@@ -45,6 +45,7 @@ impl KeywordTable {
         // Type keywords
         keywords.insert("结构体".to_string(), TokenKind::结构体);
         keywords.insert("枚举".to_string(), TokenKind::枚举);
+        keywords.insert("数组".to_string(), TokenKind::数组);
 
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);

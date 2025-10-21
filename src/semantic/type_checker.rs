@@ -138,8 +138,33 @@ impl TypeChecker {
                     })
                 }
             }
-            // Arithmetic operators return the same type as operands
-            crate::parser::ast::BinaryOperator::加 |
+            // Arithmetic operators
+            crate::parser::ast::BinaryOperator::加 => {
+                // Special handling for string concatenation
+                let is_left_string = matches!(left_type, TypeNode::基础类型(BasicType::字符串));
+                let is_right_string = matches!(right_type, TypeNode::基础类型(BasicType::字符串));
+
+                if is_left_string && is_right_string {
+                    // Both operands are strings - string concatenation
+                    Ok(TypeNode::基础类型(BasicType::字符串))
+                } else if is_left_string || is_right_string {
+                    // One operand is string, other is not - invalid operation
+                    return Err(TypeError::InvalidOperation {
+                        operation: "字符串连接".to_string(),
+                        type_name: format!("{:?} + {:?}", left_type, right_type),
+                        span: binary.span,
+                    });
+                } else if left_type == right_type {
+                    // Both operands are the same numeric type
+                    Ok(left_type)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", left_type),
+                        actual: format!("{:?}", right_type),
+                        span: binary.span,
+                    })
+                }
+            }
             crate::parser::ast::BinaryOperator::减 |
             crate::parser::ast::BinaryOperator::乘 |
             crate::parser::ast::BinaryOperator::除 |
@@ -170,6 +195,43 @@ impl TypeChecker {
                     }
                 }
             }
+        }
+    }
+
+    /// Check if two types are compatible (for assignment/initialization)
+    fn are_types_compatible(&self, expected: &TypeNode, actual: &TypeNode) -> bool {
+        match (expected, actual) {
+            // Exact types are always compatible
+            (expected, actual) if expected == actual => true,
+
+            // Array type compatibility: Array<T> is compatible with Array<T>[N] regardless of size
+            (TypeNode::数组类型(expected_array), TypeNode::数组类型(actual_array)) => {
+                // Check if element types are compatible, ignore size differences
+                self.are_types_compatible(&expected_array.element_type, &actual_array.element_type)
+            }
+
+            // Basic type compatibility with implicit conversions
+            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::浮点数)) => true,
+            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::整数)) => true,
+
+            // Function type compatibility
+            (TypeNode::函数类型(expected_func), TypeNode::函数类型(actual_func)) => {
+                if expected_func.parameters.len() != actual_func.parameters.len() {
+                    return false;
+                }
+
+                // Check parameter types (contravariant)
+                for (exp_param, act_param) in expected_func.parameters.iter().zip(actual_func.parameters.iter()) {
+                    if !self.are_types_compatible(act_param, exp_param) {
+                        return false;
+                    }
+                }
+
+                // Check return types (covariant)
+                self.are_types_compatible(&expected_func.return_type, &actual_func.return_type)
+            }
+
+            _ => false,
         }
     }
 
@@ -246,7 +308,7 @@ impl TypeChecker {
         let final_type = if let Some(declared) = declared_type {
             // Check type compatibility
             if let Some(init_type) = initializer_type {
-                if declared != init_type {
+                if !self.are_types_compatible(&declared, &init_type) {
                     return Err(TypeError::TypeMismatch {
                         expected: format!("{:?}", declared),
                         actual: format!("{:?}", init_type),

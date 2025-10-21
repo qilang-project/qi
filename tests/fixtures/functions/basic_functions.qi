@@ -1,0 +1,208 @@
+// 基本函数定义测试 | Basic Function Definition Tests
+// 测试各种函数定义语法 | Testing various function definition syntaxes
+
+// 测试1: 无参数无返回值函数 | Test 1: No parameters, no return value
+函数 简单问候() {
+    打印 "你好，世界！";
+}
+
+// 测试2: 无参数有返回值函数 | Test 2: No parameters, with return value
+函数 获取幸运数字() -> 整数 {
+    返回 42;
+}
+
+// 测试3: 有参数无返回值函数 | Test 3: With parameters, no return value
+函数 打印消息(message: 字符串) {
+    打印 message;
+}
+
+// 测试4: 有参数有返回值函数 | Test 4: With parameters and return value
+函数 相加(a: 整数, b: 整数) -> 整数 {
+    返回 a + b;
+}
+
+// 测试5: 多个不同类型的参数 | Test 5: Multiple different type parameters
+函数 计算平均值(数值: 整数, 权重: 浮点数) -> 浮点数 {
+    返回 数值 * 权重;
+}
+
+// 测试6: 布尔返回值函数 | Test 6: Boolean return value function
+函数 是偶数(n: 整数) -> 布尔 {
+    如果 (n % 2 == 0) {
+        返回 真;
+    } 否则 {
+        返回 假;
+    }
+}
+
+// 测试7: 字符串操作函数 | Test 7: String manipulation function
+函数 拼接姓名(姓: 字符串, 名: 字符串) -> 字符串 {
+    返回 姓 + 名;
+}
+
+// 测试8: 浮点数运算函数 | Test 8: Float calculation function
+函数 计算圆面积(半径: 浮点数) -> 浮点数 {
+    返回 3.14159 * 半径 * 半径;
+}
+
+// 测试9: 复杂逻辑函数 | Test 9: Complex logic function
+函数 分级分数(score: 整数) -> 字符串 {
+    如果 (score >= 90) {
+        返回 "优秀";
+    } 否则 如果 (score >= 80) {
+        返回 "良好";
+    } 否则 如果 (score >= 60) {
+        返回 "及格";
+    } 否则 {
+        返回 "不及格";
+    }
+}
+
+// 测试10: 带局部变量的函数 | Test 10: Function with local variables
+函数 计算阶乘(n: 整数) -> 整数 {
+    变量 结果 = 1;
+    变量 i = 1;
+
+    当 (i <= n) {
+        结果 = 结果 * i;
+        i = i + 1;
+    }
+
+    返回 结果;
+}
+
+// 测试11: 嵌套函数调用 | Test 11: Nested function calls
+函数 乘三(n: 整数) -> 整数 {
+    返回 n * 3;
+}
+
+函数 乘九(n: 整数) -> 整数 {
+    返回 乘三(乘三(n));
+}
+
+// 测试12: 条件返回 | Test 12: Conditional return
+函数 绝对值(n: 整数) -> 整数 {
+    如果 (n < 0) {
+        返回 -n;
+    }
+    返回 n;
+}
+
+// 测试13: 早期返回 | Test 13: Early return
+函数 检查正数(n: 整数) -> 字符串 {
+    如果 (n <= 0) {
+        返回 "不是正数";
+    }
+
+    如果 (n > 100) {
+        返回 "大正数";
+    }
+
+    返回 "正数";
+}
+
+// 测试14: 多条return路径 | Test 14: Multiple return paths
+函数 数字类型描述(n: 整数) -> 字符串 {
+    如果 (n == 0) {
+        返回 "零";
+    } 否则 如果 (n > 0) {
+        返回 "正数";
+    } 否则 {
+        返回 "负数";
+    }
+}
+
+// 测试15: 简单的数学函数 | Test 15: Simple math function
+函数 平方(n: 整数) -> 整数 {
+    返回 n * n;
+}
+
+// 测试16: 函数中的循环 | Test 16: Function with loop
+函数 数列求和(n: 整数) -> 整数 {
+    变量 和 = 0;
+    对于 (i = 1; i <= n; i = i + 1) {
+        和 = 和 + i;
+    }
+    返回 和;
+}
+
+// 测试17: 空函数体 | Test 17: Empty function body
+函数 空函数() {
+    // 这个函数什么都不做
+}
+
+// 测试18: 函数参数和局部变量同名 | Test 18: Parameter and local variable with same name
+函数 名称遮蔽测试(param: 整数) -> 整数 {
+    变量 param = param * 2;  // 局部变量遮蔽参数
+    返回 param;
+}
+
+// 测试19: 复杂返回类型 | Test 19: Complex return type
+函数 获取坐标信息() -> 字符串 {
+    变量 x = 10;
+    变量 y = 20;
+    返回 "Coordinate: (" + x + ", " + y + ")";
+}
+
+// 测试20: 函数中的多层嵌套 | Test 20: Multi-level nesting in function
+函数 复杂计算(x: 整数, y: 整数) -> 整数 {
+    变量 result = 0;
+
+    如果 (x > 0) 且 (y > 0) {
+        对于 (i = 0; i < x; i = i + 1) {
+            变量 j = 0;
+            当 (j < y) {
+                result = result + 1;
+                j = j + 1;
+            }
+        }
+    } 否则 {
+        result = -1;
+    }
+
+    返回 result;
+}
+
+// 测试21: 函数中的数组操作 | Test 21: Array operations in function
+函数 查找最大值(arr: 数组<整数>) -> 整数 {
+    变量 max = arr[0];
+    变量 i = 1;
+
+    当 (i < 5) {  // 假设数组长度为5
+        如果 (arr[i] > max) {
+            max = arr[i];
+        }
+        i = i + 1;
+    }
+
+    返回 max;
+}
+
+// 测试22: 字符串处理函数 | Test 22: String processing function
+函数 反转字符串(s: 字符串) -> 字符串 {
+    // 简化的字符串反转逻辑
+    变量 result = s;  // 实际实现中需要逐字符处理
+    返回 result;
+}
+
+// 测试23: 递归函数基础 | Test 23: Basic recursive function
+函数 向下计数(n: 整数) {
+    打印 n;
+    如果 (n > 0) {
+        向下计数(n - 1);
+    }
+}
+
+// 测试24: 函数指针概念测试 | Test 24: Function pointer concept test
+// 这个测试取决于语言是否支持函数作为一等公民
+// 函数 应用操作(fn: 函数(整数) -> 整数, value: 整数) -> 整数 {
+//     返回 fn(value);
+// }
+
+// 测试25: 高阶函数测试 | Test 25: Higher-order function test
+// 函数 创建加法器(x: 整数) -> 函数(整数) -> 整数 {
+//     函数 加法器(y: 整数) -> 整数 {
+//         返回 x + y;
+//     }
+//     返回 加法器;
+// }

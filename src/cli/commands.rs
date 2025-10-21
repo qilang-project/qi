@@ -249,7 +249,7 @@ pub enum CliError {
     NoInputFiles,
 
     /// 编译错误
-    #[error("编译错误: {0}")]
+    #[error("{0}")]
     Compilation(#[from] crate::CompilerError),
 
     /// 配置错误

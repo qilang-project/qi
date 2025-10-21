@@ -26,7 +26,7 @@ async fn main() {
 
     // Execute the command
     if let Err(e) = cli.execute(config).await {
-        eprintln!("编译错误: {}", e);
+        eprintln!("{}", e);
         process::exit(1);
     }
 }

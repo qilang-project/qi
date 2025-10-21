@@ -32,6 +32,7 @@ pub enum TokenKind {
     浮点数,    // float
     结构体,    // struct
     枚举,      // enum
+    数组,      // array
 
     // Single-character tokens
     赋值,      // =

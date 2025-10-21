@@ -7,6 +7,8 @@ pub mod unicode;
 pub use tokens::{Token, TokenKind, Span};
 pub use unicode::UnicodeHandler;
 
+use crate::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
+
 
 /// Qi language lexical analyzer
 pub struct Lexer {
@@ -15,6 +17,7 @@ pub struct Lexer {
     line: usize,
     column: usize,
     unicode_handler: UnicodeHandler,
+    diagnostics: DiagnosticManager,
 }
 
 impl Lexer {
@@ -26,7 +29,18 @@ impl Lexer {
             line: 1,
             column: 1,
             unicode_handler: UnicodeHandler::new(),
+            diagnostics: DiagnosticManager::new(),
         }
+    }
+
+    /// Get a reference to the diagnostics manager
+    pub fn diagnostics(&self) -> &DiagnosticManager {
+        &self.diagnostics
+    }
+
+    /// Consume the lexer and return the diagnostics
+    pub fn into_diagnostics(self) -> DiagnosticManager {
+        self.diagnostics
     }
 
     /// Tokenize the entire source code
@@ -41,8 +55,10 @@ impl Lexer {
                 break;
             }
 
-            let token = self.next_token()?;
-            tokens.push(token);
+            if let Some(token) = self.next_token()? {
+                tokens.push(token);
+            }
+            // If None is returned (e.g., for comments), just continue the loop
         }
 
         // Add EOF token
@@ -58,7 +74,7 @@ impl Lexer {
     }
 
     /// Get the next token
-    fn next_token(&mut self) -> Result<Token, LexicalError> {
+    fn next_token(&mut self) -> Result<Option<Token>, LexicalError> {
         let start_pos = self.position;
         let start_line = self.line;
         let start_column = self.column;
@@ -67,45 +83,46 @@ impl Lexer {
 
         match c {
             // Single-character tokens
-            '(' => Ok(self.make_single_char_token(TokenKind::左括号, start_pos, start_line, start_column)),
-            ')' => Ok(self.make_single_char_token(TokenKind::右括号, start_pos, start_line, start_column)),
-            '[' => Ok(self.make_single_char_token(TokenKind::左方括号, start_pos, start_line, start_column)),
-            ']' => Ok(self.make_single_char_token(TokenKind::右方括号, start_pos, start_line, start_column)),
-            '{' => Ok(self.make_single_char_token(TokenKind::左大括号, start_pos, start_line, start_column)),
-            '}' => Ok(self.make_single_char_token(TokenKind::右大括号, start_pos, start_line, start_column)),
-            ';' => Ok(self.make_single_char_token(TokenKind::分号, start_pos, start_line, start_column)),
-            ',' => Ok(self.make_single_char_token(TokenKind::逗号, start_pos, start_line, start_column)),
-            ':' => Ok(self.make_single_char_token(TokenKind::冒号, start_pos, start_line, start_column)),
-            '.' => Ok(self.make_single_char_token(TokenKind::点, start_pos, start_line, start_column)),
+            '(' => Ok(Some(self.make_single_char_token(TokenKind::左括号, start_pos, start_line, start_column))),
+            ')' => Ok(Some(self.make_single_char_token(TokenKind::右括号, start_pos, start_line, start_column))),
+            '[' => Ok(Some(self.make_single_char_token(TokenKind::左方括号, start_pos, start_line, start_column))),
+            ']' => Ok(Some(self.make_single_char_token(TokenKind::右方括号, start_pos, start_line, start_column))),
+            '{' => Ok(Some(self.make_single_char_token(TokenKind::左大括号, start_pos, start_line, start_column))),
+            '}' => Ok(Some(self.make_single_char_token(TokenKind::右大括号, start_pos, start_line, start_column))),
+            ';' => Ok(Some(self.make_single_char_token(TokenKind::分号, start_pos, start_line, start_column))),
+            ',' => Ok(Some(self.make_single_char_token(TokenKind::逗号, start_pos, start_line, start_column))),
+            ':' => Ok(Some(self.make_single_char_token(TokenKind::冒号, start_pos, start_line, start_column))),
+            '.' => Ok(Some(self.make_single_char_token(TokenKind::点, start_pos, start_line, start_column))),
 
             // Operators and comments
-            '+' => Ok(self.make_single_char_token(TokenKind::加, start_pos, start_line, start_column)),
-            '*' => Ok(self.make_single_char_token(TokenKind::乘, start_pos, start_line, start_column)),
+            '+' => Ok(Some(self.make_single_char_token(TokenKind::加, start_pos, start_line, start_column))),
+            '*' => Ok(Some(self.make_single_char_token(TokenKind::乘, start_pos, start_line, start_column))),
+            '%' => Ok(Some(self.make_single_char_token(TokenKind::取余, start_pos, start_line, start_column))),
             '/' => {
                 if self.peek_char() == Some('/') {
                     // Check if it's a doc comment (///)
                     if self.peek_char_at_offset(2) == Some('/') {
-                        // Doc line comment - skip and return next token
+                        // Doc line comment - skip and return None to continue main loop
                         self.skip_line_comment();
-                        return self.next_token();
+                        return Ok(None);
                     } else {
-                        // Regular line comment - skip to end of line and return next token
+                        // Regular line comment - skip and return None to continue main loop
                         self.skip_line_comment();
-                        return self.next_token();
+                        return Ok(None);
                     }
                 } else if self.peek_char() == Some('*') {
                     // Check if it's a doc block comment (/**)
                     if self.peek_char_at_offset(2) == Some('*') {
-                        // Doc block comment - skip and return next token
+                        // Doc block comment - skip and return None to continue main loop
                         self.skip_doc_block_comment();
-                        return self.next_token();
+                        return Ok(None);
                     } else {
-                        // Regular block comment - skip to closing */
+                        // Regular block comment - skip and return None to continue main loop
                         self.skip_block_comment();
-                        return self.next_token();
+                        return Ok(None);
                     }
                 } else {
-                    Ok(self.make_single_char_token(TokenKind::除, start_pos, start_line, start_column))
+                    Ok(Some(self.make_single_char_token(TokenKind::除, start_pos, start_line, start_column)))
                 }
             }
 
@@ -113,60 +130,61 @@ impl Lexer {
             '=' => {
                 if self.peek_char() == Some('=') {
                     self.advance();
-                    Ok(self.make_two_char_token(TokenKind::等于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_two_char_token(TokenKind::等于, start_pos, start_line, start_column)))
                 } else {
-                    Ok(self.make_single_char_token(TokenKind::赋值, start_pos, start_line, start_column))
+                    Ok(Some(self.make_single_char_token(TokenKind::赋值, start_pos, start_line, start_column)))
                 }
             }
             '-' => {
                 if self.peek_char() == Some('>') {
                     self.advance();
-                    Ok(self.make_two_char_token(TokenKind::箭头, start_pos, start_line, start_column))
+                    Ok(Some(self.make_two_char_token(TokenKind::箭头, start_pos, start_line, start_column)))
                 } else {
-                    Ok(self.make_single_char_token(TokenKind::减, start_pos, start_line, start_column))
+                    Ok(Some(self.make_single_char_token(TokenKind::减, start_pos, start_line, start_column)))
                 }
             }
             '!' => {
                 if self.peek_char() == Some('=') {
                     self.advance();
-                    Ok(self.make_two_char_token(TokenKind::不等于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_two_char_token(TokenKind::不等于, start_pos, start_line, start_column)))
                 } else {
+                    self.report_invalid_character_error(c, start_pos, start_line, start_column, "可能想要使用 '!=' 表示不等于，或者检查是否有多余的字符");
                     Err(LexicalError::InvalidCharacter(c, start_line, start_column))
                 }
             }
             '<' => {
                 if self.peek_char() == Some('=') {
                     self.advance();
-                    Ok(self.make_two_char_token(TokenKind::小于等于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_two_char_token(TokenKind::小于等于, start_pos, start_line, start_column)))
                 } else {
-                    Ok(self.make_single_char_token(TokenKind::小于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_single_char_token(TokenKind::小于, start_pos, start_line, start_column)))
                 }
             }
             '>' => {
                 if self.peek_char() == Some('=') {
                     self.advance();
-                    Ok(self.make_two_char_token(TokenKind::大于等于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_two_char_token(TokenKind::大于等于, start_pos, start_line, start_column)))
                 } else {
-                    Ok(self.make_single_char_token(TokenKind::大于, start_pos, start_line, start_column))
+                    Ok(Some(self.make_single_char_token(TokenKind::大于, start_pos, start_line, start_column)))
                 }
             }
 
             // Character literals
-            '\'' => self.scan_char_literal(start_pos, start_line, start_column),
+            '\'' => self.scan_char_literal(start_pos, start_line, start_column).map(Some),
 
             // String literals
-            '"' => self.scan_string_literal(start_pos, start_line, start_column),
+            '"' => self.scan_string_literal(start_pos, start_line, start_column).map(Some),
 
             // Numbers
-            '0'..='9' => self.scan_number(start_pos, start_line, start_column),
+            '0'..='9' => Ok(Some(self.scan_number(start_pos, start_line, start_column)?)),
 
             // Identifiers and keywords
             c if c.is_alphabetic() || c == '_' => {
                 // Handle Chinese characters and standard identifiers
                 if self.unicode_handler.is_chinese_char(c) {
-                    Ok(self.scan_chinese_identifier(start_pos, start_line, start_column))
+                    Ok(Some(self.scan_chinese_identifier(start_pos, start_line, start_column)))
                 } else {
-                    Ok(self.scan_identifier(start_pos, start_line, start_column))
+                    Ok(Some(self.scan_identifier(start_pos, start_line, start_column)))
                 }
             }
 
@@ -185,7 +203,10 @@ impl Lexer {
                 return self.next_token(); // Skip and get next token
             }
 
-            _ => Err(LexicalError::InvalidCharacter(c, start_line, start_column)),
+            _ => {
+                self.report_invalid_character_error(c, start_pos, start_line, start_column, "检查字符是否为有效的Qi语言符号，或者删除不需要的字符");
+                Err(LexicalError::InvalidCharacter(c, start_line, start_column))
+            }
         }
     }
 
@@ -227,6 +248,7 @@ impl Lexer {
         }
 
         if self.is_at_end() {
+            self.report_unterminated_string_error(start_pos, start_line, start_column, "字符串缺少右引号 \"，请在字符串末尾添加右引号");
             return Err(LexicalError::UnterminatedString(start_line, start_column));
         }
 
@@ -250,6 +272,7 @@ impl Lexer {
         self.advance(); // Skip opening quote
 
         if self.is_at_end() {
+            self.report_unterminated_string_error(start_pos, start_line, start_column, "字符字面量缺少右引号 '，请在字符后添加右引号");
             return Err(LexicalError::UnterminatedString(start_line, start_column));
         }
 
@@ -259,6 +282,7 @@ impl Lexer {
         let final_char = if char_content == '\\' {
             self.advance(); // Skip escape character
             if self.is_at_end() {
+                self.report_unterminated_string_error(start_pos, start_line, start_column, "转义字符序列不完整，检查转义字符后是否有有效字符");
                 return Err(LexicalError::UnterminatedString(start_line, start_column));
             }
 
@@ -280,6 +304,7 @@ impl Lexer {
 
         // Expect closing quote
         if self.current_char() != Some('\'') {
+            self.report_unterminated_string_error(start_pos, start_line, start_column, "字符字面量必须以右引号 ' 结尾，字符后请添加右引号");
             return Err(LexicalError::UnterminatedString(start_line, start_column));
         }
 
@@ -310,7 +335,10 @@ impl Lexer {
 
             let number_str = &self.source[start_pos..self.position];
             let value = number_str.parse::<f64>()
-                .map_err(|_| LexicalError::InvalidNumber(start_line, start_column))?;
+                .map_err(|_| {
+                    self.report_invalid_number_error(start_pos, start_line, start_column, "浮点数格式无效，检查数字格式是否正确");
+                    LexicalError::InvalidNumber(start_line, start_column)
+                })?;
 
             Ok(Token {
                 kind: TokenKind::浮点数字面量(value),
@@ -322,7 +350,10 @@ impl Lexer {
         } else {
             let number_str = &self.source[start_pos..self.position];
             let value = number_str.parse::<i64>()
-                .map_err(|_| LexicalError::InvalidNumber(start_line, start_column))?;
+                .map_err(|_| {
+                    self.report_invalid_number_error(start_pos, start_line, start_column, "整数格式无效，检查数字是否在有效范围内");
+                    LexicalError::InvalidNumber(start_line, start_column)
+                })?;
 
             Ok(Token {
                 kind: TokenKind::整数字面量(value),
@@ -388,25 +419,35 @@ impl Lexer {
 
     /// Advance to the next character
     fn advance(&mut self) {
-        if self.current_char() == Some('\n') {
+        if self.is_at_end() {
+            return;
+        }
+
+        let current_char = self.current_char().unwrap_or('\0');
+        if current_char == '\n' {
             self.line += 1;
             self.column = 1;
         } else {
-            self.column += self.unicode_handler.char_width(self.current_char().unwrap_or('\0'));
+            self.column += self.unicode_handler.char_width(current_char);
         }
-        self.position += self.current_char().unwrap_or('\0').len_utf8();
+        self.position += current_char.len_utf8();
     }
 
     /// Skip whitespace characters
     fn skip_whitespace(&mut self) {
-        while !self.is_at_end() && self.current_char().unwrap().is_whitespace() {
-            if self.current_char() == Some('\n') {
+        while !self.is_at_end() {
+            let current_char = self.current_char().unwrap_or('\0');
+            if !current_char.is_whitespace() {
+                break;
+            }
+
+            if current_char == '\n' {
                 self.line += 1;
                 self.column = 1;
             } else {
-                self.column += self.unicode_handler.char_width(self.current_char().unwrap_or('\0'));
+                self.column += self.unicode_handler.char_width(current_char);
             }
-            self.position += self.current_char().unwrap_or('\0').len_utf8();
+            self.position += current_char.len_utf8();
         }
     }
 
@@ -534,6 +575,106 @@ impl Lexer {
             // Unterminated doc block comment - this would be an error in a real implementation
             // For now, we'll just skip to end of file
         }
+    }
+
+    // ===== Enhanced Error Reporting Methods | 增强错误报告方法 =====
+
+    /// Report invalid character error with detailed suggestions
+    fn report_invalid_character_error(&mut self, char: char, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+        let span = Span::new(start_pos, start_pos + char.len_utf8());
+
+        self.diagnostics.add_diagnostic({
+            use crate::utils::diagnostics::Diagnostic;
+            use crate::lexer::tokens::Span;
+
+            Diagnostic {
+                level: DiagnosticLevel::错误,
+                code: "E011".to_string(),
+                message: format!("无效字符: '{}'", char),
+                english_message: format!("Invalid character: '{}'", char),
+                file_path: None,
+                span: Some(span),
+                suggestion: Some(suggestion.to_string()),
+                related_code: Some(self.source[start_pos..start_pos + char.len_utf8()].to_string()),
+            }
+        });
+    }
+
+    /// Report unterminated string error with detailed suggestions
+    fn report_unterminated_string_error(&mut self, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+        let end_pos = self.position.min(self.source.len());
+        let span = Span::new(start_pos, end_pos);
+
+        self.diagnostics.add_diagnostic({
+            use crate::utils::diagnostics::Diagnostic;
+
+            Diagnostic {
+                level: DiagnosticLevel::错误,
+                code: "E012".to_string(),
+                message: "未终止的字符串字面量".to_string(),
+                english_message: "Unterminated string literal".to_string(),
+                file_path: None,
+                span: Some(span),
+                suggestion: Some(suggestion.to_string()),
+                related_code: Some(self.source[start_pos..end_pos].to_string()),
+            }
+        });
+    }
+
+    /// Report invalid number error with detailed suggestions
+    fn report_invalid_number_error(&mut self, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+        let end_pos = self.position.min(self.source.len());
+        let span = Span::new(start_pos, end_pos);
+
+        self.diagnostics.add_diagnostic({
+            use crate::utils::diagnostics::Diagnostic;
+
+            Diagnostic {
+                level: DiagnosticLevel::错误,
+                code: "E013".to_string(),
+                message: "无效的数字格式".to_string(),
+                english_message: "Invalid number format".to_string(),
+                file_path: None,
+                span: Some(span),
+                suggestion: Some(suggestion.to_string()),
+                related_code: Some(self.source[start_pos..end_pos].to_string()),
+            }
+        });
+    }
+
+    /// Report unexpected EOF error
+    fn report_unexpected_eof_error(&mut self, position: usize, suggestion: &str) {
+        let span = Span::new(position, position);
+
+        self.diagnostics.add_diagnostic({
+            use crate::utils::diagnostics::Diagnostic;
+
+            Diagnostic {
+                level: DiagnosticLevel::错误,
+                code: "E014".to_string(),
+                message: "意外的文件结束".to_string(),
+                english_message: "Unexpected end of file".to_string(),
+                file_path: None,
+                span: Some(span),
+                suggestion: Some(suggestion.to_string()),
+                related_code: None,
+            }
+        });
+    }
+
+    /// Get error summary statistics
+    pub fn get_error_summary(&self) -> (usize, usize) {
+        (self.diagnostics.error_count(), self.diagnostics.warning_count())
+    }
+
+    /// Check if any critical errors occurred
+    pub fn has_critical_errors(&self) -> bool {
+        self.diagnostics.error_count() > 0
+    }
+
+    /// Format all diagnostics as Chinese messages
+    pub fn format_diagnostics(&self) -> String {
+        self.diagnostics.format_chinese_messages()
     }
 }
 

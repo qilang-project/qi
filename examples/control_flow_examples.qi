@@ -1,0 +1,226 @@
+// 控制流示例程序 | Control Flow Example Program
+// 演示条件判断和循环结构的使用 | Demonstrating the use of conditional and loop structures
+
+// ===== IF-ELSE STATEMENTS | 如果-否则语句 =====
+
+// 示例1: 成绩等级判断 | Example 1: Grade Level Determination
+函数 计算成绩等级(score: 整数) -> 字符串 {
+    如果 (score >= 90) {
+        返回 "优秀";
+    } 否则 如果 (score >= 80) {
+        返回 "良好";
+    } 否则 如果 (score >= 70) {
+        返回 "中等";
+    } 否则 如果 (score >= 60) {
+        返回 "及格";
+    } 否则 {
+        返回 "不及格";
+    }
+}
+
+// Basic if statement | 基本如果语句
+函数 test_basic_if() {
+    变量 x = 10;
+    如果 x > 5 {
+        打印 "x is greater than 5";
+    }
+}
+
+// If-else statement | 如果-否则语句
+函数 test_if_else() {
+    变量 age = 16;
+    如果 age >= 18 {
+        打印 "You are an adult";
+    } 否则 {
+        打印 "You are a minor";
+    }
+}
+
+// Complex conditions | 复杂条件
+函数 test_complex_conditions() {
+    变量 a = 10;
+    变量 b = 5;
+    变量 c = 15;
+
+    如果 (a > b) 且 (b + c > 20) {
+        打印 "Both conditions are true";
+    }
+
+    如果 (a == 10) 或 (c < 10) {
+        打印 "At least one condition is true";
+    }
+
+    如果 非 (a > b) {
+        打印 "a is not greater than b";
+    } 否则 {
+        打印 "a is greater than b";
+    }
+}
+
+// 示例2: 阶乘计算 | Example 2: Factorial Calculation
+函数 计算阶乘(n: 整数) -> 整数 {
+    如果 (n <= 1) {
+        返回 1;
+    } 否则 {
+        变量 result = 1;
+        变量 i = 2;
+        当 (i <= n) {
+            result = result * i;
+            i = i + 1;
+        }
+        返回 result;
+    }
+}
+
+// 示例3: 素数判断 | Example 3: Prime Number Check
+函数 是素数(n: 整数) -> 布尔 {
+    如果 (n <= 1) {
+        返回 假;
+    } 否则 如果 (n == 2) {
+        返回 真;
+    } 否则 如果 (n % 2 == 0) {
+        返回 假;
+    } 否则 {
+        变量 i = 3;
+        当 (i * i <= n) {
+            如果 (n % i == 0) {
+                返回 假;
+            }
+            i = i + 2;
+        }
+        返回 真;
+    }
+}
+
+// 示例4: 数组求和 | Example 4: Array Summation
+函数 计算数组之和(arr: 数组<整数>) -> 整数 {
+    变量 sum = 0;
+    变量 i = 0;
+    当 (i < 5) {  // 假设数组长度为5
+        sum = sum + arr[i];
+        i = i + 1;
+    }
+    返回 sum;
+}
+
+// 示例5: 打印乘法表 | Example 5: Print Multiplication Table
+函数 打印乘法表(n: 整数) {
+    变量 i = 1;
+    当 (i <= n) {
+        变量 j = 1;
+        当 (j <= n) {
+            打印 i * j;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// 示例6: 斐波那契数列 | Example 6: Fibonacci Sequence
+函数 计算斐波那契(n: 整数) -> 整数 {
+    如果 (n <= 0) {
+        返回 0;
+    } 否则 如果 (n == 1) {
+        返回 1;
+    } 否则 {
+        变量 a = 0;
+        变量 b = 1;
+        变量 i = 2;
+        当 (i <= n) {
+            变量 temp = a + b;
+            a = b;
+            b = temp;
+            i = i + 1;
+        }
+        返回 b;
+    }
+}
+
+// 示例7: 使用C风格for循环的累加 | Example 7: Accumulation with C-style For Loop
+函数 计算累加(start: 整数, end: 整数) -> 整数 {
+    变量 sum = 0;
+    对于 (i = start; i <= end; i = i + 1) {
+        sum = sum + i;
+    }
+    返回 sum;
+}
+
+// 示例8: 复杂嵌套控制流 | Example 8: Complex Nested Control Flow
+函数 寻找最大值(arr: 数组<整数>) -> 整数 {
+    变量 max = arr[0];
+    变量 i = 1;
+
+    当 (i < 5) {  // 假设数组长度为5
+        如果 (arr[i] > max) {
+            max = arr[i];
+            // 找到新的最大值时打印
+            打印 "New max found: " + max;
+        }
+        i = i + 1;
+    }
+
+    返回 max;
+}
+
+// 示例9: 循环中的条件判断 | Example 9: Conditional Logic in Loops
+函数 统计奇偶数(arr: 数组<整数>) {
+    变量 even_count = 0;
+    变量 odd_count = 0;
+    变量 i = 0;
+
+    当 (i < 5) {  // 假设数组长度为5
+        如果 (arr[i] % 2 == 0) {
+            even_count = even_count + 1;
+        } 否则 {
+            odd_count = odd_count + 1;
+        }
+        i = i + 1;
+    }
+
+    打印 "Even numbers: " + even_count;
+    打印 "Odd numbers: " + odd_count;
+}
+
+// 示例10: 使用嵌套循环打印图案 | Example 10: Pattern Printing with Nested Loops
+函数 打印三角形图案(size: 整数) {
+    变量 row = 1;
+    当 (row <= size) {
+        变量 col = 1;
+        当 (col <= row) {
+            打印 "*";
+            col = col + 1;
+        }
+        打印 "";  // 换行
+        row = row + 1;
+    }
+}
+
+// 主函数 | Main Function
+函数 主() {
+    // 测试成绩等级
+    打印 "Grade for 85: " + 计算成绩等级(85);
+
+    // 测试阶乘计算
+    打印 "Factorial of 5: " + 计算阶乘(5);
+
+    // 测试素数判断
+    打印 "Is 17 prime? " + 是素数(17);
+
+    // 测试数组求和
+    变量 numbers = [1, 2, 3, 4, 5];
+    打印 "Sum of array: " + 计算数组之和(numbers);
+
+    // 测试累加
+    打印 "Sum from 1 to 10: " + 计算累加(1, 10);
+
+    // 测试斐波那契
+    打印 "Fibonacci(7): " + 计算斐波那契(7);
+
+    // 测试统计功能
+    统计奇偶数(numbers);
+
+    // 测试图案打印
+    打印三角形图案(3);
+
+    返回 0;
+}

@@ -1,0 +1,383 @@
+// 运行时错误测试用例 | Runtime Error Test Cases
+// 这些程序会在运行时产生错误，用于测试运行时错误处理 | These programs will cause runtime errors for testing runtime error handling
+
+// 错误1: 除零错误 | Error 1: Division by zero
+函数 test_division_by_zero() {
+    变量 a = 10;
+    变量 b = 0;
+    变量 result = a / b;  // 运行时除零错误
+    打印 result;
+}
+
+// 错误2: 数组越界访问 | Error 2: Array index out of bounds
+函数 test_array_bounds() {
+    变量 arr = [1, 2, 3];  // 长度为3的数组
+    变量 value = arr[10];  // 越界访问
+    打印 value;
+}
+
+// 错误3: 栈溢出（无限递归）| Error 3: Stack overflow (infinite recursion)
+函数 infinite_recursion() {
+    返回 infinite_recursion();  // 无限递归导致栈溢出
+}
+
+// 错误4: 空指针解引用 | Error 4: Null pointer dereference
+函数 test_null_pointer() {
+    变量 ptr = 空;  // 空指针
+    变量 value = *ptr;  // 解引用空指针
+    打印 value;
+}
+
+// 错误5: 整数溢出 | Error 5: Integer overflow
+函数 test_integer_overflow() {
+    变量 max = 9223372036854775807;  // i64最大值
+    变量 result = max + 1;  // 溢出
+    打印 result;
+}
+
+// 错误6: 类型转换失败 | Error 6: Type conversion failure
+函数 test_type_conversion() {
+    变量 s = "not a number";
+    变量 n = 整数(s);  // 字符串到整数转换失败
+    打印 n;
+}
+
+// 错误7: 函数调用失败 | Error 7: Function call failure
+函数 test_function_call_failure() {
+    调用不存在的函数();  // 调用不存在的函数
+}
+
+// 错误8: 内存不足 | Error 8: Out of memory
+函数 test_out_of_memory() {
+    变量 huge_array = [0; 1000000000000];  // 尝试分配超大数组
+    打印 "allocated";
+}
+
+// 错误9: 文件操作失败 | Error 9: File operation failure
+函数 test_file_error() {
+    变量 content = 读取文件("不存在的文件.txt");  // 读取不存在的文件
+    打印 content;
+}
+
+// 错误10: 断言失败 | Error 10: Assertion failure
+函数 test_assertion_failure() {
+    断言(1 == 2);  // 断言失败
+    打印 "unreachable";
+}
+
+// 错误11: 数学域错误 | Error 11: Math domain error
+函数 test_math_domain_error() {
+    变量 result = 平方根(-1);  // 负数的平方根
+    打印 result;
+}
+
+// 错误12: 字符串索引越界 | Error 12: String index out of bounds
+函数 test_string_bounds() {
+    变量 s = "hello";
+    变量 c = s[100];  // 字符串索引越界
+    打印 c;
+}
+
+// 错误13: 类型断言失败 | Error 13: Type assertion failure
+函数 test_type_assertion() {
+    变量 x : 任意 = "hello";
+    变量 n : 整数 = 断言类型<整数>(x);  // 类型断言失败
+    打印 n;
+}
+
+// 错误14: 并发错误 | Error 14: Concurrency error
+函数 test_concurrency_error() {
+    变量 channel = 创建通道();
+    关闭通道(channel);
+    发送消息(channel, "test");  // 向已关闭的通道发送消息
+}
+
+// 错误15: 网络错误 | Error 15: Network error
+函数 test_network_error() {
+    变量 response = HTTP请求("不存在的网址");  // 网络请求失败
+    打印 response;
+}
+
+// ===== 高级运行时错误 | Advanced Runtime Errors =====
+
+// 错误16: 浮点数精度错误 | Error 16: Floating point precision error
+函数 test_float_precision() {
+    变量 a = 0.1 + 0.2;
+    变量 b = 0.3;
+    如果 (a != b) {  // 浮点数精度问题
+        打印 "浮点数精度错误: " + a + " != " + b;
+    }
+}
+
+// 错误17: 循环引用垃圾回收 | Error 17: Circular reference garbage collection
+函数 test_circular_reference() {
+    变量 obj1 = 创建对象();
+    变量 obj2 = 创建对象();
+    obj1.引用 = obj2;
+    obj2.引用 = obj1;  // 循环引用
+    // 垃圾回收器可能无法正确处理
+}
+
+// 错误18: 死锁 | Error 18: Deadlock
+函数 test_deadlock() {
+    变量 lock1 = 创建锁();
+    变量 lock2 = 创建锁();
+
+    // 线程1
+    启动线程({
+        获取锁(lock1);
+        等待(100);  // 模拟一些工作
+        获取锁(lock2);  // 可能死锁
+        释放锁(lock2);
+        释放锁(lock1);
+    });
+
+    // 线程2
+    启动线程({
+        获取锁(lock2);
+        等待(100);
+        获取锁(lock1);  // 可能死锁
+        释放锁(lock1);
+        释放锁(lock2);
+    });
+}
+
+// 错误19: 竞态条件 | Error 19: Race condition
+函数 test_race_condition() {
+    变量 counter = 0;
+
+    // 启动多个线程同时修改counter
+    对于 (i = 0; i < 10; i = i + 1) {
+        启动线程({
+            对于 (j = 0; j < 1000; j = j + 1) {
+                counter = counter + 1;  // 竞态条件
+            }
+        });
+    }
+
+    等待所有线程完成();
+    打印 "Final counter: " + counter;  // 结果可能不是10000
+}
+
+// 错误20: 缓冲区溢出 | Error 20: Buffer overflow
+函数 test_buffer_overflow() {
+    变量 buffer = [0; 10];  // 10个元素的缓冲区
+    对于 (i = 0; i <= 10; i = i + 1) {  // 注意<=，会越界
+        buffer[i] = i;  // 缓冲区溢出
+    }
+}
+
+// 错误21: 未初始化内存读取 | Error 21: Uninitialized memory read
+函数 test_uninitialized_memory() {
+    变量 array: 数组<整数>;  // 未初始化的数组
+    变量 value = array[0];  // 读取未初始化的内存
+    打印 value;
+}
+
+// 错误22: 重复释放内存 | Error 22: Double free memory
+函数 test_double_free() {
+    变量 ptr = 分配内存(1024);
+    释放内存(ptr);
+    释放内存(ptr);  // 重复释放
+}
+
+// 错误23: 使用已释放内存 | Error 23: Use after free
+函数 test_use_after_free() {
+    变量 ptr = 分配内存(1024);
+    释放内存(ptr);
+    变量 value = *ptr;  // 使用已释放的内存
+    打印 value;
+}
+
+// 错误24: 格式化字符串漏洞 | Error 24: Format string vulnerability
+函数 test_format_string_vulnerability() {
+    变量 user_input = "%s%s%s%s%s";  // 恶意输入
+    打印格式(user_input);  // 格式化字符串漏洞
+}
+
+// 错误25: 整数截断 | Error 25: Integer truncation
+函数 test_integer_truncation() {
+    变量 large = 123456789;
+    变量 small: 整数8位 = large;  // 整数截断
+    打印 small;
+}
+
+// 错误26: 符号扩展错误 | Error 26: Sign extension error
+函数 test_sign_extension() {
+    变量 signed: 有符号整数8位 = -1;
+    变量 unsigned: 无符号整数 = signed;  // 符号扩展错误
+    打印 unsigned;
+}
+
+// 错误27: 对齐错误 | Error 27: Alignment error
+函数 test_alignment_error() {
+    变量 ptr = 分配对齐内存(16);  // 16字节对齐
+    变量 misaligned = ptr + 1;  // 非对齐访问
+    变量 value = *misaligned;  // 对齐错误
+}
+
+// 错误28: 系统调用失败 | Error 28: System call failure
+函数 test_system_call_failure() {
+    变量 result = 系统调用(999, 无效参数);  // 无效系统调用
+    如果 (result == -1) {
+        打印 "系统调用失败";
+    }
+}
+
+// 错误29: 权限拒绝 | Error 29: Permission denied
+函数 test_permission_denied() {
+    变量 file = 打开文件("/root/secret.txt");  // 权限不足
+    如果 (file == 空文件句柄) {
+        打印 "权限被拒绝";
+    }
+}
+
+// 错误30: 磁盘满 | Error 30: Disk full
+函数 test_disk_full() {
+    变量 file = 创建文件("huge_file.dat");
+    变量 data = "lots of data";
+    当 (真) {
+        写入文件(file, data);  // 可能填满磁盘
+    }
+}
+
+// 主函数用于测试各种运行时错误
+函数 main() {
+    打印 "运行时错误测试程序";
+
+    // 这些函数调用会导致运行时错误，在实际测试中可以逐个启用
+    // test_division_by_zero();     // 错误1
+    // test_array_bounds();         // 错误2
+    // infinite_recursion();        // 错误3
+    // test_null_pointer();         // 错误4
+    // test_integer_overflow();     // 错误5
+    // test_type_conversion();      // 错误6
+    // test_function_call_failure(); // 错误7
+    // test_out_of_memory();        // 错误8
+    // test_file_error();           // 错误9
+    // test_assertion_failure();    // 错误10
+    // test_math_domain_error();    // 错误11
+    // test_string_bounds();        // 错误12
+    // test_type_assertion();       // 错误13
+    // test_concurrency_error();    // 错误14
+    // test_network_error();        // 错误15
+
+    // 高级运行时错误（可能导致系统不稳定）
+    // test_float_precision();       // 错误16
+    // test_circular_reference();    // 错误17
+    // test_deadlock();              // 错误18
+    // test_race_condition();       // 错误19
+    // test_buffer_overflow();       // 错误20
+    // test_uninitialized_memory();  // 错误21
+    // test_double_free();           // 错误22
+    // test_use_after_free();        // 错误23
+    // test_format_string_vulnerability(); // 错误24
+    // test_integer_truncation();    // 错误25
+    // test_sign_extension();       // 错误26
+    // test_alignment_error();      // 错误27
+    // test_system_call_failure();  // 错误28
+    // test_permission_denied();    // 错误29
+    // test_disk_full();            // 错误30
+
+    返回 0;
+}
+
+// 辅助函数定义 | Helper function definitions
+函数 创建对象() -> 对象 {
+    返回 新对象();
+}
+
+函数 创建锁() -> 锁 {
+    返回 新锁();
+}
+
+函数 获取锁(lock: 锁) {
+    // 获取锁的实现
+}
+
+函数 释放锁(lock: 锁) {
+    // 释放锁的实现
+}
+
+function 启动线程(func: 函数()) {
+    // 启动线程的实现
+}
+
+function 等待所有线程完成() {
+    // 等待所有线程完成的实现
+}
+
+function 等待(milliseconds: 整数) {
+    // 等待指定毫秒数的实现
+}
+
+function 分配内存(size: 整数) -> 指针 {
+    // 内存分配的实现
+}
+
+function 释放内存(ptr: 指针) {
+    // 释放内存的实现
+}
+
+function 分配对齐内存(alignment: 整数) -> 指针 {
+    // 对齐内存分配的实现
+}
+
+function 打印格式(format: 字符串) {
+    // 格式化打印的实现
+}
+
+function 系统调用(call_number: 整数, param: 任意) -> 整数 {
+    // 系统调用的实现
+}
+
+function 打开文件(path: 字符串) -> 文件句柄 {
+    // 打开文件的实现
+}
+
+function 创建文件(path: 字符串) -> 文件句柄 {
+    // 创建文件的实现
+}
+
+function 写入文件(file: 文件句柄, data: 字符串) {
+    // 写入文件的实现
+}
+
+function 读取文件(path: 字符串) -> 字符串 {
+    // 读取文件的实现
+}
+
+function HTTP请求(url: 字符串) -> 字符串 {
+    // HTTP请求的实现
+}
+
+function 创建通道() -> 通道 {
+    // 创建通道的实现
+}
+
+function 关闭通道(channel: 通道) {
+    // 关闭通道的实现
+}
+
+function 发送消息(channel: 通道, message: 字符串) {
+    // 发送消息的实现
+}
+
+function 平方根(x: 浮点数) -> 浮点数 {
+    // 平方根计算的实现
+}
+
+function 断言类型<T>(value: 任意) -> T {
+    // 类型断言的实现
+}
+
+// 类型定义 | Type definitions
+type 对象 = {
+    引用: 任意
+};
+
+type 锁 = 整数;
+type 指针 = 整数;
+type 文件句柄 = 整数;
+type 通道 = 整数;
+type 空文件句柄 = 整数;

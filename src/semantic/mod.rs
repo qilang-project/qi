@@ -1,4 +1,5 @@
 //! Type checking and semantic analysis for Qi language
+//! 类型检查和语义分析
 
 pub mod scope;
 pub mod symbol_table;
@@ -7,20 +8,38 @@ pub mod type_checker;
 pub use symbol_table::SymbolTable;
 pub use type_checker::TypeChecker;
 use crate::parser::AstNode;
+use crate::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
+use crate::lexer::Span;
 
 /// Semantic analyzer
+/// 语义分析器
 #[allow(dead_code)]
 pub struct SemanticAnalyzer {
     type_checker: TypeChecker,
+    diagnostics: DiagnosticManager,
 }
 
 impl SemanticAnalyzer {
     /// Create a new semantic analyzer
+    /// 创建新的语义分析器
     pub fn new() -> Self {
         let type_checker = TypeChecker::new();
         Self {
             type_checker,
+            diagnostics: DiagnosticManager::new(),
         }
+    }
+
+    /// Get a reference to the diagnostics manager
+    /// 获取诊断管理器的引用
+    pub fn diagnostics(&self) -> &DiagnosticManager {
+        &self.diagnostics
+    }
+
+    /// Consume the analyzer and return diagnostics
+    /// 消费分析器并返回诊断信息
+    pub fn into_diagnostics(self) -> DiagnosticManager {
+        self.diagnostics
     }
 
     
@@ -600,9 +619,151 @@ impl SemanticAnalyzer {
             }
         }
     }
+
+    // ===== Enhanced Error Reporting Methods | 增强错误报告方法 =====
+
+    /// Report undefined variable error with detailed context
+    /// 报告未定义变量错误及详细上下文
+    fn report_undefined_variable_error(&mut self, var_name: &str, span: Span) {
+        self.diagnostics.undefined_variable_error(span, var_name, Some(format!(
+            "检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量", var_name
+        )));
+    }
+
+    /// Report type mismatch error with detailed suggestions
+    /// 报告类型不匹配错误及详细建议
+    fn report_type_mismatch_error(&mut self, expected: &str, found: &str, span: Span, context: &str) {
+        let suggestion = match context {
+            "assignment" => format!("确保赋值的表达式类型与变量声明类型 '{}' 匹配", expected),
+            "function_call" => format!("检查函数调用参数类型，期望 '{}', 实际 '{}'", expected, found),
+            "return" => format!("确保返回值类型与函数声明类型 '{}' 匹配", expected),
+            "operation" => format!("检查操作数类型是否支持此操作，期望 '{}', 实际 '{}'", expected, found),
+            _ => format!("类型不匹配，期望 '{}', 实际 '{}', 请检查类型转换", expected, found),
+        };
+
+        self.diagnostics.type_mismatch_error(span, expected, found, Some(&suggestion));
+    }
+
+    /// Report function call error with detailed suggestions
+    /// 报告函数调用错误及详细建议
+    fn report_function_call_error(&mut self, func_name: &str, error_type: &str, span: Span, details: &str) {
+        let message = format!("函数调用错误: {} - {}", func_name, details);
+        let suggestion = match error_type {
+            "undefined" => format!("检查函数名 '{}' 是否正确，或者先定义函数", func_name),
+            "wrong_type" => format!("'{}' 不是一个函数，检查标识符类型", func_name),
+            "arity_mismatch" => format!("检查函数 '{}' 的参数数量是否正确", func_name),
+            "parameter_type" => format!("检查函数 '{}' 的参数类型是否匹配", func_name),
+            _ => format!("检查函数 '{}' 的调用语法是否正确", func_name),
+        };
+
+        self.diagnostics.function_call_error(span, &message, Some(&suggestion));
+    }
+
+    /// Report array access error with detailed suggestions
+    /// 报告数组访问错误及详细建议
+    fn report_array_access_error(&mut self, error_type: &str, span: Span, details: &str) {
+        let message = format!("数组访问错误: {}", details);
+        let suggestion = match error_type {
+            "not_array" => "确保访问的对象是数组类型".to_string(),
+            "invalid_index" => "数组索引必须是整数类型".to_string(),
+            "out_of_bounds" => "检查数组索引是否在有效范围内".to_string(),
+            _ => "检查数组访问语法是否正确".to_string(),
+        };
+
+        self.diagnostics.array_access_error(span, &message, Some(&suggestion));
+    }
+
+    /// Report struct field error with detailed suggestions
+    /// 报告结构体字段错误及详细建议
+    fn report_struct_field_error(&mut self, struct_name: &str, field_name: &str, span: Span, error_type: &str) {
+        let message = match error_type {
+            "field_not_found" => format!("结构体 '{}' 没有字段 '{}'", struct_name, field_name),
+            "not_struct" => format!("'{}' 不是一个结构体类型", struct_name),
+            _ => format!("结构体字段访问错误: {}.{}", struct_name, field_name),
+        };
+
+        let suggestion = match error_type {
+            "field_not_found" => format!("检查结构体 '{}' 的字段名称是否正确", struct_name),
+            "not_struct" => "确保访问的对象是结构体类型".to_string(),
+            _ => "检查结构体字段访问语法".to_string(),
+        };
+
+        self.diagnostics.struct_field_error(span, struct_name, field_name, Some(&suggestion));
+    }
+
+    /// Report invalid operation error with detailed suggestions
+    /// 报告无效操作错误及详细建议
+    fn report_invalid_operation_error(&mut self, operation: &str, type_name: &str, span: Span) {
+        let message = format!("无效操作: '{}' 对于类型 '{}'", operation, type_name);
+        let suggestion = format!("检查类型 '{}' 是否支持操作 '{}'", type_name, operation);
+
+        self.diagnostics.invalid_operation_error(span, operation, type_name, Some(&suggestion));
+    }
+
+    /// Report variable redeclaration error
+    /// 报告变量重复声明错误
+    fn report_variable_redeclaration_error(&mut self, var_name: &str, span: Span, original_span: Span) {
+        self.diagnostics.variable_redeclaration_error(span, var_name, original_span);
+    }
+
+    /// Report constant reassignment error
+    /// 报告常量重新赋值错误
+    fn report_constant_reassignment_error(&mut self, const_name: &str, span: Span) {
+        self.diagnostics.constant_reassignment_error(span, const_name);
+    }
+
+    /// Report non-boolean condition error
+    /// 报告非布尔条件错误
+    fn report_non_boolean_condition_error(&mut self, condition_type: &str, span: Span, context: &str) {
+        let context_str = match context {
+            "if" => "如果语句",
+            "while" => "当循环",
+            "for" => "对于循环",
+            _ => "条件语句",
+        };
+
+        self.diagnostics.non_boolean_condition_error(span, condition_type, context_str);
+    }
+
+    /// Get error summary statistics
+    /// 获取错误摘要统计
+    pub fn get_error_summary(&self) -> (usize, usize) {
+        (self.diagnostics.error_count(), self.diagnostics.warning_count())
+    }
+
+    /// Check if any critical errors occurred
+    /// 检查是否发生了关键错误
+    pub fn has_critical_errors(&self) -> bool {
+        self.diagnostics.error_count() > 0
+    }
+
+    /// Format all diagnostics as Chinese messages
+    /// 将所有诊断信息格式化为中文消息
+    pub fn format_diagnostics(&self) -> String {
+        self.diagnostics.format_chinese_messages()
+    }
+
+    /// Add warning for unused variable
+    /// 添加未使用变量警告
+    pub fn add_unused_variable_warning(&mut self, var_name: &str, span: Span) {
+        self.diagnostics.unused_variable_warning(span, var_name);
+    }
+
+    /// Add warning for unreachable code
+    /// 添加不可达代码警告
+    pub fn add_unreachable_code_warning(&mut self, span: Span) {
+        self.diagnostics.unreachable_code_warning(span);
+    }
+
+    /// Add warning for dead code
+    /// 添加死代码警告
+    pub fn add_dead_code_warning(&mut self, span: Span) {
+        self.diagnostics.dead_code_warning(span);
+    }
 }
 
 /// Semantic analysis errors
+/// 语义分析错误
 #[derive(Debug, thiserror::Error)]
 pub enum SemanticError {
     /// Undeclared variable

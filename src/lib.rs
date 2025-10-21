@@ -51,11 +51,11 @@ impl QiCompiler {
         // Phase 1: Lexical analysis and parsing using manual parser
         let mut lexer = crate::lexer::Lexer::new(source_code);
         let tokens = lexer.tokenize()
-            .map_err(|e| CompilerError::Lexical(format!("Lexical error: {:?}", e)))?;
+            .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
 
         let parser = crate::parser::Parser::new();
         let ast = parser.parse(tokens)
-            .map_err(|e| CompilerError::Parse(format!("Parsing error: {:?}", e)))?;
+            .map_err(|e| CompilerError::Parse(format!("解析错误: {}", e)))?;
 
         // Phase 3: Generate LLVM IR from AST
         println!("Parsed with LALRPOP: {:?}", ast);
@@ -94,19 +94,19 @@ pub struct CompilationResult {
 #[derive(Debug, thiserror::Error)]
 pub enum CompilerError {
     /// Lexical analysis error
-    #[error("Lexical error: {0}")]
+    #[error("词法错误: {0}")]
     Lexical(String),
     /// Parsing error
-    #[error("Parse error: {0}")]
+    #[error("解析错误: {0}")]
     Parse(String),
     /// Semantic analysis error
-    #[error("Semantic error: {0}")]
+    #[error("语义错误: {0}")]
     Semantic(String),
     /// Code generation error
-    #[error("Code generation error: {0}")]
+    #[error("代码生成错误: {0}")]
     Codegen(String),
     /// I/O error
-    #[error("I/O error: {0}")]
+    #[error("输入/输出错误: {0}")]
     Io(#[from] std::io::Error),
 }
 
@@ -915,4 +915,81 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
+    mod error_message_tests {
+        use super::*;
+
+        #[test]
+        fn test_invalid_character_error_message() {
+            use crate::lexer::{Lexer, LexicalError};
+
+            let source = "变量 x = 5 @ 3;";
+            let mut lexer = Lexer::new(source.to_string());
+            let result = lexer.tokenize();
+
+            assert!(result.is_err());
+
+            if let Err(LexicalError::InvalidCharacter(c, line, col)) = result {
+                assert_eq!(c, '@');
+                assert_eq!(line, 1);
+                assert_eq!(col, 12);
+
+                // Test that the error displays correctly in Chinese
+                let error_str = format!("{}", LexicalError::InvalidCharacter(c, line, col));
+                assert!(error_str.contains("无效字符"));
+                assert!(error_str.contains("@"));
+                assert!(error_str.contains("第 1 行第 12 列"));
+            } else {
+                panic!("Expected InvalidCharacter error");
+            }
+        }
+
+        #[test]
+        fn test_unterminated_string_error_message() {
+            use crate::lexer::{Lexer, LexicalError};
+
+            let source = "变量 message = \"hello world;";
+            let mut lexer = Lexer::new(source.to_string());
+            let result = lexer.tokenize();
+
+            assert!(result.is_err());
+
+            if let Err(LexicalError::UnterminatedString(line, col)) = result {
+                assert_eq!(line, 1);
+                assert_eq!(col, 16);
+
+                // Test that the error displays correctly in Chinese
+                let error_str = format!("{}", LexicalError::UnterminatedString(line, col));
+                assert!(error_str.contains("未终止的字符串字面量"));
+                assert!(error_str.contains("第 1 行第 16 列"));
+            } else {
+                panic!("Expected UnterminatedString error");
+            }
+        }
+
+        #[test]
+        fn test_compilation_error_chinese_display() {
+            use std::path::PathBuf;
+
+            let source_with_error = "变量 x = 5 @ 3;"; // Invalid character
+
+            let compiler = QiCompiler::new();
+            let temp_file = PathBuf::from("test_temp.qi");
+            std::fs::write(&temp_file, source_with_error).unwrap();
+
+            let result = compiler.compile(temp_file);
+
+            assert!(result.is_err());
+
+            if let Err(compiler_error) = result {
+                let error_str = format!("{}", compiler_error);
+                assert!(error_str.contains("词法错误"));
+                assert!(error_str.contains("无效字符"));
+                assert!(error_str.contains("@"));
+            }
+
+            // Clean up
+            let _ = std::fs::remove_file("test_temp.qi");
+        }
     }
+}

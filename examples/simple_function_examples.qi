@@ -1,0 +1,39 @@
+// 简单函数示例 | Simple Function Examples
+
+// 基础数学函数
+函数 add(a: 整数, b: 整数) : 整数 {
+    返回 a + b;
+}
+
+函数 multiply(x: 整数, y: 整数) : 整数 {
+    返回 x * y;
+}
+
+// 条件函数
+函数 is_even(n: 整数) : 布尔 {
+    返回 n % 2 == 0;
+}
+
+// 递归函数
+函数 factorial(n: 整数) : 整数 {
+    如果 (n <= 1) {
+        返回 1;
+    } 否则 {
+        返回 n * factorial(n - 1);
+    }
+}
+
+// 主函数
+函数 main() {
+    变量 sum = add(5, 3);
+    变量 product = multiply(4, 6);
+    变ue even_check = is_even(8);
+    变量 fact = factorial(5);
+
+    打印 "Sum: " + sum;
+    打印 "Product: " + product;
+    打印 "Is 8 even: " + even_check;
+    打印 "5! = " + fact;
+
+    返回 0;
+}

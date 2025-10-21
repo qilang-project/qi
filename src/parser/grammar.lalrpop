@@ -26,11 +26,25 @@ Statement: AstNode = {
 };
 
 VariableDeclaration: AstNode = {
+    "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: true,
+        span: Default::default(),
+    }),
     "变量" <name:Identifier> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
         is_mutable: true,
+        span: Default::default(),
+    }),
+    "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: false,
         span: Default::default(),
     }),
     "常量" <name:Identifier> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
@@ -43,10 +57,24 @@ VariableDeclaration: AstNode = {
 };
 
 FunctionDeclaration: AstNode = {
+    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        span: Default::default(),
+    }),
     "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
+        body,
+        span: Default::default(),
+    }),
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
         body,
         span: Default::default(),
     }),
@@ -107,16 +135,39 @@ ForStatement: AstNode = {
         body,
         span: Default::default(),
     }),
+    "对于" "(" <initializer:Expr> ";" <condition:Expr> ";" <update:Expr> ")" "{" <body:Statement*> "}" => AstNode::C风格对于语句(CStyleForStatement {
+        initializer: Box::new(initializer),
+        condition: Box::new(condition),
+        update: Box::new(update),
+        body,
+        span: Default::default(),
+    }),
 };
 
 // Expression precedence from lowest to highest
 Expr: AstNode = {
-    <left:Expr> "=" <right:Term> => AstNode::赋值表达式(AssignmentExpression {
+    <left:Expr> "=" <right:LogicalExpr> => AstNode::赋值表达式(AssignmentExpression {
         target: match left {
             AstNode::标识符表达式(ident) => ident.name,
             _ => "unknown".to_string(),
         },
         value: Box::new(right),
+        span: Default::default(),
+    }),
+    LogicalExpr,
+};
+
+LogicalExpr: AstNode = {
+    <left:LogicalExpr> "与" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::与,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:LogicalExpr> "或" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::或,
+        right: Box::new(right),
         span: Default::default(),
     }),
     Term,
@@ -185,6 +236,12 @@ Primary: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Primary> "%" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::取余,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     Atom,
 };
 
@@ -208,6 +265,14 @@ FunctionCall: AstNode = {
             _ => "unknown".to_string(),
         },
         arguments: vec![],
+        span: Default::default(),
+    }),
+    <callee:IdentifierExpression> "(" <args:ExprList> ")" => AstNode::函数调用表达式(FunctionCallExpression {
+        callee: match callee {
+            AstNode::标识符表达式(ident) => ident.name,
+            _ => "unknown".to_string(),
+        },
+        arguments: args,
         span: Default::default(),
     }),
 };
@@ -280,11 +345,25 @@ ExprList: Vec<AstNode> = {
 };
 
 ParameterList: Vec<Parameter> = {
+    <first:Identifier> ":" <type_annotation:Type> => vec![Parameter {
+        name: first,
+        type_annotation: Some(type_annotation),
+        span: Default::default(),
+    }],
     <first:Identifier> => vec![Parameter {
         name: first,
         type_annotation: None,
         span: Default::default(),
     }],
+    <first:Identifier> ":" <type_annotation:Type> "," <rest:ParameterList> => {
+        let mut rest = rest;
+        rest.insert(0, Parameter {
+            name: first,
+            type_annotation: Some(type_annotation),
+            span: Default::default(),
+        });
+        rest
+    },
     <first:Identifier> "," <rest:ParameterList> => {
         let mut rest = rest;
         rest.insert(0, Parameter {
@@ -296,6 +375,21 @@ ParameterList: Vec<Parameter> = {
     },
 };
 
+// Type annotations
+Type: TypeNode = {
+    "整数" => TypeNode::基础类型(BasicType::整数),
+    "浮点数" => TypeNode::基础类型(BasicType::浮点数),
+    "布尔" => TypeNode::基础类型(BasicType::布尔),
+    "字符" => TypeNode::基础类型(BasicType::字符),
+    "字符串" => TypeNode::基础类型(BasicType::字符串),
+    "空" => TypeNode::基础类型(BasicType::空),
+    // Array type: 数组<类型>
+    "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
+        element_type: Box::new(element_type),
+        size: None,
+    }),
+};
+
 // Regular identifiers (not keywords)
 Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
@@ -303,7 +397,8 @@ Identifier: String = {
     <id:r"[\u4e00-\u9fff][\u4e00-\u9fff0-9_]*"> => {
         // Filter out Chinese keywords but allow other Chinese identifiers
         match id {
-            "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "真" | "假" =>
+            "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "真" | "假" |
+            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" =>
                 panic!("Keyword used as identifier: {}", id),
             _ => id.to_string(),
         }

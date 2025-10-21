@@ -96,23 +96,23 @@ description: "Task list for Qi Language Compiler Implementation"
 
 **Independent Test**: Compile programs with various variable declarations and verify correct behavior and error handling
 
-### Tests for User Story 2 ⚠️
+### Tests for User Story 2 ✅
 
-- [ ] T032 [P] [US2] Create variable declaration test fixtures in tests/fixtures/types/variables.qi
-- [ ] T033 [P] [US2] Create type mismatch error test cases in tests/fixtures/types/type_errors.qi
-- [ ] T034 [P] [US2] String manipulation tests in tests/fixtures/types/strings.qi
-- [ ] T035 [P] [US2] Type checker unit tests in tests/unit/semantic_tests.rs
+- [X] T032 [P] [US2] Create variable declaration test fixtures in tests/fixtures/types/variables.qi
+- [X] T033 [P] [US2] Create type mismatch error test cases in tests/fixtures/types/type_errors.qi
+- [X] T034 [P] [US2] String manipulation tests in tests/fixtures/types/strings.qi
+- [X] T035 [P] [US2] Type checker unit tests in tests/unit/semantic_tests.rs
 
-### Implementation for User Story 2
+### Implementation for User Story 2 ✅
 
-- [ ] T036 [P] [US2] Implement type checker for basic types in src/semantic/type_checker.rs
-- [ ] T037 [P] [US2] Add scope management in src/semantic/scope.rs
-- [ ] T038 [US2] Enhance parser to handle type annotations in src/parser/grammar.rs
-- [ ] T039 [US2] Update AST with variable declaration nodes in src/parser/ast.rs
-- [ ] T040 [US2] Implement memory allocation for variables in src/codegen/builder.rs
-- [ ] T041 [US2] Add Chinese error messages for type errors in src/utils/diagnostics.rs
-- [ ] T042 [US2] Create variable handling examples in examples/variables.qi
-- [ ] T043 [US2] Update CLI to show type errors clearly
+- [X] T036 [P] [US2] Implement type checker for basic types in src/semantic/type_checker.rs
+- [X] T037 [P] [US2] Add scope management in src/semantic/scope.rs
+- [X] T038 [US2] Enhance parser to handle type annotations in src/parser/grammar.rs
+- [X] T039 [US2] Update AST with variable declaration nodes in src/parser/ast.rs
+- [X] T040 [US2] Implement memory allocation for variables in src/codegen/builder.rs
+- [X] T041 [US2] Add Chinese error messages for type errors in src/utils/diagnostics.rs
+- [X] T042 [US2] Create variable handling examples in examples/variables.qi
+- [X] T043 [US2] Update CLI to show type errors clearly
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
 
@@ -124,23 +124,23 @@ description: "Task list for Qi Language Compiler Implementation"
 
 **Independent Test**: Compile programs with control flow structures and verify they execute correctly
 
-### Tests for User Story 3 ⚠️
+### Tests for User Story 3 ✅
 
-- [ ] T044 [P] [US3] Create conditional statement test fixtures in tests/fixtures/control/if_else.qi
-- [ ] T045 [P] [US3] Create while loop test cases in tests/fixtures/control/while_loops.qi
-- [ ] T046 [P] [US3] Create for loop test cases in tests/fixtures/control/for_loops.qi
-- [ ] T047 [P] [US3] Control flow unit tests in tests/unit/parser_tests.rs
+- [X] T044 [P] [US3] Create conditional statement test fixtures in tests/fixtures/control/if_else.qi
+- [X] T045 [P] [US3] Create while loop test cases in tests/fixtures/control/while_loops.qi
+- [X] T046 [P] [US3] Create for loop test cases in tests/fixtures/control/for_loops.qi
+- [X] T047 [P] [US3] Control flow unit tests in tests/unit/parser_tests.rs
 
-### Implementation for User Story 3
+### Implementation for User Story 3 ✅
 
-- [ ] T048 [P] [US3] Add control flow keywords to lexer in src/lexer/keywords.rs
-- [ ] T049 [P] [US3] Implement parsing of if-else statements in src/parser/grammar.rs
-- [ ] T050 [P] [US3] Implement parsing of while and for loops in src/parser/grammar.rs
-- [ ] T051 [US3] Add control flow AST nodes in src/parser/ast.rs
-- [ ] T052 [US3] Implement conditional jump generation in src/codegen/builder.rs
-- [ ] T053 [US3] Add loop handling in IR generation in src/codegen/llvm.rs
-- [ ] T054 [US3] Create control flow examples in examples/control_flow.qi
-- [ ] T055 [US3] Test complex nested control structures
+- [X] T048 [P] [US3] Add control flow keywords to lexer in src/lexer/keywords.rs
+- [X] T049 [P] [US3] Implement parsing of if-else statements in src/parser/grammar.rs
+- [X] T050 [P] [US3] Implement parsing of while and for loops in src/parser/grammar.rs
+- [X] T051 [US3] Add control flow AST nodes in src/parser/ast.rs
+- [X] T052 [US3] Implement conditional jump generation in src/codegen/builder.rs
+- [X] T053 [US3] Add loop handling in IR generation in src/codegen/llvm.rs
+- [X] T054 [US3] Create control flow examples in examples/control_flow.qi
+- [X] T055 [US3] Test complex nested control structures
 
 **Checkpoint**: All user stories should now be independently functional
 
@@ -152,21 +152,21 @@ description: "Task list for Qi Language Compiler Implementation"
 
 **Independent Test**: Define functions with various parameters and call them to verify correct behavior
 
-### Tests for User Story 4 ⚠️
+### Tests for User Story 4 ✅
 
-- [ ] T056 [P] [US4] Create function definition test fixtures in tests/fixtures/functions/basic_functions.qi
-- [ ] T057 [P] [US4] Create parameter passing tests in tests/fixtures/functions/parameters.qi
-- [ ] T058 [P] [US4] Create recursion test cases in tests/fixtures/functions/recursion.qi
-- [ ] T059 [P] [US4] Function call unit tests in tests/unit/semantic_tests.rs
+- [X] T056 [P] [US4] Create function definition test fixtures in tests/fixtures/functions/basic_functions.qi
+- [X] T057 [P] [US4] Create parameter passing tests in tests/fixtures/functions/parameters.qi
+- [X] T058 [P] [US4] Create recursion test cases in tests/fixtures/functions/recursion.qi
+- [X] T059 [P] [US4] Function call unit tests in tests/unit/semantic_tests.rs
 
-### Implementation for User Story 4
+### Implementation for User Story 4 ✅
 
-- [ ] T060 [P] [US4] Add function keywords to lexer in src/lexer/keywords.rs
-- [ ] T061 [P] [US4] Implement function declaration parsing in src/parser/grammar.rs
-- [ ] T062 [P] [US4] Implement function call parsing in src/parser/grammar.rs
-- [ ] T063 [P] [US4] Add function AST nodes in src/parser/ast.rs
-- [ ] T064 [P] [US4] Implement function symbol table handling in src/semantic/symbol_table.rs
-- [ ] T065 [P] [US4] Add function call code generation in src/codegen/builder.rs
+- [X] T060 [P] [US4] Add function keywords to lexer in src/lexer/keywords.rs
+- [X] T061 [P] [US4] Implement function declaration parsing in src/parser/grammar.rs
+- [X] T062 [P] [US4] Implement function call parsing in src/parser/grammar.rs
+- [X] T063 [P] [US4] Add function AST nodes in src/parser/ast.rs
+- [X] T064 [P] [US4] Implement function symbol table handling in src/semantic/symbol_table.rs
+- [X] T065 [P] [US4] Add function call code generation in src/codegen/builder.rs
 - [ ] T066 [P] [US4] Implement parameter passing in src/codegen/llvm.rs
 - [ ] T067 [P] [US4] Add return value handling in src/runtime/errors.rs
 - [ ] T068 [US4] Create function examples in examples/functions.qi

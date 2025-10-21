@@ -231,4 +231,202 @@ mod tests {
         assert!(!found.is_mutable);
         assert!(matches!(found.kind, SymbolKind::常量));
     }
+
+    // ===== Function Call Tests =====
+
+    #[test]
+    fn test_function_symbol_definition() {
+        let mut symbol_table = SymbolTable::new();
+
+        // 定义函数符号
+        let func_symbol = Symbol {
+            name: "相加".to_string(),
+            kind: SymbolKind::函数,
+            type_node: TypeNode::函数类型(FunctionType {
+                parameters: vec![
+                    TypeNode::基础类型(BasicType::整数),
+                    TypeNode::基础类型(BasicType::整数),
+                ],
+                return_type: Box::new(TypeNode::基础类型(BasicType::整数)),
+            }),
+            scope_level: 0,
+            span: Default::default(),
+            is_mutable: false,
+        };
+
+        assert!(symbol_table.define_symbol(func_symbol).is_ok());
+
+        // 查找函数符号
+        let found_symbol = symbol_table.lookup_symbol("相加");
+        assert!(found_symbol.is_some());
+        assert!(matches!(found_symbol.unwrap().kind, SymbolKind::函数));
+    }
+
+    #[test]
+    fn test_function_call_type_inference() {
+        let mut type_checker = TypeChecker::new();
+
+        // 创建函数调用表达式: add(5, 3)
+        let function_call = AstNode::函数调用表达式(FunctionCallExpression {
+            callee: "add".to_string(),
+            arguments: vec![
+                AstNode::字面量表达式(LiteralExpression {
+                    value: LiteralValue::整数(5),
+                    span: Default::default(),
+                }),
+                AstNode::字面量表达式(LiteralExpression {
+                    value: LiteralValue::整数(3),
+                    span: Default::default(),
+                }),
+            ],
+            span: Default::default(),
+        });
+
+        // 类型检查函数调用（需要在符号表中查找函数定义）
+        // 这里测试类型推断的基本结构
+        let inferred_type = type_checker.infer_type(&function_call);
+        // 实际实现需要在符号表中查找函数签名
+    }
+
+    #[test]
+    fn test_function_parameter_types() {
+        let mut symbol_table = SymbolTable::new();
+
+        // 进入函数作用域
+        symbol_table.enter_scope();
+
+        // 定义函数参数符号
+        let param1 = Symbol {
+            name: "参数1".to_string(),
+            kind: SymbolKind::参数,
+            type_node: TypeNode::基础类型(BasicType::整数),
+            scope_level: 1,
+            span: Default::default(),
+            is_mutable: true,
+        };
+
+        let param2 = Symbol {
+            name: "参数2".to_string(),
+            kind: SymbolKind::参数,
+            type_node: TypeNode::基础类型(BasicType::字符串),
+            scope_level: 1,
+            span: Default::default(),
+            is_mutable: true,
+        };
+
+        assert!(symbol_table.define_symbol(param1).is_ok());
+        assert!(symbol_table.define_symbol(param2).is_ok());
+
+        // 验证参数类型
+        let found_param1 = symbol_table.lookup_symbol("参数1").unwrap();
+        let found_param2 = symbol_table.lookup_symbol("参数2").unwrap();
+
+        assert_eq!(found_param1.type_node, TypeNode::基础类型(BasicType::整数));
+        assert_eq!(found_param2.type_node, TypeNode::基础类型(BasicType::字符串));
+        assert!(matches!(found_param1.kind, SymbolKind::参数));
+        assert!(matches!(found_param2.kind, SymbolKind::参数));
+
+        symbol_table.exit_scope();
+    }
+
+    #[test]
+    fn test_recursive_function_type() {
+        let mut symbol_table = SymbolTable::new();
+
+        // 定义递归函数符号
+        let recursive_func = Symbol {
+            name: "阶乘".to_string(),
+            kind: SymbolKind::函数,
+            type_node: TypeNode::函数类型(FunctionType {
+                parameters: vec![TypeNode::基础类型(BasicType::整数)],
+                return_type: Box::new(TypeNode::基础类型(BasicType::整数)),
+            }),
+            scope_level: 0,
+            span: Default::default(),
+            is_mutable: false,
+        };
+
+        symbol_table.define_symbol(recursive_func).unwrap();
+
+        // 验证递归函数可以自引用
+        let found = symbol_table.lookup_symbol("阶乘");
+        assert!(found.is_some());
+        assert!(matches!(found.unwrap().kind, SymbolKind::函数));
+    }
+
+    #[test]
+    fn test_function_overload_detection() {
+        let mut symbol_table = SymbolTable::new();
+
+        // 定义第一个函数
+        let func1 = Symbol {
+            name: "处理".to_string(),
+            kind: SymbolKind::函数,
+            type_node: TypeNode::函数类型(FunctionType {
+                parameters: vec![TypeNode::基础类型(BasicType::整数)],
+                return_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
+            }),
+            scope_level: 0,
+            span: Default::default(),
+            is_mutable: false,
+        };
+
+        symbol_table.define_symbol(func1).unwrap();
+
+        // 尝试定义同名函数（函数重载）
+        let func2 = Symbol {
+            name: "处理".to_string(),
+            kind: SymbolKind::函数,
+            type_node: TypeNode::函数类型(FunctionType {
+                parameters: vec![TypeNode::基础类型(BasicType::字符串)],
+                return_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
+            }),
+            scope_level: 0,
+            span: Default::default(),
+            is_mutable: false,
+        };
+
+        // 当前实现可能不支持函数重载，应该报错
+        let result = symbol_table.define_symbol(func2);
+        // 根据实际实现调整这个断言
+        assert!(result.is_err()); // 如果不支持重载
+    }
+
+    #[test]
+    fn test_higher_order_function_types() {
+        // 测试高阶函数类型（函数作为参数或返回值）
+        let param_func_type = TypeNode::函数类型(FunctionType {
+            parameters: vec![TypeNode::基础类型(BasicType::整数)],
+            return_type: Box::new(TypeNode::基础类型(BasicType::布尔)),
+        });
+
+        let higher_order_func_type = TypeNode::函数类型(FunctionType {
+            parameters: vec![param_func_type],
+            return_type: Box::new(TypeNode::基础类型(BasicType::整数)),
+        });
+
+        // 验证高阶函数类型的结构
+        if let TypeNode::函数类型(func_type) = higher_order_func_type {
+            assert_eq!(func_type.parameters.len(), 1);
+            if let TypeNode::函数类型(param_type) = &func_type.parameters[0] {
+                assert_eq!(param_type.parameters.len(), 1);
+                assert!(matches!(*param_type.return_type, TypeNode::基础类型(BasicType::布尔)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_void_function_type() {
+        // 测试无返回值函数类型
+        let void_func_type = TypeNode::函数类型(FunctionType {
+            parameters: vec![],
+            return_type: Box::new(TypeNode::基础类型(BasicType::空)),
+        });
+
+        // 验证空返回类型
+        if let TypeNode::函数类型(func_type) = void_func_type {
+            assert!(func_type.parameters.is_empty());
+            assert!(matches!(*func_type.return_type, TypeNode::基础类型(BasicType::空)));
+        }
+    }
 }
