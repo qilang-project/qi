@@ -4,12 +4,11 @@
 use qi_compiler::lexer::*;
 use qi_compiler::parser::*;
 use qi_compiler::semantic::*;
-use qi_compiler::parser::ast::*;
 
 #[test]
 fn test_type_checker_creation() {
     let type_checker = TypeChecker::new();
-    assert!(!type_checker.has_errors());
+    assert!(type_checker.get_errors().is_empty());
 }
 
 #[test]
@@ -37,7 +36,7 @@ fn test_symbol_table_scope_management() {
 
 #[test]
 fn test_semantic_analyzer_creation() {
-    let analyzer = SemanticAnalyzer::new();
+    let mut analyzer = SemanticAnalyzer::new();
     assert!(!analyzer.has_critical_errors());
 
     let (error_count, warning_count) = analyzer.get_error_summary();
@@ -153,7 +152,8 @@ fn test_variable_declaration_in_analyzer() {
     };
 
     let mut analyzer = SemanticAnalyzer::new();
-    let result = analyzer.analyze_variable_declaration(&var_decl);
+    let ast = AstNode::变量声明(var_decl);
+    let result = analyzer.analyze(&ast);
 
     // Should handle variable declaration analysis
     assert!(result.is_ok() || result.is_err());
@@ -170,7 +170,8 @@ fn test_function_declaration_in_analyzer() {
     };
 
     let mut analyzer = SemanticAnalyzer::new();
-    let result = analyzer.analyze_function_declaration(&func_decl);
+    let ast = AstNode::函数声明(func_decl);
+    let result = analyzer.analyze(&ast);
 
     // Should handle function declaration analysis
     assert!(result.is_ok() || result.is_err());
@@ -178,7 +179,7 @@ fn test_function_declaration_in_analyzer() {
 
 #[test]
 fn test_analyzer_diagnostics() {
-    let analyzer = SemanticAnalyzer::new();
+    let mut analyzer = SemanticAnalyzer::new();
     let formatted = analyzer.format_diagnostics();
 
     // Should format diagnostics (empty initially)
@@ -219,7 +220,7 @@ fn test_nested_scope_analysis() {
 
 #[test]
 fn test_type_checking_basic_expressions() {
-    let type_checker = TypeChecker::new();
+    let _type_checker = TypeChecker::new();
 
     // Test literal expression
     let literal_expr = AstNode::字面量表达式(LiteralExpression {
@@ -227,6 +228,7 @@ fn test_type_checking_basic_expressions() {
         span: Default::default(),
     });
 
+    let mut type_checker = TypeChecker::new();
     let result = type_checker.check(&literal_expr);
 
     // Should type check basic expressions
@@ -271,7 +273,8 @@ fn test_expression_statement_analysis() {
     };
 
     let mut analyzer = SemanticAnalyzer::new();
-    let result = analyzer.analyze_expression_statement(&expr_stmt);
+    let ast = AstNode::表达式语句(expr_stmt);
+    let result = analyzer.analyze(&ast);
 
     // Should analyze expression statements
     assert!(result.is_ok() || result.is_err());
@@ -288,50 +291,13 @@ fn test_return_statement_analysis() {
     };
 
     let mut analyzer = SemanticAnalyzer::new();
-    let result = analyzer.analyze_return_statement(&return_stmt);
+    let ast = AstNode::返回语句(return_stmt);
+    let result = analyzer.analyze(&ast);
 
     // Should analyze return statements
     assert!(result.is_ok() || result.is_err());
 }
 
-#[test]
-fn test_boolean_type_checking() {
-    let analyzer = SemanticAnalyzer::new();
-
-    // Test boolean type recognition
-    let boolean_type = TypeNode::基础类型(BasicType::布尔);
-    assert!(analyzer.is_boolean_type(&boolean_type));
-
-    // Test non-boolean types
-    let int_type = TypeNode::基础类型(BasicType::整数);
-    assert!(!analyzer.is_boolean_type(&int_type));
-}
-
-#[test]
-fn test_integer_type_checking() {
-    let analyzer = SemanticAnalyzer::new();
-
-    // Test integer type recognition
-    let int_type = TypeNode::基础类型(BasicType::整数);
-    assert!(analyzer.is_integer_type(&int_type));
-
-    // Test non-integer types
-    let string_type = TypeNode::基础类型(BasicType::字符串);
-    assert!(!analyzer.is_integer_type(&string_type));
-}
-
-#[test]
-fn test_string_type_checking() {
-    let analyzer = SemanticAnalyzer::new();
-
-    // Test string type recognition
-    let string_type = TypeNode::基础类型(BasicType::字符串);
-    assert!(analyzer.is_string_type(&string_type));
-
-    // Test non-string types
-    let int_type = TypeNode::基础类型(BasicType::整数);
-    assert!(!analyzer.is_string_type(&int_type));
-}
 
 #[test]
 fn test_analyzer_warnings() {

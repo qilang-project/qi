@@ -2,7 +2,6 @@
 //! 测试词法分析器模块
 
 use qi_compiler::lexer::*;
-use qi_compiler::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
 
 #[test]
 fn test_tokenization_of_basic_tokens() {

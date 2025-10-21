@@ -6,11 +6,10 @@ use qi_compiler::parser::*;
 use qi_compiler::codegen::*;
 use qi_compiler::config::CompilationTarget;
 use qi_compiler::config::OptimizationLevel;
-use qi_compiler::parser::ast::*;
 
 #[test]
 fn test_code_generator_creation() {
-    let generator = CodeGenerator::new(CompilationTarget::Linux);
+    let _generator = CodeGenerator::new(CompilationTarget::Linux);
 
     // Test that generator was created
     // We can't access private fields directly, but we can test functionality
@@ -19,7 +18,7 @@ fn test_code_generator_creation() {
 
 #[test]
 fn test_code_generator_with_optimization() {
-    let generator = CodeGenerator::new_with_optimization(
+    let _generator = CodeGenerator::new_with_optimization(
         CompilationTarget::Linux,
         OptimizationLevel::Basic
     );
@@ -346,7 +345,7 @@ fn test_optimization_levels() {
     let opt_levels = vec![
         OptimizationLevel::None,
         OptimizationLevel::Basic,
-        OptimizationLevel::Optimized,
+        OptimizationLevel::Standard,
     ];
 
     for opt_level in opt_levels {
@@ -390,11 +389,11 @@ fn test_optimization_level_getters_setters() {
     let mut generator = CodeGenerator::new(CompilationTarget::Linux);
 
     // Test getting optimization level
-    let initial_level = generator.get_optimization_level();
+    let _initial_level = generator.get_optimization_level();
 
     // Test setting optimization level
-    generator.set_optimization_level(OptimizationLevel::Optimized);
-    let new_level = generator.get_optimization_level();
+    generator.set_optimization_level(OptimizationLevel::Standard);
+    let _new_level = generator.get_optimization_level();
 
     // Verify that the level was changed (if implemented)
     assert!(true); // Basic test that the methods exist and don't panic

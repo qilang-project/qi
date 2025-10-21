@@ -3,7 +3,6 @@
 
 use qi_compiler::lexer::*;
 use qi_compiler::parser::*;
-use qi_compiler::parser::ast::*;
 
 #[test]
 fn test_parse_empty_program() {

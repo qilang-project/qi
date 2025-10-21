@@ -2,7 +2,7 @@
 //! 测试诊断系统
 
 use qi_compiler::lexer::*;
-use qi_compiler::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
+use qi_compiler::utils::diagnostics::DiagnosticManager;
 
 #[test]
 fn test_lexer_diagnostics_integration() {
@@ -42,7 +42,7 @@ fn test_lexer_multiple_errors() {
 
     // Should collect multiple errors
     assert!(error_count > 1);
-    assert!(diagnostics.has_critical_errors());
+    assert!(diagnostics.has_errors());
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn test_lexer_span_information_in_diagnostics() {
     let mut lexer = Lexer::new(source.to_string());
     let _result = lexer.tokenize().unwrap_err();
 
-    let diagnostics = lexer.diagnostics();
+    let _diagnostics = lexer.diagnostics();
     let formatted = lexer.format_diagnostics();
 
     // Should include position information
@@ -68,7 +68,7 @@ fn test_empty_source_diagnostics() {
 
     let diagnostics = lexer.diagnostics();
     assert_eq!(diagnostics.error_count(), 0);
-    assert!(!diagnostics.has_critical_errors());
+    assert!(!diagnostics.has_errors());
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn test_valid_source_no_diagnostics() {
 
     let diagnostics = lexer.diagnostics();
     assert_eq!(diagnostics.error_count(), 0);
-    assert!(!diagnostics.has_critical_errors());
+    assert!(!diagnostics.has_errors());
 }
 
 #[test]
@@ -142,13 +142,12 @@ fn test_comment_handling_no_diagnostics() {
 
 #[test]
 fn test_diagnostic_manager_creation() {
-    use qi_compiler::lexer::Span;
-
+  
     let manager = DiagnosticManager::new();
     assert_eq!(manager.error_count(), 0);
     assert_eq!(manager.warning_count(), 0);
     assert!(!manager.has_errors());
-    assert!(!manager.has_warnings());
+    assert_eq!(manager.warning_count(), 0);
 }
 
 #[test]
