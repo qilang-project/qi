@@ -1,8 +1,0 @@
-变量 x = 10;
-变量 y = 5;
-
-如果 x > y {
-    变量 result_true = 1;
-} 否则 {
-    变量 result_false = 0;
-}

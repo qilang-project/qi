@@ -1,5 +1,0 @@
-let x = [1, 2, 3];
-let y = x[0];
-let hello = "Hello";
-let world = "World";
-let message = hello + " " + world;
