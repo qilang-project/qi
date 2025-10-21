@@ -180,6 +180,25 @@ impl IrBuilder {
         result
     }
 
+    /// Mangle Chinese function names using UTF-8 + Hex encoding
+    /// Prefix with _Z_ to avoid conflicts with C library symbols
+    fn mangle_function_name(&self, name: &str) -> String {
+        // ASCII names remain unchanged (except main function special case)
+        if name.chars().all(|c| c.is_ascii()) {
+            return name.to_string();
+        }
+
+        // Convert UTF-8 bytes to hex representation
+        let utf8_bytes = name.as_bytes();
+        let hex_string: String = utf8_bytes
+            .iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect();
+
+        // Add prefix to prevent symbol conflicts
+        format!("_Z_{}", hex_string)
+    }
+
     /// Build IR for an AST node
     #[allow(unreachable_patterns)]
     fn build_node(&mut self, node: &AstNode) -> Result<String, String> {
@@ -226,7 +245,18 @@ impl IrBuilder {
                 Ok(var_name)
             }
             AstNode::函数声明(func_decl) => {
-                let func_name = if func_decl.name == "主" { "main" } else { &func_decl.name };
+                // Handle special cases and apply name mangling for Chinese function names
+                let func_name: String = match func_decl.name.as_str() {
+                    "主函数" | "主" => "main".to_string(), // Special case for main function
+                    name => {
+                        // Apply UTF-8 + Hex name mangling for non-ASCII names
+                        if name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(name)
+                        } else {
+                            name.to_string() // Keep ASCII names as-is
+                        }
+                    }
+                };
 
                 // Build parameter list
                 let params: Vec<String> = func_decl.parameters
@@ -243,8 +273,14 @@ impl IrBuilder {
                     format!(" {}", params.join(", "))
                 };
 
-                // Use i32 for main function return type, others as specified
-                let return_type = if func_decl.name == "主" { "i32" } else { &self.get_return_type(&func_decl.return_type) };
+                // Use i32 for main function return type, void for others unless specified
+                let return_type = if func_decl.name == "主函数" || func_decl.name == "主" {
+                    "i32"
+                } else if func_decl.return_type.is_none() {
+                    "void"
+                } else {
+                    &self.get_return_type(&func_decl.return_type)
+                };
 
                 // Add function label
                 self.add_instruction(IrInstruction::标签 {
@@ -259,6 +295,14 @@ impl IrBuilder {
                 // Process function body
                 for stmt in &func_decl.body {
                     self.build_node(stmt)?;
+                }
+
+                // Add return statement for all functions if none exists
+                if func_decl.name == "主函数" || func_decl.name == "主" {
+                    self.add_instruction(IrInstruction::返回 { value: Some("0".to_string()) });
+                } else {
+                    // For non-main functions, return void if no explicit return
+                    self.add_instruction(IrInstruction::返回 { value: None });
                 }
 
                 // Add closing brace for the function
@@ -281,6 +325,9 @@ impl IrBuilder {
             AstNode::打印语句(print_stmt) => {
                 // Build the value to print
                 let value = self.build_node(&print_stmt.value)?;
+
+                // Increment counter to ensure unique names
+                self.temp_counter += 1;
 
                 // Check if it's a string literal (starts with @)
                 if value.starts_with('@') {
@@ -536,11 +583,24 @@ impl IrBuilder {
                     arg_temps.push(temp);
                 }
 
+                // Apply the same name mangling logic for function calls
+                let mapped_callee: String = match call_expr.callee.as_str() {
+                    "主函数" | "主" => "main".to_string(), // Special case for main function
+                    name => {
+                        // Apply UTF-8 + Hex name mangling for non-ASCII names
+                        if name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(name)
+                        } else {
+                            name.to_string() // Keep ASCII names as-is
+                        }
+                    }
+                };
+
                 // Generate function call
                 let temp = self.generate_temp();
                 self.add_instruction(IrInstruction::函数调用 {
                     dest: Some(temp.clone()),
-                    callee: call_expr.callee.clone(),
+                    callee: mapped_callee,
                     arguments: arg_temps,
                 });
                 Ok(temp)

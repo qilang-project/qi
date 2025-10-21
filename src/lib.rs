@@ -60,7 +60,7 @@ impl QiCompiler {
         // Phase 3: Generate LLVM IR from AST
         println!("Parsed with LALRPOP: {:?}", ast);
 
-        let mut codegen = crate::codegen::CodeGenerator::new(crate::config::CompilationTarget::Linux);
+        let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
         let ir_content = codegen.generate(&crate::parser::ast::AstNode::程序(ast))
             .map_err(|e| CompilerError::Codegen(format!("Code generation failed: {:?}", e)))?;
 

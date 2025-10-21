@@ -49,7 +49,7 @@ impl KeywordTable {
 
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);
-        keywords.insert("print".to_string(), TokenKind::标识符("print".to_string()));
+        keywords.insert("print".to_string(), TokenKind::标识符);
         keywords.insert("true".to_string(), TokenKind::布尔字面量(true));
         keywords.insert("false".to_string(), TokenKind::布尔字面量(false));
 

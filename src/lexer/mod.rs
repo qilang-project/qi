@@ -259,7 +259,7 @@ impl Lexer {
         let content = self.source[start_content..end_content].to_string();
 
         Ok(Token {
-            kind: TokenKind::字符串字面量(content),
+            kind: TokenKind::字符串字面量,
             text: self.source[start_pos..end_pos].to_string(),
             span: tokens::Span::new(start_pos, end_pos),
             line: start_line,
@@ -333,31 +333,35 @@ impl Lexer {
                 self.advance();
             }
 
-            let number_str = &self.source[start_pos..self.position];
-            let value = number_str.parse::<f64>()
-                .map_err(|_| {
-                    self.report_invalid_number_error(start_pos, start_line, start_column, "浮点数格式无效，检查数字格式是否正确");
-                    LexicalError::InvalidNumber(start_line, start_column)
-                })?;
+            let number_str = self.source[start_pos..self.position].to_string();
+
+            // Validate float format
+            if number_str.parse::<f64>().is_err() {
+                self.report_invalid_number_error(start_pos, start_line, start_column, "浮点数格式无效，检查数字格式是否正确");
+                return Err(LexicalError::InvalidNumber(start_line, start_column));
+            }
 
             Ok(Token {
-                kind: TokenKind::浮点数字面量(value),
-                text: number_str.to_string(),
+                kind: TokenKind::浮点数字面量,
+                text: number_str.clone(),
                 span: tokens::Span::new(start_pos, self.position),
                 line: start_line,
                 column: start_column,
             })
         } else {
-            let number_str = &self.source[start_pos..self.position];
-            let value = number_str.parse::<i64>()
-                .map_err(|_| {
-                    self.report_invalid_number_error(start_pos, start_line, start_column, "整数格式无效，检查数字是否在有效范围内");
-                    LexicalError::InvalidNumber(start_line, start_column)
-                })?;
+            let number_str = self.source[start_pos..self.position].to_string();
+
+            // Validate integer format
+            let value = if let Ok(val) = number_str.parse::<i64>() {
+                val
+            } else {
+                self.report_invalid_number_error(start_pos, start_line, start_column, "整数格式无效，检查数字是否在有效范围内");
+                return Err(LexicalError::InvalidNumber(start_line, start_column));
+            };
 
             Ok(Token {
                 kind: TokenKind::整数字面量(value),
-                text: number_str.to_string(),
+                text: number_str.clone(),
                 span: tokens::Span::new(start_pos, self.position),
                 line: start_line,
                 column: start_column,
@@ -380,7 +384,7 @@ impl Lexer {
 
         // Check if it's a keyword
         let kind = keywords::KEYWORDS.lookup(text)
-            .unwrap_or(TokenKind::标识符(text.to_string()));
+            .unwrap_or(TokenKind::标识符);
 
         Token {
             kind,
@@ -406,7 +410,7 @@ impl Lexer {
 
         // Check if it's a Chinese keyword
         let kind = keywords::KEYWORDS.lookup(text)
-            .unwrap_or(TokenKind::标识符(text.to_string()));
+            .unwrap_or(TokenKind::标识符);
 
         Token {
             kind,

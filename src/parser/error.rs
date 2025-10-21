@@ -110,9 +110,9 @@ pub enum RecoveryStrategy {
     /// Skip to next line
     /// 跳到下一行
     SkipToNextLine,
-    /// Skip to next token kind
-    /// 跳到下一个特定类型的token
-    SkipToToken(TokenKind),
+    /// Skip to next token kind (removed since TokenKind is now Copy)
+    /// 跳到下一个特定类型的token (已移除，因为TokenKind现在是Copy类型)
+    SkipToNextToken,
     /// Skip to matching bracket
     /// 跳到匹配的括号
     SkipToMatchingBracket,
@@ -408,7 +408,7 @@ impl ParserErrorRecovery {
                 RecoveryStrategy::SkipToMatchingBracket
             }
             "function_call" => {
-                RecoveryStrategy::SkipToToken(TokenKind::右括号)
+                RecoveryStrategy::SkipToNextToken
             }
             _ => {
                 // Default strategy: skip to next semicolon or line end
@@ -425,10 +425,10 @@ impl ParserErrorRecovery {
     /// 将token类型转换为字符串表示
     fn token_kind_to_string(&self, kind: &TokenKind) -> String {
         match kind {
-            TokenKind::标识符(_) => "标识符".to_string(),
+            TokenKind::标识符 => "标识符".to_string(),
             TokenKind::整数字面量(_) => "整数".to_string(),
-            TokenKind::浮点数字面量(_) => "浮点数".to_string(),
-            TokenKind::字符串字面量(_) => "字符串".to_string(),
+            TokenKind::浮点数字面量 => "浮点数".to_string(),
+            TokenKind::字符串字面量 => "字符串".to_string(),
             TokenKind::字符字面量(_) => "字符".to_string(),
             TokenKind::布尔字面量(_) => "布尔值".to_string(),
             TokenKind::左括号 => "(".to_string(),
@@ -475,6 +475,23 @@ impl ParserErrorRecovery {
             TokenKind::长度 => "长度".to_string(),
             TokenKind::类型 => "类型".to_string(),
             TokenKind::文件结束 => "文件结束".to_string(),
+
+            // Additional keywords that were missing
+            TokenKind::循环 => "循环".to_string(),
+            TokenKind::整数 => "整数".to_string(),
+            TokenKind::字符串 => "字符串".to_string(),
+            TokenKind::布尔 => "布尔".to_string(),
+            TokenKind::浮点数 => "浮点数".to_string(),
+            TokenKind::结构体 => "结构体".to_string(),
+            TokenKind::枚举 => "枚举".to_string(),
+            TokenKind::数组 => "数组".to_string(),
+            TokenKind::导入 => "导入".to_string(),
+            TokenKind::作为 => "作为".to_string(),
+            TokenKind::在 => "在".to_string(),
+            TokenKind::字符 => "字符".to_string(),
+            TokenKind::空 => "空".to_string(),
+            TokenKind::参数 => "参数".to_string(),
+            TokenKind::错误 => "错误".to_string(),
         }
     }
 
@@ -488,8 +505,8 @@ impl ParserErrorRecovery {
             RecoveryStrategy::SkipToNextLine => {
                 self.skip_to_next_line(tokens, current_position)
             }
-            RecoveryStrategy::SkipToToken(target_kind) => {
-                self.skip_to_token(tokens, current_position, &[target_kind])
+            RecoveryStrategy::SkipToNextToken => {
+                self.skip_to_next_token(tokens, current_position)
             }
             RecoveryStrategy::SkipToMatchingBracket => {
                 self.skip_to_matching_bracket(tokens, current_position)
@@ -512,6 +529,16 @@ impl ParserErrorRecovery {
             }
         }
         tokens.len().min(start_pos + 50)
+    }
+
+    /// Skip to the next token (simple one-token skip)
+    /// 跳到下一个token（简单的单token跳过）
+    fn skip_to_next_token(&self, tokens: &[Token], start_pos: usize) -> usize {
+        if start_pos < tokens.len() {
+            start_pos + 1
+        } else {
+            start_pos
+        }
     }
 
     /// Skip to the next line (look for newline in source)

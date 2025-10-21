@@ -85,6 +85,17 @@ pub enum Commands {
         inplace: bool,
     },
 
+    /// 编译并运行 Qi 程序
+    Run {
+        /// 源文件路径
+        #[arg(required = true)]
+        file: PathBuf,
+
+        /// 运行参数
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+
     /// 显示编译器信息
     Info {
         /// 显示版本信息
@@ -109,6 +120,9 @@ impl Cli {
         match command {
             Some(Commands::Compile { files, output }) => {
                 self.compile_files(files, output, config).await
+            }
+            Some(Commands::Run { file, args }) => {
+                self.run_file(file, args, config).await
             }
             Some(Commands::Check { files }) => {
                 self.check_files(files, config).await
@@ -137,6 +151,15 @@ impl Cli {
     ) -> Result<(), CliError> {
         if files.is_empty() {
             return Err(CliError::NoInputFiles);
+        }
+
+        if config.verbose {
+            println!("编译配置:");
+            println!("  目标平台: {}", config.target_platform);
+            println!("  优化级别: {}", config.optimization_level);
+            println!("  调试符号: {}", if config.debug_symbols { "是" } else { "否" });
+            println!("  运行时检查: {}", if config.runtime_checks { "是" } else { "否" });
+            println!();
         }
 
         let compiler = crate::QiCompiler::with_config(config.clone());
@@ -180,7 +203,204 @@ impl Cli {
 
         if !config.verbose {
             let count = files.len();
-            println!("成功编译 {} 个文件", count);
+            let target = match config.target_platform {
+                crate::config::CompilationTarget::Linux => " (Linux)",
+                crate::config::CompilationTarget::Windows => " (Windows)",
+                crate::config::CompilationTarget::MacOS => " (macOS)",
+                crate::config::CompilationTarget::Wasm => " (WebAssembly)",
+            };
+            println!("成功编译 {} 个文件{}", count, target);
+        }
+
+        Ok(())
+    }
+
+    async fn run_file(
+        &self,
+        file: PathBuf,
+        args: Vec<String>,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        if config.verbose {
+            println!("运行配置:");
+            println!("  目标平台: {}", config.target_platform);
+            println!("  优化级别: {}", config.optimization_level);
+            println!("  源文件: {:?}", file);
+            println!("  运行参数: {:?}", args);
+            println!();
+        }
+
+        // Step 1: Compile the file
+        let compiler = crate::QiCompiler::with_config(config.clone());
+
+        if config.verbose {
+            println!("正在编译: {:?}", file);
+        }
+
+        let compile_result = compiler.compile(file.clone())?;
+
+        if config.verbose {
+            println!("  编译完成，耗时: {}ms", compile_result.duration_ms);
+        }
+
+        // Handle warnings
+        for warning in &compile_result.warnings {
+            eprintln!("警告: {}", warning);
+        }
+
+        if config.verbose {
+            println!("  生成文件: {:?}", compile_result.executable_path);
+        }
+
+        // Step 2: Determine how to run the executable based on target platform
+        match config.target_platform {
+            crate::config::CompilationTarget::MacOS => {
+                // For macOS, we need to compile LLVM IR to executable
+                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Linux => {
+                // For Linux, run the executable directly
+                self.run_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Windows => {
+                // For Windows, run the executable directly
+                self.run_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Wasm => {
+                // For WebAssembly, we need a different approach
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    "WebAssembly 运行暂未实现".to_string()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run_macos_executable(
+        &self,
+        llvm_ir_path: &std::path::Path,
+        args: &[String],
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        use std::process::Command;
+
+        // Generate executable path in current directory
+        let executable_name = llvm_ir_path.file_stem()
+            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
+                "无效的文件名".to_string()
+            )))?
+            .to_string_lossy()
+            .to_string();
+
+        let temp_executable = std::env::current_dir()?
+            .join(format!("{}.exec", executable_name));
+
+        if config.verbose {
+            println!("正在编译 LLVM IR 到可执行文件...");
+        }
+
+        // Compile LLVM IR to object file
+        let output = Command::new("clang")
+            .arg("-c")
+            .arg("-x")
+            .arg("ir")
+            .arg(llvm_ir_path)
+            .arg("-o")
+            .arg(&temp_executable.with_extension("o"))
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("LLVM IR 编译失败: {}", error)
+            )));
+        }
+
+        // Link to create executable
+        let output = Command::new("clang")
+            .arg(&temp_executable.with_extension("o"))
+            .arg("-o")
+            .arg(&temp_executable)
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("链接失败: {}", error)
+            )));
+        }
+
+        if config.verbose {
+            println!("正在运行可执行文件...");
+        }
+
+        // Run the executable
+        let mut cmd = Command::new(&temp_executable);
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        let output = cmd.output().map_err(|e| CliError::Io(e))?;
+
+        // Print stdout
+        if !output.stdout.is_empty() {
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+
+        // Print stderr
+        if !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        if !output.status.success() {
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("程序运行失败，退出码: {:?}", output.status.code())
+            )));
+        }
+
+        // Clean up temporary files
+        let _ = std::fs::remove_file(&temp_executable.with_extension("o"));
+        let _ = std::fs::remove_file(&temp_executable);
+
+        Ok(())
+    }
+
+    async fn run_executable(
+        &self,
+        executable_path: &std::path::Path,
+        args: &[String],
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        use std::process::Command;
+
+        if config.verbose {
+            println!("正在运行可执行文件...");
+        }
+
+        let mut cmd = Command::new(executable_path);
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        let output = cmd.output().map_err(|e| CliError::Io(e))?;
+
+        // Print stdout
+        if !output.stdout.is_empty() {
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+
+        // Print stderr
+        if !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        if !output.status.success() {
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("程序运行失败，退出码: {:?}", output.status.code())
+            )));
         }
 
         Ok(())
@@ -217,6 +437,7 @@ impl Cli {
         if version || (!language && !targets) {
             println!("Qi 编译器 v{}", env!("CARGO_PKG_VERSION"));
             println!("作者: Qi Language Team <team@qi-lang.org>");
+            println!();
         }
 
         if language {
@@ -227,14 +448,40 @@ impl Cli {
             println!("  - 控制流 (如果, 否则, 当, 对于)");
             println!("  - 函数定义 (函数, 返回)");
             println!("  - 基础数据类型 (整数, 字符串, 布尔, 浮点数)");
+            println!("  - 数组操作");
+            println!("  - 错误处理和调试支持");
+            println!();
         }
 
         if targets {
             println!("支持的目标平台:");
             println!("  - Linux x86_64");
+            println!("    • 完整的系统调用支持");
+            println!("    • POSIX 兼容性");
+            println!("    • 共享内存和信号量");
             println!("  - Windows x86_64");
+            println!("    • Win32 API 支持");
+            println!("    • COM 和注册表操作");
+            println!("    • 控制台和进程管理");
             println!("  - macOS x86_64");
+            println!("    • CoreFoundation 集成");
+            println!("    • Mach 内核调用");
+            println!("    • Grand Central Dispatch 支持");
             println!("  - WebAssembly");
+            println!("    • 浏览器和 Node.js 支持");
+            println!("    • DOM 操作和事件处理");
+            println!("    • JavaScript 互操作");
+            println!();
+
+            println!("使用方法:");
+            println!("  qi compile --target linux source.qi     # 编译为 Linux 可执行文件");
+            println!("  qi compile --target windows source.qi   # 编译为 Windows 可执行文件");
+            println!("  qi compile --target macos source.qi     # 编译为 macOS 可执行文件");
+            println!("  qi compile --target wasm source.qi       # 编译为 WebAssembly 模块");
+            println!("  qi run source.qi                       # 编译并运行 Qi 程序");
+            println!("  qi run --target macos source.qi         # 编译并运行 macOS 程序");
+            println!("  qi run source.qi arg1 arg2             # 编译并运行，传递参数");
+            println!();
         }
 
         Ok(())

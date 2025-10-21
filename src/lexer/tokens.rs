@@ -14,7 +14,7 @@ impl Span {
 }
 
 /// Token kinds for Qi language
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     // Chinese Keywords (multi-character)
     如果,      // if
@@ -75,16 +75,24 @@ pub enum TokenKind {
     假,                 // false
 
     // Identifiers and literals
-    标识符(String),      // Variable/function names
-    字符串字面量(String), // String literals
+    标识符,              // Variable/function names (stored in text field)
+    字符串字面量,        // String literals (stored in text field)
     整数字面量(i64),     // Integer literals
-    浮点数字面量(f64),   // Float literals
+    浮点数字面量,   // Float literals (stored in text field)
     布尔字面量(bool),    // Boolean literals
     字符字面量(char),    // Character literals
 
+    // Additional keywords
+    非,                 // not
+    跳出,               // break
+    继续,               // continue
+    输入,               // input
+    长度,               // length
+    类型,               // type
+
     // Special
     文件结束,
-    错误(String),       // Lexical error
+    错误,               // Lexical error (stored in text field)
 }
 
 /// Token with source location information
@@ -113,10 +121,7 @@ impl Token {
 impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TokenKind::标识符(s) => write!(f, "{}", s),
-            TokenKind::字符串字面量(s) => write!(f, "\"{}\"", s),
             TokenKind::整数字面量(n) => write!(f, "{}", n),
-            TokenKind::浮点数字面量(n) => write!(f, "{}", n),
             TokenKind::布尔字面量(b) => write!(f, "{}", b),
             TokenKind::字符字面量(c) => write!(f, "'{}'", c),
             _ => write!(f, "{:?}", self),

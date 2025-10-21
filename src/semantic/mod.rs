@@ -625,9 +625,8 @@ impl SemanticAnalyzer {
     /// Report undefined variable error with detailed context
     /// 报告未定义变量错误及详细上下文
     fn report_undefined_variable_error(&mut self, var_name: &str, span: Span) {
-        self.diagnostics.undefined_variable_error(span, var_name, Some(format!(
-            "检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量", var_name
-        )));
+        let suggestion = format!("检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量", var_name);
+        self.diagnostics.undefined_variable_error(span, var_name, Some(&suggestion));
     }
 
     /// Report type mismatch error with detailed suggestions
