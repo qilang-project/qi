@@ -98,6 +98,7 @@ impl SemanticAnalyzer {
             AstNode::数组访问表达式(array_access) => self.analyze_array_access(array_access),
             AstNode::数组字面量表达式(array_literal) => self.analyze_array_literal(array_literal),
             AstNode::字符串连接表达式(string_concat) => self.analyze_string_concat(string_concat),
+            AstNode::块语句(block_stmt) => self.analyze_block_statement(block_stmt),
             _ => {
                 // For expressions, run type checking
                 self.type_checker.check(node)
@@ -157,9 +158,7 @@ impl SemanticAnalyzer {
             // Enter else branch scope
             self.type_checker.symbol_table.enter_scope();
 
-            for statement in else_branch {
-                self.analyze_node(statement)?;
-            }
+            self.analyze_node(else_branch)?;
 
             // Exit else branch scope
             self.type_checker.symbol_table.exit_scope();
@@ -206,6 +205,22 @@ impl SemanticAnalyzer {
         }
 
         // Exit loop body scope
+        self.type_checker.symbol_table.exit_scope();
+
+        Ok(())
+    }
+
+    /// Analyze block statement
+    fn analyze_block_statement(&mut self, block_stmt: &crate::parser::ast::BlockStatement) -> Result<(), SemanticError> {
+        // Enter block scope
+        self.type_checker.symbol_table.enter_scope();
+
+        // Analyze all statements in block
+        for statement in &block_stmt.statements {
+            self.analyze_node(statement)?;
+        }
+
+        // Exit block scope
         self.type_checker.symbol_table.exit_scope();
 
         Ok(())

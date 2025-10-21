@@ -20,6 +20,7 @@ pub enum AstNode {
     返回语句(ReturnStatement),
     打印语句(PrintStatement),
     表达式语句(ExpressionStatement),
+    块语句(BlockStatement),
 
     // Expressions
     字面量表达式(LiteralExpression),
@@ -84,7 +85,14 @@ pub struct Parameter {
 pub struct IfStatement {
     pub condition: Box<AstNode>,
     pub then_branch: Vec<AstNode>,
-    pub else_branch: Option<Vec<AstNode>>,
+    pub else_branch: Option<Box<AstNode>>,
+    pub span: Span,
+}
+
+/// Block statement
+#[derive(Debug, Clone)]
+pub struct BlockStatement {
+    pub statements: Vec<AstNode>,
     pub span: Span,
 }
 

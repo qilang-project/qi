@@ -46,6 +46,7 @@ impl Lexer {
     /// Tokenize the entire source code
     pub fn tokenize(&mut self) -> Result<Vec<Token>, LexicalError> {
         let mut tokens = Vec::new();
+        let mut first_error: Option<LexicalError> = None;
 
         while !self.is_at_end() {
             // Skip whitespace
@@ -55,10 +56,22 @@ impl Lexer {
                 break;
             }
 
-            if let Some(token) = self.next_token()? {
-                tokens.push(token);
+            match self.next_token() {
+                Ok(Some(token)) => {
+                    tokens.push(token);
+                }
+                Ok(None) => {
+                    // None returned (e.g., for comments), just continue the loop
+                }
+                Err(e) => {
+                    // Store first error but continue scanning for more errors
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                    // Skip the problematic character to continue scanning
+                    self.advance();
+                }
             }
-            // If None is returned (e.g., for comments), just continue the loop
         }
 
         // Add EOF token
@@ -70,7 +83,14 @@ impl Lexer {
             column: self.column,
         });
 
-        Ok(tokens)
+        // Return the first error if any were encountered
+        // This allows multiple errors to be collected in the diagnostics system
+        // even though we return the first one to the caller
+        if let Some(e) = first_error {
+            Err(e)
+        } else {
+            Ok(tokens)
+        }
     }
 
     /// Get the next token

@@ -14,6 +14,7 @@ pub Program: Program = {
 Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
+    StructDeclaration,
     ReturnStatement,
     PrintStatement,
     IfStatement,
@@ -105,23 +106,42 @@ PrintStatement: AstNode = {
     }),
 };
 
+Block: Vec<AstNode> = {
+    "{" <statements:Statement*> "}" => statements
+};
+
 IfStatement: AstNode = {
-    "如果" <condition:Expr> "{" <then_branch:Statement*> "}" => AstNode::如果语句(IfStatement {
-        condition: Box::new(condition),
-        then_branch,
-        else_branch: None,
-        span: Default::default(),
-    }),
-    "如果" <condition:Expr> "{" <then_branch:Statement*> "}" "否则" "{" <else_branch:Statement*> "}" => AstNode::如果语句(IfStatement {
-        condition: Box::new(condition),
-        then_branch,
-        else_branch: Some(else_branch),
-        span: Default::default(),
-    }),
+    "如果" <condition:Expr> <then_branch:Block> "否则" <else_branch:Block> => {
+        AstNode::如果语句(IfStatement {
+            condition: Box::new(condition),
+            then_branch,
+            else_branch: Some(Box::new(AstNode::块语句(BlockStatement {
+                statements: else_branch,
+                span: Default::default(),
+            }))),
+            span: Default::default(),
+        })
+    },
+    "如果" <condition:Expr> <then_branch:Block> "否则如果" <else_if:IfStatement> => {
+        AstNode::如果语句(IfStatement {
+            condition: Box::new(condition),
+            then_branch,
+            else_branch: Some(Box::new(else_if)),
+            span: Default::default(),
+        })
+    },
+    "如果" <condition:Expr> <then_branch:Block> => {
+        AstNode::如果语句(IfStatement {
+            condition: Box::new(condition),
+            then_branch,
+            else_branch: None,
+            span: Default::default(),
+        })
+    },
 };
 
 WhileStatement: AstNode = {
-    "当" <condition:Expr> "{" <body:Statement*> "}" => AstNode::当语句(WhileStatement {
+    "当" <condition:Expr> <body:Block> => AstNode::当语句(WhileStatement {
         condition: Box::new(condition),
         body,
         span: Default::default(),
@@ -129,12 +149,42 @@ WhileStatement: AstNode = {
 };
 
 ForStatement: AstNode = {
-    "对于" <variable:Identifier> "在" <range:Expr> "{" <body:Statement*> "}" => AstNode::对于语句(ForStatement {
+    "对于" <variable:Identifier> "在" <range:Expr> <body:Block> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
         span: Default::default(),
     }),
+};
+
+StructDeclaration: AstNode = {
+    "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+        name,
+        fields,
+        span: Default::default(),
+    }),
+    "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
+        name,
+        fields: vec![],
+        span: Default::default(),
+    }),
+};
+
+StructFieldList: Vec<StructField> = {
+    <first:StructField> => vec![first],
+    <first:StructField> "," <rest:StructFieldList> => {
+        let mut rest = rest;
+        rest.insert(0, first);
+        rest
+    },
+};
+
+StructField: StructField = {
+    <name:Identifier> ":" <type_annotation:Type> => StructField {
+        name,
+        type_annotation,
+        span: Default::default(),
+    },
 };
 
 // Expression precedence from lowest to highest
@@ -157,7 +207,19 @@ LogicalExpr: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:LogicalExpr> "&&" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::与,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:LogicalExpr> "或" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::或,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:LogicalExpr> "||" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::或,
         right: Box::new(right),
@@ -229,6 +291,12 @@ Primary: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Primary> "/" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::除,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Primary> "%" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
@@ -248,6 +316,19 @@ Atom: AstNode = {
     IdentifierExpression,
     FunctionCall,
     ArrayAccessExpression,
+    "-" <expr:Atom> => {
+        match expr {
+            AstNode::字面量表达式(lit) => AstNode::字面量表达式(LiteralExpression {
+                value: match lit.value {
+                    crate::parser::ast::LiteralValue::整数(n) => crate::parser::ast::LiteralValue::整数(-n),
+                    crate::parser::ast::LiteralValue::浮点数(f) => crate::parser::ast::LiteralValue::浮点数(-f),
+                    other => other,
+                },
+                span: Default::default(),
+            }),
+            other => other, // For non-literals, would need to support unary negation operator
+        }
+    },
     "(" <Expr> ")",
 };
 
@@ -391,7 +472,7 @@ Identifier: String = {
         // Filter out Chinese keywords but allow other Chinese identifiers
         match id {
             "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "真" | "假" |
-            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" =>
+            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" =>
                 panic!("Keyword used as identifier: {}", id),
             _ => id.to_string(),
         }

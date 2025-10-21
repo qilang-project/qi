@@ -89,6 +89,7 @@ impl TypeChecker {
             AstNode::枚举声明(enum_decl) => self.check_enum_declaration(enum_decl),
             AstNode::打印语句(print_stmt) => self.check_print_statement(print_stmt),
             AstNode::循环语句(loop_stmt) => self.check_loop_statement(loop_stmt),
+            AstNode::块语句(block_stmt) => self.check_block_statement(block_stmt),
         }
     }
 
@@ -596,31 +597,21 @@ impl TypeChecker {
 
         // Enter new scope for then branch
         self.symbol_table.enter_scope();
-
-        // Type check then branch
         for stmt in &if_stmt.then_branch {
             if let Err(e) = self.check(stmt) {
                 self.errors.push(e);
             }
         }
-
-        // Exit then branch scope
         self.symbol_table.exit_scope();
 
         // Type check else branch if present
         if let Some(else_branch) = &if_stmt.else_branch {
             self.symbol_table.enter_scope();
-
-            for stmt in else_branch {
-                if let Err(e) = self.check(stmt) {
-                    self.errors.push(e);
-                }
+            if let Err(e) = self.check(else_branch) {
+                self.errors.push(e);
             }
-
             self.symbol_table.exit_scope();
         }
-
-        // If statement doesn't produce a value
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
@@ -729,6 +720,24 @@ impl TypeChecker {
     fn check_expression_statement(&mut self, expr_stmt: &crate::parser::ast::ExpressionStatement) -> Result<TypeNode, TypeError> {
         // Type check the expression
         self.check(&expr_stmt.expression)
+    }
+
+    fn check_block_statement(&mut self, block_stmt: &crate::parser::ast::BlockStatement) -> Result<TypeNode, TypeError> {
+        // Enter new scope for block
+        self.symbol_table.enter_scope();
+
+        // Type check all statements in block
+        for stmt in &block_stmt.statements {
+            if let Err(e) = self.check(stmt) {
+                self.errors.push(e);
+            }
+        }
+
+        // Exit block scope
+        self.symbol_table.exit_scope();
+
+        // Block statement doesn't produce a value
+        Ok(TypeNode::基础类型(BasicType::空))
     }
 
     fn check_print_statement(&mut self, print_stmt: &crate::parser::ast::PrintStatement) -> Result<TypeNode, TypeError> {
@@ -851,3 +860,4 @@ impl Default for TypeChecker {
         Self::new()
     }
 }
+

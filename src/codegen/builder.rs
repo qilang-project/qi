@@ -16,6 +16,7 @@ pub enum IrInstruction {
     存储 {
         target: String,
         value: String,
+        value_type: Option<String>,
     },
 
     /// Load a value
@@ -227,8 +228,8 @@ impl IrBuilder {
                         if let Some(t) = infer_from_node(s) { return Some(t); }
                     }
                     if let Some(else_branch) = &if_stmt.else_branch {
-                        for s in else_branch {
-                            if let Some(t) = infer_from_node(s) { return Some(t); }
+                        if let Some(t) = infer_from_node(else_branch) { 
+                            return Some(t); 
                         }
                     }
                     None
@@ -310,6 +311,7 @@ impl IrBuilder {
                     self.add_instruction(IrInstruction::存储 {
                         target: var_name.clone(),
                         value,
+                        value_type: Some(type_name.to_string()),
                     });
                 }
 
@@ -511,12 +513,10 @@ impl IrBuilder {
                 // Else branch (if exists)
                 self.add_instruction(IrInstruction::标签 { name: else_label.clone() });
                 if let Some(else_branch) = &if_stmt.else_branch {
-                    for stmt in else_branch {
-                        self.build_node(stmt)?;
-                    }
-                    // Add jump to end label after else branch
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.build_node(else_branch)?;
                 }
+                // Always add jump to end label after else branch (even if empty)
+                self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
 
                 // End label
                 self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
@@ -528,6 +528,9 @@ impl IrBuilder {
                 let start_label = self.generate_label();
                 let body_label = self.generate_label();
                 let end_label = self.generate_label();
+
+                // Jump to start label (condition check)
+                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
 
                 // Start label (condition check)
                 self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
@@ -580,8 +583,151 @@ impl IrBuilder {
 
                 Ok("loop".to_string())
             }
-            AstNode::对于语句(_for_stmt) => {
-                // Range-based for loops are more complex, skip for now
+            AstNode::对于语句(for_stmt) => {
+                // Handle: for var in [1, 2, 3] { ... }
+                // For now, support array literals only
+                
+                // First, evaluate the range expression to get the array
+                let array_val = self.build_node(&for_stmt.range)?;
+                
+                // Check if range is an array literal - if so, we know the size
+                let max_iterations = match &*for_stmt.range {
+                    AstNode::数组字面量表达式(arr_lit) => arr_lit.elements.len().to_string(),
+                    _ => "10".to_string(), // Default fallback
+                };
+                
+                // Generate labels
+                let start_label = self.generate_label();
+                let body_label = self.generate_label();
+                let end_label = self.generate_label();
+                
+                // Allocate loop counter variable (index into array)
+                let loop_counter = if for_stmt.variable.chars().any(|c| !c.is_ascii()) {
+                    format!("%idx_{}", self.mangle_function_name(&for_stmt.variable))
+                } else {
+                    format!("%idx_{}", for_stmt.variable)
+                };
+                
+                // Allocate loop variable (holds current element value)
+                let loop_var = if for_stmt.variable.chars().any(|c| !c.is_ascii()) {
+                    format!("%{}", self.mangle_function_name(&for_stmt.variable))
+                } else {
+                    format!("%{}", for_stmt.variable)
+                };
+                
+                // Initialize counter to 0
+                self.add_instruction(IrInstruction::分配 {
+                    dest: loop_counter.clone(),
+                    type_name: "i64".to_string(),
+                });
+                
+                self.add_instruction(IrInstruction::存储 {
+                    target: loop_counter.clone(),
+                    value: "0".to_string(),
+                    value_type: Some("i64".to_string()),
+                });
+                
+                // Allocate loop variable
+                self.add_instruction(IrInstruction::分配 {
+                    dest: loop_var.clone(),
+                    type_name: "i64".to_string(),
+                });
+                
+                // Jump to condition check
+                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                
+                // Start label (condition check)
+                self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
+                
+                // Load counter
+                let counter_val = self.generate_temp();
+                self.add_instruction(IrInstruction::加载 {
+                    dest: counter_val.clone(),
+                    source: loop_counter.clone(),
+                });
+                
+                // Check: counter < max_iterations
+                let cond = self.generate_temp();
+                self.add_instruction(IrInstruction::二元操作 {
+                    dest: cond.clone(),
+                    left: counter_val,
+                    operator: BinaryOperator::小于,
+                    right: max_iterations.to_string(),
+                });
+                
+                // Conditional jump
+                self.add_instruction(IrInstruction::条件跳转 {
+                    condition: cond,
+                    true_label: body_label.clone(),
+                    false_label: end_label.clone(),
+                });
+                
+                // Body label
+                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
+                
+                // Load current counter value
+                let curr_idx = self.generate_temp();
+                self.add_instruction(IrInstruction::加载 {
+                    dest: curr_idx.clone(),
+                    source: loop_counter.clone(),
+                });
+                
+                // Get element from array: array[counter]
+                let element = self.generate_temp();
+                self.add_instruction(IrInstruction::数组访问 {
+                    dest: element.clone(),
+                    array: array_val.clone(),
+                    index: curr_idx,
+                });
+                
+                // Load the value at that address
+                let element_val = self.generate_temp();
+                self.add_instruction(IrInstruction::加载 {
+                    dest: element_val.clone(),
+                    source: element,
+                });
+                
+                // Store element value into loop variable
+                self.add_instruction(IrInstruction::存储 {
+                    target: loop_var.clone(),
+                    value: element_val,
+                    value_type: Some("i64".to_string()),
+                });
+                
+                // Execute body statements
+                for stmt in &for_stmt.body {
+                    self.build_node(stmt)?;
+                }
+                
+                // Load counter
+                let idx_val = self.generate_temp();
+                self.add_instruction(IrInstruction::加载 {
+                    dest: idx_val.clone(),
+                    source: loop_counter.clone(),
+                });
+                
+                // Increment counter
+                let new_idx = self.generate_temp();
+                self.add_instruction(IrInstruction::二元操作 {
+                    dest: new_idx.clone(),
+                    left: idx_val,
+                    operator: BinaryOperator::加,
+                    right: "1".to_string(),
+                });
+                
+                // Store new counter value
+                self.add_instruction(IrInstruction::存储 {
+                    target: loop_counter.clone(),
+                    value: new_idx,
+                    value_type: Some("i64".to_string()),
+                });
+                
+                // Jump back to condition
+                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                
+                // End label
+                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                
                 Ok("for".to_string())
             }
             AstNode::字面量表达式(literal) => {
@@ -635,6 +781,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::存储 {
                     target: target_name.clone(),
                     value,
+                    value_type: None, // Type will be inferred
                 });
                 Ok(target_name)
             }
@@ -775,6 +922,7 @@ impl IrBuilder {
                     self.add_instruction(IrInstruction::存储 {
                         target: field_ptr,
                         value: field_value,
+                        value_type: None, // Type will be inferred
                     });
                 }
 
@@ -800,6 +948,13 @@ impl IrBuilder {
                 });
 
                 Ok(load_temp)
+            }
+            AstNode::块语句(block_stmt) => {
+                // Process all statements in the block
+                for stmt in &block_stmt.statements {
+                    self.build_node(stmt)?;
+                }
+                Ok("block".to_string())
             }
             _ => {
                 #[allow(unreachable_patterns)]
@@ -891,22 +1046,21 @@ impl IrBuilder {
                 IrInstruction::分配 { dest, type_name } => {
                     ir.push_str(&format!("{} = alloca {}\n", dest, type_name));
                 }
-                IrInstruction::存储 { target, value } => {
-                    // Determine the type based on the value
-                    let value_type = if value.starts_with('@') || value.contains("getelementptr") {
-                        "ptr"
+                IrInstruction::存储 { target, value, value_type } => {
+                    // Determine the type based on the value_type if provided, otherwise infer
+                    let inferred_type = if let Some(vt) = value_type {
+                        vt.to_string()
+                    } else if value.starts_with('@') || value.contains("getelementptr") {
+                        "ptr".to_string()
                     } else if value.contains('.') {
-                        "double"
-                    } else if value == "0" || value == "1" {
-                        // Check if this might be a boolean by looking at nearby context
-                        "i1"
+                        "double".to_string()
                     } else if value.parse::<i64>().is_ok() {
-                        "i64"
+                        "i64".to_string()
                     } else {
                         // Default to i64 for variables
-                        "i64"
+                        "i64".to_string()
                     };
-                    ir.push_str(&format!("store {} {}, ptr {}\n", value_type, value, target));
+                    ir.push_str(&format!("store {} {}, ptr {}\n", inferred_type, value, target));
                 }
                 IrInstruction::加载 { dest, source } => {
                     // For now, default to i64 for most variables
@@ -1083,8 +1237,10 @@ impl IrBuilder {
                     ir.push_str(&format!("{} = alloca [{} x i64]\n", dest, size));
                 }
                 IrInstruction::数组存储 { array, index, value } => {
-                    // Simplified array store
-                    ir.push_str(&format!("store i64 {}, i64* getelementptr [10 x i64], [10 x i64]* {}, i64 0, i64 {}\n", value, array, index));
+                    // Simplified array store - generate unique temp names using a hash of array and index
+                    let hash = format!("{}{}", array.replace("%", "").replace("t", ""), index.replace("%", ""));
+                    ir.push_str(&format!("%addr_tmp{} = getelementptr [10 x i64], [10 x i64]* {}, i64 0, i64 {}\n", hash, array, index));
+                    ir.push_str(&format!("store i64 {}, i64* %addr_tmp{}\n", value, hash));
                 }
                 IrInstruction::字符串连接 { dest, left, right } => {
                     // Simplified string concatenation using external function

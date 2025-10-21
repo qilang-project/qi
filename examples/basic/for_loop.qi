@@ -1,0 +1,29 @@
+// For Loop Example - Comprehensive Test
+// 展示 for 循环的各种用法
+
+函数 主() {
+    打印 "=== For Loop Examples ===";
+    
+    // Example 1: Simple iteration
+    打印 "Example 1: Simple iteration over [1,2,3]";
+    对于 num 在 [1, 2, 3] {
+        打印 num;
+    }
+    
+    // Example 2: Iteration with arithmetic
+    打印 "Example 2: Iteration with arithmetic (multiply by 2)";
+    对于 x 在 [5, 10, 15, 20] {
+        变量 result = x * 2;
+        打印 result;
+    }
+    
+    // Example 3: Using loop variable in conditional
+    打印 "Example 3: Conditional printing (only numbers > 10)";
+    对于 val 在 [5, 15, 10, 20, 8] {
+        如果 val > 10 {
+            打印 val;
+        }
+    }
+    
+    打印 "=== Done ===";
+}
