@@ -1,0 +1,9 @@
+// Test function symbol table operations
+
+函数 add_numbers(a: 整数, b: 整数) : 整数 {
+    返回 a + b;
+}
+
+函数 multiply(x: 整数, y: 整数) : 整数 {
+    返回 x * y;
+}

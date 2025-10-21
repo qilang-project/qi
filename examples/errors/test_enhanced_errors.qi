@@ -1,0 +1,5 @@
+// 测试增强错误消息显示 | Test Enhanced Error Message Display
+// 这个文件包含一个故意的语法错误来测试源代码上下文显示 | This file contains an intentional syntax error to test source code context display
+
+变量 x = 42;
+变量 y = x @ 5;  // 这里有一个无效字符 @，应该显示源代码上下文

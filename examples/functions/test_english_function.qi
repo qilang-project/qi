@@ -1,0 +1,3 @@
+function test_func() -> 整数 {
+    返回 42;
+}

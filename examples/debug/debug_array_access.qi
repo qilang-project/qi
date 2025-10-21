@@ -1,0 +1,2 @@
+变量 numbers: 数组<整数> = [1, 2, 3, 4, 5];
+变量 first_num: 整数 = numbers[0];

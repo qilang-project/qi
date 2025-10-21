@@ -1,8 +1,0 @@
-// 最简单的Qi程序
-// Simplest Qi program
-
-函数 主函数() {
-    打印 "Hello, Qi!";
-}
-
-主函数();
