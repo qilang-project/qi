@@ -256,7 +256,7 @@ impl Lexer {
         self.advance(); // Skip closing quote
         let end_pos = self.position;
 
-        let content = self.source[start_content..end_content].to_string();
+        let _content = self.source[start_content..end_content].to_string();
 
         Ok(Token {
             kind: TokenKind::字符串字面量,
@@ -584,13 +584,12 @@ impl Lexer {
     // ===== Enhanced Error Reporting Methods | 增强错误报告方法 =====
 
     /// Report invalid character error with detailed suggestions
-    fn report_invalid_character_error(&mut self, char: char, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+    fn report_invalid_character_error(&mut self, char: char, start_pos: usize, _line: usize, _column: usize, suggestion: &str) {
         let span = Span::new(start_pos, start_pos + char.len_utf8());
 
         self.diagnostics.add_diagnostic({
             use crate::utils::diagnostics::Diagnostic;
-            use crate::lexer::tokens::Span;
-
+  
             Diagnostic {
                 level: DiagnosticLevel::错误,
                 code: "E011".to_string(),
@@ -605,7 +604,7 @@ impl Lexer {
     }
 
     /// Report unterminated string error with detailed suggestions
-    fn report_unterminated_string_error(&mut self, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+    fn report_unterminated_string_error(&mut self, start_pos: usize, _line: usize, _column: usize, suggestion: &str) {
         let end_pos = self.position.min(self.source.len());
         let span = Span::new(start_pos, end_pos);
 
@@ -626,7 +625,7 @@ impl Lexer {
     }
 
     /// Report invalid number error with detailed suggestions
-    fn report_invalid_number_error(&mut self, start_pos: usize, line: usize, column: usize, suggestion: &str) {
+    fn report_invalid_number_error(&mut self, start_pos: usize, _line: usize, _column: usize, suggestion: &str) {
         let end_pos = self.position.min(self.source.len());
         let span = Span::new(start_pos, end_pos);
 
@@ -647,6 +646,7 @@ impl Lexer {
     }
 
     /// Report unexpected EOF error
+    #[allow(dead_code)]
     fn report_unexpected_eof_error(&mut self, position: usize, suggestion: &str) {
         let span = Span::new(position, position);
 

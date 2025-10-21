@@ -1,6 +1,0 @@
-// Simple calculation test in Qi Language
-函数 计算() {
-  变量 a = 10;
-  变量 b = 20;
-  变量 c = a + b;
-}

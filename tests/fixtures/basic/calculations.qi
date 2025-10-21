@@ -1,0 +1,16 @@
+// 简单算术运算测试 | Simple Arithmetic Test
+// 测试基本的数学运算 | Test basic mathematical operations
+
+函数 主() {
+    变量 a = 10;
+    变量 b = 5;
+    变量 c = a + b;
+    变量 d = a - b;
+    变量 e = a * b;
+
+    打印 a;
+    打印 b;
+    打印 c;
+    打印 d;
+    打印 e;
+}

@@ -1,478 +1,377 @@
-//! Unit tests for Qi parser
+//! Unit tests for Qi parser module
+//! 测试解析器模块
 
-use qi_compiler::lexer::{Lexer, TokenKind};
-use qi_compiler::parser::Parser;
+use qi_compiler::lexer::*;
+use qi_compiler::parser::*;
 use qi_compiler::parser::ast::*;
-use qi_compiler::lexer::Span;
 
 #[test]
-fn test_empty_program() {
-    let source = "".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_empty_program() {
+    let source = "";
+    let mut lexer = Lexer::new(source.to_string());
+    let tokens = lexer.tokenize().unwrap();
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
+    let parser = Parser::new();
+    let result = parser.parse(tokens);
 
-    // Should return a program with no statements for now
     assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 0);
 }
 
 #[test]
-fn test_single_literal() {
-    let source = "42;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_direct_source() {
+    let source = "42;";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_simple_variable_declaration() {
-    let source = "变量 x = 10;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_simple_variable_declaration() {
+    let source = "变量 x = 10;";
+    let mut lexer = Lexer::new(source.to_string());
+    let tokens = lexer.tokenize().unwrap();
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
+    let parser = Parser::new();
+    let result = parser.parse(tokens);
 
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_chinese_variable_names() {
-    let source = "变量 数字 = 42; 变量 文本 = \"你好\";".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_multiple_statements() {
+    let source = "变量 x = 10; 变量 y = 20;";
+    let mut lexer = Lexer::new(source.to_string());
+    let tokens = lexer.tokenize().unwrap();
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
+    let parser = Parser::new();
+    let result = parser.parse(tokens);
 
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
 }
 
 #[test]
-fn test_basic_expressions() {
-    let source = "1 + 2 * 3;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_chinese_variable_names() {
+    let source = "变量 数字 = 42; 变量 文本 = \"你好\";";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
 }
 
 #[test]
-fn test_boolean_literals() {
-    let source = "真; 假;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_basic_expressions() {
+    let source = "1 + 2 * 3;";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_string_literals() {
-    let source = "\"Hello, World!\";".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_function_declaration() {
+    let source = "函数 测试() { }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_declaration() {
-    let source = "函数 测试() { }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_function_with_return() {
+    let source = "函数 main() { 返回 42; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_mixed_language_identifiers() {
-    let source = "variable 中文变量 = 42;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_function_with_parameters() {
+    let source = "函数 add(x, y) { 返回 x + y; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_complex_arithmetic() {
-    let source = "(1 + 2) * (3 - 4) / 5;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_if_statement() {
+    let source = "如果 x > 5 { 变量 y = 10; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    // Parser is not fully implemented yet, but should not panic
-    assert!(result.is_ok() || result.is_err());
-}
-
-// Control flow tests for User Story 3
-#[test]
-fn test_basic_if_statement() {
-    let source = "如果 x > 5 { 打印 \"greater\"; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_if_else_statement() {
-    let source = "如果 age >= 18 { 打印 \"adult\"; } 否则 { 打印 \"minor\"; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_if_else_statement() {
+    let source = "如果 x > 5 { 变量 y = 10; } 否则 { 变量 y = 0; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_nested_if_statements() {
-    let source = "
-    如果 age >= 18 {
-        如果 has_license {
-            打印 \"can drive\";
-        } 否则 {
-            打印 \"needs license\";
+fn test_parse_while_loop() {
+    let source = "当 i < 10 { 变量 x = x + 1; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
+}
+
+#[test]
+fn test_parse_for_loop() {
+    let source = "对于 i 在 [1, 2, 3] { 总和 = 总和 + i; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
+}
+
+#[test]
+fn test_parse_nested_control_flow() {
+    let source = r#"
+    如果 x > 5 {
+        当 i < 10 {
+            如果 i == 5 {
+                返回 "找到";
+            }
+            i = i + 1;
         }
-    } 否则 {
-        打印 \"too young\";
-    }".to_string();
+    }
+    "#;
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_while_loop() {
-    let source = "变量 count = 0; 当 count < 5 { count = count + 1; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_function_call() {
+    let source = "变量 result = test();";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_nested_while_loops() {
-    let source = "
-    变量 outer = 0;
-    当 outer < 3 {
-        变量 inner = 0;
-        当 inner < 3 {
-            inner = inner + 1;
-        }
-        outer = outer + 1;
-    }".to_string();
+fn test_parse_function_call_with_arguments() {
+    let source = "变量 result = add(1, 2);";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_for_loop() {
-    let source = "对于 (i = 0; i < 5; i = i + 1) { 打印 i; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_complex_expressions() {
+    let source = "变量 result = (1 + 2) * (3 - 4) / 5;";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_nested_for_loops() {
-    let source = "
-    对于 (row = 0; row < 3; row = row + 1) {
-        对于 (col = 0; col < 3; col = col + 1) {
-            打印 row * 3 + col;
-        }
-    }".to_string();
+fn test_parse_string_literals() {
+    let source = "变量 message = \"Hello, World!\";";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-// Function call tests for User Story 4
-#[test]
-fn test_basic_function_call() {
-    let source = "打印问候();".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_call_with_single_argument() {
-    let source = "打印数字(42);".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_character_literals() {
+    let source = "变量 ch = 'A';";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_call_with_multiple_arguments() {
-    let source = "计算总和(10, 20, 30);".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_boolean_expressions() {
+    let source = "变量 x = 10; 如果 x > 5 { 返回 真; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
 }
 
 #[test]
-fn test_function_declaration_no_params_no_return() {
-    let source = "函数 问好() { 打印 \"Hello!\"; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_comparison_operators() {
+    let source = "如果 a == b && c != d { 返回 真; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_declaration_with_params_no_return() {
-    let source = "函数 打印消息(message: 字符串) { 打印 message; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_array_literal() {
+    let source = "变量 arr = [1, 2, 3];";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_declaration_with_params_and_return() {
-    let source = "函数 相加(a: 整数, b: 整数) -> 整数 { 返回 a + b; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_struct_declaration() {
+    let source = "结构体 Person { name: 字符串, age: 整数 }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
-fn test_function_declaration_no_params_with_return() {
-    let source = "函数 获取幸运数字() -> 整数 { 返回 42; }".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+fn test_parse_assignment() {
+    let source = "变量 x = 10; x = x + 1;";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
 }
 
 #[test]
-fn test_function_call_in_expression() {
-    let source = "变量 result = 相加(5, 3) * 2;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_nested_function_calls() {
-    let source = "变量 result = 相加(相加(1, 2), 相加(3, 4));".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_function_call_with_string_arguments() {
-    let source = "连接文本(\"Hello\", \"World\");".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_function_call_with_mixed_type_arguments() {
-    let source = "混合操作(10, 2.5, \"result\");".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_recursive_function_call() {
-    let source = "
-    函数 阶乘(n: 整数) -> 整数 {
-        如果 (n <= 1) {
+fn test_parse_complex_program() {
+    let source = r#"
+    函数 factorial(n) {
+        如果 n <= 1 {
             返回 1;
         } 否则 {
-            返回 n * 阶乘(n - 1);
+            返回 n * factorial(n - 1);
         }
-    }".to_string();
-
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_function_call_in_condition() {
-    let source = "
-    如果 是偶数(10) {
-        打印 \"Even\";
-    }".to_string();
-
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_function_call_in_loop() {
-    let source = "
-    变量 i = 0;
-    当 (i < 5) {
-        打印数字(i);
-        i = i + 1;
-    }".to_string();
-
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_main_function() {
-    let source = "
-    函数 主() -> 整数 {
-        打印 \"Hello, Qi!\";
-        返回 0;
-    }".to_string();
-
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_multiple_function_declarations() {
-    let source = "
-    函数 相加(a: 整数, b: 整数) -> 整数 {
-        返回 a + b;
     }
 
-    函数 乘以(a: 整数, b: 整数) -> 整数 {
-        返回 a * b;
+    函数 main() {
+        变量 result = factorial(5);
+        返回 result;
     }
+    "#;
 
-    函数 主() -> 整数 {
-        变量 sum = 相加(5, 3);
-        变量 product = 乘以(4, 6);
-        打印 sum;
-        打印 product;
-        返回 0;
-    }".to_string();
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
+}
 
-    let mut parser = Parser::new(tokens);
-    let result = parser.parse();
+#[test]
+fn test_parse_error_handling() {
+    let source = "变量 x = ;"; // Incomplete assignment
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
 
-    assert!(result.is_ok() || result.is_err());
+    // Should handle parse errors gracefully
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_unterminated_string() {
+    let source = "变量 s = \"unclosed string;";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    // Should handle unterminated string error
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_mismatched_brackets() {
+    let source = "如果 x > 5 { 变量 y = 10;"; // Missing closing brace
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    // Should handle mismatched brackets error
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parser_default_trait() {
+    let parser = Parser::default();
+    let source = "变量 x = 42;";
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
+}
+
+#[test]
+fn test_parse_with_whitespace_and_comments() {
+    let source = r#"
+    // This is a comment
+    变量 x = 10; /* Another comment */ 变量 y = 20;
+
+    """
+    Multi-line comment
+    """
+    函数 test() {
+        返回 42;
+    }
+    "#;
+
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 3);
 }

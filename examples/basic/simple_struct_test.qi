@@ -1,4 +1,0 @@
-struct Point {
-    x: 整数;
-    y: 整数
-}

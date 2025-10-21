@@ -82,7 +82,6 @@ impl TypeChecker {
             AstNode::如果语句(if_stmt) => self.check_if_statement(if_stmt),
             AstNode::当语句(while_stmt) => self.check_while_statement(while_stmt),
             AstNode::对于语句(for_stmt) => self.check_for_statement(for_stmt),
-            AstNode::C风格对于语句(c_for_stmt) => self.check_c_style_for_statement(c_for_stmt),
             AstNode::返回语句(return_stmt) => self.check_return_statement(return_stmt),
             AstNode::表达式语句(expr_stmt) => self.check_expression_statement(expr_stmt),
             AstNode::程序(program) => self.check_program(program),
@@ -823,44 +822,6 @@ impl TypeChecker {
         Ok(enum_type)
     }
 
-    fn check_c_style_for_statement(&mut self, c_for_stmt: &crate::parser::ast::CStyleForStatement) -> Result<TypeNode, TypeError> {
-        // Type check initializer
-        self.check(&c_for_stmt.initializer)?;
-
-        // Type check condition
-        let condition_type = self.check(&c_for_stmt.condition)?;
-        match condition_type {
-            TypeNode::基础类型(BasicType::布尔) => {
-                // Good, condition is boolean
-            }
-            _ => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "布尔".to_string(),
-                    actual: format!("{:?}", condition_type),
-                    span: c_for_stmt.span,
-                });
-            }
-        }
-
-        // Enter new scope for loop body
-        self.symbol_table.enter_scope();
-
-        // Type check loop body
-        for stmt in &c_for_stmt.body {
-            if let Err(e) = self.check(stmt) {
-                self.errors.push(e);
-            }
-        }
-
-        // Exit loop scope
-        self.symbol_table.exit_scope();
-
-        // Type check update
-        self.check(&c_for_stmt.update)?;
-
-        // For statement doesn't produce a value
-        Ok(TypeNode::基础类型(BasicType::空))
-    }
 
     fn check_loop_statement(&mut self, loop_stmt: &crate::parser::ast::LoopStatement) -> Result<TypeNode, TypeError> {
         // Enter new scope for loop body

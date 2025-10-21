@@ -1,9 +1,0 @@
-变量 a = 10;
-
-/**
- * This is a doc block comment
- */
-变量 b = 20;
-
-/// This is a doc line comment  
-变量 c = 30;

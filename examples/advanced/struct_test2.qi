@@ -1,5 +1,0 @@
-struct Point {
-    x: 整数;
-    y: 整数
-}
-let p = Point { x: 10, y: 20 };

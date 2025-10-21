@@ -8,7 +8,7 @@ pub mod type_checker;
 pub use symbol_table::SymbolTable;
 pub use type_checker::TypeChecker;
 use crate::parser::AstNode;
-use crate::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
+use crate::utils::diagnostics::DiagnosticManager;
 use crate::lexer::Span;
 
 /// Semantic analyzer
@@ -90,7 +90,6 @@ impl SemanticAnalyzer {
             AstNode::当语句(while_stmt) => self.analyze_while_statement(while_stmt),
             AstNode::循环语句(loop_stmt) => self.analyze_loop_statement(loop_stmt),
             AstNode::对于语句(for_stmt) => self.analyze_for_statement(for_stmt),
-            AstNode::C风格对于语句(c_for_stmt) => self.analyze_c_style_for_statement(c_for_stmt),
             AstNode::返回语句(return_stmt) => self.analyze_return_statement(return_stmt),
             AstNode::表达式语句(expr_stmt) => self.analyze_expression_statement(expr_stmt),
             AstNode::函数调用表达式(call_expr) => self.analyze_function_call(call_expr),
@@ -260,38 +259,6 @@ impl SemanticAnalyzer {
         // Exit loop body scope
         self.type_checker.symbol_table.exit_scope();
 
-        Ok(())
-    }
-
-    /// Analyze C-style for statement
-    fn analyze_c_style_for_statement(&mut self, c_for_stmt: &crate::parser::ast::CStyleForStatement) -> Result<(), SemanticError> {
-        // Check initializer
-        self.analyze_node(&c_for_stmt.initializer)?;
-
-        // Check condition type (should be boolean)
-        let condition_type = self.type_checker.check(&c_for_stmt.condition)
-            .map_err(|e| SemanticError::TypeMismatch(e.to_string(), "".to_string()))?;
-
-        if !self.is_boolean_type(&condition_type) {
-            return Err(SemanticError::TypeMismatch(
-                "循环条件必须是布尔类型".to_string(),
-                format!("{:?}", condition_type)
-            ));
-        }
-
-        // Enter loop body scope
-        self.type_checker.symbol_table.enter_scope();
-
-        // Analyze loop body
-        for statement in &c_for_stmt.body {
-            self.analyze_node(statement)?;
-        }
-
-        // Exit loop body scope
-        self.type_checker.symbol_table.exit_scope();
-
-        // Check update
-        self.analyze_node(&c_for_stmt.update)?;
 
         Ok(())
     }
@@ -624,6 +591,7 @@ impl SemanticAnalyzer {
 
     /// Report undefined variable error with detailed context
     /// 报告未定义变量错误及详细上下文
+    #[allow(dead_code)]
     fn report_undefined_variable_error(&mut self, var_name: &str, span: Span) {
         let suggestion = format!("检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量", var_name);
         self.diagnostics.undefined_variable_error(span, var_name, Some(&suggestion));
@@ -631,6 +599,7 @@ impl SemanticAnalyzer {
 
     /// Report type mismatch error with detailed suggestions
     /// 报告类型不匹配错误及详细建议
+    #[allow(dead_code)]
     fn report_type_mismatch_error(&mut self, expected: &str, found: &str, span: Span, context: &str) {
         let suggestion = match context {
             "assignment" => format!("确保赋值的表达式类型与变量声明类型 '{}' 匹配", expected),
@@ -645,6 +614,7 @@ impl SemanticAnalyzer {
 
     /// Report function call error with detailed suggestions
     /// 报告函数调用错误及详细建议
+    #[allow(dead_code)]
     fn report_function_call_error(&mut self, func_name: &str, error_type: &str, span: Span, details: &str) {
         let message = format!("函数调用错误: {} - {}", func_name, details);
         let suggestion = match error_type {
@@ -660,6 +630,7 @@ impl SemanticAnalyzer {
 
     /// Report array access error with detailed suggestions
     /// 报告数组访问错误及详细建议
+    #[allow(dead_code)]
     fn report_array_access_error(&mut self, error_type: &str, span: Span, details: &str) {
         let message = format!("数组访问错误: {}", details);
         let suggestion = match error_type {
@@ -674,8 +645,9 @@ impl SemanticAnalyzer {
 
     /// Report struct field error with detailed suggestions
     /// 报告结构体字段错误及详细建议
+    #[allow(dead_code)]
     fn report_struct_field_error(&mut self, struct_name: &str, field_name: &str, span: Span, error_type: &str) {
-        let message = match error_type {
+        let _message = match error_type {
             "field_not_found" => format!("结构体 '{}' 没有字段 '{}'", struct_name, field_name),
             "not_struct" => format!("'{}' 不是一个结构体类型", struct_name),
             _ => format!("结构体字段访问错误: {}.{}", struct_name, field_name),
@@ -692,8 +664,9 @@ impl SemanticAnalyzer {
 
     /// Report invalid operation error with detailed suggestions
     /// 报告无效操作错误及详细建议
+    #[allow(dead_code)]
     fn report_invalid_operation_error(&mut self, operation: &str, type_name: &str, span: Span) {
-        let message = format!("无效操作: '{}' 对于类型 '{}'", operation, type_name);
+        let _message = format!("无效操作: '{}' 对于类型 '{}'", operation, type_name);
         let suggestion = format!("检查类型 '{}' 是否支持操作 '{}'", type_name, operation);
 
         self.diagnostics.invalid_operation_error(span, operation, type_name, Some(&suggestion));
@@ -701,18 +674,21 @@ impl SemanticAnalyzer {
 
     /// Report variable redeclaration error
     /// 报告变量重复声明错误
+    #[allow(dead_code)]
     fn report_variable_redeclaration_error(&mut self, var_name: &str, span: Span, original_span: Span) {
         self.diagnostics.variable_redeclaration_error(span, var_name, original_span);
     }
 
     /// Report constant reassignment error
     /// 报告常量重新赋值错误
+    #[allow(dead_code)]
     fn report_constant_reassignment_error(&mut self, const_name: &str, span: Span) {
         self.diagnostics.constant_reassignment_error(span, const_name);
     }
 
     /// Report non-boolean condition error
     /// 报告非布尔条件错误
+    #[allow(dead_code)]
     fn report_non_boolean_condition_error(&mut self, condition_type: &str, span: Span, context: &str) {
         let context_str = match context {
             "if" => "如果语句",

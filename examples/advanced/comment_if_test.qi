@@ -1,9 +1,0 @@
-变量 a = 10;
-变量 b = 20;
-
-// Test if statement with comments
-如果 a < b {
-    变量 test_passed = 1; // Inline comment
-} /* Block comment after statement */ 否则 {
-    变量 test_failed = 0;
-}

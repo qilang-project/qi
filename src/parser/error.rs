@@ -489,7 +489,6 @@ impl ParserErrorRecovery {
             TokenKind::作为 => "作为".to_string(),
             TokenKind::在 => "在".to_string(),
             TokenKind::字符 => "字符".to_string(),
-            TokenKind::空 => "空".to_string(),
             TokenKind::参数 => "参数".to_string(),
             TokenKind::错误 => "错误".to_string(),
         }

@@ -162,7 +162,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let result = parser.parse(tokens);
         assert!(result.is_ok());
 
@@ -223,7 +223,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let result = parser.parse(tokens);
         assert!(result.is_ok());
 
@@ -303,7 +303,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let result = parser.parse(tokens);
         assert!(result.is_ok());
 
@@ -323,7 +323,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let ast = parser.parse(tokens).expect("Should parse successfully");
 
         let mut type_checker = TypeChecker::new();
@@ -390,7 +390,7 @@ mod tests {
             println!("  {}: {:?}", i, token);
         }
 
-        let mut parser = Parser::new();
+        let parser = Parser::new();
         let result = parser.parse(tokens);
 
         match result {
@@ -990,6 +990,32 @@ mod tests {
 
             // Clean up
             let _ = std::fs::remove_file("test_temp.qi");
+        }
+    }
+
+    #[test]
+    fn test_fixtures_integration() {
+        use std::fs;
+        use std::path::Path;
+        use crate::parser::Parser;
+
+        // Test that basic fixture files exist and can be parsed
+        let basic_dir = Path::new("tests/fixtures/basic");
+        if !basic_dir.exists() {
+            return; // Skip test if fixtures don't exist
+        }
+
+        let parser = Parser::new();
+
+        for entry in fs::read_dir(basic_dir).expect("Should read basic fixtures directory") {
+            let entry = entry.expect("Should read directory entry");
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "qi") {
+                let source = fs::read_to_string(&path).expect("Should read fixture file");
+                let result = parser.parse_source(&source);
+                assert!(result.is_ok(), "Fixture should parse: {}\nError: {:?}", path.display(), result.err());
+            }
         }
     }
 }

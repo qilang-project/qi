@@ -199,6 +199,69 @@ impl IrBuilder {
         format!("_Z_{}", hex_string)
     }
 
+    /// Infer a function return type from its body if not explicitly annotated
+    /// Returns Some(llvm_ty) if a non-void type is inferred, otherwise None
+    fn infer_return_type_from_body(&self, body: &[AstNode]) -> Option<String> {
+        // Walk statements recursively to find the first return with a value
+        fn infer_from_node(node: &AstNode) -> Option<String> {
+            match node {
+                AstNode::返回语句(ret) => {
+                    if let Some(expr) = &ret.value {
+                        if let AstNode::字面量表达式(lit) = &**expr {
+                            use crate::parser::ast::LiteralValue as LV;
+                            return Some(match &lit.value {
+                                LV::整数(_) => "i64".to_string(),
+                                LV::浮点数(_) => "double".to_string(),
+                                LV::布尔(_) => "i1".to_string(),
+                                LV::字符串(_) => "ptr".to_string(),
+                                LV::字符(_) => "i8".to_string(),
+                            });
+                        }
+                        return Some("i64".to_string());
+                    }
+                    None
+                }
+                AstNode::如果语句(if_stmt) => {
+                    // Check then branch, then else branch
+                    for s in &if_stmt.then_branch {
+                        if let Some(t) = infer_from_node(s) { return Some(t); }
+                    }
+                    if let Some(else_branch) = &if_stmt.else_branch {
+                        for s in else_branch {
+                            if let Some(t) = infer_from_node(s) { return Some(t); }
+                        }
+                    }
+                    None
+                }
+                AstNode::当语句(while_stmt) => {
+                    for s in &while_stmt.body {
+                        if let Some(t) = infer_from_node(s) { return Some(t); }
+                    }
+                    None
+                }
+                AstNode::循环语句(loop_stmt) => {
+                    for s in &loop_stmt.body {
+                        if let Some(t) = infer_from_node(s) { return Some(t); }
+                    }
+                    None
+                }
+                // Program and other containers
+                AstNode::程序(p) => {
+                    for s in &p.statements {
+                        if let Some(t) = infer_from_node(s) { return Some(t); }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        for stmt in body {
+            if let Some(t) = infer_from_node(stmt) { return Some(t); }
+        }
+        None
+    }
+
     /// Build IR for an AST node
     #[allow(unreachable_patterns)]
     fn build_node(&mut self, node: &AstNode) -> Result<String, String> {
@@ -210,15 +273,23 @@ impl IrBuilder {
                 Ok("main".to_string())
             }
             AstNode::变量声明(decl) => {
-                let var_name = format!("%{}", decl.name);
+                // Mangle variable names for Chinese characters
+                let var_name = if decl.name.chars().any(|c| !c.is_ascii()) {
+                    format!("%{}", self.mangle_function_name(&decl.name))
+                } else {
+                    format!("%{}", decl.name)
+                };
 
-                // Determine the type based on the initializer
+                // Determine the type based on the initializer or type annotation
                 let type_name = if let Some(initializer) = &decl.initializer {
                     match &**initializer {
                         AstNode::字面量表达式(literal) => {
                             match &literal.value {
                                 crate::parser::ast::LiteralValue::字符串(_) => "ptr",
-                                _ => &self.get_llvm_type(&decl.type_annotation)
+                                crate::parser::ast::LiteralValue::整数(_) => "i64",
+                                crate::parser::ast::LiteralValue::浮点数(_) => "double",
+                                crate::parser::ast::LiteralValue::布尔(_) => "i1",
+                                crate::parser::ast::LiteralValue::字符(_) => "i8",
                             }
                         }
                         _ => &self.get_llvm_type(&decl.type_annotation)
@@ -249,21 +320,25 @@ impl IrBuilder {
                 let func_name: String = match func_decl.name.as_str() {
                     "主函数" | "主" => "main".to_string(), // Special case for main function
                     name => {
-                        // Apply UTF-8 + Hex name mangling for non-ASCII names
                         if name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(name)
                         } else {
-                            name.to_string() // Keep ASCII names as-is
+                            name.to_string()
                         }
                     }
                 };
 
-                // Build parameter list
+                // Build parameter list with mangled names for Chinese identifiers
                 let params: Vec<String> = func_decl.parameters
                     .iter()
                     .map(|p| {
                         let type_str = self.get_llvm_type(&p.type_annotation);
-                        format!("{} {}", type_str, p.name)
+                        let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
+                            format!("%{}", self.mangle_function_name(&p.name))
+                        } else {
+                            format!("%{}", p.name)
+                        };
+                        format!("{} {}", type_str, param_name)
                     })
                     .collect();
 
@@ -273,16 +348,17 @@ impl IrBuilder {
                     format!(" {}", params.join(", "))
                 };
 
-                // Use i32 for main function return type, void for others unless specified
+                // Determine return type
                 let return_type = if func_decl.name == "主函数" || func_decl.name == "主" {
-                    "i32"
-                } else if func_decl.return_type.is_none() {
-                    "void"
+                    "i32".to_string()
+                } else if let Some(_) = func_decl.return_type {
+                    self.get_return_type(&func_decl.return_type)
                 } else {
-                    &self.get_return_type(&func_decl.return_type)
+                    // Infer from body if there's an explicit return with a value
+                    self.infer_return_type_from_body(&func_decl.body).unwrap_or_else(|| "void".to_string())
                 };
 
-                // Add function label
+                // Add function header label
                 self.add_instruction(IrInstruction::标签 {
                     name: format!("define {} @{}({}) {{", return_type, func_name, params_str),
                 });
@@ -292,23 +368,48 @@ impl IrBuilder {
                     name: "entry:".to_string(),
                 });
 
+                // Remember current instruction index to detect explicit returns
+                let start_len = self.instructions.len();
+
                 // Process function body
                 for stmt in &func_decl.body {
                     self.build_node(stmt)?;
                 }
 
-                // Add return statement for all functions if none exists
-                if func_decl.name == "主函数" || func_decl.name == "主" {
-                    self.add_instruction(IrInstruction::返回 { value: Some("0".to_string()) });
-                } else {
-                    // For non-main functions, return void if no explicit return
-                    self.add_instruction(IrInstruction::返回 { value: None });
+                // Detect whether an explicit return was emitted in this function
+                let mut has_explicit_return = false;
+                for instr in &self.instructions[start_len..] {
+                    if let IrInstruction::返回 { .. } = instr {
+                        has_explicit_return = true;
+                        break;
+                    }
+                }
+
+                // Add implicit return if needed
+                if !has_explicit_return {
+                    if func_decl.name == "主函数" || func_decl.name == "主" {
+                        // main returns i32 0 by default
+                        self.add_instruction(IrInstruction::返回 { value: Some("0".to_string()) });
+                    } else if return_type == "void" {
+                        // Non-main, no explicit return -> ret void
+                        self.add_instruction(IrInstruction::返回 { value: None });
+                    } else {
+                        // Non-void function but no explicit return: return zero of the type (simple default)
+                        let zero_val = match return_type.as_str() {
+                            "i1" => "0",
+                            "i8" => "0",
+                            "i32" => "0",
+                            "i64" => "0",
+                            "double" => "0.0",
+                            "ptr" => "null",
+                            _ => "0",
+                        };
+                        self.add_instruction(IrInstruction::返回 { value: Some(zero_val.to_string()) });
+                    }
                 }
 
                 // Add closing brace for the function
-                self.add_instruction(IrInstruction::标签 {
-                    name: "}".to_string(),
-                });
+                self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
 
                 Ok(func_name.to_string())
             }
@@ -323,40 +424,60 @@ impl IrBuilder {
                 Ok("ret".to_string())
             }
             AstNode::打印语句(print_stmt) => {
+                // Determine the type of the expression to select correct format
+                let expr_type = match &*print_stmt.value {
+                    AstNode::字面量表达式(literal) => {
+                        match &literal.value {
+                            crate::parser::ast::LiteralValue::字符串(_) => "string",
+                            crate::parser::ast::LiteralValue::整数(_) => "integer",
+                            crate::parser::ast::LiteralValue::浮点数(_) => "float",
+                            crate::parser::ast::LiteralValue::布尔(_) => "integer",
+                            crate::parser::ast::LiteralValue::字符(_) => "integer",
+                        }
+                    }
+                    AstNode::标识符表达式(_) => "integer", // Variables default to integer for now
+                    AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
+                    _ => "integer", // Default to integer
+                };
+
                 // Build the value to print
                 let value = self.build_node(&print_stmt.value)?;
 
                 // Increment counter to ensure unique names
                 self.temp_counter += 1;
 
-                // Check if it's a string literal (starts with @)
-                if value.starts_with('@') {
-                    // Direct string literal - create a format string with newline
-                    let format_name = format!("@.printf_format_{}", self.temp_counter);
-                    self.add_instruction(IrInstruction::字符串常量 {
-                        name: format!("{} = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1", format_name),
-                    });
+                // Create appropriate format string based on expression type
+                let format_name = format!("@.printf_format_{}", self.temp_counter);
+                let format_spec = match expr_type {
+                    "string" => {
+                        self.add_instruction(IrInstruction::字符串常量 {
+                            name: format!("{} = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1", format_name),
+                        });
+                        format_name
+                    }
+                    "float" => {
+                        let float_format = format!("@.printf_format_float_{}", self.temp_counter);
+                        self.add_instruction(IrInstruction::字符串常量 {
+                            name: format!("{} = private unnamed_addr constant [5 x i8] c\"%f\\0A\\00\", align 1", float_format),
+                        });
+                        float_format
+                    }
+                    _ => {
+                        // integer (default)
+                        self.add_instruction(IrInstruction::字符串常量 {
+                            name: format!("{} = private unnamed_addr constant [5 x i8] c\"%ld\\0A\\00\", align 1", format_name),
+                        });
+                        format_name
+                    }
+                };
 
-                    // Generate printf call matching clang's format
-                    self.add_instruction(IrInstruction::函数调用 {
-                        dest: Some(format!("%t{}", self.temp_counter + 1)),
-                        callee: "printf".to_string(),
-                        arguments: vec![format_name, value],
-                    });
-                } else {
-                    // Variable or expression - need to load it first
-                    let format_name = format!("@.printf_format_{}", self.temp_counter);
-                    self.add_instruction(IrInstruction::字符串常量 {
-                        name: format!("{} = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1", format_name),
-                    });
-
-                    // Generate printf call
-                    self.add_instruction(IrInstruction::函数调用 {
-                        dest: Some(format!("%t{}", self.temp_counter + 1)),
-                        callee: "printf".to_string(),
-                        arguments: vec![format_name, value],
-                    });
-                }
+                // Generate printf call
+                let printf_result = self.generate_temp();
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(printf_result.clone()),
+                    callee: "printf".to_string(),
+                    arguments: vec![format_spec, value],
+                });
 
                 Ok("print".to_string())
             }
@@ -364,7 +485,7 @@ impl IrBuilder {
                 self.build_node(&expr_stmt.expression)
             }
             AstNode::如果语句(if_stmt) => {
-                // Build condition
+                // Build condition - this should already generate a comparison (i1 result)
                 let condition = self.build_node(&if_stmt.condition)?;
 
                 // Generate labels
@@ -372,18 +493,10 @@ impl IrBuilder {
                 let else_label = self.generate_label();
                 let end_label = self.generate_label();
 
-                // Compare condition to 0 (false)
-                let temp = self.generate_temp();
-                self.add_instruction(IrInstruction::二元操作 {
-                    dest: temp.clone(),
-                    left: condition,
-                    operator: crate::parser::ast::BinaryOperator::不等于,
-                    right: "0".to_string(),
-                });
-
-                // Conditional jump
+                // The condition should already be an i1 value from the comparison operation
+                // Use it directly for conditional jump
                 self.add_instruction(IrInstruction::条件跳转 {
-                    condition: temp,
+                    condition: condition,
                     true_label: then_label.clone(),
                     false_label: else_label.clone(),
                 });
@@ -401,6 +514,8 @@ impl IrBuilder {
                     for stmt in else_branch {
                         self.build_node(stmt)?;
                     }
+                    // Add jump to end label after else branch
+                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
                 }
 
                 // End label
@@ -414,35 +529,29 @@ impl IrBuilder {
                 let body_label = self.generate_label();
                 let end_label = self.generate_label();
 
-                // Start label
+                // Start label (condition check)
                 self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
 
-                // Build condition
+                // Build condition - this should already generate a comparison (i1 result)
                 let condition = self.build_node(&while_stmt.condition)?;
 
-                // Compare condition to 0 (false)
-                let temp = self.generate_temp();
-                self.add_instruction(IrInstruction::二元操作 {
-                    dest: temp.clone(),
-                    left: condition,
-                    operator: crate::parser::ast::BinaryOperator::不等于,
-                    right: "0".to_string(),
+                // The condition should already be an i1 value from the comparison operation
+                // Use it directly for conditional jump
+                self.add_instruction(IrInstruction::条件跳转 {
+                    condition: condition,
+                    true_label: body_label.clone(), // Go to body if condition is true
+                    false_label: end_label.clone(), // Exit loop if condition is false
                 });
 
-                // Conditional jump to body
-                self.add_instruction(IrInstruction::条件跳转 {
-                    condition: temp,
-                    true_label: body_label.clone(),
-                    false_label: end_label.clone(),
-                });
+                // Body label
+                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
 
                 // Body
-                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
                 for stmt in &while_stmt.body {
                     self.build_node(stmt)?;
                 }
 
-                // Jump back to start
+                // Jump back to start to check condition again
                 self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
 
                 // End label
@@ -470,59 +579,6 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
 
                 Ok("loop".to_string())
-            }
-            AstNode::C风格对于语句(c_for_stmt) => {
-                // Generate labels
-                let start_label = self.generate_label();
-                let body_label = self.generate_label();
-                let update_label = self.generate_label();
-                let end_label = self.generate_label();
-
-                // Execute initializer
-                self.build_node(&c_for_stmt.initializer)?;
-
-                // Start label (condition check)
-                self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
-
-                // Build condition
-                let condition = self.build_node(&c_for_stmt.condition)?;
-
-                // Compare condition to 0 (false)
-                let temp = self.generate_temp();
-                self.add_instruction(IrInstruction::二元操作 {
-                    dest: temp.clone(),
-                    left: condition,
-                    operator: crate::parser::ast::BinaryOperator::不等于,
-                    right: "0".to_string(),
-                });
-
-                // Conditional jump to body or end
-                self.add_instruction(IrInstruction::条件跳转 {
-                    condition: temp,
-                    true_label: body_label.clone(),
-                    false_label: end_label.clone(),
-                });
-
-                // Body
-                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
-                for stmt in &c_for_stmt.body {
-                    self.build_node(stmt)?;
-                }
-
-                // Jump to update
-                self.add_instruction(IrInstruction::跳转 { label: update_label.clone() });
-
-                // Update section
-                self.add_instruction(IrInstruction::标签 { name: update_label.clone() });
-                self.build_node(&c_for_stmt.update)?;
-
-                // Jump back to condition check
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
-
-                // End label
-                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
-
-                Ok("c_for".to_string())
             }
             AstNode::对于语句(_for_stmt) => {
                 // Range-based for loops are more complex, skip for now
@@ -568,12 +624,19 @@ impl IrBuilder {
             AstNode::赋值表达式(assign_expr) => {
                 let value = self.build_node(&assign_expr.value)?;
 
+                // Mangle the target variable name if needed
+                let target_name = if assign_expr.target.chars().any(|c| !c.is_ascii()) {
+                    format!("%{}", self.mangle_function_name(&assign_expr.target))
+                } else {
+                    format!("%{}", assign_expr.target)
+                };
+
                 // For assignment, we store the value to the variable
                 self.add_instruction(IrInstruction::存储 {
-                    target: assign_expr.target.clone(),
+                    target: target_name.clone(),
                     value,
                 });
-                Ok(assign_expr.target.clone())
+                Ok(target_name)
             }
             AstNode::函数调用表达式(call_expr) => {
                 // Evaluate arguments
@@ -607,9 +670,17 @@ impl IrBuilder {
             }
             AstNode::标识符表达式(ident) => {
                 let temp = self.generate_temp();
+                let var_name = if ident.name.chars().any(|c| !c.is_ascii()) {
+                    format!("%{}", self.mangle_function_name(&ident.name))
+                } else {
+                    format!("%{}", ident.name)
+                };
+
+                // For simplicity, always load from variables
+                // Parameters will be treated as variables for now
                 self.add_instruction(IrInstruction::加载 {
                     dest: temp.clone(),
-                    source: format!("%{}", ident.name),
+                    source: var_name,
                 });
                 Ok(temp)
             }
@@ -764,7 +835,7 @@ impl IrBuilder {
         let mut ir = String::new();
         let mut string_constants = Vec::new();
         let mut other_instructions = Vec::new();
-    let _temp_counter = self.temp_counter; // reserved for future use
+        let _temp_counter = self.temp_counter; // reserved for future use
         let mut current_function_ret_ty: Option<String> = None;
 
         // Separate string constants from other instructions
@@ -801,6 +872,19 @@ impl IrBuilder {
             ir.push('\n');
         }
 
+        // Helper to get zero value by type
+        fn zero_for_ty(ty: &str) -> &'static str {
+            match ty {
+                "i1" => "0",
+                "i8" => "0",
+                "i32" => "0",
+                "i64" => "0",
+                "double" => "0.0",
+                "ptr" => "null",
+                _ => "0",
+            }
+        }
+
         // Process other instructions
         for instruction in &other_instructions {
             match instruction {
@@ -808,64 +892,100 @@ impl IrBuilder {
                     ir.push_str(&format!("{} = alloca {}\n", dest, type_name));
                 }
                 IrInstruction::存储 { target, value } => {
-                    // Determine the type based on the target variable name
-                    let (value_type, _pointer_type) = if target.contains("message") || target.starts_with("%str") {
-                        ("ptr", "ptr")
-                    } else if value.contains("getelementptr") || value.starts_with('@') {
-                        ("ptr", "ptr")
+                    // Determine the type based on the value
+                    let value_type = if value.starts_with('@') || value.contains("getelementptr") {
+                        "ptr"
                     } else if value.contains('.') {
-                        ("double", "ptr")
+                        "double"
                     } else if value == "0" || value == "1" {
-                        ("i1", "ptr")
+                        // Check if this might be a boolean by looking at nearby context
+                        "i1"
+                    } else if value.parse::<i64>().is_ok() {
+                        "i64"
                     } else {
-                        ("i64", "ptr")
+                        // Default to i64 for variables
+                        "i64"
                     };
                     ir.push_str(&format!("store {} {}, ptr {}\n", value_type, value, target));
                 }
                 IrInstruction::加载 { dest, source } => {
-                    // Determine the correct type based on the source
-                    let load_type = if source.starts_with("%message") {
-                        // Assume message is a string pointer
-                        "ptr"
-                    } else {
-                        "i64"
-                    };
+                    // For now, default to i64 for most variables
+                    // In a more sophisticated implementation, we'd track variable types
+                    let load_type = "i64";
                     ir.push_str(&format!("{} = load {}, ptr {}\n", dest, load_type, source));
                 }
                 IrInstruction::二元操作 { dest, left, operator, right } => {
-                    let (op_str, return_type) = match operator {
-                        crate::parser::ast::BinaryOperator::加 => ("add", "i64"),
-                        crate::parser::ast::BinaryOperator::减 => ("sub", "i64"),
-                        crate::parser::ast::BinaryOperator::乘 => ("mul", "i64"),
-                        crate::parser::ast::BinaryOperator::除 => ("sdiv", "i64"),
-                        crate::parser::ast::BinaryOperator::取余 => ("srem", "i64"),
-                        crate::parser::ast::BinaryOperator::等于 => ("icmp eq", "i1"),
-                        crate::parser::ast::BinaryOperator::不等于 => ("icmp ne", "i1"),
-                        crate::parser::ast::BinaryOperator::大于 => ("icmp sgt", "i1"),
-                        crate::parser::ast::BinaryOperator::小于 => ("icmp slt", "i1"),
-                        crate::parser::ast::BinaryOperator::大于等于 => ("icmp sge", "i1"),
-                        crate::parser::ast::BinaryOperator::小于等于 => ("icmp sle", "i1"),
-                        crate::parser::ast::BinaryOperator::与 => ("and", "i1"),
-                        crate::parser::ast::BinaryOperator::或 => ("or", "i1"),
+                    // Determine operation type based on operands
+                    let is_float = left.contains('.') || right.contains('.');
+                    let (op_str, operand_type, return_type) = if is_float {
+                        match operator {
+                            crate::parser::ast::BinaryOperator::加 => ("fadd", "double", "double"),
+                            crate::parser::ast::BinaryOperator::减 => ("fsub", "double", "double"),
+                            crate::parser::ast::BinaryOperator::乘 => ("fmul", "double", "double"),
+                            crate::parser::ast::BinaryOperator::除 => ("fdiv", "double", "double"),
+                            crate::parser::ast::BinaryOperator::取余 => ("frem", "double", "double"),
+                            crate::parser::ast::BinaryOperator::等于 => ("fcmp oeq", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::不等于 => ("fcmp one", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::大于 => ("fcmp ogt", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::小于 => ("fcmp olt", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::大于等于 => ("fcmp oge", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::小于等于 => ("fcmp ole", "double", "i1"),
+                            crate::parser::ast::BinaryOperator::与 => ("and", "i1", "i1"),
+                            crate::parser::ast::BinaryOperator::或 => ("or", "i1", "i1"),
+                        }
+                    } else {
+                        match operator {
+                            crate::parser::ast::BinaryOperator::加 => ("add", "i64", "i64"),
+                            crate::parser::ast::BinaryOperator::减 => ("sub", "i64", "i64"),
+                            crate::parser::ast::BinaryOperator::乘 => ("mul", "i64", "i64"),
+                            crate::parser::ast::BinaryOperator::除 => ("sdiv", "i64", "i64"),
+                            crate::parser::ast::BinaryOperator::取余 => ("srem", "i64", "i64"),
+                            crate::parser::ast::BinaryOperator::等于 => ("icmp eq", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::不等于 => ("icmp ne", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::大于 => ("icmp sgt", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::小于 => ("icmp slt", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::大于等于 => ("icmp sge", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::小于等于 => ("icmp sle", "i64", "i1"),
+                            crate::parser::ast::BinaryOperator::与 => ("and", "i1", "i1"),
+                            crate::parser::ast::BinaryOperator::或 => ("or", "i1", "i1"),
+                        }
                     };
 
-                    ir.push_str(&format!("{} = {} {} {}, {}\n", dest, op_str, return_type, left, right));
+                    // For comparison operations (icmp, fcmp), use operand_type
+                    // For arithmetic operations, use return_type
+                    let type_for_instruction = if op_str.starts_with("icmp") || op_str.starts_with("fcmp") {
+                        operand_type
+                    } else {
+                        return_type
+                    };
+
+                    ir.push_str(&format!("{} = {} {} {}, {}\n", dest, op_str, type_for_instruction, left, right));
                 }
                 IrInstruction::函数调用 { dest, callee, arguments } => {
                     if callee == "printf" && !arguments.is_empty() {
                         // Handle printf calls matching clang's format
                         let mut processed_args = Vec::new();
 
-                        for arg in arguments {
-                            if arg.starts_with('@') {
-                                // String constant - pass as ptr noundef
+                        for (i, arg) in arguments.iter().enumerate() {
+                            if i == 0 {
+                                // First argument is always format string
                                 processed_args.push(format!("ptr noundef {}", arg));
-                            } else if arg.starts_with('%') {
-                                // Variable or temporary - pass as ptr
+                            } else if arg.starts_with('@') {
+                                // String constant - pass as ptr
                                 processed_args.push(format!("ptr {}", arg));
+                            } else if arg.starts_with('%') {
+                                // Variable or temporary - need to determine type
+                                // For simplicity, assume i64 for most variables
+                                processed_args.push(format!("i64 {}", arg));
                             } else {
-                                // Other values
-                                processed_args.push(arg.clone());
+                                // Literal values - pass as-is with appropriate type
+                                if arg.parse::<i64>().is_ok() {
+                                    processed_args.push(format!("i64 {}", arg));
+                                } else if arg.parse::<f64>().is_ok() {
+                                    processed_args.push(format!("double {}", arg));
+                                } else {
+                                    processed_args.push(arg.clone());
+                                }
                             }
                         }
 
@@ -897,8 +1017,16 @@ impl IrBuilder {
                     }
                 }
                 IrInstruction::返回 { value: None } => {
-                    // If current function is void, emit ret void; otherwise emit a default zero return? Here keep ret void.
-                    ir.push_str("ret void\n");
+                    // If current function is non-void, emit a typed zero; else ret void
+                    if let Some(ref ty) = current_function_ret_ty {
+                        if ty != "void" {
+                            ir.push_str(&format!("ret {} {}\n", ty, zero_for_ty(ty)));
+                        } else {
+                            ir.push_str("ret void\n");
+                        }
+                    } else {
+                        ir.push_str("ret void\n");
+                    }
                 }
                 IrInstruction::返回 { value: Some(val) } => {
                     // Use the current function return type if known
@@ -972,12 +1100,6 @@ impl IrBuilder {
                     // String constants are handled separately at the beginning
                 }
             }
-        }
-
-        // ALWAYS add closing brace for main function - no conditions
-        // This is a simple fix for the missing closing brace issue
-        if ir.contains("define i32 @main") && !ir.ends_with("}\n") {
-            ir.push_str("}\n");
         }
 
         Ok(ir)

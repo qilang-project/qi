@@ -135,13 +135,6 @@ ForStatement: AstNode = {
         body,
         span: Default::default(),
     }),
-    "对于" "(" <initializer:Expr> ";" <condition:Expr> ";" <update:Expr> ")" "{" <body:Statement*> "}" => AstNode::C风格对于语句(CStyleForStatement {
-        initializer: Box::new(initializer),
-        condition: Box::new(condition),
-        update: Box::new(update),
-        body,
-        span: Default::default(),
-    }),
 };
 
 // Expression precedence from lowest to highest
@@ -411,4 +404,3 @@ IdentifierExpression: AstNode = {
         span: Default::default(),
     }),
 };
-

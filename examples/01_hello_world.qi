@@ -1,0 +1,6 @@
+// 01_hello_world.qi - 最基础的 Qi 程序
+// Basic Hello World program in Qi
+
+函数 主() {
+    打印 "你好，Qi语言！";
+}

@@ -17,7 +17,6 @@ pub enum AstNode {
     循环语句(LoopStatement),
     当语句(WhileStatement),
     对于语句(ForStatement),
-    C风格对于语句(CStyleForStatement),
     返回语句(ReturnStatement),
     打印语句(PrintStatement),
     表达式语句(ExpressionStatement),
@@ -109,16 +108,6 @@ pub struct WhileStatement {
 pub struct ForStatement {
     pub variable: String,
     pub range: Box<AstNode>,
-    pub body: Vec<AstNode>,
-    pub span: Span,
-}
-
-/// C-style for statement
-#[derive(Debug, Clone)]
-pub struct CStyleForStatement {
-    pub initializer: Box<AstNode>,
-    pub condition: Box<AstNode>,
-    pub update: Box<AstNode>,
     pub body: Vec<AstNode>,
     pub span: Span,
 }
