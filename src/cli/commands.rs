@@ -409,14 +409,46 @@ impl Cli {
     async fn check_files(
         &self,
         files: Vec<PathBuf>,
-        _config: crate::config::CompilerConfig,
+        config: crate::config::CompilerConfig,
     ) -> Result<(), CliError> {
         if files.is_empty() {
             return Err(CliError::NoInputFiles);
         }
 
-        // TODO: Implement syntax checking
-        println!("检查文件: {:?}", files);
+        use crate::parser::Parser;
+        let parser = Parser::new();
+        let mut all_passed = true;
+
+        for file in &files {
+            if config.verbose {
+                println!("正在检查文件: {:?}", file);
+            }
+
+            let source = std::fs::read_to_string(file)
+                .map_err(|e| CliError::Io(e))?;
+
+            match parser.parse_source(&source) {
+                Ok(_) => {
+                    if config.verbose {
+                        println!("  ✓ 语法正确");
+                    }
+                }
+                Err(parse_error) => {
+                    all_passed = false;
+                    eprintln!("  ✗ 语法错误: {:?} ({:?})", parse_error, file);
+                }
+            }
+        }
+
+        if all_passed {
+            if !config.verbose {
+                println!("所有文件语法检查通过");
+            }
+        } else {
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                "语法检查失败".to_string()
+            )));
+        }
 
         Ok(())
     }

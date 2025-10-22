@@ -33,6 +33,8 @@ pub enum TokenKind {
     结构体,    // struct
     枚举,      // enum
     数组,      // array
+    方法,      // method
+    自己,      // self
 
     // Single-character tokens
     赋值,      // =

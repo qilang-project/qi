@@ -770,20 +770,57 @@ impl IrBuilder {
             AstNode::赋值表达式(assign_expr) => {
                 let value = self.build_node(&assign_expr.value)?;
 
-                // Mangle the target variable name if needed
-                let target_name = if assign_expr.target.chars().any(|c| !c.is_ascii()) {
-                    format!("%{}", self.mangle_function_name(&assign_expr.target))
-                } else {
-                    format!("%{}", assign_expr.target)
-                };
+                // Handle different LValue types
+                match assign_expr.target.as_ref() {
+                    AstNode::标识符表达式(ident) => {
+                        // Simple variable assignment: x = value
+                        let target_name = if ident.name.chars().any(|c| !c.is_ascii()) {
+                            format!("%{}", self.mangle_function_name(&ident.name))
+                        } else {
+                            format!("%{}", ident.name)
+                        };
 
-                // For assignment, we store the value to the variable
-                self.add_instruction(IrInstruction::存储 {
-                    target: target_name.clone(),
-                    value,
-                    value_type: None, // Type will be inferred
-                });
-                Ok(target_name)
+                        self.add_instruction(IrInstruction::存储 {
+                            target: target_name.clone(),
+                            value,
+                            value_type: None,
+                        });
+                        Ok(target_name)
+                    }
+                    AstNode::字段访问表达式(field_access) => {
+                        // Field assignment: obj.field = value
+                        // First get the field address
+                        let object = self.build_node(&field_access.object)?;
+                        let field_addr = format!("%t{}", self.generate_temp());
+                        self.add_instruction(IrInstruction::字段访问 {
+                            dest: field_addr.clone(),
+                            object,
+                            field: field_access.field.clone(),
+                        });
+                        
+                        // Then store the value to that address
+                        self.add_instruction(IrInstruction::存储 {
+                            target: field_addr.clone(),
+                            value,
+                            value_type: None,
+                        });
+                        Ok(field_addr)
+                    }
+                    AstNode::数组访问表达式(array_access) => {
+                        // Array element assignment: arr[index] = value
+                        let array = self.build_node(&array_access.array)?;
+                        let index = self.build_node(&array_access.index)?;
+                        
+                        // Generate instruction to store to array element
+                        self.add_instruction(IrInstruction::数组存储 {
+                            array: array.clone(),
+                            index,
+                            value,
+                        });
+                        Ok(array)
+                    }
+                    _ => Err(format!("Invalid assignment target: {:?}", assign_expr.target)),
+                }
             }
             AstNode::函数调用表达式(call_expr) => {
                 // Evaluate arguments

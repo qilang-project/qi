@@ -90,6 +90,8 @@ impl TypeChecker {
             AstNode::打印语句(print_stmt) => self.check_print_statement(print_stmt),
             AstNode::循环语句(loop_stmt) => self.check_loop_statement(loop_stmt),
             AstNode::块语句(block_stmt) => self.check_block_statement(block_stmt),
+            AstNode::方法声明(method_decl) => self.check_method_declaration(method_decl),
+            AstNode::方法调用表达式(method_call) => self.check_method_call(method_call),
         }
     }
 
@@ -275,23 +277,45 @@ impl TypeChecker {
     fn check_assignment(&mut self, assignment: &crate::parser::ast::AssignmentExpression) -> Result<TypeNode, TypeError> {
         let value_type = self.check(&assignment.value)?;
 
-        // Check if target variable exists
-        match self.symbol_table.lookup_symbol(&assignment.target) {
-            Some(symbol) => {
-                if symbol.type_node == value_type {
-                    Ok(value_type)
-                } else {
-                    Err(TypeError::TypeMismatch {
-                        expected: format!("{:?}", symbol.type_node),
-                        actual: format!("{:?}", value_type),
+        // Check the target (LValue) and get its type
+        let target_type = match assignment.target.as_ref() {
+            AstNode::标识符表达式(ident) => {
+                // Simple variable assignment
+                match self.symbol_table.lookup_symbol(&ident.name) {
+                    Some(symbol) => Ok(symbol.type_node.clone()),
+                    None => Err(TypeError::UndefinedVariable {
+                        name: ident.name.clone(),
                         span: assignment.span,
-                    })
+                    }),
                 }
             }
-            None => Err(TypeError::UndefinedVariable {
-                name: assignment.target.clone(),
+            AstNode::字段访问表达式(field_access) => {
+                // Field assignment (e.g., obj.field = value)
+                self.check_field_access(field_access)
+            }
+            AstNode::数组访问表达式(array_access) => {
+                // Array element assignment (e.g., arr[0] = value)
+                self.check_array_access(array_access)
+            }
+            _ => {
+                // This should never happen if the grammar is correct
+                Err(TypeError::InvalidOperation {
+                    operation: "assignment".to_string(),
+                    type_name: "invalid target".to_string(),
+                    span: assignment.span,
+                })
+            }
+        }?;
+
+        // Check type compatibility
+        if target_type == value_type {
+            Ok(value_type)
+        } else {
+            Err(TypeError::TypeMismatch {
+                expected: format!("{:?}", target_type),
+                actual: format!("{:?}", value_type),
                 span: assignment.span,
-            }),
+            })
         }
     }
 
@@ -770,6 +794,7 @@ impl TypeChecker {
         let struct_type = TypeNode::结构体类型(crate::parser::ast::StructType {
             name: struct_decl.name.clone(),
             fields: struct_decl.fields.clone(),
+            methods: vec![], // 方法在方法声明时添加
         });
 
         // Create type info for struct
@@ -852,6 +877,105 @@ impl TypeChecker {
 
     pub fn get_errors(&self) -> &[TypeError] {
         &self.errors
+    }
+
+    fn check_method_declaration(&mut self, method_decl: &crate::parser::ast::MethodDeclaration) -> Result<TypeNode, TypeError> {
+        // 1. 验证接收者类型存在
+        if self.symbol_table.lookup_symbol(&method_decl.receiver_type).is_none() {
+            return Err(TypeError::General {
+                message: format!("接收者类型 '{}' 未定义", method_decl.receiver_type),
+                span: method_decl.span,
+            });
+        }
+
+        // 2. 进入新作用域处理方法体
+        self.symbol_table.enter_scope();
+
+        // 添加接收者参数到作用域 (类似 self 参数)
+        let receiver_symbol = crate::semantic::symbol_table::Symbol {
+            name: method_decl.receiver_name.clone(),
+            kind: crate::semantic::symbol_table::SymbolKind::变量,
+            type_node: TypeNode::基础类型(BasicType::整数), // 简化：暂时用整数类型
+            scope_level: self.symbol_table.current_scope(),
+            span: method_decl.span,
+            is_mutable: method_decl.is_receiver_mutable,
+        };
+
+        if let Err(e) = self.symbol_table.define_symbol(receiver_symbol) {
+            self.errors.push(TypeError::General {
+                message: format!("接收者参数定义错误: {}", e),
+                span: method_decl.span,
+            });
+        }
+
+        // 添加方法参数到作用域
+        for param in &method_decl.parameters {
+            let param_type = param.type_annotation.clone()
+                .unwrap_or_else(|| TypeNode::基础类型(BasicType::空));
+
+            let param_symbol = crate::semantic::symbol_table::Symbol {
+                name: param.name.clone(),
+                kind: crate::semantic::symbol_table::SymbolKind::变量,
+                type_node: param_type,
+                scope_level: self.symbol_table.current_scope(),
+                span: param.span,
+                is_mutable: false,
+            };
+
+            if let Err(e) = self.symbol_table.define_symbol(param_symbol) {
+                self.errors.push(TypeError::General {
+                    message: format!("参数定义错误: {}", e),
+                    span: param.span,
+                });
+            }
+        }
+
+        // 类型检查方法体
+        for stmt in &method_decl.body {
+            if let Err(e) = self.check(stmt) {
+                self.errors.push(e);
+            }
+        }
+
+        self.symbol_table.exit_scope();
+
+        // 3. TODO: 将方法添加到类型的方法列表
+        // 这需要在符号表中维护类型的方法信息
+
+        // 返回方法返回类型
+        Ok(method_decl.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
+    }
+
+    fn check_method_call(&mut self, method_call: &crate::parser::ast::MethodCallExpression) -> Result<TypeNode, TypeError> {
+        // 1. 检查对象类型
+        let object_type = self.check(&method_call.object)?;
+
+        // 2. 验证对象是结构体类型
+        match &object_type {
+            TypeNode::结构体类型(_struct_type) => {
+                // TODO: 验证方法存在于结构体类型中
+                // 目前简化处理：假设方法存在
+                
+                // 3. TODO: 检查参数类型
+                // 需要获取方法签名并验证参数
+                for arg in &method_call.arguments {
+                    if let Err(e) = self.check(arg) {
+                        self.errors.push(e);
+                    }
+                }
+
+                // 4. TODO: 返回方法的实际返回类型
+                // 目前简化：返回整数类型
+                Ok(TypeNode::基础类型(BasicType::整数))
+            }
+            _ => {
+                Err(TypeError::InvalidOperation {
+                    operation: format!("方法调用 '{}'", method_call.method_name),
+                    type_name: format!("{:?}", object_type),
+                    span: method_call.span,
+                })
+            }
+        }
     }
 }
 

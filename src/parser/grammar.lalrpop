@@ -58,6 +58,89 @@ VariableDeclaration: AstNode = {
 };
 
 FunctionDeclaration: AstNode = {
+    // 带接收器的函数(方法) - Go 风格
+    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: params,
+        return_type: None,
+        body,
+        span: Default::default(),
+    }),
+    // 可变接收器的函数
+    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: true,
+        method_name: name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: true,
+        method_name: name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: true,
+        method_name: name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        span: Default::default(),
+    }),
+    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+        receiver_name,
+        receiver_type,
+        is_receiver_mutable: true,
+        method_name: name,
+        parameters: params,
+        return_type: None,
+        body,
+        span: Default::default(),
+    }),
+    // 普通函数(无接收器)
     "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
@@ -111,6 +194,12 @@ Block: Vec<AstNode> = {
 };
 
 IfStatement: AstNode = {
+    IfWithElse,
+    IfWithoutElse,
+};
+
+// If statements with else (higher precedence to resolve dangling-else)
+IfWithElse: AstNode = {
     "如果" <condition:Expr> <then_branch:Block> "否则" <else_branch:Block> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
@@ -122,7 +211,7 @@ IfStatement: AstNode = {
             span: Default::default(),
         })
     },
-    "如果" <condition:Expr> <then_branch:Block> "否则如果" <else_if:IfStatement> => {
+    "如果" <condition:Expr> <then_branch:Block> "否则如果" <else_if:IfWithElse> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
@@ -130,6 +219,10 @@ IfStatement: AstNode = {
             span: Default::default(),
         })
     },
+};
+
+// If statements without else
+IfWithoutElse: AstNode = {
     "如果" <condition:Expr> <then_branch:Block> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
@@ -161,162 +254,174 @@ StructDeclaration: AstNode = {
     "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields,
+        methods: vec![],
         span: Default::default(),
     }),
     "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields: vec![],
+        methods: vec![],
         span: Default::default(),
     }),
 };
 
 StructFieldList: Vec<StructField> = {
-    <first:StructField> => vec![first],
-    <first:StructField> "," <rest:StructFieldList> => {
-        let mut rest = rest;
-        rest.insert(0, first);
-        rest
-    },
+    <fields:Comma<StructField>> => fields,
 };
 
 StructField: StructField = {
     <name:Identifier> ":" <type_annotation:Type> => StructField {
         name,
         type_annotation,
+        is_embedded: false,
         span: Default::default(),
     },
 };
-
-// Expression precedence from lowest to highest
+// Expression hierarchy using tiered approach like Solang
+// Each level handles operators of the same precedence
 Expr: AstNode = {
-    <left:Expr> "=" <right:LogicalExpr> => AstNode::赋值表达式(AssignmentExpression {
-        target: match left {
-            AstNode::标识符表达式(ident) => ident.name,
-            _ => "unknown".to_string(),
-        },
-        value: Box::new(right),
-        span: Default::default(),
-    }),
-    LogicalExpr,
+    Precedence1,
 };
 
-LogicalExpr: AstNode = {
-    <left:LogicalExpr> "与" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::与,
-        right: Box::new(right),
-        span: Default::default(),
-    }),
-    <left:LogicalExpr> "&&" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::与,
-        right: Box::new(right),
-        span: Default::default(),
-    }),
-    <left:LogicalExpr> "或" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+// Level 1: Assignment (lowest precedence, right-associative)
+// Only Precedence8 (postfix) expressions can be assigned to (identifiers, field access, array subscript)
+Precedence1: AstNode = {
+    <left:Precedence8> "=" <right:Precedence1> => {
+        // Validate that left is a valid LValue
+        match &left {
+            AstNode::标识符表达式(_) |
+            AstNode::字段访问表达式(_) |
+            AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left),
+                    value: Box::new(right),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target: only identifiers, field access, and array subscript are allowed")
+        }
+    },
+    Precedence2,
+};
+
+// Level 2: Logical OR
+Precedence2: AstNode = {
+    <left:Precedence2> "或" <right:Precedence3> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::或,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:LogicalExpr> "||" <right:Term> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence2> "||" <right:Precedence3> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::或,
         right: Box::new(right),
         span: Default::default(),
     }),
-    Term,
+    Precedence3,
 };
 
-Term: AstNode = {
-    <left:Term> "==" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+// Level 3: Logical AND
+Precedence3: AstNode = {
+    <left:Precedence3> "与" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::与,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence3> "&&" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::与,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    Precedence4,
+};
+
+// Level 4: Comparison operators
+Precedence4: AstNode = {
+    <left:Precedence5> "==" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::等于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Term> "!=" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> "!=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::不等于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Term> ">" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> ">" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Term> ">=" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> ">=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于等于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Term> "<" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> "<" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Term> "<=" <right:Factor> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> "<=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于等于,
         right: Box::new(right),
         span: Default::default(),
     }),
-    Factor,
+    Precedence5,
 };
 
-Factor: AstNode = {
-    <left:Factor> "+" <right:Primary> => AstNode::二元操作表达式(BinaryExpression {
+// Level 5: Addition and subtraction
+Precedence5: AstNode = {
+    <left:Precedence5> "+" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::加,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Factor> "-" <right:Primary> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5> "-" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,
         right: Box::new(right),
         span: Default::default(),
     }),
-    Primary,
+    Precedence6,
 };
 
-Primary: AstNode = {
-    <left:Primary> "*" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
+// Level 6: Multiplication, division, and modulo
+Precedence6: AstNode = {
+    <left:Precedence6> "*" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::乘,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Primary> "/" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence6> "/" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::除,
         right: Box::new(right),
         span: Default::default(),
     }),
-    <left:Primary> "%" <right:Atom> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence6> "%" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
         right: Box::new(right),
         span: Default::default(),
     }),
-    Atom,
+    Precedence7,
 };
 
-Atom: AstNode = {
-    BooleanLiteral,
-    IntegerLiteral,
-    FloatLiteral,
-    StringLiteral,
-    CharLiteral,
-    ArrayLiteral,
-    IdentifierExpression,
-    FunctionCall,
-    ArrayAccessExpression,
-    "-" <expr:Atom> => {
+// Level 7: Unary operators
+Precedence7: AstNode = {
+    "-" <expr:Precedence7> => {
         match expr {
             AstNode::字面量表达式(lit) => AstNode::字面量表达式(LiteralExpression {
                 value: match lit.value {
@@ -326,38 +431,88 @@ Atom: AstNode = {
                 },
                 span: Default::default(),
             }),
-            other => other, // For non-literals, would need to support unary negation operator
+            other => other,
         }
     },
+    Precedence8,
+};
+
+// Level 8: Postfix operators (field access, array subscript, function call)
+Precedence8: AstNode = {
+    <base:Precedence8> "." <field:Identifier> => {
+        AstNode::字段访问表达式(FieldAccessExpression {
+            object: Box::new(base),
+            field,
+            span: Default::default(),
+        })
+    },
+    <array:Precedence8> "[" <index:Expr> "]" => {
+        AstNode::数组访问表达式(ArrayAccessExpression {
+            array: Box::new(array),
+            index: Box::new(index),
+            span: Default::default(),
+        })
+    },
+    <callee:Precedence8> "(" <args:ExprList> ")" => {
+        match callee {
+            AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                callee: ident.name,
+                arguments: args,
+                span: Default::default(),
+            }),
+            _ => callee,
+        }
+    },
+    <callee:Precedence8> "(" ")" => {
+        match callee {
+            AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                callee: ident.name,
+                arguments: vec![],
+                span: Default::default(),
+            }),
+            _ => callee,
+        }
+    },
+    Primary,
+};
+
+// Primary expressions (literals, identifiers, parenthesized expressions)
+// Note: Struct literals are parsed in Atom within parentheses to avoid ambiguity
+// with blocks in control flow statements. To use struct literals as expressions,
+// wrap them in parentheses: (Point { x: 1, y: 2 })
+Primary: AstNode = {
+    <name:Identifier> => AstNode::标识符表达式(IdentifierExpression {
+        name,
+        span: Default::default(),
+    }),
+    Atom,
+};
+
+// Atomic expressions - the lowest level
+// Struct literals are only allowed here (in parentheses) to avoid ambiguity
+Atom: AstNode = {
+    BooleanLiteral,
+    IntegerLiteral,
+    FloatLiteral,
+    StringLiteral,
+    CharLiteral,
+    ArrayLiteral,
+    // Parenthesized expressions, including struct literals
     "(" <Expr> ")",
-};
-
-FunctionCall: AstNode = {
-    <callee:IdentifierExpression> "(" ")" => AstNode::函数调用表达式(FunctionCallExpression {
-        callee: match callee {
-            AstNode::标识符表达式(ident) => ident.name,
-            _ => "unknown".to_string(),
-        },
-        arguments: vec![],
+    // Struct literals (must be in safe context or parenthes)
+    "(" <name:Identifier> "{" <fields:StructFieldValueList> "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields,
         span: Default::default(),
     }),
-    <callee:IdentifierExpression> "(" <args:ExprList> ")" => AstNode::函数调用表达式(FunctionCallExpression {
-        callee: match callee {
-            AstNode::标识符表达式(ident) => ident.name,
-            _ => "unknown".to_string(),
-        },
-        arguments: args,
+    "(" <name:Identifier> "{" "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields: vec![],
         span: Default::default(),
     }),
 };
 
-ArrayAccessExpression: AstNode = {
-    <array:IdentifierExpression> "[" <index:Expr> "]" => AstNode::数组访问表达式(ArrayAccessExpression {
-        array: Box::new(array),
-        index: Box::new(index),
-        span: Default::default(),
-    }),
-};
+
 
 BooleanLiteral: AstNode = {
     "真" => AstNode::字面量表达式(LiteralExpression {
@@ -409,47 +564,50 @@ ArrayLiteral: AstNode = {
     }),
 };
 
-ExprList: Vec<AstNode> = {
-    <first:Expr> => vec![first],
-    <first:Expr> "," <rest:ExprList> => {
+
+StructFieldValueList: Vec<StructFieldValue> = {
+    <fields:Comma<StructFieldValue>> => fields,
+};
+
+StructFieldValue: StructFieldValue = {
+    <name:Identifier> ":" <value:Expr> => StructFieldValue {
+        name,
+        value: Box::new(value),
+        span: Default::default(),
+    },
+};
+
+ParameterList: Vec<Parameter> = {
+    <params:Comma<Parameter>> => params,
+};
+
+Parameter: Parameter = {
+    <name:Identifier> ":" <type_annotation:Type> => Parameter {
+        name,
+        type_annotation: Some(type_annotation),
+        span: Default::default(),
+    },
+    <name:Identifier> => Parameter {
+        name,
+        type_annotation: None,
+        span: Default::default(),
+    },
+};
+
+// Helper macro for comma-separated lists
+Comma<T>: Vec<T> = {
+    <first:T> => vec![first],
+    <first:T> "," <rest:Comma<T>> => {
         let mut rest = rest;
         rest.insert(0, first);
         rest
     },
 };
 
-ParameterList: Vec<Parameter> = {
-    <first:Identifier> ":" <type_annotation:Type> => vec![Parameter {
-        name: first,
-        type_annotation: Some(type_annotation),
-        span: Default::default(),
-    }],
-    <first:Identifier> => vec![Parameter {
-        name: first,
-        type_annotation: None,
-        span: Default::default(),
-    }],
-    <first:Identifier> ":" <type_annotation:Type> "," <rest:ParameterList> => {
-        let mut rest = rest;
-        rest.insert(0, Parameter {
-            name: first,
-            type_annotation: Some(type_annotation),
-            span: Default::default(),
-        });
-        rest
-    },
-    <first:Identifier> "," <rest:ParameterList> => {
-        let mut rest = rest;
-        rest.insert(0, Parameter {
-            name: first,
-            type_annotation: None,
-            span: Default::default(),
-        });
-        rest
-    },
+ExprList: Vec<AstNode> = {
+    <exprs:Comma<Expr>> => exprs,
 };
 
-// Type annotations
 Type: TypeNode = {
     "整数" => TypeNode::基础类型(BasicType::整数),
     "浮点数" => TypeNode::基础类型(BasicType::浮点数),
@@ -457,22 +615,20 @@ Type: TypeNode = {
     "字符" => TypeNode::基础类型(BasicType::字符),
     "字符串" => TypeNode::基础类型(BasicType::字符串),
     "空" => TypeNode::基础类型(BasicType::空),
-    // Array type: 数组<类型>
     "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
         element_type: Box::new(element_type),
         size: None,
     }),
+    // Custom types (struct names, etc.)
+    <name:Identifier> => TypeNode::自定义类型(name),
 };
 
-// Regular identifiers (not keywords)
 Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
-    // Match Chinese identifiers (Unicode characters outside ASCII range)
-    <id:r"[\u4e00-\u9fff][\u4e00-\u9fff0-9_]*"> => {
-        // Filter out Chinese keywords but allow other Chinese identifiers
+    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
         match id {
-            "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "真" | "假" |
-            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" =>
+            "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "在" | "真" | "假" |
+            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" | "打印" =>
                 panic!("Keyword used as identifier: {}", id),
             _ => id.to_string(),
         }

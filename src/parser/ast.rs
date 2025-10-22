@@ -12,6 +12,7 @@ pub enum AstNode {
     变量声明(VariableDeclaration),
     函数声明(FunctionDeclaration),
     结构体声明(StructDeclaration),
+    方法声明(MethodDeclaration),
     枚举声明(EnumDeclaration),
     如果语句(IfStatement),
     循环语句(LoopStatement),
@@ -33,6 +34,7 @@ pub enum AstNode {
     字符串连接表达式(StringConcatExpression),
     结构体实例化表达式(StructLiteralExpression),
     字段访问表达式(FieldAccessExpression),
+    方法调用表达式(MethodCallExpression),
 }
 
 /// Program node
@@ -190,10 +192,19 @@ pub struct FunctionCallExpression {
     pub span: Span,
 }
 
+/// Method call expression (e.g., obj.method(args))
+#[derive(Debug, Clone)]
+pub struct MethodCallExpression {
+    pub object: Box<AstNode>,
+    pub method_name: String,
+    pub arguments: Vec<AstNode>,
+    pub span: Span,
+}
+
 /// Assignment expression
 #[derive(Debug, Clone)]
 pub struct AssignmentExpression {
-    pub target: String,
+    pub target: Box<AstNode>,  // Changed from String to Box<AstNode> to support complex LValues
     pub value: Box<AstNode>,
     pub span: Span,
 }
@@ -206,6 +217,7 @@ pub enum TypeNode {
     数组类型(ArrayType),
     结构体类型(StructType),
     枚举类型(EnumType),
+    自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
 }
 
 /// Basic types
@@ -261,6 +273,7 @@ pub struct StringConcatExpression {
 pub struct StructDeclaration {
     pub name: String,
     pub fields: Vec<StructField>,
+    pub methods: Vec<MethodDeclaration>,
     pub span: Span,
 }
 
@@ -269,6 +282,20 @@ pub struct StructDeclaration {
 pub struct StructField {
     pub name: String,
     pub type_annotation: TypeNode,
+    pub is_embedded: bool, // 支持嵌入字段（类似Go的匿名字段）
+    pub span: Span,
+}
+
+/// Method declaration (associated with a struct)
+#[derive(Debug, Clone)]
+pub struct MethodDeclaration {
+    pub receiver_name: String,        // 接收者变量名，如 "自己"
+    pub receiver_type: String,        // 接收者类型名
+    pub is_receiver_mutable: bool,    // 接收者是否可变
+    pub method_name: String,          // 方法名
+    pub parameters: Vec<Parameter>,   // 方法参数
+    pub return_type: Option<TypeNode>, // 返回类型
+    pub body: Vec<AstNode>,           // 方法体
     pub span: Span,
 }
 
@@ -293,6 +320,7 @@ pub struct EnumVariant {
 pub struct StructType {
     pub name: String,
     pub fields: Vec<StructField>,
+    pub methods: Vec<String>, // 方法名列表
 }
 
 /// Enum type

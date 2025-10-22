@@ -454,6 +454,7 @@ impl SemanticAnalyzer {
         let struct_type = crate::parser::ast::StructType {
             name: struct_decl.name.clone(),
             fields: struct_decl.fields.clone(),
+            methods: vec![], // 方法在方法声明时添加
         };
 
         // Add struct type to symbol table

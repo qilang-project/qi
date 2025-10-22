@@ -36,7 +36,7 @@ fn test_symbol_table_scope_management() {
 
 #[test]
 fn test_semantic_analyzer_creation() {
-    let mut analyzer = SemanticAnalyzer::new();
+    let analyzer = SemanticAnalyzer::new();
     assert!(!analyzer.has_critical_errors());
 
     let (error_count, warning_count) = analyzer.get_error_summary();
@@ -179,7 +179,7 @@ fn test_function_declaration_in_analyzer() {
 
 #[test]
 fn test_analyzer_diagnostics() {
-    let mut analyzer = SemanticAnalyzer::new();
+    let analyzer = SemanticAnalyzer::new();
     let formatted = analyzer.format_diagnostics();
 
     // Should format diagnostics (empty initially)
@@ -188,7 +188,7 @@ fn test_analyzer_diagnostics() {
 
 #[test]
 fn test_analyzer_error_summary() {
-    let mut analyzer = SemanticAnalyzer::new();
+    let analyzer = SemanticAnalyzer::new();
 
     let (error_count, warning_count) = analyzer.get_error_summary();
     assert_eq!(error_count, 0);
@@ -242,8 +242,8 @@ fn test_symbol_table_error_handling() {
     // Try to exit global scope (should not panic)
     symbol_table.exit_scope();
 
-    // Should handle gracefully
-    assert!(symbol_table.current_scope() >= 0);
+    // Should still be at global scope (scope 0)
+    assert_eq!(symbol_table.current_scope(), 0);
 }
 
 #[test]
@@ -301,15 +301,15 @@ fn test_return_statement_analysis() {
 
 #[test]
 fn test_analyzer_warnings() {
-    let mut analyzer = SemanticAnalyzer::new();
+    let analyzer = SemanticAnalyzer::new();
 
     // Test adding warnings (if supported)
     // This tests the warning infrastructure
     let (error_count, warning_count) = analyzer.get_error_summary();
     assert_eq!(error_count, 0);
 
-    // Warning count might be 0 or more depending on implementation
-    assert!(warning_count >= 0);
+    // Warning count should be 0 for empty analyzer
+    assert_eq!(warning_count, 0);
 }
 
 #[test]

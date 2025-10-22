@@ -485,6 +485,8 @@ impl ParserErrorRecovery {
             TokenKind::结构体 => "结构体".to_string(),
             TokenKind::枚举 => "枚举".to_string(),
             TokenKind::数组 => "数组".to_string(),
+            TokenKind::方法 => "方法".to_string(),
+            TokenKind::自己 => "自己".to_string(),
             TokenKind::导入 => "导入".to_string(),
             TokenKind::作为 => "作为".to_string(),
             TokenKind::在 => "在".to_string(),
