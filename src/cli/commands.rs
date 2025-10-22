@@ -298,6 +298,7 @@ impl Cli {
 
         if config.verbose {
             println!("正在编译 LLVM IR 到可执行文件...");
+            println!("  集成 Qi Runtime 支持...");
         }
 
         // Compile LLVM IR to object file
@@ -318,9 +319,19 @@ impl Cli {
             )));
         }
 
-        // Link to create executable
+        // Build runtime library if needed
+        self.ensure_runtime_library_built(&config)?;
+
+        // Link with Qi runtime to create executable
+        let runtime_lib_path = self.get_runtime_library_path()?;
+        
+        if config.verbose {
+            println!("  链接 Qi Runtime 库: {:?}", runtime_lib_path);
+        }
+
         let output = Command::new("clang")
             .arg(&temp_executable.with_extension("o"))
+            .arg(&runtime_lib_path)
             .arg("-o")
             .arg(&temp_executable)
             .output()
@@ -517,6 +528,82 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    /// Ensure the Qi runtime library is built
+    fn ensure_runtime_library_built(&self, config: &crate::config::CompilerConfig) -> Result<(), CliError> {
+        use std::process::Command;
+
+        let runtime_lib = self.get_runtime_library_path()?;
+        
+        // Check if runtime library exists
+        if runtime_lib.exists() {
+            if config.verbose {
+                println!("  Runtime 库已存在: {:?}", runtime_lib);
+            }
+            return Ok(());
+        }
+
+        if config.verbose {
+            println!("  构建 Qi Runtime 库...");
+        }
+
+        // Build the runtime library using cargo
+        let project_root = std::env::current_dir()?;
+        
+        let output = Command::new("cargo")
+            .arg("build")
+            .arg("--release")
+            .arg("--lib")
+            .current_dir(&project_root)
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("Runtime 库构建失败: {}", error)
+            )));
+        }
+
+        if config.verbose {
+            println!("  Runtime 库构建完成");
+        }
+
+        Ok(())
+    }
+
+    /// Get the path to the Qi runtime library
+    fn get_runtime_library_path(&self) -> Result<std::path::PathBuf, CliError> {
+        let project_root = std::env::current_dir()?;
+        
+        // Try release build first
+        let release_lib = project_root.join("target/release/libqi_compiler.a");
+        if release_lib.exists() {
+            return Ok(release_lib);
+        }
+
+        // Try release build with rlib extension
+        let release_rlib = project_root.join("target/release/libqi_compiler.rlib");
+        if release_rlib.exists() {
+            return Ok(release_rlib);
+        }
+
+        // Try debug build
+        let debug_lib = project_root.join("target/debug/libqi_compiler.a");
+        if debug_lib.exists() {
+            return Ok(debug_lib);
+        }
+
+        // Try debug build with rlib extension
+        let debug_rlib = project_root.join("target/debug/libqi_compiler.rlib");
+        if debug_rlib.exists() {
+            return Ok(debug_rlib);
+        }
+
+        Err(CliError::Compilation(crate::CompilerError::Codegen(
+            "找不到 Qi Runtime 库文件".to_string()
+        )))
     }
 }
 

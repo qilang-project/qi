@@ -330,6 +330,8 @@ impl IrBuilder {
                     }
                 };
 
+                let is_main = func_decl.name == "主函数" || func_decl.name == "主" || func_name == "main";
+
                 // Build parameter list with mangled names for Chinese identifiers
                 let params: Vec<String> = func_decl.parameters
                     .iter()
@@ -351,7 +353,7 @@ impl IrBuilder {
                 };
 
                 // Determine return type
-                let return_type = if func_decl.name == "主函数" || func_decl.name == "主" {
+                let return_type = if is_main {
                     "i32".to_string()
                 } else if let Some(_) = func_decl.return_type {
                     self.get_return_type(&func_decl.return_type)
@@ -369,6 +371,16 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 {
                     name: "entry:".to_string(),
                 });
+
+                // If this is main, initialize the runtime
+                if is_main {
+                    let init_result = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(init_result),
+                        callee: "qi_runtime_initialize".to_string(),
+                        arguments: vec![],
+                    });
+                }
 
                 // Remember current instruction index to detect explicit returns
                 let start_len = self.instructions.len();
@@ -389,7 +401,14 @@ impl IrBuilder {
 
                 // Add implicit return if needed
                 if !has_explicit_return {
-                    if func_decl.name == "主函数" || func_decl.name == "主" {
+                    if is_main {
+                        // Call runtime shutdown before returning from main
+                        let shutdown_result = self.generate_temp();
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(shutdown_result),
+                            callee: "qi_runtime_shutdown".to_string(),
+                            arguments: vec![],
+                        });
                         // main returns i32 0 by default
                         self.add_instruction(IrInstruction::返回 { value: Some("0".to_string()) });
                     } else if return_type == "void" {
@@ -426,7 +445,7 @@ impl IrBuilder {
                 Ok("ret".to_string())
             }
             AstNode::打印语句(print_stmt) => {
-                // Determine the type of the expression to select correct format
+                // Determine the type of the expression to select correct runtime function
                 let expr_type = match &*print_stmt.value {
                     AstNode::字面量表达式(literal) => {
                         match &literal.value {
@@ -445,40 +464,18 @@ impl IrBuilder {
                 // Build the value to print
                 let value = self.build_node(&print_stmt.value)?;
 
-                // Increment counter to ensure unique names
-                self.temp_counter += 1;
-
-                // Create appropriate format string based on expression type
-                let format_name = format!("@.printf_format_{}", self.temp_counter);
-                let format_spec = match expr_type {
-                    "string" => {
-                        self.add_instruction(IrInstruction::字符串常量 {
-                            name: format!("{} = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1", format_name),
-                        });
-                        format_name
-                    }
-                    "float" => {
-                        let float_format = format!("@.printf_format_float_{}", self.temp_counter);
-                        self.add_instruction(IrInstruction::字符串常量 {
-                            name: format!("{} = private unnamed_addr constant [5 x i8] c\"%f\\0A\\00\", align 1", float_format),
-                        });
-                        float_format
-                    }
-                    _ => {
-                        // integer (default)
-                        self.add_instruction(IrInstruction::字符串常量 {
-                            name: format!("{} = private unnamed_addr constant [5 x i8] c\"%ld\\0A\\00\", align 1", format_name),
-                        });
-                        format_name
-                    }
+                // Generate runtime print call based on type
+                let runtime_func = match expr_type {
+                    "string" => "qi_runtime_println",
+                    "float" => "qi_runtime_println_float",
+                    _ => "qi_runtime_println_int",
                 };
 
-                // Generate printf call
-                let printf_result = self.generate_temp();
+                let result = self.generate_temp();
                 self.add_instruction(IrInstruction::函数调用 {
-                    dest: Some(printf_result.clone()),
-                    callee: "printf".to_string(),
-                    arguments: vec![format_spec, value],
+                    dest: Some(result.clone()),
+                    callee: runtime_func.to_string(),
+                    arguments: vec![value],
                 });
 
                 Ok("print".to_string())
@@ -1046,7 +1043,22 @@ impl IrBuilder {
         ir.push_str("; Generated by Qi Language Compiler\n");
         ir.push_str("; Module ID = 'qi_program'\n\n");
 
-        // Add external function declarations
+        // Add Qi Runtime function declarations
+        ir.push_str("; Qi Runtime declarations\n");
+        ir.push_str("declare i32 @qi_runtime_initialize()\n");
+        ir.push_str("declare i32 @qi_runtime_shutdown()\n");
+        ir.push_str("declare i32 @qi_runtime_execute(ptr, i64)\n");
+        ir.push_str("declare i32 @qi_runtime_print(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_println(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_print_int(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_println_int(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_print_float(double)\n");
+        ir.push_str("declare i32 @qi_runtime_println_float(double)\n");
+        ir.push_str("declare ptr @qi_runtime_alloc(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_dealloc(ptr, i64)\n");
+        ir.push_str("\n");
+
+        // Add external function declarations (for backward compatibility)
         ir.push_str("declare i32 @printf(ptr, ...)\n");
         ir.push_str("declare ptr @qi_string_concat(ptr, ptr)\n\n");
 
@@ -1190,16 +1202,38 @@ impl IrBuilder {
                             }
                         }
                     } else {
-                        // Regular function call
-                        let args_str = if arguments.is_empty() {
-                            String::new()
+                        // Regular function call - determine argument types and return type
+                        let mut typed_args = Vec::new();
+                        
+                        for arg in arguments {
+                            if arg.starts_with('@') {
+                                // String constant
+                                typed_args.push(format!("ptr {}", arg));
+                            } else if arg.starts_with('%') {
+                                // Variable or temporary - assume i64 for now
+                                typed_args.push(format!("i64 {}", arg));
+                            } else {
+                                // Literal values
+                                if arg.contains('.') {
+                                    typed_args.push(format!("double {}", arg));
+                                } else {
+                                    typed_args.push(format!("i64 {}", arg));
+                                }
+                            }
+                        }
+                        
+                        let args_str = typed_args.join(", ");
+                        
+                        // Determine return type based on function name
+                        let ret_type = if callee.starts_with("qi_runtime_") {
+                            "i32" // All runtime functions return i32
                         } else {
-                            format!(" {}", arguments.join(", "))
+                            "i64" // Default to i64
                         };
 
                         match dest {
                             Some(dest_var) => {
-                                ir.push_str(&format!("{} = call i64 @{}({})\n", dest_var, callee, args_str));
+                                ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, callee, args_str));
                             }
                             None => {
                                 ir.push_str(&format!("call void @{}({})\n", callee, args_str));

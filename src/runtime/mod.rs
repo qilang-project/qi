@@ -28,6 +28,7 @@ pub mod memory;
 pub mod io;
 pub mod stdlib;
 pub mod error;
+pub mod executor;
 
 // Legacy modules for backward compatibility
 pub mod strings;
