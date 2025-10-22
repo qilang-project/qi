@@ -24,7 +24,6 @@ use std::sync::{Arc, Mutex};
 use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// Comprehensive debugging system for Qi runtime
-#[derive(Debug)]
 pub struct DebugSystem {
     /// Stack trace collector
     stack_collector: Arc<StackTraceCollector>,

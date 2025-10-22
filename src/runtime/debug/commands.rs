@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::{DebugSystem, VariableValue};
 
 /// Debug command processor
-#[derive(Debug)]
 pub struct DebugCommandProcessor {
     /// Debug module for logging
     debug_module: std::sync::Arc<crate::runtime::stdlib::debug::DebugModule>,
@@ -435,7 +434,7 @@ impl DebugCommandHandler for UnregisterCommand {
             });
         }
 
-        match debug_system.unregister_variable(&args[0]) {
+        match debug_system.variable_inspector.unregister_variable(&args[0]) {
             Ok(()) => Ok(CommandResult {
                 success: true,
                 message: format!("变量 '{}' 已注销", args[0]),
@@ -770,7 +769,7 @@ impl DebugCommandHandler for ExitCommand {
 // Implement VariableValue for common types used in commands
 impl VariableValue for f64 {
     fn get_type_name(&self) -> &str { "f64" }
-    fn to_string(&self) -> String { self.to_string() }
+    fn to_string(&self) -> String { format!("{:?}", self) }
     fn get_address(&self) -> Option<usize> { Some(self as *const f64 as usize) }
     fn get_size(&self) -> Option<usize> { Some(8) }
     fn get_metadata(&self) -> super::VariableMetadata {
@@ -785,7 +784,7 @@ impl VariableValue for f64 {
 
 impl VariableValue for bool {
     fn get_type_name(&self) -> &str { "bool" }
-    fn to_string(&self) -> String { self.to_string() }
+    fn to_string(&self) -> String { format!("{:?}", self) }
     fn get_address(&self) -> Option<usize> { Some(self as *const bool as usize) }
     fn get_size(&self) -> Option<usize> { Some(1) }
     fn get_metadata(&self) -> super::VariableMetadata {

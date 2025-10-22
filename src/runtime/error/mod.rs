@@ -349,11 +349,12 @@ impl StackFrame {
 
     /// Format stack frame as string
     pub fn format(&self) -> String {
-        let mut result = format!("{} ({}:{})", self.function, self.file,
+        let mut result = format!("{} ({}:{}", self.function, self.file,
             self.line.unwrap_or(0));
         if let Some(col) = self.column {
             result.push_str(&format!(":{}", col));
         }
+        result.push(')');
         result
     }
 }

@@ -379,10 +379,26 @@ impl IoInterface {
 
     /// Print to standard output
     pub fn print(&self, text: &str) -> RuntimeResult<()> {
+        let start_time = Instant::now();
+        let operation_id = self.generate_operation_id("print");
+
         let result = {
             let mut stdio = self.stdio.lock().unwrap();
             stdio.print(text)
         };
+
+        let duration = start_time.elapsed();
+        self.record_operation(&IoOperation {
+            id: operation_id,
+            operation_type: "print".to_string(),
+            resource: "stdout".to_string(),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            duration_ms: duration.as_millis() as f64,
+            bytes_transferred: text.len() as u64,
+            success: result.is_ok(),
+            error_message: result.as_ref().err().map(|e| e.to_string()),
+            metadata: HashMap::new(),
+        });
 
         result.map_err(|e| RuntimeError::io_error(e.to_string(), "标准输出失败".to_string()))
     }

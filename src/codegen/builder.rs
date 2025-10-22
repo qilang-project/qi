@@ -207,12 +207,23 @@ impl IrBuilder {
     /// Map Chinese function names to runtime function names
     fn map_to_runtime_function(&self, name: &str) -> Option<String> {
         let runtime_func = match name {
+            // HEX function names (direct mappings to avoid Chinese restrictions)
+            "e6_89_93_e5_b0_b0" => Some("e6_89_93_e5_b0_b0"), // 打印
+            "e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4" => Some("e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4"), // 打印整数
+            "e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4" => Some("e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4"), // 打印浮点数
+            "e6_b1_b2_e5_b9_b3_e6_a0_b9" => Some("e6_b1_b2_e5_b9_b3_e6_a0_b9"), // 求平方根
+            "e6_b1_82_e7_bb_9d_e5_80_bc" => Some("e6_b1_82_e7_bb_9d_e5_80_bc"), // 求绝对值
+            "e5_ad_97_e7_ac_a6_e9_95_bf" => Some("e5_ad_97_e7_ac_a6_e9_95_bf"), // 字符串长度
+            "e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5" => Some("e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5"), // 字符串连接
+            "e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6" => Some("e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6"), // 读取文件
+            "e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6" => Some("e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6"), // 写入文件
+
             // String operations
             "字符串长度" | "长度" => Some("qi_runtime_string_length"),
             "字符串连接" | "连接" => Some("qi_runtime_string_concat"),
             "字符串切片" | "切片" => Some("qi_runtime_string_slice"),
             "字符串比较" | "比较" => Some("qi_runtime_string_compare"),
-            
+
             // Math operations
             "平方根" | "根号" => Some("qi_runtime_math_sqrt"),
             "幂" | "次方" => Some("qi_runtime_math_pow"),
@@ -223,7 +234,7 @@ impl IrBuilder {
             "向下取整" | "floor" => Some("qi_runtime_math_floor"),
             "向上取整" | "ceil" => Some("qi_runtime_math_ceil"),
             "四舍五入" | "round" => Some("qi_runtime_math_round"),
-            
+
             // File I/O operations
             "打开文件" | "打开" => Some("qi_runtime_file_open"),
             "读取文件" | "读取" => Some("qi_runtime_file_read"),
@@ -231,11 +242,11 @@ impl IrBuilder {
             "关闭文件" | "关闭" => Some("qi_runtime_file_close"),
             "读取文本" => Some("qi_runtime_file_read_string"),
             "写入文本" => Some("qi_runtime_file_write_string"),
-            
+
             // Array operations
             "创建数组" => Some("qi_runtime_array_create"),
             "数组长度" => Some("qi_runtime_array_length"),
-            
+
             // Type conversions
             "整数转字符串" => Some("qi_runtime_int_to_string"),
             "浮点数转字符串" => Some("qi_runtime_float_to_string"),
@@ -243,19 +254,19 @@ impl IrBuilder {
             "字符串转浮点数" => Some("qi_runtime_string_to_float"),
             "整数转浮点数" => Some("qi_runtime_int_to_float"),
             "浮点数转整数" => Some("qi_runtime_float_to_int"),
-            
+
             // Memory operations
             "分配内存" => Some("qi_runtime_alloc"),
             "释放内存" => Some("qi_runtime_dealloc"),
-            
+
             // Print operations (for explicit calls)
             "打印整数" => Some("qi_runtime_print_int"),
             "打印浮点数" => Some("qi_runtime_print_float"),
             "打印字符串" => Some("qi_runtime_print"),
-            
+
             _ => None,
         };
-        
+
         runtime_func.map(|s| s.to_string())
     }
 
@@ -1179,6 +1190,20 @@ impl IrBuilder {
         ir.push_str("declare double @qi_runtime_string_to_float(ptr)\n");
         ir.push_str("declare double @qi_runtime_int_to_float(i64)\n");
         ir.push_str("declare i64 @qi_runtime_float_to_int(double)\n");
+        ir.push_str("\n");
+
+        // Add Chinese function aliases (HEX names)
+        ir.push_str("; Chinese function aliases (HEX names)\n");
+        ir.push_str("declare i32 @e6_89_93_e5_b0_b0(ptr)\n"); // 打印
+        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e8_a1_8c(ptr)\n"); // 打印行
+        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4(i64)\n"); // 打印整数
+        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4(double)\n"); // 打印浮点数
+        ir.push_str("declare double @e6_b1_b2_e5_b9_b3_e6_a0_b9(double)\n"); // 求平方根
+        ir.push_str("declare i64 @e6_b1_82_e7_bb_9d_e5_80_bc(i64)\n"); // 求绝对值
+        ir.push_str("declare i64 @e5_ad_97_e7_ac_a6_e9_95_bf(ptr)\n"); // 字符串长度
+        ir.push_str("declare ptr @e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5(ptr, ptr)\n"); // 字符串连接
+        ir.push_str("declare ptr @e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6(ptr)\n"); // 读取文件
+        ir.push_str("declare i32 @e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6(ptr, ptr)\n"); // 写入文件
         ir.push_str("\n");
 
         // Add external function declarations (for backward compatibility)

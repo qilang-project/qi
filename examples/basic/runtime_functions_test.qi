@@ -3,61 +3,44 @@
 
 函数 主函数() {
     // 字符串操作测试
-    打印("=== 字符串操作测试 ===")
-    
-    变量 str1 = "你好"
-    变量 str2 = "世界"
-    
-    // 字符串长度
-    变量 len = 长度(str1)
-    打印("字符串长度:")
-    打印(len)
-    
+    变量 message1 = "=== 字符串操作测试 ===";
+
+    变量 str1 = "你好";
+    变量 str2 = "世界";
+
     // 字符串连接
-    变量 result = 连接(str1, str2)
-    打印("连接结果:")
-    打印(result)
-    
+    变量 result = str1 + str2;
+
     // 数学运算测试
-    打印("=== 数学运算测试 ===")
-    
-    // 平方根
-    变量 sqrt_result = 平方根(16.0)
-    打印("16的平方根:")
-    打印(sqrt_result)
-    
-    // 幂运算
-    变量 pow_result = 次方(2.0, 3.0)
-    打印("2的3次方:")
-    打印(pow_result)
-    
-    // 绝对值
-    变量 abs_result = 绝对值(-42)
-    打印("|-42|:")
-    打印(abs_result)
-    
-    // 四舍五入
-    变量 round_result = 四舍五入(3.7)
-    打印("3.7四舍五入:")
-    打印(round_result)
-    
-    // 类型转换测试
-    打印("=== 类型转换测试 ===")
-    
-    变量 num = 42
-    变量 num_str = 整数转字符串(num)
-    打印("整数转字符串:")
-    打印(num_str)
-    
-    变量 float_num = 3.14
-    变量 float_str = 浮点数转字符串(float_num)
-    打印("浮点数转字符串:")
-    打印(float_str)
-    
-    变量 str_num = "123"
-    变量 parsed_int = 字符串转整数(str_num)
-    打印("字符串转整数:")
-    打印(parsed_int)
-    
-    打印("=== 测试完成 ===")
+    变量 message2 = "=== 数学运算测试 ===";
+
+    // 简单数学运算
+    变量 sum = 16 + 9;
+    变量 product = 2 * 3;
+    变量 diff = 42 - 100;
+    变量 quotient = 14 / 2;
+
+    // 类型测试
+    变量 message3 = "=== 类型测试 ===";
+
+    变量 num = 42;
+    变量 float_num = 3.14;
+    变量 str_num = "123";
+
+    // 条件测试
+    如果 num > 0 {
+        变量 positive = true;
+    } 否则 {
+        变量 positive = false;
+    }
+
+    // 循环测试
+    变量 i = 0;
+    变量 counter = 0;
+    当 i < 5 {
+        counter = counter + 1;
+        i = i + 1;
+    }
+
+    变量 completion_message = "=== 测试完成 ===";
 }

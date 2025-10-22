@@ -96,6 +96,48 @@ pub enum Commands {
         args: Vec<String>,
     },
 
+    /// 编译并调试运行 Qi 程序
+    Debug {
+        /// 源文件路径
+        #[arg(required = true)]
+        file: PathBuf,
+
+        /// 运行参数
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+
+        /// 启用详细调试信息
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// 启用内存监控
+        #[arg(long)]
+        memory: bool,
+
+        /// 启用性能分析
+        #[arg(long)]
+        profile: bool,
+
+        /// 启用堆栈跟踪
+        #[arg(long)]
+        stack_trace: bool,
+    },
+
+    /// 检查并运行 Qi 程序（仅语法检查后运行）
+    CheckRun {
+        /// 源文件路径
+        #[arg(required = true)]
+        file: PathBuf,
+
+        /// 运行参数
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+
+        /// 仅检查不运行
+        #[arg(short, long)]
+        check_only: bool,
+    },
+
     /// 显示编译器信息
     Info {
         /// 显示版本信息
@@ -123,6 +165,12 @@ impl Cli {
             }
             Some(Commands::Run { file, args }) => {
                 self.run_file(file, args, config).await
+            }
+            Some(Commands::Debug { file, args, verbose, memory, profile, stack_trace }) => {
+                self.debug_file(file, args, verbose, memory, profile, stack_trace, config).await
+            }
+            Some(Commands::CheckRun { file, args, check_only }) => {
+                self.check_run_file(file, args, check_only, config).await
             }
             Some(Commands::Check { files }) => {
                 self.check_files(files, config).await
@@ -573,36 +621,404 @@ impl Cli {
         Ok(())
     }
 
+    /// 调试运行 Qi 程序
+    async fn debug_file(
+        &self,
+        file: PathBuf,
+        args: Vec<String>,
+        verbose: bool,
+        memory: bool,
+        profile: bool,
+        stack_trace: bool,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        println!("🐛 调试模式启动");
+        println!("📁 源文件: {:?}", file);
+        println!("⚙️  调试选项:");
+        if verbose { println!("  • 详细输出: 开启"); }
+        if memory { println!("  • 内存监控: 开启"); }
+        if profile { println!("  • 性能分析: 开启"); }
+        if stack_trace { println!("  • 堆栈跟踪: 开启"); }
+        println!();
+
+        // Step 1: Parse and analyze the source file for debugging info
+        if verbose || config.verbose {
+            println!("🔍 正在分析源代码...");
+        }
+
+        use crate::parser::Parser;
+        let parser = Parser::new();
+        let source = std::fs::read_to_string(&file)
+            .map_err(|e| CliError::Io(e))?;
+
+        let program = match parser.parse_source(&source) {
+            Ok(program) => {
+                if verbose || config.verbose {
+                    println!("  ✓ 语法解析成功");
+                    println!("  📊 解析统计:");
+                    println!("    - 语句数量: {}", program.statements.len());
+                }
+                program
+            }
+            Err(parse_error) => {
+                eprintln!("  ✗ 语法错误: {:?}", parse_error);
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    format!("语法解析失败: {:?}", parse_error)
+                )));
+            }
+        };
+
+        // Step 2: Compile with debug symbols
+        if verbose || config.verbose {
+            println!("🛠️  正在编译调试版本...");
+        }
+
+        let mut debug_config = config.clone();
+        debug_config.debug_symbols = true;
+        debug_config.optimization_level = crate::config::OptimizationLevel::None; // No optimization for debugging
+
+        let compiler = crate::QiCompiler::with_config(debug_config);
+        let compile_result = compiler.compile(file.clone())?;
+
+        if verbose || config.verbose {
+            println!("  ✓ 编译完成，耗时: {}ms", compile_result.duration_ms);
+            println!("  🔧 调试符号: 已嵌入");
+            println!("  ⚡ 优化级别: 无");
+        }
+
+        // Step 3: Setup debugging environment
+        if verbose || config.verbose {
+            println!("🎯 正在设置调试环境...");
+        }
+
+        // Setup environment variables for debugging
+        let mut debug_env = std::env::vars().collect::<std::collections::HashMap<String, String>>();
+
+        if memory {
+            debug_env.insert("QI_DEBUG_MEMORY".to_string(), "1".to_string());
+            println!("  💾 内存监控: 已启用");
+        }
+
+        if profile {
+            debug_env.insert("QI_DEBUG_PROFILE".to_string(), "1".to_string());
+            println!("  📈 性能分析: 已启用");
+        }
+
+        if stack_trace {
+            debug_env.insert("QI_DEBUG_STACK".to_string(), "1".to_string());
+            println!("  📚 堆栈跟踪: 已启用");
+        }
+
+        println!();
+        println!("🚀 启动调试运行...");
+        println!("📝 运行参数: {:?}", args);
+        println!("{}", "─".repeat(50));
+
+        // Step 4: Run with debugging
+        match config.target_platform {
+            crate::config::CompilationTarget::MacOS => {
+                self.run_macos_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+            }
+            crate::config::CompilationTarget::Linux => {
+                self.run_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+            }
+            crate::config::CompilationTarget::Windows => {
+                self.run_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+            }
+            crate::config::CompilationTarget::Wasm => {
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    "WebAssembly 调试运行暂未实现".to_string()
+                )));
+            }
+        }
+
+        println!("{}", "─".repeat(50));
+        println!("✅ 调试运行完成");
+
+        Ok(())
+    }
+
+    /// 检查并运行 Qi 程序
+    async fn check_run_file(
+        &self,
+        file: PathBuf,
+        args: Vec<String>,
+        check_only: bool,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        println!("🔍 检查并运行模式");
+        println!("📁 源文件: {:?}", file);
+
+        if check_only {
+            println!("📋 模式: 仅检查");
+        } else {
+            println!("🏃 模式: 检查并运行");
+        }
+        println!();
+
+        // Step 1: Parse and validate
+        if config.verbose {
+            println!("🔍 正在语法检查...");
+        }
+
+        use crate::parser::Parser;
+        let parser = Parser::new();
+        let source = std::fs::read_to_string(&file)
+            .map_err(|e| CliError::Io(e))?;
+
+        let program = match parser.parse_source(&source) {
+            Ok(program) => {
+                println!("  ✓ 语法检查通过");
+                if config.verbose {
+                    println!("  📊 语句数量: {}", program.statements.len());
+                }
+                program
+            }
+            Err(parse_error) => {
+                eprintln!("  ✗ 语法错误: {:?}", parse_error);
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    format!("语法检查失败: {:?}", parse_error)
+                )));
+            }
+        };
+
+        if check_only {
+            println!("✅ 检查完成，程序语法正确");
+            return Ok(());
+        }
+
+        // Step 2: Compile and run
+        if config.verbose {
+            println!("🛠️  正在编译...");
+        }
+
+        let compiler = crate::QiCompiler::with_config(config.clone());
+        let compile_result = compiler.compile(file.clone())?;
+
+        if config.verbose {
+            println!("  ✓ 编译完成，耗时: {}ms", compile_result.duration_ms);
+        }
+
+        // Handle warnings
+        for warning in &compile_result.warnings {
+            eprintln!("⚠️  警告: {}", warning);
+        }
+
+        println!();
+        println!("🚀 启动程序...");
+        println!("📝 运行参数: {:?}", args);
+        println!("{}", "─".repeat(40));
+
+        // Step 3: Run the program
+        match config.target_platform {
+            crate::config::CompilationTarget::MacOS => {
+                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Linux => {
+                self.run_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Windows => {
+                self.run_executable(&compile_result.executable_path, &args, config).await?;
+            }
+            crate::config::CompilationTarget::Wasm => {
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    "WebAssembly 运行暂未实现".to_string()
+                )));
+            }
+        }
+
+        println!("{}", "─".repeat(40));
+        println!("✅ 程序运行完成");
+
+        Ok(())
+    }
+
+    /// Run executable with debugging environment
+    async fn run_executable_debug(
+        &self,
+        executable_path: &std::path::Path,
+        args: &[String],
+        debug_env: std::collections::HashMap<String, String>,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        use std::process::Command;
+
+        let mut cmd = Command::new(executable_path);
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        // Add debugging environment variables
+        for (key, value) in debug_env {
+            cmd.env(key, value);
+        }
+
+        let output = cmd.output().map_err(|e| CliError::Io(e))?;
+
+        // Print stdout
+        if !output.stdout.is_empty() {
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+
+        // Print stderr
+        if !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        if !output.status.success() {
+            eprintln!("❌ 程序异常退出，退出码: {:?}", output.status.code());
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("程序运行失败，退出码: {:?}", output.status.code())
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Run macOS executable with debugging environment
+    async fn run_macos_executable_debug(
+        &self,
+        llvm_ir_path: &std::path::Path,
+        args: &[String],
+        debug_env: std::collections::HashMap<String, String>,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        use std::process::Command;
+
+        // Generate executable path in current directory
+        let executable_name = llvm_ir_path.file_stem()
+            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
+                "无效的文件名".to_string()
+            )))?
+            .to_string_lossy()
+            .to_string();
+
+        let temp_executable = std::env::current_dir()?
+            .join(format!("{}_debug.exec", executable_name));
+
+        if config.verbose {
+            println!("🔧 正在编译调试版本可执行文件...");
+        }
+
+        // Compile LLVM IR to object file with debug info
+        let output = Command::new("clang")
+            .arg("-c")
+            .arg("-g")  // Add debug symbols
+            .arg("-O0") // No optimization
+            .arg("-x")
+            .arg("ir")
+            .arg(llvm_ir_path)
+            .arg("-o")
+            .arg(&temp_executable.with_extension("o"))
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("LLVM IR 编译失败: {}", error)
+            )));
+        }
+
+        // Build runtime library if needed
+        self.ensure_runtime_library_built(&config)?;
+
+        // Link with Qi runtime to create executable
+        let runtime_lib_path = self.get_runtime_library_path()?;
+
+        let output = Command::new("clang")
+            .arg(&temp_executable.with_extension("o"))
+            .arg(&runtime_lib_path)
+            .arg("-o")
+            .arg(&temp_executable)
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("链接失败: {}", error)
+            )));
+        }
+
+        // Run with debugging environment
+        let mut cmd = Command::new(&temp_executable);
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        // Add debugging environment variables
+        for (key, value) in debug_env {
+            cmd.env(key, value);
+        }
+
+        let output = cmd.output().map_err(|e| CliError::Io(e))?;
+
+        // Print stdout
+        if !output.stdout.is_empty() {
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+
+        // Print stderr
+        if !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        if !output.status.success() {
+            eprintln!("❌ 调试程序异常退出，退出码: {:?}", output.status.code());
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("程序运行失败，退出码: {:?}", output.status.code())
+            )));
+        }
+
+        // Clean up temporary files
+        let _ = std::fs::remove_file(&temp_executable.with_extension("o"));
+        let _ = std::fs::remove_file(&temp_executable);
+
+        Ok(())
+    }
+
     /// Get the path to the Qi runtime library
     fn get_runtime_library_path(&self) -> Result<std::path::PathBuf, CliError> {
         let project_root = std::env::current_dir()?;
-        
-        // Try release build first
-        let release_lib = project_root.join("target/release/libqi_compiler.a");
-        if release_lib.exists() {
-            return Ok(release_lib);
+
+        // Compile our runtime as a simple static library
+        let runtime_src = project_root.join("src/runtime/lib.rs");
+        let output_dir = project_root.join("target/debug");
+
+        // Create output directory if it doesn't exist
+        std::fs::create_dir_all(&output_dir)?;
+
+        let output_path = output_dir.join("libqi_runtime.a");
+
+        // We don't have access to config here, so we'll assume verbose for now
+        println!("  编译 runtime 源文件到: {:?}", output_path);
+
+        // Use rustc to compile the runtime as a static library
+        let rustc_output = std::process::Command::new("rustc")
+            .arg("--crate-type=staticlib")
+            .arg("-C")
+            .arg("panic=abort")
+            .arg("-C")
+            .arg("link-arg=-lc")
+            .arg("-o")
+            .arg(&output_path)
+            .arg(&runtime_src)
+            .current_dir(&project_root)
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if !rustc_output.status.success() {
+            eprintln!("Rust runtime 编译失败: {}", String::from_utf8_lossy(&rustc_output.stderr));
+            eprintln!("输出: {}", String::from_utf8_lossy(&rustc_output.stdout));
         }
 
-        // Try release build with rlib extension
-        let release_rlib = project_root.join("target/release/libqi_compiler.rlib");
-        if release_rlib.exists() {
-            return Ok(release_rlib);
-        }
-
-        // Try debug build
-        let debug_lib = project_root.join("target/debug/libqi_compiler.a");
-        if debug_lib.exists() {
-            return Ok(debug_lib);
-        }
-
-        // Try debug build with rlib extension
-        let debug_rlib = project_root.join("target/debug/libqi_compiler.rlib");
-        if debug_rlib.exists() {
-            return Ok(debug_rlib);
+        if output_path.exists() {
+            return Ok(output_path);
         }
 
         Err(CliError::Compilation(crate::CompilerError::Codegen(
-            "找不到 Qi Runtime 库文件".to_string()
+            "无法编译 Qi Runtime 库文件".to_string()
         )))
     }
 }

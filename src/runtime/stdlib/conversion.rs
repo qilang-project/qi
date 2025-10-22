@@ -264,11 +264,20 @@ impl ConversionModule {
 
     /// Convert Chinese number to integer
     fn chinese_to_int(&self, input: &str) -> RuntimeResult<i64> {
+        let mut chars: Vec<char> = input.chars().collect();
+        let mut is_negative = false;
+
+        // Check for negative sign
+        if !chars.is_empty() && chars[0] == '负' {
+            is_negative = true;
+            chars.remove(0);
+        }
+
         let mut result = 0i64;
         let mut temp = 0i64;
         let mut last_unit = 1i64;
 
-        for ch in input.chars() {
+        for ch in chars {
             if let Some(&num) = self.chinese_numbers.get(&ch) {
                 temp = num;
             } else if let Some(&unit) = self.chinese_units.get(&ch) {
@@ -295,7 +304,11 @@ impl ConversionModule {
         }
 
         result += temp;
-        Ok(result)
+        if is_negative {
+            Ok(-result)
+        } else {
+            Ok(result)
+        }
     }
 
     /// Convert Chinese number to float

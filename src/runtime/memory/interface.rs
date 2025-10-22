@@ -162,9 +162,9 @@ impl MemoryInterface {
         self.limits.lock().unwrap().clone()
     }
 
-    /// Get total allocated bytes
+    /// Get currently allocated bytes (allocated - deallocated)
     pub fn get_allocated_bytes(&self) -> u64 {
-        self.stats.lock().unwrap().total_bytes_allocated
+        self.stats.lock().unwrap().get_current_usage()
     }
 
     /// Check if GC should be triggered and run it if needed

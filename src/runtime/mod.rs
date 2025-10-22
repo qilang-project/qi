@@ -14,13 +14,13 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! use qi_runtime::{RuntimeEnvironment, RuntimeConfig};
+//! ```rust,no_run
+//! use qi_compiler::runtime::{RuntimeEnvironment, RuntimeConfig};
 //!
 //! let config = RuntimeConfig::default();
-//! let mut runtime = RuntimeEnvironment::new(config)?;
-//! runtime.initialize()?;
-//! runtime.execute_program(program_data)?;
+//! let mut runtime = RuntimeEnvironment::new(config).unwrap();
+//! runtime.initialize().unwrap();
+//! // runtime.execute_program(program_data).unwrap();
 //! ```
 
 pub mod environment;
@@ -29,8 +29,7 @@ pub mod io;
 pub mod stdlib;
 pub mod error;
 pub mod executor;
-// TODO: Fix debug module compilation errors
-// pub mod debug;
+pub mod debug;
 
 // Legacy modules for backward compatibility
 pub mod strings;
@@ -42,8 +41,7 @@ pub use memory::{MemoryManager, AllocationStrategy};
 pub use io::{FileSystemInterface, NetworkManager};
 pub use stdlib::{StandardLibrary, StringModule, MathModule};
 pub use error::{ErrorHandler, ChineseErrorMessages};
-// TODO: Re-enable when debug module is fixed
-// pub use debug::{DebugSystem, DebugSystemConfig, create_debug_system};
+pub use debug::{DebugSystem, DebugSystemConfig, create_debug_system};
 
 /// Runtime version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -345,7 +345,7 @@ mod tests {
         assert!(!ptr2.is_null());
         assert!(ptr2 > ptr1); // Should be allocated after ptr1
 
-        assert_eq!(allocator.get_usage(), 208); // 100 + 200 (aligned to 8)
+        assert_eq!(allocator.get_usage(), 304); // 104 (100 aligned to 8) + 200 (already aligned)
 
         allocator.reset();
         assert_eq!(allocator.get_usage(), 0);

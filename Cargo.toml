@@ -79,6 +79,9 @@ crossbeam = "0.8.4"
 # System calls for FFI
 libc = "0.2.158"
 
+# CPU core count detection
+num_cpus = "1.16.0"
+
 # Additional serialization support
 chrono = { version = "0.4.38", features = ["serde"] }
 

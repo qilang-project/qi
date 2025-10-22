@@ -1,0 +1,7 @@
+// 简单运行时测试 - 使用实际的runtime函数
+
+函数 主() {
+    qi_runtime_print("你好，Qi运行时！");
+    qi_runtime_println_int(42);
+    qi_runtime_println_float(3.14);
+}

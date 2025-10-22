@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::fmt;
 use serde::{Serialize, Deserialize};
-use super::DebugModule;
+use crate::runtime::stdlib::DebugModule;
 
 /// Variable inspector for runtime debugging
 #[derive(Debug)]
@@ -431,7 +431,7 @@ impl VariableInspector {
         Ok(InspectionResult {
             variable: variable.clone(),
             display,
-            nested,
+            nested: nested.clone(),
             metadata: InspectionMetadata {
                 depth,
                 nested_count: nested.len(),
@@ -636,7 +636,7 @@ pub type RuntimeResult<T> = Result<T, crate::runtime::error::Error>;
 // Implement VariableValue for common types
 impl VariableValue for i32 {
     fn get_type_name(&self) -> &str { "i32" }
-    fn to_string(&self) -> String { self.to_string() }
+    fn to_string(&self) -> String { format!("{}", self) }
     fn get_address(&self) -> Option<usize> { Some(self as *const i32 as usize) }
     fn get_size(&self) -> Option<usize> { Some(4) }
     fn get_metadata(&self) -> VariableMetadata {
@@ -658,7 +658,7 @@ impl VariableValue for String {
         VariableMetadata::String {
             length: self.len(),
             encoding: "UTF-8".to_string(),
-            is_utf8: self.is_utf8(),
+            is_utf8: true, // String in Rust is always valid UTF-8
         }
     }
 }

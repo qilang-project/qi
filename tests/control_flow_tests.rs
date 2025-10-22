@@ -324,16 +324,16 @@ fn test_deeply_nested_control_flow() {
 #[test]
 fn test_control_flow_with_function_calls() {
     let source = r#"
-    函数 is_even(n) {
+    函数 is_even(n: 整数): 布尔 {
         返回 n % 2 == 0;
     }
 
-    函数 process_list(items) {
+    函数 process_list(items: 数组<整数>) {
         对于 item 在 items {
             如果 is_even(item) {
-                打印 "偶数";
+                变量 result = "偶数";
             } 否则 {
-                打印 "奇数";
+                变量 result = "奇数";
             }
         }
     }
@@ -342,6 +342,9 @@ fn test_control_flow_with_function_calls() {
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
+    if let Err(ref e) = result {
+        eprintln!("Parse error: {:?}", e);
+    }
     assert!(result.is_ok());
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 2);

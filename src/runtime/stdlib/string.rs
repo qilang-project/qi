@@ -333,7 +333,21 @@ impl StringModule {
             "".to_string()
         };
 
-        let strings: Vec<String> = if args.len() > 1 {
+        let strings: Vec<String> = if args.len() == 2 && matches!(&args[0], StdlibValue::String(_)) && matches!(&args[1], StdlibValue::Array(_)) {
+            // Pattern: separator + array of strings
+            match &args[1] {
+                StdlibValue::Array(arr) => arr.iter().map(|arg| {
+                    match arg {
+                        StdlibValue::String(s) => Ok(s.clone()),
+                        _ => Err(StdlibError::StringOperationError {
+                            operation: "join".to_string(),
+                            message: "数组元素必须是字符串".to_string(),
+                        }),
+                    }
+                }).collect::<Result<Vec<String>, StdlibError>>()?,
+                _ => unreachable!(), // We already checked this pattern
+            }
+        } else if args.len() > 1 {
             args[1..].iter().map(|arg| {
                 match arg {
                     StdlibValue::String(s) => Ok(s.clone()),
@@ -343,7 +357,8 @@ impl StringModule {
                     }),
                 }
             }).collect::<Result<Vec<String>, StdlibError>>()?
-        } else {
+        } else if args.len() == 1 && matches!(&args[0], StdlibValue::Array(_)) {
+            // Pattern: just array of strings
             match &args[0] {
                 StdlibValue::Array(arr) => arr.iter().map(|arg| {
                     match arg {
@@ -354,13 +369,19 @@ impl StringModule {
                         }),
                     }
                 }).collect::<Result<Vec<String>, StdlibError>>()?,
-                _ => {
-                    return Err(StdlibError::StringOperationError {
-                        operation: "join".to_string(),
-                        message: "参数必须是字符串或字符串数组".to_string(),
-                    });
-                }
+                _ => unreachable!(), // We already checked this pattern
             }
+        } else if args.len() == 1 && matches!(&args[0], StdlibValue::String(_)) {
+            // Pattern: single string (just return it)
+            match &args[0] {
+                StdlibValue::String(s) => vec![s.clone()],
+                _ => unreachable!(), // We already checked this pattern
+            }
+        } else {
+            return Err(StdlibError::StringOperationError {
+                operation: "join".to_string(),
+                message: "参数格式不正确".to_string(),
+            });
         };
 
         let result = strings.join(&separator);
@@ -590,7 +611,7 @@ mod tests {
 
         let result = module.length(&args);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StdlibValue::Integer(5)); // 你、好、，、世、界、！
+        assert_eq!(result.unwrap(), StdlibValue::Integer(6)); // 你、好、，、世、界、！
     }
 
     #[test]
@@ -601,7 +622,7 @@ mod tests {
         let args = vec![StdlibValue::String("测试中文字符串".to_string())];
         let result = module.length(&args);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StdlibValue::Integer(6));
+        assert_eq!(result.unwrap(), StdlibValue::Integer(7));
 
         // Chinese string comparison
         let args = vec![

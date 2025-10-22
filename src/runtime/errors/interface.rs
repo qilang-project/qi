@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::runtime::{RuntimeResult, RuntimeError};
-use super::{LegacyError, ErrorSeverity, ErrorStatistics, StackFrame};
+use super::{ErrorSeverity, ErrorStatistics, StackFrame};
 
 /// Unified error interface that provides access to all error handling functionality
 #[derive(Debug)]

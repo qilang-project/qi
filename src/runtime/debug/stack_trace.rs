@@ -5,10 +5,51 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::backtrace::{Backtrace, BacktraceFrame};
-use std::fmt;
-use super::{StackTraceCollector, EnhancedStackFrame};
+// Note: Backtrace functionality requires nightly Rust
+// For now, we'll use a placeholder implementation
+use std::ptr;
+
+// Placeholder types for backtrace functionality
+struct Backtrace {
+    _private: (),
+}
+
+impl Backtrace {
+    fn new() -> Self {
+        Self { _private: () }
+    }
+
+    fn frames(&self) -> Vec<BacktraceFrame> {
+        // Return a placeholder frame for testing
+        vec![
+            BacktraceFrame {
+                ip: std::ptr::null_mut(),
+            }
+        ]
+    }
+}
+
+struct BacktraceFrame {
+    ip: *mut std::os::raw::c_void,
+}
+
+impl BacktraceFrame {
+    fn ip(&self) -> *mut std::os::raw::c_void {
+        self.ip
+    }
+}
 use crate::runtime::stdlib::DebugModule;
+
+/// Backtrace symbol information
+#[derive(Debug, Clone)]
+pub struct BacktraceSymbol {
+    /// Symbol name
+    pub name: Option<String>,
+    /// Filename
+    pub filename: Option<String>,
+    /// Line number
+    pub lineno: Option<u32>,
+}
 
 /// Stack trace collector with symbol resolution
 #[derive(Debug)]
@@ -209,7 +250,7 @@ impl StackTraceCollector {
         // Create enhanced frame
         let enhanced_frame = EnhancedStackFrame {
             frame: basic_frame,
-            module: symbol_info.as_ref().and_then(|s| s.module_name.clone()),
+            module: None, // TODO: Extract module info from symbol
             address_offset: Some(ip_addr),
             frame_type,
             locals: HashMap::new(), // TODO: Implement variable inspection
