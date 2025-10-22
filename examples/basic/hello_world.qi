@@ -2,5 +2,5 @@
 // 测试最基础的打印功能 | Test basic print functionality
 
 函数 主() {
-    打印 "你好，世界！";
+    打印("你好，世界！");
 }

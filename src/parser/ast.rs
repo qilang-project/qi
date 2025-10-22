@@ -19,7 +19,6 @@ pub enum AstNode {
     当语句(WhileStatement),
     对于语句(ForStatement),
     返回语句(ReturnStatement),
-    打印语句(PrintStatement),
     表达式语句(ExpressionStatement),
     块语句(BlockStatement),
 
@@ -126,13 +125,6 @@ pub struct ForStatement {
 #[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub value: Option<Box<AstNode>>,
-    pub span: Span,
-}
-
-/// Print statement
-#[derive(Debug, Clone)]
-pub struct PrintStatement {
-    pub value: Box<AstNode>,
     pub span: Span,
 }
 

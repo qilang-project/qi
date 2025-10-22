@@ -70,7 +70,6 @@ pub enum TokenKind {
     参数,      // parameter
     与,        // and
     或,        // or
-    打印,      // print
 
     // Boolean literal constants
     真,                 // true

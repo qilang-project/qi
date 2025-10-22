@@ -107,6 +107,8 @@ pub struct IrBuilder {
     instructions: Vec<IrInstruction>,
     temp_counter: usize,
     label_counter: usize,
+    /// Track variable types for better code generation
+    variable_types: std::collections::HashMap<String, String>,
 }
 
 impl IrBuilder {
@@ -115,6 +117,7 @@ impl IrBuilder {
             instructions: Vec::new(),
             temp_counter: 0,
             label_counter: 0,
+            variable_types: std::collections::HashMap::new(),
         }
     }
 
@@ -122,6 +125,7 @@ impl IrBuilder {
         self.instructions.clear();
         self.temp_counter = 0;
         self.label_counter = 0;
+        self.variable_types.clear();
 
         self.build_node(ast)?;
         self.emit_llvm_ir()
@@ -198,6 +202,61 @@ impl IrBuilder {
 
         // Add prefix to prevent symbol conflicts
         format!("_Z_{}", hex_string)
+    }
+    
+    /// Map Chinese function names to runtime function names
+    fn map_to_runtime_function(&self, name: &str) -> Option<String> {
+        let runtime_func = match name {
+            // String operations
+            "字符串长度" | "长度" => Some("qi_runtime_string_length"),
+            "字符串连接" | "连接" => Some("qi_runtime_string_concat"),
+            "字符串切片" | "切片" => Some("qi_runtime_string_slice"),
+            "字符串比较" | "比较" => Some("qi_runtime_string_compare"),
+            
+            // Math operations
+            "平方根" | "根号" => Some("qi_runtime_math_sqrt"),
+            "幂" | "次方" => Some("qi_runtime_math_pow"),
+            "正弦" | "sin" => Some("qi_runtime_math_sin"),
+            "余弦" | "cos" => Some("qi_runtime_math_cos"),
+            "正切" | "tan" => Some("qi_runtime_math_tan"),
+            "绝对值" => Some("qi_runtime_math_abs_int"), // Default to int, could be smarter
+            "向下取整" | "floor" => Some("qi_runtime_math_floor"),
+            "向上取整" | "ceil" => Some("qi_runtime_math_ceil"),
+            "四舍五入" | "round" => Some("qi_runtime_math_round"),
+            
+            // File I/O operations
+            "打开文件" | "打开" => Some("qi_runtime_file_open"),
+            "读取文件" | "读取" => Some("qi_runtime_file_read"),
+            "写入文件" | "写入" => Some("qi_runtime_file_write"),
+            "关闭文件" | "关闭" => Some("qi_runtime_file_close"),
+            "读取文本" => Some("qi_runtime_file_read_string"),
+            "写入文本" => Some("qi_runtime_file_write_string"),
+            
+            // Array operations
+            "创建数组" => Some("qi_runtime_array_create"),
+            "数组长度" => Some("qi_runtime_array_length"),
+            
+            // Type conversions
+            "整数转字符串" => Some("qi_runtime_int_to_string"),
+            "浮点数转字符串" => Some("qi_runtime_float_to_string"),
+            "字符串转整数" => Some("qi_runtime_string_to_int"),
+            "字符串转浮点数" => Some("qi_runtime_string_to_float"),
+            "整数转浮点数" => Some("qi_runtime_int_to_float"),
+            "浮点数转整数" => Some("qi_runtime_float_to_int"),
+            
+            // Memory operations
+            "分配内存" => Some("qi_runtime_alloc"),
+            "释放内存" => Some("qi_runtime_dealloc"),
+            
+            // Print operations (for explicit calls)
+            "打印整数" => Some("qi_runtime_print_int"),
+            "打印浮点数" => Some("qi_runtime_print_float"),
+            "打印字符串" => Some("qi_runtime_print"),
+            
+            _ => None,
+        };
+        
+        runtime_func.map(|s| s.to_string())
     }
 
     /// Infer a function return type from its body if not explicitly annotated
@@ -298,6 +357,9 @@ impl IrBuilder {
                 } else {
                     &self.get_llvm_type(&decl.type_annotation)
                 };
+
+                // Record the variable type for later use
+                self.variable_types.insert(decl.name.clone(), type_name.to_string());
 
                 // Allocate variable
                 self.add_instruction(IrInstruction::分配 {
@@ -443,42 +505,6 @@ impl IrBuilder {
 
                 self.add_instruction(IrInstruction::返回 { value });
                 Ok("ret".to_string())
-            }
-            AstNode::打印语句(print_stmt) => {
-                // Determine the type of the expression to select correct runtime function
-                let expr_type = match &*print_stmt.value {
-                    AstNode::字面量表达式(literal) => {
-                        match &literal.value {
-                            crate::parser::ast::LiteralValue::字符串(_) => "string",
-                            crate::parser::ast::LiteralValue::整数(_) => "integer",
-                            crate::parser::ast::LiteralValue::浮点数(_) => "float",
-                            crate::parser::ast::LiteralValue::布尔(_) => "integer",
-                            crate::parser::ast::LiteralValue::字符(_) => "integer",
-                        }
-                    }
-                    AstNode::标识符表达式(_) => "integer", // Variables default to integer for now
-                    AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
-                    _ => "integer", // Default to integer
-                };
-
-                // Build the value to print
-                let value = self.build_node(&print_stmt.value)?;
-
-                // Generate runtime print call based on type
-                let runtime_func = match expr_type {
-                    "string" => "qi_runtime_println",
-                    "float" => "qi_runtime_println_float",
-                    _ => "qi_runtime_println_int",
-                };
-
-                let result = self.generate_temp();
-                self.add_instruction(IrInstruction::函数调用 {
-                    dest: Some(result.clone()),
-                    callee: runtime_func.to_string(),
-                    arguments: vec![value],
-                });
-
-                Ok("print".to_string())
             }
             AstNode::表达式语句(expr_stmt) => {
                 self.build_node(&expr_stmt.expression)
@@ -820,6 +846,46 @@ impl IrBuilder {
                 }
             }
             AstNode::函数调用表达式(call_expr) => {
+                // Special handling for 打印 function - map to appropriate runtime function
+                let runtime_function = if call_expr.callee == "打印" {
+                    // Determine the type of the first argument
+                    if let Some(first_arg) = call_expr.arguments.first() {
+                        let expr_type = match first_arg {
+                            AstNode::字面量表达式(literal) => {
+                                match &literal.value {
+                                    crate::parser::ast::LiteralValue::字符串(_) => "string",
+                                    crate::parser::ast::LiteralValue::整数(_) => "integer",
+                                    crate::parser::ast::LiteralValue::浮点数(_) => "float",
+                                    crate::parser::ast::LiteralValue::布尔(_) => "integer",
+                                    crate::parser::ast::LiteralValue::字符(_) => "integer",
+                                }
+                            }
+                            AstNode::标识符表达式(ident) => {
+                                // Look up variable type from our tracking
+                                match self.variable_types.get(&ident.name) {
+                                    Some(vtype) if vtype == "double" => "float",
+                                    Some(vtype) if vtype == "ptr" => "string",
+                                    _ => "integer", // Default to integer
+                                }
+                            }
+                            AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
+                            _ => "integer", // Default to integer
+                        };
+                        
+                        // Map to appropriate runtime function
+                        Some(match expr_type {
+                            "string" => "qi_runtime_println",
+                            "float" => "qi_runtime_println_float",
+                            _ => "qi_runtime_println_int",
+                        }.to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    // Check if this is a builtin runtime function
+                    self.map_to_runtime_function(&call_expr.callee)
+                };
+                
                 // Evaluate arguments
                 let mut arg_temps = Vec::new();
                 for arg in &call_expr.arguments {
@@ -827,15 +893,21 @@ impl IrBuilder {
                     arg_temps.push(temp);
                 }
 
-                // Apply the same name mangling logic for function calls
-                let mapped_callee: String = match call_expr.callee.as_str() {
-                    "主函数" | "主" => "main".to_string(), // Special case for main function
-                    name => {
-                        // Apply UTF-8 + Hex name mangling for non-ASCII names
-                        if name.chars().any(|c| !c.is_ascii()) {
-                            self.mangle_function_name(name)
-                        } else {
-                            name.to_string() // Keep ASCII names as-is
+                // Determine the callee name
+                let mapped_callee: String = if let Some(runtime_func) = runtime_function {
+                    // Use runtime function name directly
+                    runtime_func
+                } else {
+                    // Apply the same name mangling logic for user functions
+                    match call_expr.callee.as_str() {
+                        "主函数" | "主" => "main".to_string(), // Special case for main function
+                        name => {
+                            // Apply UTF-8 + Hex name mangling for non-ASCII names
+                            if name.chars().any(|c| !c.is_ascii()) {
+                                self.mangle_function_name(name)
+                            } else {
+                                name.to_string() // Keep ASCII names as-is
+                            }
                         }
                     }
                 };
@@ -1045,17 +1117,68 @@ impl IrBuilder {
 
         // Add Qi Runtime function declarations
         ir.push_str("; Qi Runtime declarations\n");
+        ir.push_str("; Core runtime functions\n");
         ir.push_str("declare i32 @qi_runtime_initialize()\n");
         ir.push_str("declare i32 @qi_runtime_shutdown()\n");
         ir.push_str("declare i32 @qi_runtime_execute(ptr, i64)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; Print functions\n");
         ir.push_str("declare i32 @qi_runtime_print(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_println(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_print_int(i64)\n");
         ir.push_str("declare i32 @qi_runtime_println_int(i64)\n");
         ir.push_str("declare i32 @qi_runtime_print_float(double)\n");
         ir.push_str("declare i32 @qi_runtime_println_float(double)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; Memory management\n");
         ir.push_str("declare ptr @qi_runtime_alloc(i64)\n");
         ir.push_str("declare i32 @qi_runtime_dealloc(ptr, i64)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; String operations\n");
+        ir.push_str("declare i64 @qi_runtime_string_length(ptr)\n");
+        ir.push_str("declare ptr @qi_runtime_string_concat(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_runtime_string_slice(ptr, i64, i64)\n");
+        ir.push_str("declare i32 @qi_runtime_string_compare(ptr, ptr)\n");
+        ir.push_str("declare void @qi_runtime_free_string(ptr)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; Math operations\n");
+        ir.push_str("declare double @qi_runtime_math_sqrt(double)\n");
+        ir.push_str("declare double @qi_runtime_math_pow(double, double)\n");
+        ir.push_str("declare double @qi_runtime_math_sin(double)\n");
+        ir.push_str("declare double @qi_runtime_math_cos(double)\n");
+        ir.push_str("declare double @qi_runtime_math_tan(double)\n");
+        ir.push_str("declare i64 @qi_runtime_math_abs_int(i64)\n");
+        ir.push_str("declare double @qi_runtime_math_abs_float(double)\n");
+        ir.push_str("declare double @qi_runtime_math_floor(double)\n");
+        ir.push_str("declare double @qi_runtime_math_ceil(double)\n");
+        ir.push_str("declare double @qi_runtime_math_round(double)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; File I/O operations\n");
+        ir.push_str("declare i64 @qi_runtime_file_open(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_file_read(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_runtime_file_write(i64, ptr, i64)\n");
+        ir.push_str("declare i32 @qi_runtime_file_close(i64)\n");
+        ir.push_str("declare ptr @qi_runtime_file_read_string(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_file_write_string(ptr, ptr)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; Array operations\n");
+        ir.push_str("declare ptr @qi_runtime_array_create(i64, i64)\n");
+        ir.push_str("declare i64 @qi_runtime_array_length(ptr)\n");
+        ir.push_str("\n");
+        
+        ir.push_str("; Type conversions\n");
+        ir.push_str("declare ptr @qi_runtime_int_to_string(i64)\n");
+        ir.push_str("declare ptr @qi_runtime_float_to_string(double)\n");
+        ir.push_str("declare i64 @qi_runtime_string_to_int(ptr)\n");
+        ir.push_str("declare double @qi_runtime_string_to_float(ptr)\n");
+        ir.push_str("declare double @qi_runtime_int_to_float(i64)\n");
+        ir.push_str("declare i64 @qi_runtime_float_to_int(double)\n");
         ir.push_str("\n");
 
         // Add external function declarations (for backward compatibility)

@@ -470,7 +470,6 @@ impl ParserErrorRecovery {
             TokenKind::真 => "真".to_string(),
             TokenKind::假 => "假".to_string(),
             TokenKind::空 => "空".to_string(),
-            TokenKind::打印 => "打印".to_string(),
             TokenKind::输入 => "输入".to_string(),
             TokenKind::长度 => "长度".to_string(),
             TokenKind::类型 => "类型".to_string(),

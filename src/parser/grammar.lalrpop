@@ -16,7 +16,6 @@ Statement: AstNode = {
     FunctionDeclaration,
     StructDeclaration,
     ReturnStatement,
-    PrintStatement,
     IfStatement,
     WhileStatement,
     ForStatement,
@@ -178,13 +177,6 @@ ReturnStatement: AstNode = {
     }),
     "返回" ";" => AstNode::返回语句(ReturnStatement {
         value: None,
-        span: Default::default(),
-    }),
-};
-
-PrintStatement: AstNode = {
-    "打印" <value:Expr> ";" => AstNode::打印语句(PrintStatement {
-        value: Box::new(value),
         span: Default::default(),
     }),
 };
@@ -628,7 +620,7 @@ Identifier: String = {
     <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
         match id {
             "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "在" | "真" | "假" |
-            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" | "打印" =>
+            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" =>
                 panic!("Keyword used as identifier: {}", id),
             _ => id.to_string(),
         }

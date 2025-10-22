@@ -2,7 +2,7 @@
 // 测试无参数函数定义和调用 | Test function definition and call without parameters
 
 函数 问候() {
-    打印 "你好！欢迎使用Qi语言！";
+    打印("你好！欢迎使用Qi语言！");
 }
 
 函数 主() {

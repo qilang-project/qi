@@ -36,7 +36,6 @@ impl KeywordTable {
         keywords.insert("与".to_string(), TokenKind::与);
         keywords.insert("或".to_string(), TokenKind::或);
         keywords.insert("参数".to_string(), TokenKind::参数);
-        keywords.insert("打印".to_string(), TokenKind::打印);
 
         // Boolean literals
         keywords.insert("真".to_string(), TokenKind::布尔字面量(true));

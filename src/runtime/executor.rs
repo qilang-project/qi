@@ -291,6 +291,354 @@ pub extern "C" fn qi_runtime_free_string(s: *mut c_char) {
     }
 }
 
+// ============================================================================
+// String Operations
+// ============================================================================
+
+/// Get string length (returns number of UTF-8 characters)
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_length(s: *const c_char) -> i64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe {
+        if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
+            rust_str.chars().count() as i64
+        } else {
+            0
+        }
+    }
+}
+
+/// Concatenate two strings (caller must free the result)
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
+    if s1.is_null() || s2.is_null() {
+        return std::ptr::null_mut();
+    }
+    
+    unsafe {
+        if let (Ok(str1), Ok(str2)) = (
+            CStr::from_ptr(s1).to_str(),
+            CStr::from_ptr(s2).to_str(),
+        ) {
+            let result = format!("{}{}", str1, str2);
+            if let Ok(c_string) = std::ffi::CString::new(result) {
+                return c_string.into_raw();
+            }
+        }
+        std::ptr::null_mut()
+    }
+}
+
+/// Get substring (caller must free the result)
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_slice(s: *const c_char, start: i64, end: i64) -> *mut c_char {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    
+    unsafe {
+        if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
+            let chars: Vec<char> = rust_str.chars().collect();
+            let start_idx = start.max(0) as usize;
+            let end_idx = end.min(chars.len() as i64) as usize;
+            
+            if start_idx < end_idx && end_idx <= chars.len() {
+                let substring: String = chars[start_idx..end_idx].iter().collect();
+                if let Ok(c_string) = std::ffi::CString::new(substring) {
+                    return c_string.into_raw();
+                }
+            }
+        }
+        std::ptr::null_mut()
+    }
+}
+
+/// Compare two strings (returns 0 if equal, <0 if s1<s2, >0 if s1>s2)
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_compare(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        return -1;
+    }
+    
+    unsafe {
+        if let (Ok(str1), Ok(str2)) = (
+            CStr::from_ptr(s1).to_str(),
+            CStr::from_ptr(s2).to_str(),
+        ) {
+            str1.cmp(str2) as c_int
+        } else {
+            -1
+        }
+    }
+}
+
+// ============================================================================
+// Math Operations
+// ============================================================================
+
+/// Square root
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_sqrt(x: f64) -> f64 {
+    x.sqrt()
+}
+
+/// Power function
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_pow(base: f64, exp: f64) -> f64 {
+    base.powf(exp)
+}
+
+/// Sine
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_sin(x: f64) -> f64 {
+    x.sin()
+}
+
+/// Cosine
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_cos(x: f64) -> f64 {
+    x.cos()
+}
+
+/// Tangent
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_tan(x: f64) -> f64 {
+    x.tan()
+}
+
+/// Absolute value (integer)
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_abs_int(x: i64) -> i64 {
+    x.abs()
+}
+
+/// Absolute value (float)
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_abs_float(x: f64) -> f64 {
+    x.abs()
+}
+
+/// Floor
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_floor(x: f64) -> f64 {
+    x.floor()
+}
+
+/// Ceiling
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_ceil(x: f64) -> f64 {
+    x.ceil()
+}
+
+/// Round
+#[no_mangle]
+pub extern "C" fn qi_runtime_math_round(x: f64) -> f64 {
+    x.round()
+}
+
+// ============================================================================
+// File I/O Operations
+// ============================================================================
+
+/// Open a file (returns file handle or negative on error)
+/// Temporary implementation using standard file handles
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char) -> i64 {
+    if path.is_null() || mode.is_null() {
+        return -1;
+    }
+    
+    // Temporary: Return a dummy handle
+    // TODO: Implement proper file handle management
+    eprintln!("警告: qi_runtime_file_open 尚未完全实现");
+    -1
+}
+
+/// Read from file (returns bytes read or negative on error)
+/// Temporary implementation
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_read(
+    handle: i64,
+    buffer: *mut u8,
+    size: usize,
+) -> i64 {
+    eprintln!("警告: qi_runtime_file_read 尚未完全实现");
+    -1
+}
+
+/// Write to file (returns bytes written or negative on error)
+/// Temporary implementation
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_write(
+    handle: i64,
+    data: *const u8,
+    size: usize,
+) -> i64 {
+    eprintln!("警告: qi_runtime_file_write 尚未完全实现");
+    -1
+}
+
+/// Close file
+/// Temporary implementation
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_close(handle: i64) -> c_int {
+    eprintln!("警告: qi_runtime_file_close 尚未完全实现");
+    0
+}
+
+/// Read entire file as string (caller must free the result)
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_read_string(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    
+    unsafe {
+        if let Ok(path_str) = CStr::from_ptr(path).to_str() {
+            // Use standard library to read file
+            match std::fs::read_to_string(path_str) {
+                Ok(content) => {
+                    if let Ok(c_string) = std::ffi::CString::new(content) {
+                        return c_string.into_raw();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("读取文件内容失败: {}", e);
+                }
+            }
+        }
+        std::ptr::null_mut()
+    }
+}
+
+/// Write string to file
+#[no_mangle]
+pub extern "C" fn qi_runtime_file_write_string(path: *const c_char, content: *const c_char) -> c_int {
+    if path.is_null() || content.is_null() {
+        return -1;
+    }
+    
+    unsafe {
+        if let (Ok(path_str), Ok(content_str)) = (
+            CStr::from_ptr(path).to_str(),
+            CStr::from_ptr(content).to_str(),
+        ) {
+            // Use standard library to write file
+            match std::fs::write(path_str, content_str) {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("写入文件内容失败: {}", e);
+                    -1
+                }
+            }
+        } else {
+            -1
+        }
+    }
+}
+
+// ============================================================================
+// Array Operations
+// ============================================================================
+
+/// Create array (returns pointer to array structure)
+#[no_mangle]
+pub extern "C" fn qi_runtime_array_create(size: i64, element_size: i64) -> *mut u8 {
+    if size <= 0 || element_size <= 0 {
+        return std::ptr::null_mut();
+    }
+    
+    let total_size = (size * element_size) as usize;
+    qi_runtime_alloc(total_size)
+}
+
+/// Get array length
+#[no_mangle]
+pub extern "C" fn qi_runtime_array_length(array: *const u8) -> i64 {
+    // For now, we'll store the length in the first 8 bytes
+    // This is a simplified implementation
+    if array.is_null() {
+        return 0;
+    }
+    
+    unsafe {
+        let length_ptr = array as *const i64;
+        *length_ptr
+    }
+}
+
+// ============================================================================
+// Type Conversion
+// ============================================================================
+
+/// Convert integer to string (caller must free the result)
+#[no_mangle]
+pub extern "C" fn qi_runtime_int_to_string(value: i64) -> *mut c_char {
+    let string = value.to_string();
+    if let Ok(c_string) = std::ffi::CString::new(string) {
+        c_string.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Convert float to string (caller must free the result)
+#[no_mangle]
+pub extern "C" fn qi_runtime_float_to_string(value: f64) -> *mut c_char {
+    let string = value.to_string();
+    if let Ok(c_string) = std::ffi::CString::new(string) {
+        c_string.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Convert string to integer
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_to_int(s: *const c_char) -> i64 {
+    if s.is_null() {
+        return 0;
+    }
+    
+    unsafe {
+        if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
+            rust_str.parse::<i64>().unwrap_or(0)
+        } else {
+            0
+        }
+    }
+}
+
+/// Convert string to float
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_to_float(s: *const c_char) -> f64 {
+    if s.is_null() {
+        return 0.0;
+    }
+    
+    unsafe {
+        if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
+            rust_str.parse::<f64>().unwrap_or(0.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Convert integer to float
+#[no_mangle]
+pub extern "C" fn qi_runtime_int_to_float(value: i64) -> f64 {
+    value as f64
+}
+
+/// Convert float to integer (truncate)
+#[no_mangle]
+pub extern "C" fn qi_runtime_float_to_int(value: f64) -> i64 {
+    value as i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +663,37 @@ mod tests {
         qi_runtime_println_float(3.14);
 
         qi_runtime_shutdown();
+    }
+    
+    #[test]
+    fn test_string_operations() {
+        use std::ffi::CString;
+        
+        let s1 = CString::new("Hello").unwrap();
+        let s2 = CString::new("World").unwrap();
+        
+        let len = qi_runtime_string_length(s1.as_ptr());
+        assert_eq!(len, 5);
+        
+        let result = qi_runtime_string_concat(s1.as_ptr(), s2.as_ptr());
+        assert!(!result.is_null());
+        
+        unsafe {
+            let result_str = CStr::from_ptr(result).to_str().unwrap();
+            assert_eq!(result_str, "HelloWorld");
+            qi_runtime_free_string(result);
+        }
+    }
+    
+    #[test]
+    fn test_math_operations() {
+        let result = qi_runtime_math_sqrt(16.0);
+        assert_eq!(result, 4.0);
+        
+        let result = qi_runtime_math_pow(2.0, 3.0);
+        assert_eq!(result, 8.0);
+        
+        let result = qi_runtime_math_abs_int(-42);
+        assert_eq!(result, 42);
     }
 }
