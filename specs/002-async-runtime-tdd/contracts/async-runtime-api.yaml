@@ -1,0 +1,487 @@
+# Async Runtime API Contract
+
+openapi: 3.0.3
+info:
+  title: Qi Async Runtime API
+  description: Internal API contracts for Qi language async runtime system
+  version: 1.0.0
+  contact:
+    name: Qi Language Team
+  license:
+    name: MIT
+
+# Async Runtime Core API
+paths:
+  /runtime/coroutine:
+    post:
+      summary: Create new coroutine
+      operationId: create_coroutine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoroutineCreateRequest'
+      responses:
+        '200':
+          description: Coroutine created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoroutineResponse'
+        '400':
+          description: Invalid coroutine creation request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /runtime/coroutine/{coroutine_id}:
+    get:
+      summary: Get coroutine status
+      operationId: get_coroutine
+      parameters:
+        - name: coroutine_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Coroutine status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoroutineStatus'
+        '404':
+          description: Coroutine not found
+
+    delete:
+      summary: Cancel coroutine
+      operationId: cancel_coroutine
+      parameters:
+        - name: coroutine_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Coroutine cancelled successfully
+        '404':
+          description: Coroutine not found
+
+  /runtime/coroutine/{coroutine_id}/resume:
+    post:
+      summary: Resume suspended coroutine
+      operationId: resume_coroutine
+      parameters:
+        - name: coroutine_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Coroutine resumed successfully
+        '400':
+          description: Coroutine cannot be resumed
+        '404':
+          description: Coroutine not found
+
+  /runtime/tasks:
+    post:
+      summary: Schedule async task
+      operationId: schedule_task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskScheduleRequest'
+      responses:
+        '200':
+          description: Task scheduled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+
+  /runtime/tasks/{task_id}:
+    get:
+      summary: Get task status
+      operationId: get_task_status
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskStatus'
+
+  /runtime/io/file:
+    post:
+      summary: Async file read operation
+      operationId: read_file_async
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileReadRequest'
+      responses:
+        '200':
+          description: File read operation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncOperationResponse'
+
+  /runtime/io/network:
+    post:
+      summary: Async network operation
+      operationId: network_operation_async
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkOperationRequest'
+      responses:
+        '200':
+          description: Network operation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncOperationResponse'
+
+  /runtime/metrics:
+    get:
+      summary: Get runtime performance metrics
+      operationId: get_runtime_metrics
+      responses:
+        '200':
+          description: Runtime metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeMetrics'
+
+components:
+  schemas:
+    # Core Types
+    CoroutineId:
+      type: string
+      format: uuid
+      description: Unique identifier for a coroutine
+
+    TaskId:
+      type: string
+      format: uuid
+      description: Unique identifier for a task
+
+    AwaitableId:
+      type: string
+      format: uuid
+      description: Unique identifier for an awaitable value
+
+    # Enums
+    CoroutineState:
+      type: string
+      enum:
+        - created
+        - running
+        - suspended
+        - completed
+        - cancelled
+        - error
+      description: Current state of a coroutine
+
+    TaskPriority:
+      type: string
+      enum:
+        - critical
+        - high
+        - normal
+        - low
+      description: Execution priority for tasks
+
+    AsyncOperationType:
+      type: string
+      enum:
+        - file_read
+        - file_write
+        - network_connect
+        - network_send
+        - network_receive
+        - timer
+      description: Type of async operation
+
+    # Request Schemas
+    CoroutineCreateRequest:
+      type: object
+      required:
+        - function_name
+        - parameters
+      properties:
+        function_name:
+          type: string
+          description: Name of the async function (Chinese characters allowed)
+          example: "读取文件异步"
+        parameters:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              value:
+                type: string
+          description: Function parameters
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+          default: normal
+        timeout_ms:
+          type: integer
+          description: Optional timeout in milliseconds
+
+    TaskScheduleRequest:
+      type: object
+      required:
+        - coroutine_id
+      properties:
+        coroutine_id:
+          $ref: '#/components/schemas/CoroutineId'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+          default: normal
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskId'
+          description: Tasks that must complete before this task
+        deadline_ms:
+          type: integer
+          description: Optional deadline in milliseconds
+
+    FileReadRequest:
+      type: object
+      required:
+        - file_path
+      properties:
+        file_path:
+          type: string
+          description: Path to file to read
+          example: "/tmp/数据文件.txt"
+        offset:
+          type: integer
+          default: 0
+          description: Starting offset for read operation
+        length:
+          type: integer
+          description: Number of bytes to read (optional)
+        buffer_awaitable_id:
+          $ref: '#/components/schemas/AwaitableId'
+          description: Awaitable for result buffer
+
+    NetworkOperationRequest:
+      type: object
+      required:
+        - operation_type
+        - address
+      properties:
+        operation_type:
+          $ref: '#/components/schemas/AsyncOperationType'
+        address:
+          type: string
+          description: Network address (IP:port or hostname)
+          example: "example.com:8080"
+        data:
+          type: string
+          format: byte
+          description: Data for send operations
+        timeout_ms:
+          type: integer
+          default: 30000
+          description: Network operation timeout
+
+    # Response Schemas
+    CoroutineResponse:
+      type: object
+      required:
+        - coroutine_id
+        - state
+      properties:
+        coroutine_id:
+          $ref: '#/components/schemas/CoroutineId'
+        state:
+          $ref: '#/components/schemas/CoroutineState'
+        creation_time_ms:
+          type: integer
+          description: Time taken to create coroutine in milliseconds
+        estimated_stack_size:
+          type: integer
+          description: Estimated stack size in bytes
+
+    CoroutineStatus:
+      type: object
+      required:
+        - coroutine_id
+        - state
+        - creation_time
+      properties:
+        coroutine_id:
+          $ref: '#/components/schemas/CoroutineId'
+        state:
+          $ref: '#/components/schemas/CoroutineState'
+        creation_time:
+          type: string
+          format: date-time
+        resume_count:
+          type: integer
+          description: Number of times coroutine has been resumed
+        current_awaitable:
+          $ref: '#/components/schemas/AwaitableId'
+          description: Currently awaited operation (if suspended)
+
+    TaskResponse:
+      type: object
+      required:
+        - task_id
+        - status
+      properties:
+        task_id:
+          $ref: '#/components/schemas/TaskId'
+        status:
+          type: string
+          enum:
+            - scheduled
+            - running
+            - completed
+            - failed
+        estimated_completion_time:
+          type: string
+          format: date-time
+        queue_position:
+          type: integer
+          description: Position in task queue
+
+    TaskStatus:
+      type: object
+      required:
+        - task_id
+        - status
+      properties:
+        task_id:
+          $ref: '#/components/schemas/TaskId'
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - completed
+            - failed
+            - cancelled
+        start_time:
+          type: string
+          format: date-time
+        completion_time:
+          type: string
+          format: date-time
+        result:
+          type: string
+          description: Task result (if completed)
+        error_message:
+          type: string
+          description: Error message (if failed)
+
+    AsyncOperationResponse:
+      type: object
+      required:
+        - operation_id
+        - awaitable_id
+      properties:
+        operation_id:
+          $ref: '#/components/schemas/AwaitableId'
+        awaitable_id:
+          $ref: '#/components/schemas/AwaitableId'
+        estimated_completion_time:
+          type: string
+          format: date-time
+        operation_type:
+          $ref: '#/components/schemas/AsyncOperationType'
+
+    RuntimeMetrics:
+      type: object
+      required:
+        - timestamp
+        - active_coroutines
+        - total_created
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        active_coroutines:
+          type: integer
+          description: Number of currently active coroutines
+        total_created:
+          type: integer
+          description: Total coroutines created since runtime start
+        average_creation_time_ms:
+          type: number
+          format: float
+          description: Average coroutine creation time in milliseconds
+        context_switches_per_second:
+          type: number
+          format: float
+          description: Context switches per second
+        memory_usage_mb:
+          type: number
+          format: float
+          description: Current memory usage in megabytes
+        io_operations_per_second:
+          type: number
+          format: float
+          description: I/O operations per second
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_code
+        - error_message
+      properties:
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: "COROUTINE_CREATION_FAILED"
+        error_message:
+          type: string
+          description: Human-readable error message in Chinese
+          example: "协程创建失败：内存不足"
+        details:
+          type: object
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+
+  # Security Schemes
+  securitySchemes:
+    InternalApi:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+      description: Internal API authentication for runtime components
+
+security:
+  - InternalApi: []

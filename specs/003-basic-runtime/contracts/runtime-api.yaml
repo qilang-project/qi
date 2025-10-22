@@ -1,0 +1,1084 @@
+# Basic Runtime API Contract
+
+openapi: 3.0.3
+info:
+  title: Qi Basic Runtime API
+  description: Internal API contracts for Qi language basic runtime system
+  version: 1.0.0
+  contact:
+    name: Qi Language Team
+  license:
+    name: MIT
+
+# Runtime Core API
+paths:
+  /runtime/initialize:
+    post:
+      summary: Initialize runtime environment
+      operationId: initialize_runtime
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeInitializeRequest'
+      responses:
+        '200':
+          description: Runtime initialized successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeInitializeResponse'
+        '400':
+          description: Runtime initialization failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /runtime/execute:
+    post:
+      summary: Execute compiled Qi program
+      operationId: execute_program
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramExecuteRequest'
+      responses:
+        '200':
+          description: Program execution completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramExecuteResponse'
+        '400':
+          description: Program execution failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /runtime/terminate:
+    post:
+      summary: Terminate runtime environment
+      operationId: terminate_runtime
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeTerminateRequest'
+      responses:
+        '200':
+          description: Runtime terminated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeTerminateResponse'
+
+  /runtime/metrics:
+    get:
+      summary: Get runtime performance metrics
+      operationId: get_runtime_metrics
+      responses:
+        '200':
+          description: Runtime metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeMetricsResponse'
+
+# Memory Management API
+paths:
+  /memory/allocate:
+    post:
+      summary: Allocate memory block
+      operationId: allocate_memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryAllocateRequest'
+      responses:
+        '200':
+          description: Memory allocated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryAllocateResponse'
+        '400':
+          description: Memory allocation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /memory/deallocate:
+    post:
+      summary: Deallocate memory block
+      operationId: deallocate_memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryDeallocateRequest'
+      responses:
+        '200':
+          description: Memory deallocated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryDeallocateResponse'
+
+  /memory/gc:
+    post:
+      summary: Trigger garbage collection
+      operationId: trigger_gc
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GcTriggerRequest'
+      responses:
+        '200':
+          description: Garbage collection completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GcTriggerResponse'
+
+# File I/O API
+paths:
+  /io/file/read:
+    post:
+      summary: Read file contents
+      operationId: read_file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileReadRequest'
+      responses:
+        '200':
+          description: File read successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileReadResponse'
+        '400':
+          description: File read failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /io/file/write:
+    post:
+      summary: Write data to file
+      operationId: write_file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileWriteRequest'
+      responses:
+        '200':
+          description: File written successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileWriteResponse'
+        '400':
+          description: File write failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /io/file/delete:
+    post:
+      summary: Delete file
+      operationId: delete_file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileDeleteRequest'
+      responses:
+        '200':
+          description: File deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileDeleteResponse'
+        '400':
+          description: File deletion failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# Network API
+paths:
+  /network/http/request:
+    post:
+      summary: Make HTTP request
+      operationId: http_request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HttpRequestRequest'
+      responses:
+        '200':
+          description: HTTP request completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpRequestResponse'
+        '400':
+          description: HTTP request failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/tcp/connect:
+    post:
+      summary: Establish TCP connection
+      operationId: tcp_connect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TcpConnectRequest'
+      responses:
+        '200':
+          description: TCP connection established
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TcpConnectResponse'
+        '400':
+          description: TCP connection failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+# Standard Library API
+paths:
+  /stdlib/string/operations:
+    post:
+      summary: Perform string operations
+      operationId: string_operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StringOperationRequest'
+      responses:
+        '200':
+          description: String operation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StringOperationResponse'
+        '400':
+          description: String operation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stdlib/math/operations:
+    post:
+      summary: Perform mathematical operations
+      operationId: math_operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MathOperationRequest'
+      responses:
+        '200':
+          description: Math operation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MathOperationResponse'
+        '400':
+          description: Math operation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    # Core Runtime Schemas
+    RuntimeInitializeRequest:
+      type: object
+      required:
+        - program_path
+      properties:
+        program_path:
+          type: string
+          description: Path to compiled Qi program
+        command_line_args:
+          type: array
+          items:
+            type: string
+          description: Command line arguments
+        environment:
+          type: object
+          description: Environment variables
+        runtime_config:
+          $ref: '#/components/schemas/RuntimeConfig'
+
+    RuntimeInitializeResponse:
+      type: object
+      required:
+        - runtime_id
+        - status
+      properties:
+        runtime_id:
+          type: string
+          format: uuid
+          description: Unique runtime identifier
+        status:
+          type: string
+          enum: [ready, error]
+          description: Runtime initialization status
+        startup_time_ms:
+          type: number
+          description: Time taken to initialize runtime in milliseconds
+        memory_usage_mb:
+          type: number
+          description: Initial memory usage in megabytes
+        supported_features:
+          type: array
+          items:
+            type: string
+          description: List of supported runtime features
+
+    RuntimeTerminateRequest:
+      type: object
+      required:
+        - runtime_id
+      properties:
+        runtime_id:
+          type: string
+          format: uuid
+          description: Runtime identifier to terminate
+        cleanup_resources:
+          type: boolean
+          default: true
+          description: Whether to cleanup all resources
+        force_terminate:
+          type: boolean
+          default: false
+          description: Force immediate termination
+
+    RuntimeTerminateResponse:
+      type: object
+      required:
+        - success
+        - cleanup_time_ms
+      properties:
+        success:
+          type: boolean
+          description: Whether termination was successful
+        cleanup_time_ms:
+          type: number
+          description: Time taken for cleanup in milliseconds
+        resources_cleaned:
+          type: integer
+          description: Number of resources cleaned up
+        error_message:
+          type: string
+          description: Error message if termination failed
+
+    ProgramExecuteRequest:
+      type: object
+      required:
+        - runtime_id
+        - program_data
+      properties:
+        runtime_id:
+          type: string
+          format: uuid
+          description: Runtime identifier
+        program_data:
+          type: string
+          format: byte
+          description: Compiled program binary data
+        input_data:
+          type: string
+          description: Standard input data
+        execution_timeout_ms:
+          type: integer
+          description: Program execution timeout in milliseconds
+        debug_mode:
+          type: boolean
+          default: false
+          description: Enable debug mode
+
+    ProgramExecuteResponse:
+      type: object
+      required:
+        - exit_code
+        - execution_time_ms
+      properties:
+        exit_code:
+          type: integer
+          description: Program exit code
+        execution_time_ms:
+          type: number
+          description: Program execution time in milliseconds
+        stdout:
+          type: string
+          description: Program standard output
+        stderr:
+          type: string
+          description: Program standard error
+        memory_peak_mb:
+          type: number
+          description: Peak memory usage in megabytes
+        error_details:
+          $ref: '#/components/schemas/RuntimeErrorDetails'
+
+    RuntimeMetricsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        memory_usage:
+          $ref: '#/components/schemas/MemoryUsageMetrics'
+        io_metrics:
+          $ref: '#/components/schemas/IoUsageMetrics'
+        gc_metrics:
+          $ref: '#/components/schemas/GcMetrics'
+        performance_metrics:
+          $ref: '#/components/schemas/PerformanceMetrics'
+
+    # Memory Management Schemas
+    MemoryAllocateRequest:
+      type: object
+      required:
+        - size
+        - type
+      properties:
+        size:
+          type: integer
+          description: Size of memory block to allocate in bytes
+        type:
+          type: string
+          enum: [bump, arena, generic]
+          description: Allocation strategy
+        alignment:
+          type: integer
+          description: Memory alignment requirement
+        zeroed:
+          type: boolean
+          default: true
+          description: Whether to zero-initialize memory
+
+    MemoryAllocateResponse:
+      type: object
+      required:
+        - success
+        - address
+      properties:
+        success:
+          type: boolean
+          description: Whether allocation was successful
+        address:
+          type: string
+          description: Memory address (hex string)
+        allocation_time_ns:
+          type: number
+          description: Allocation time in nanoseconds
+        pool_used:
+          type: string
+          description: Memory pool used for allocation
+
+    MemoryDeallocateRequest:
+      type: object
+      required:
+        - address
+      properties:
+        address:
+          type: string
+          description: Memory address to deallocate (hex string)
+        force:
+          type: boolean
+          default: false
+          description: Force deallocation even if references exist
+
+    MemoryDeallocateResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          description: Whether deallocation was successful
+        deallocation_time_ns:
+          type: number
+          description: Deallocation time in nanoseconds
+        freed_bytes:
+          type: integer
+          description: Number of bytes freed
+
+    GcTriggerRequest:
+      type: object
+      properties:
+        force:
+          type: boolean
+          default: false
+          description: Force garbage collection even if threshold not met
+        collect_all:
+          type: boolean
+          default: false
+          description: Collect all generations instead of just young
+
+    GcTriggerResponse:
+      type: object
+      required:
+        - success
+        - collected_objects
+      properties:
+        success:
+          type: boolean
+          description: Whether garbage collection was successful
+        collected_objects:
+          type: integer
+          description: Number of objects collected
+        freed_bytes:
+          type: integer
+          description: Number of bytes freed
+        collection_time_ms:
+          type: number
+          description: Garbage collection time in milliseconds
+        generation_collected:
+          type: integer
+          description: Generation that was collected
+
+    # File I/O Schemas
+    FileReadRequest:
+      type: object
+      required:
+        - file_path
+      properties:
+        file_path:
+          type: string
+          description: Path to file to read
+        offset:
+          type: integer
+          default: 0
+          description: Starting offset for read operation
+        length:
+          type: integer
+          description: Number of bytes to read (optional)
+        encoding:
+          type: string
+          default: utf-8
+          description: File character encoding
+        buffer_size:
+          type: integer
+          default: 8192
+          description: Read buffer size in bytes
+
+    FileReadResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          description: Whether file read was successful
+        data:
+          type: string
+          format: byte
+          description: File data read
+        bytes_read:
+          type: integer
+          description: Number of bytes read
+        read_time_ms:
+          type: number
+          description: Time taken to read file in milliseconds
+        file_size:
+          type: integer
+          description: Total file size in bytes
+
+    FileWriteRequest:
+      type: object
+      required:
+        - file_path
+        - data
+      properties:
+        file_path:
+          type: string
+          description: Path to file to write
+        data:
+          type: string
+          format: byte
+          description: Data to write to file
+        offset:
+          type: integer
+          description: Starting offset for write operation
+        append:
+          type: boolean
+          default: false
+          description: Whether to append to existing file
+        encoding:
+          type: string
+          default: utf-8
+          description: File character encoding
+        create_directories:
+          type: boolean
+          default: true
+          description: Create parent directories if they don't exist
+
+    FileWriteResponse:
+      type: object
+      required:
+        - success
+        - bytes_written
+      properties:
+        success:
+          type: boolean
+          description: Whether file write was successful
+        bytes_written:
+          type: integer
+          description: Number of bytes written
+        write_time_ms:
+          type: number
+          description: Time taken to write file in milliseconds
+        file_size:
+          type: integer
+          description: Final file size in bytes
+
+    FileDeleteRequest:
+      type: object
+      required:
+        - file_path
+      properties:
+        file_path:
+          type: string
+          description: Path to file to delete
+        recursive:
+          type: boolean
+          default: false
+          description: Whether to delete directories recursively
+        force:
+          type: boolean
+          default: false
+          description: Force deletion even if file is read-only
+
+    FileDeleteResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          description: Whether file deletion was successful
+        delete_time_ms:
+          type: number
+          description: Time taken to delete file in milliseconds
+        items_deleted:
+          type: integer
+          description: Number of items deleted (for directories)
+
+    # Network Schemas
+    HttpRequestRequest:
+      type: object
+      required:
+        - url
+        - method
+      properties:
+        url:
+          type: string
+          description: HTTP request URL
+        method:
+          type: string
+          enum: [GET, POST, PUT, DELETE, HEAD, OPTIONS]
+          description: HTTP method
+        headers:
+          type: object
+          description: HTTP request headers
+        body:
+          type: string
+          description: HTTP request body
+        timeout_ms:
+          type: integer
+          default: 30000
+          description: Request timeout in milliseconds
+        follow_redirects:
+          type: boolean
+          default: true
+          description: Whether to follow HTTP redirects
+        verify_ssl:
+          type: boolean
+          default: true
+          description: Whether to verify SSL certificates
+
+    HttpRequestResponse:
+      type: object
+      required:
+        - success
+        - status_code
+      properties:
+        success:
+          type: boolean
+          description: Whether HTTP request was successful
+        status_code:
+          type: integer
+          description: HTTP status code
+        headers:
+          type: object
+          description: HTTP response headers
+        body:
+          type: string
+          description: HTTP response body
+        response_time_ms:
+          type: number
+          description: HTTP request response time in milliseconds
+        redirect_count:
+          type: integer
+          description: Number of redirects followed
+
+    TcpConnectRequest:
+      type: object
+      required:
+        - host
+        - port
+      properties:
+        host:
+          type: string
+          description: Hostname or IP address
+        port:
+          type: integer
+          description: Port number
+        timeout_ms:
+          type: integer
+          default: 30000
+          description: Connection timeout in milliseconds
+        bind_address:
+          type: string
+          description: Local bind address for client socket
+        keep_alive:
+          type: boolean
+          default: false
+          description: Whether to keep connection alive
+
+    TcpConnectResponse:
+      type: object
+      required:
+        - success
+        - connection_id
+      properties:
+        success:
+          type: boolean
+          description: Whether TCP connection was successful
+        connection_id:
+          type: string
+          format: uuid
+          description: Unique connection identifier
+        local_address:
+          type: string
+          description: Local socket address
+        remote_address:
+          type: string
+          description: Remote socket address
+        connection_time_ms:
+          type: number
+          description: Connection establishment time in milliseconds
+
+    # Standard Library Schemas
+    StringOperationRequest:
+      type: object
+      required:
+        - operation
+        - string1
+      properties:
+        operation:
+          type: string
+          enum: [concat, substring, length, compare, replace, split, join, trim, uppercase, lowercase]
+          description: String operation type
+        string1:
+          type: string
+          description: First string operand
+        string2:
+          type: string
+          description: Second string operand
+        start_index:
+          type: integer
+          description: Starting index for substring operation
+        length:
+          type: integer
+          description: Length for substring operation
+        search_string:
+          type: string
+          description: String to search for
+        replacement_string:
+          type: string
+          description: Replacement string
+        separator:
+          type: string
+          description: Separator for split/join operations
+
+    StringOperationResponse:
+      type: object
+      required:
+        - success
+        - result
+      properties:
+        success:
+          type: boolean
+          description: Whether string operation was successful
+        result:
+          type: string
+          description: String operation result
+        operation_time_ns:
+          type: number
+          description: Operation time in nanoseconds
+        bytes_processed:
+          type: integer
+          description: Number of bytes processed
+
+    MathOperationRequest:
+      type: object
+      required:
+        - operation
+        - operand1
+      properties:
+        operation:
+          type: string
+          enum: [add, subtract, multiply, divide, power, sqrt, sin, cos, tan, log, exp, abs, min, max, round, floor, ceil]
+          description: Mathematical operation type
+        operand1:
+          type: number
+          description: First operand
+        operand2:
+          type: number
+          description: Second operand (for binary operations)
+        precision:
+          type: integer
+          default: 6
+          description: Precision for floating-point results
+
+    MathOperationResponse:
+      type: object
+      required:
+        - success
+        - result
+      properties:
+        success:
+          type: boolean
+          description: Whether math operation was successful
+        result:
+          type: number
+          description: Mathematical operation result
+        operation_time_ns:
+          type: number
+          description: Operation time in nanoseconds
+        error_message:
+          type: string
+          description: Error message if operation failed
+
+    # Common Schemas
+    RuntimeConfig:
+      type: object
+      properties:
+        max_memory_mb:
+          type: integer
+          default: 1024
+          description: Maximum memory usage in megabytes
+        gc_threshold_percent:
+          type: number
+          default: 0.8
+          description: Garbage collection trigger threshold
+        io_buffer_size:
+          type: integer
+          default: 8192
+          description: Default I/O buffer size
+        network_timeout_ms:
+          type: integer
+          default: 30000
+          description: Default network timeout
+        debug_mode:
+          type: boolean
+          default: false
+          description: Enable debug mode
+        locale:
+          type: string
+          default: zh-CN
+          description: Default locale for error messages
+
+    RuntimeErrorDetails:
+      type: object
+      properties:
+        error_code:
+          type: string
+          description: Error code identifier
+        error_type:
+          type: string
+          enum: [runtime, memory, io, network, system, user]
+          description: Error type classification
+        error_message:
+          type: string
+          description: User-friendly error message (in Chinese)
+        technical_message:
+          type: string
+          description: Technical error details
+        location:
+          type: string
+          description: Error occurrence location
+        stack_trace:
+          type: array
+          items:
+            type: string
+          description: Call stack information
+        recovery_options:
+          type: array
+          items:
+            type: string
+          description: Possible recovery actions
+
+    MemoryUsageMetrics:
+      type: object
+      properties:
+        total_allocated_mb:
+          type: number
+          description: Total allocated memory in megabytes
+        peak_usage_mb:
+          type: number
+          description: Peak memory usage in megabytes
+        gc_pressure:
+          type: number
+          description: Garbage collection pressure (0-1)
+        allocation_rate:
+          type: number
+          description: Allocation rate per second
+        deallocation_rate:
+          type: number
+          description: Deallocation rate per second
+
+    IoUsageMetrics:
+      type: object
+      properties:
+        files_opened:
+          type: integer
+          description: Number of files currently open
+        bytes_read:
+          type: integer
+          description: Total bytes read
+        bytes_written:
+          type: integer
+          description: Total bytes written
+        read_operations:
+          type: integer
+          description: Number of read operations
+        write_operations:
+          type: integer
+          description: Number of write operations
+        average_read_time_ms:
+          type: number
+          description: Average read time in milliseconds
+        average_write_time_ms:
+          type: number
+          description: Average write time in milliseconds
+
+    GcMetrics:
+      type: object
+      properties:
+        collections_per_second:
+          type: number
+          description: Number of GC collections per second
+        objects_collected:
+          type: integer
+          description: Total objects collected
+        bytes_collected:
+          type: integer
+          description: Total bytes collected
+        gc_pause_time_ms:
+          type: number
+          description: Average GC pause time in milliseconds
+        collection_efficiency:
+          type: number
+          description: Collection efficiency (bytes collected per ms)
+
+    PerformanceMetrics:
+      type: object
+      properties:
+        cpu_usage_percent:
+          type: number
+          description: CPU usage percentage
+        startup_time_ms:
+          type: number
+          description: Runtime startup time in milliseconds
+        program_execution_rate:
+          type: number
+          description: Programs executed per second
+        average_execution_time_ms:
+          type: number
+          description: Average program execution time
+        memory_efficiency:
+          type: number
+          description: Memory efficiency score
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_code
+        - error_message
+      properties:
+        error_code:
+          type: string
+          description: Machine-readable error code
+        error_message:
+          type: string
+          description: Human-readable error message (in Chinese)
+        technical_details:
+          type: string
+          description: Technical error details
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          description: Request identifier for tracking
+
+  # Security Schemes
+  securitySchemes:
+    InternalApi:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+      description: Internal API authentication for runtime components
+
+security:
+  - InternalApi: []

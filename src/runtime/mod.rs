@@ -1,9 +1,55 @@
-//! C runtime library integration
+//! Qi Basic Runtime Environment
+//!
+//! This module provides the foundational runtime environment for executing compiled Qi programs.
+//! It includes memory management, I/O operations, standard library functions, and comprehensive
+//! Chinese language support.
+//!
+//! # Features
+//!
+//! - **Memory Management**: Hybrid ownership + reference counting system
+//! - **I/O Operations**: Synchronous file and network operations with Chinese keyword support
+//! - **Standard Library**: Built-in functions for strings, math, and system operations
+//! - **Error Handling**: Comprehensive Chinese error message system
+//! - **Cross-Platform**: Support for Linux, Windows, and macOS
+//!
+//! # Usage
+//!
+//! ```rust
+//! use qi_runtime::{RuntimeEnvironment, RuntimeConfig};
+//!
+//! let config = RuntimeConfig::default();
+//! let mut runtime = RuntimeEnvironment::new(config)?;
+//! runtime.initialize()?;
+//! runtime.execute_program(program_data)?;
+//! ```
 
+pub mod environment;
 pub mod memory;
+pub mod io;
+pub mod stdlib;
+pub mod error;
+
+// Legacy modules for backward compatibility
 pub mod strings;
 pub mod errors;
-pub mod io;
+
+// Re-export core components for convenience
+pub use environment::{RuntimeEnvironment, RuntimeState, RuntimeConfig};
+pub use memory::{MemoryManager, AllocationStrategy};
+pub use io::{FileSystemInterface, NetworkManager};
+pub use stdlib::{StandardLibrary, StringModule, MathModule};
+pub use error::{ErrorHandler, ChineseErrorMessages};
+
+/// Runtime version information
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Runtime build timestamp
+pub const BUILD_TIMESTAMP: &str = "2025-01-22";
+
+/// Result type for runtime operations
+pub type RuntimeResult<T> = Result<T, RuntimeError>;
+
+/// Core runtime error type - unified with error module
+pub type RuntimeError = error::Error;
 
 /// Runtime library interface
 pub struct RuntimeLibrary {
@@ -15,13 +61,13 @@ pub struct RuntimeLibrary {
 
 impl RuntimeLibrary {
     /// Create a new runtime library interface
-    pub fn new() -> Self {
-        Self {
-            memory_interface: memory::MemoryInterface::new(),
+    pub fn new() -> Result<Self, RuntimeError> {
+        Ok(Self {
+            memory_interface: memory::MemoryInterface::new()?,
             string_interface: strings::StringInterface::new(),
             error_interface: errors::ErrorInterface::new(),
-            io_interface: io::IoInterface::new(),
-        }
+            io_interface: io::IoInterface::new()?,
+        })
     }
 
     /// Initialize the runtime library
@@ -59,35 +105,32 @@ impl RuntimeLibrary {
     }
 }
 
-/// Runtime errors
-#[derive(Debug, thiserror::Error)]
-pub enum RuntimeError {
-    /// Memory allocation error
-    #[error("内存分配错误: {0}")]
-    MemoryAllocation(String),
-
-    /// String operation error
-    #[error("字符串操作错误: {0}")]
-    StringOperation(String),
-
-    /// Runtime panic
-    #[error("运行时错误: {0}")]
-    Panic(String),
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn test_version_info() {
+        assert!(!VERSION.is_empty());
+        assert!(!BUILD_TIMESTAMP.is_empty());
+    }
+
+    #[test]
+    fn test_runtime_error_display() {
+        let error = RuntimeError::program_execution_error("测试错误消息", "测试错误消息");
+        assert!(error.to_string().contains("测试错误消息"));
+    }
+
+    #[test]
     fn test_runtime_library_initialization() {
-        let mut runtime = RuntimeLibrary::new();
+        let mut runtime = RuntimeLibrary::new().unwrap();
         assert!(runtime.initialize().is_ok());
     }
 
     #[test]
     fn test_memory_operations() {
-        let mut runtime = RuntimeLibrary::new();
+        let mut runtime = RuntimeLibrary::new().unwrap();
         runtime.initialize().unwrap();
 
         let memory = runtime.memory();
@@ -96,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_string_operations() {
-        let mut runtime = RuntimeLibrary::new();
+        let mut runtime = RuntimeLibrary::new().unwrap();
         runtime.initialize().unwrap();
 
         let strings = runtime.strings();
@@ -106,7 +149,7 @@ mod tests {
         assert_eq!(strings.length("Hello").unwrap(), 5);
 
         // Test string concatenation
-        assert_eq!(strings.concat("你好", "世界").unwrap(), "你好世界");
+        assert_eq!(strings.concat(&[String::from("你好"), String::from("世界")]).unwrap(), "你好世界");
 
         // Test string comparison
         assert_eq!(strings.compare("你好", "你好").unwrap(), 0);
@@ -116,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_io_operations() {
-        let mut runtime = RuntimeLibrary::new();
+        let mut runtime = RuntimeLibrary::new().unwrap();
         runtime.initialize().unwrap();
 
         let io = runtime.io();
@@ -129,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_memory_allocation() {
-        let mut runtime = RuntimeLibrary::new();
+        let mut runtime = RuntimeLibrary::new().unwrap();
         runtime.initialize().unwrap();
 
         let memory = runtime.memory_mut();
