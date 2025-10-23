@@ -7,6 +7,7 @@ use std::future::Future;
 use crate::runtime::RuntimeResult;
 
 use super::task::{TaskId, TaskHandle, TaskPriority, TaskInner, TaskMetadata};
+#[allow(unused_imports)]
 use super::pool::{WorkerPool, PoolConfig};
 use super::scheduler::Scheduler;
 

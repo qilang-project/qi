@@ -4,6 +4,7 @@
 pub mod scope;
 pub mod symbol_table;
 pub mod type_checker;
+pub mod module;
 
 pub use symbol_table::SymbolTable;
 pub use type_checker::TypeChecker;

@@ -2,6 +2,19 @@
 
 use crate::lexer::tokens::Span;
 
+/// Visibility modifier for declarations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    公开,  // public
+    私有,  // private (default)
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Visibility::私有
+    }
+}
+
 /// AST node types
 #[derive(Debug, Clone)]
 pub enum AstNode {
@@ -48,7 +61,8 @@ pub struct Program {
 /// Import statement
 #[derive(Debug, Clone)]
 pub struct ImportStatement {
-    pub module_path: String,
+    pub module_path: Vec<String>,  // Changed to Vec for module paths like "标准库.输入输出"
+    pub items: Option<Vec<String>>,  // Optional specific items to import
     pub alias: Option<String>,
     pub span: Span,
 }
@@ -70,6 +84,7 @@ pub struct FunctionDeclaration {
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -266,6 +281,7 @@ pub struct StructDeclaration {
     pub name: String,
     pub fields: Vec<StructField>,
     pub methods: Vec<MethodDeclaration>,
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -275,6 +291,7 @@ pub struct StructField {
     pub name: String,
     pub type_annotation: TypeNode,
     pub is_embedded: bool, // 支持嵌入字段（类似Go的匿名字段）
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -288,6 +305,7 @@ pub struct MethodDeclaration {
     pub parameters: Vec<Parameter>,   // 方法参数
     pub return_type: Option<TypeNode>, // 返回类型
     pub body: Vec<AstNode>,           // 方法体
+    pub visibility: Visibility,
     pub span: Span,
 }
 
@@ -296,6 +314,7 @@ pub struct MethodDeclaration {
 pub struct EnumDeclaration {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    pub visibility: Visibility,
     pub span: Span,
 }
 

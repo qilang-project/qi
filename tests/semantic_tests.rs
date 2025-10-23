@@ -166,6 +166,7 @@ fn test_function_declaration_in_analyzer() {
         parameters: vec![],
         return_type: None,
         body: vec![],
+        visibility: Default::default(),
         span: Default::default(),
     };
 
