@@ -1,10 +1,8 @@
-//! Build script for Qi compiler - LALRPOP grammar processing only
-//! 
-//! NOTE: The C runtime library (previously in /runtime) is no longer used.
-//! All runtime functions are now provided by src/runtime/executor.rs via FFI.
+//! Build script for Qi compiler - LALRPOP grammar processing and C runtime compilation
 
 fn main() {
     println!("cargo:rerun-if-changed=src/parser/");
+    println!("cargo:rerun-if-changed=src/runtime/async_runtime/c_runtime/");
 
     // Process LALRPOP grammar
     // Note: This may report shift/reduce conflicts which are benign
@@ -19,4 +17,16 @@ fn main() {
             panic!("LALRPOP failed to generate parser");
         }
     }
+
+    // Compile C syscall library for async runtime
+    println!("cargo:rerun-if-changed=src/runtime/async_runtime/c_runtime/syscalls.c");
+    
+    cc::Build::new()
+        .file("src/runtime/async_runtime/c_runtime/syscalls.c")
+        .warnings(true)
+        .extra_warnings(true)
+        .opt_level(2)
+        .compile("qi_async_syscalls");
+
+    eprintln!("✓ C async syscalls compiled successfully");
 }

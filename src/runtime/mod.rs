@@ -30,6 +30,7 @@ pub mod stdlib;
 pub mod error;
 pub mod executor;
 pub mod debug;
+pub mod async_runtime;
 
 // Legacy modules for backward compatibility
 pub mod strings;
@@ -42,6 +43,7 @@ pub use io::{FileSystemInterface, NetworkManager};
 pub use stdlib::{StandardLibrary, StringModule, MathModule};
 pub use error::{ErrorHandler, ChineseErrorMessages};
 pub use debug::{DebugSystem, DebugSystemConfig, create_debug_system};
+pub use async_runtime::{Runtime as AsyncRuntime, RuntimeConfig as AsyncRuntimeConfig, RuntimeStats as AsyncRuntimeStats};
 
 /// Runtime version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -145,6 +145,18 @@ cargo clippy
 └── build.rs              # 构建脚本
 ```
 
+### 运行时支持
+
+Qi 编译器包含 Rust + C 实现的运行时，涵盖内存管理、字符串处理、I/O、错误调度等功能。最新增加的异步运行时具备如下特性：
+
+- 基于 Tokio 的多线程任务执行器
+- 优先级队列与工作窃取调度策略
+- Rust 管理协程与任务状态，C 负责底层系统调用（睡眠、计时、CPU 信息）
+- FFI 层抽象 epoll/kqueue/IOCP 等平台事件模型
+- 可取消任务、运行时统计、可配置栈池、事件循环适配器
+
+示例代码见 [`examples/async_runtime_demo.rs`](examples/async_runtime_demo.rs)。
+
 ## 贡献
 
 欢迎贡献！请查看 [贡献指南](CONTRIBUTING.md) 了解详情。
