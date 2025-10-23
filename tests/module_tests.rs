@@ -199,7 +199,7 @@ fn test_visibility_in_methods() {
 fn test_module_system_integration() {
     use qi_compiler::semantic::module::ModuleRegistry;
 
-    let mut registry = ModuleRegistry::new();
+    let registry = ModuleRegistry::new();
     
     // This test ensures the module system can be instantiated
     assert!(registry.current_module().is_none());
