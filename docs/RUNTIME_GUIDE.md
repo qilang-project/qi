@@ -22,22 +22,239 @@ Qi Runtime 由以下几个主要部分组成：
 qi/
 ├── src/
 │   ├── runtime/
-│   │   └── lib.rs           # Runtime 主文件 (Rust FFI 导出)
+│   │   ├── executor.rs      # Runtime 执行器 (FFI 函数导出)
+│   │   ├── environment.rs   # 运行时环境管理
+│   │   ├── memory/          # 内存管理
+│   │   ├── io/              # I/O 操作
+│   │   ├── stdlib/          # 标准库函数
+│   │   └── mod.rs           # Runtime 模块入口
 │   └── codegen/
 │       └── builder.rs       # LLVM IR 代码生成器
-├── runtime/                 # C Runtime (可选)
-│   ├── include/
-│   └── src/
 └── examples/
     └── runtime/             # Runtime 功能测试示例
 ```
 
-**核心原理：**
+### Runtime 工作原理
 
-- Rust Runtime (`src/runtime/lib.rs`) 编译为静态库 (`libqi_runtime.a`)
-- 使用 `#[no_mangle]` 和 `extern "C"` 导出 C ABI 兼容的函数
-- LLVM IR 代码通过 `declare` 声明这些函数
-- 链接时将 LLVM IR 编译的目标文件与 Runtime 静态库链接
+Qi Runtime 采用 **编译器前端 + Rust Runtime 库** 的架构，通过 FFI (Foreign Function Interface) 将用户代码与底层运行时功能连接起来。
+
+#### 1. 编译流程
+
+```
+┌─────────────┐
+│  Qi 源代码   │  函数 主() { 打印("你好"); }
+└──────┬──────┘
+       │ 词法分析 + 语法分析
+       ▼
+┌─────────────┐
+│  AST 树      │  Program { 函数声明(...) }
+└──────┬──────┘
+       │ 代码生成 (builder.rs)
+       ▼
+┌─────────────┐
+│  LLVM IR    │  declare i32 @qi_runtime_println(ptr)
+│             │  define i32 @main() {
+│             │    call i32 @qi_runtime_println(...)
+│             │  }
+└──────┬──────┘
+       │ Clang 编译
+       ▼
+┌─────────────┐
+│  目标文件    │  .o (机器码 + 未解析的符号引用)
+└──────┬──────┘
+       │ 链接 Runtime 静态库
+       ▼
+┌─────────────┐
+│  可执行文件  │  符号已解析，可以直接运行
+└─────────────┘
+```
+
+#### 2. 函数映射机制
+
+当用户在 Qi 代码中调用 `打印("你好")` 时，编译器会经过以下步骤：
+
+**步骤 A: 名称映射 (builder.rs)**
+
+```rust
+// map_to_runtime_function 方法
+"打印" | "print" → "qi_runtime_println"
+```
+
+**步骤 B: 生成 LLVM IR 声明**
+
+```llvm
+; 在 emit_llvm_ir 中自动添加
+declare i32 @qi_runtime_println(ptr)
+```
+
+**步骤 C: 生成函数调用**
+
+```llvm
+; 在用户代码中
+%str = ...  ; 字符串常量
+%result = call i32 @qi_runtime_println(ptr %str)
+```
+
+**步骤 D: 链接到 Rust Runtime (executor.rs)**
+
+```rust
+#[no_mangle]
+pub extern "C" fn qi_runtime_println(s: *const c_char) -> c_int {
+    // 实际的打印实现
+    unsafe {
+        if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
+            println!("{}", rust_str);
+            return 0;
+        }
+    }
+    -1
+}
+```
+
+#### 3. 类型系统桥接
+
+Qi 语言的类型需要在三个层面保持一致：
+
+| Qi 层面  | LLVM IR 层面 | Rust Runtime 层面 | 说明             |
+| -------- | ------------ | ----------------- | ---------------- |
+| `整数`   | `i64`        | `c_long` (i64)    | 64 位有符号整数  |
+| `浮点数` | `double`     | `c_double` (f64)  | 64 位浮点数      |
+| `字符串` | `ptr`        | `*const c_char`   | UTF-8 字符串指针 |
+| `布尔`   | `i1`         | `c_int` (i32)     | 布尔值 (0/1)     |
+
+**示例：整数打印**
+
+```qi
+打印整数(42);
+```
+
+生成的 LLVM IR：
+
+```llvm
+call i32 @qi_runtime_print_int(i64 42)
+```
+
+对应的 Rust 函数：
+
+```rust
+#[no_mangle]
+pub extern "C" fn qi_runtime_print_int(value: c_long) -> c_int {
+    print!("{}", value);
+    0
+}
+```
+
+#### 4. 多态函数处理
+
+特殊情况：`打印` 函数根据参数类型选择不同的运行时函数
+
+```rust
+// 在 builder.rs 的 build_node 中
+let runtime_function = if call_expr.callee == "打印" {
+    // 根据参数类型选择正确的函数
+    match expr_type {
+        "string" => "qi_runtime_println",      // 字符串
+        "float" => "qi_runtime_println_float", // 浮点数
+        _ => "qi_runtime_println_int",         // 整数
+    }
+} else {
+    // 其他函数通过 map_to_runtime_function 映射
+    self.map_to_runtime_function(&call_expr.callee)
+};
+```
+
+这种设计允许用户写出简洁的代码：
+
+```qi
+打印(42);        // 自动调用 qi_runtime_println_int
+打印(3.14);      // 自动调用 qi_runtime_println_float
+打印("你好");    // 自动调用 qi_runtime_println
+```
+
+#### 5. 符号导出与链接
+
+**macOS 平台：**
+
+```bash
+# 编译 Rust Runtime 为静态库
+cargo build --release
+# 生成: target/release/libqi_runtime.a
+
+# 符号名带下划线前缀
+nm target/release/libqi_runtime.a | grep qi_runtime_println
+# 输出: 0000000000001234 T _qi_runtime_println
+
+# 链接时需要 -Wl,-force_load 强制加载所有符号
+clang user_code.o -Wl,-force_load target/release/libqi_runtime.a -o program
+```
+
+**Linux 平台：**
+
+```bash
+# 符号名不带下划线
+nm target/release/libqi_runtime.a | grep qi_runtime_println
+# 输出: 0000000000001234 T qi_runtime_println
+
+# 链接时使用 --whole-archive
+clang user_code.o -Wl,--whole-archive target/release/libqi_runtime.a -Wl,--no-whole-archive -o program
+```
+
+**为什么需要强制加载？**
+
+静态库默认只链接被引用的符号。但 LLVM IR 中的 `declare` 语句在编译为目标文件后，
+符号引用可能不会被标记为"强引用"，导致链接器跳过这些符号。`-force_load` 或
+`--whole-archive` 强制链接器包含静态库中的所有符号。
+
+#### 6. 内存管理
+
+**字符串返回值处理：**
+
+```rust
+// Runtime 函数返回新分配的字符串
+#[no_mangle]
+pub extern "C" fn qi_runtime_string_concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
+    // ...
+    let c_result = std::ffi::CString::new(result).unwrap();
+    c_result.into_raw()  // ⚠️ 所有权转移给调用者！
+}
+
+// 提供释放函数
+#[no_mangle]
+pub extern "C" fn qi_runtime_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe {
+            let _ = std::ffi::CString::from_raw(s);
+            // CString 析构时自动释放内存
+        }
+    }
+}
+```
+
+未来可以通过编译器自动插入释放代码，避免内存泄漏。
+
+---
+
+### 核心原理总结
+
+1. **统一的命名体系**：
+
+   - 用户层：中文函数名 + 英文别名（如 `打印`、`print`）
+   - 实现层：统一的 `qi_runtime_...` 格式
+
+2. **三层类型系统**：
+
+   - Qi 类型 → LLVM IR 类型 → Rust FFI 类型
+   - 必须严格匹配，否则链接失败
+
+3. **FFI 桥接**：
+
+   - `#[no_mangle]` 防止符号改名
+   - `extern "C"` 使用 C ABI 调用约定
+   - Rust 静态库导出所有运行时函数
+
+4. **灵活的映射机制**：
+   - 简单函数：通过 `map_to_runtime_function` 一对一映射
+   - 复杂函数：在代码生成时动态选择（如多态的 `打印`）
 
 ---
 
@@ -190,59 +407,124 @@ declare i32 @qi_runtime_println(ptr)
 
 #### 3.1 添加函数名映射
 
-找到 `map_function_name` 方法，添加新函数的中英文映射：
+找到 `map_to_runtime_function` 方法，添加新函数的中英文映射：
 
 ```rust
-fn map_function_name(&self, name: &str) -> Option<&str> {
-    match name {
+/// Map Chinese function names to runtime function names
+/// This bridges Qi language function names (Chinese/English aliases) to actual runtime C function names
+fn map_to_runtime_function(&self, name: &str) -> Option<String> {
+    let runtime_func = match name {
         // 现有映射...
-        "打印" => Some("qi_runtime_println"),
-        "打印整数" => Some("qi_runtime_print_int"),
+        "打印整数" | "print_int" => Some("qi_runtime_print_int"),
+        "字符串长度" | "长度" | "len" => Some("qi_runtime_string_length"),
 
         // 添加新的映射
-        "平方" => Some("qi_runtime_square"),
-        "拼接" => Some("qi_runtime_string_concat"),
+        "平方" | "square" => Some("qi_runtime_square"),
+        "拼接" | "concat" => Some("qi_runtime_string_concat"),
 
         _ => None,
-    }
+    };
+
+    runtime_func.map(|s| s.to_string())
 }
 ```
 
+**命名规范：**
+
+- **键（Key）**：用户在 Qi 代码中使用的名字
+  - 支持中文主名称（如 `"平方"`）
+  - 支持英文别名（如 `"square"`）
+  - 使用 `|` 分隔多个别名
+- **值（Value）**：统一的 `qi_runtime_...` 格式
+  - 必须与 Rust Runtime 中的函数名完全一致
+  - 使用 snake_case 命名风格
+
 #### 3.2 添加函数声明
 
-找到 `emit_runtime_declarations` 方法，添加 LLVM IR 函数声明：
+在 `emit_llvm_ir` 方法中，函数声明会自动添加。确保你理解声明的格式：
 
 ```rust
-fn emit_runtime_declarations(&self) -> String {
-    let mut ir = String::new();
+// 在 emit_llvm_ir 方法中已经包含的声明
+ir.push_str("; Qi Runtime declarations\n");
+ir.push_str("declare i32 @qi_runtime_print_int(i64)\n");
+ir.push_str("declare i64 @qi_runtime_string_length(ptr)\n");
 
-    // 现有声明...
-    ir.push_str("declare i32 @qi_runtime_print_int(i64)\n");
+// 如果需要添加新的运行时函数类别，在对应位置添加：
+ir.push_str("; Math operations\n");
+ir.push_str("declare i64 @qi_runtime_square(i64)\n");
 
-    // 添加新的声明
-    ir.push_str("declare i64 @qi_runtime_square(i64)\n");
-    ir.push_str("declare ptr @qi_runtime_string_concat(ptr, ptr)\n");
-
-    ir
-}
+ir.push_str("; String operations\n");
+ir.push_str("declare ptr @qi_runtime_string_concat(ptr, ptr)\n");
 ```
 
 **重要：** 声明的类型签名必须与 Rust 函数完全匹配！
 
-#### 3.3 配置参数类型推断（如果需要）
+**类型签名规则：**
 
-如果函数参数类型有特殊要求，在 `build_function_call` 方法中添加类型检测：
+- 返回类型在 `declare` 之后
+- 函数名以 `@` 开头
+- 参数类型在括号内，用逗号分隔
+
+示例对照表：
+
+| Rust 函数签名                                     | LLVM IR 声明                   |
+| ------------------------------------------------- | ------------------------------ |
+| `fn(i64) -> i64`                                  | `declare i64 @func(i64)`       |
+| `fn(f64) -> f64`                                  | `declare double @func(double)` |
+| `fn(*const c_char) -> i32`                        | `declare i32 @func(ptr)`       |
+| `fn(i64, i64) -> i64`                             | `declare i64 @func(i64, i64)`  |
+| `fn(*const c_char, *const c_char) -> *mut c_char` | `declare ptr @func(ptr, ptr)`  |
+
+#### 3.3 理解类型推断（自动处理）
+
+**好消息：** 对于大多数函数，你**不需要**手动配置类型推断！
+
+代码生成器会自动根据以下规则推断参数类型：
+
+1. **字面量类型**：
+
+   - 整数 → `i64`
+   - 浮点数 → `double`
+   - 字符串 → `ptr`
+   - 布尔 → `i1`
+
+2. **变量类型**：
+
+   - 从 `variable_types` 映射表中查找
+   - 在变量声明时自动记录
+
+3. **函数返回类型**：
+   - 根据 `map_to_runtime_function` 的映射自动推断
+   - 字符串函数返回 `ptr`
+   - 数学函数返回 `double` 或 `i64`
+
+**仅在特殊情况下需要手动配置：**
+
+如果你的函数有特殊的类型要求（例如需要强制类型转换），可以在 `build_node` 方法的 `函数调用表达式` 分支中添加：
 
 ```rust
-// 在 build_function_call 方法内
-if callee == "qi_runtime_square" {
-    // 参数必须是 i64 类型
-    param_type = "i64";
-} else if callee == "qi_runtime_string_concat" {
-    // 参数必须是 ptr 类型
-    param_type = "ptr";
-}
+// 在 AstNode::函数调用表达式 的 build_node 中
+let runtime_function = if call_expr.callee == "特殊函数" {
+    // 特殊处理逻辑
+    Some("qi_runtime_special".to_string())
+} else {
+    self.map_to_runtime_function(&call_expr.callee)
+};
 ```
+
+#### 3.4 验证映射（推荐）
+
+添加完映射后，编译项目确保没有错误：
+
+```bash
+cargo build --release
+```
+
+如果有编译错误，检查：
+
+- 函数名拼写是否正确
+- 返回值类型是否正确使用 `Some(...)` 包装
+- 是否有语法错误
 
 ---
 
@@ -388,61 +670,73 @@ pub extern "C" fn qi_runtime_free_string(s: *mut c_char) {
 
 ---
 
-## 完整示例：添加数学函数 `绝对值`
+## 完整示例：添加数学函数 `求最大值`
 
 ### 1. 添加 Runtime 函数
 
-`src/runtime/lib.rs`:
+`src/runtime/executor.rs`:
 
 ```rust
-/// 计算整数的绝对值
+/// 计算两个整数的最大值
 #[no_mangle]
-pub extern "C" fn qi_runtime_abs(value: c_long) -> c_long {
-    value.abs()
+pub extern "C" fn qi_runtime_math_max_int(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
 }
 
-/// 计算浮点数的绝对值
+/// 计算两个浮点数的最大值
 #[no_mangle]
-pub extern "C" fn qi_runtime_fabs(value: c_double) -> c_double {
-    value.abs()
-}
+pub extern "C" fn qi_runtime_math_max_float(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}v v操
 ```
 
 ### 2. 注册到代码生成器
 
 `src/codegen/builder.rs`:
 
+在 `map_to_runtime_function` 方法中添加：
+
 ```rust
-// 在 map_function_name 中
-"绝对值" => Some("qi_runtime_abs"),
-"浮点绝对值" => Some("qi_runtime_fabs"),
-
-// 在 emit_runtime_declarations 中
-ir.push_str("declare i64 @qi_runtime_abs(i64)\n");
-ir.push_str("declare double @qi_runtime_fabs(double)\n");
-
-// 在 build_function_call 中（参数类型推断）
-if callee == "qi_runtime_abs" {
-    param_type = "i64";
-} else if callee == "qi_runtime_fabs" {
-    param_type = "double";
-}
+// Math operations
+"求最大值" | "最大值" | "max" => Some("qi_runtime_math_max_int"),
+"浮点最大值" | "max_float" => Some("qi_runtime_math_max_float"),
 ```
+
+在 `emit_llvm_ir` 方法中确认已有数学函数声明区域，添加：
+
+```rust
+ir.push_str("; Math operations\n");
+// ... 现有声明 ...
+ir.push_str("declare i64 @qi_runtime_math_max_int(i64, i64)\n");
+ir.push_str("declare double @qi_runtime_math_max_float(double, double)\n");
+```
+
+**注意：** 由于代码生成器已经自动处理类型推断，你不需要手动配置参数类型！
 
 ### 3. 创建测试
 
-`examples/runtime/绝对值测试.qi`:
+`examples/runtime/最大值测试.qi`:
 
 ```qi
 函数 主() {
-    打印("=== 绝对值测试 ===");
+    打印("=== 最大值测试 ===");
 
-    打印整数(绝对值(-42));      // 42
-    打印整数(绝对值(100));      // 100
-    打印整数(绝对值(0));        // 0
+    // 整数最大值
+    变量 a = 42;
+    变量 b = 100;
+    变量 最大 = 求最大值(a, b);
 
-    打印浮点数(浮点绝对值(-3.14));  // 3.14
-    打印浮点数(浮点绝对值(2.718)); // 2.718
+    打印("整数最大值: ");
+    打印整数(最大);  // 输出: 100
+
+    // 直接使用字面量
+    打印整数(求最大值(10, 20));   // 输出: 20
+    打印整数(求最大值(-5, -10));  // 输出: -5
+    打印整数(求最大值(0, 0));     // 输出: 0
+
+    // 浮点数最大值
+    打印浮点数(浮点最大值(3.14, 2.718));  // 输出: 3.14
+    打印浮点数(浮点最大值(-1.5, -2.5));  // 输出: -1.5
 
     打印("=== 测试完成 ===");
 }
@@ -451,19 +745,45 @@ if callee == "qi_runtime_abs" {
 ### 4. 运行测试
 
 ```bash
-cargo run --release -- run examples/runtime/绝对值测试.qi
+cargo run --release -- run examples/runtime/最大值测试.qi
 ```
 
-**输出：**
+**预期输出：**
 
 ```
-=== 绝对值测试 ===
-42
-100
+Qi Runtime initialized
+=== 最大值测试 ===
+整数最大值: 100
+20
+-5
 0
 3.14
-2.718
+-1.5
 === 测试完成 ===
+Qi Runtime shutdown
+```
+
+### 5. 验证生成的 LLVM IR（可选）
+
+```bash
+cargo run --release -- compile examples/runtime/最大值测试.qi
+cat examples/runtime/最大值测试.ll
+```
+
+你应该看到类似的内容：
+
+```llvm
+; Qi Runtime declarations
+declare i64 @qi_runtime_math_max_int(i64, i64)
+declare double @qi_runtime_math_max_float(double, double)
+
+define i32 @main() {
+entry:
+  ; ...
+  %t1 = call i64 @qi_runtime_math_max_int(i64 42, i64 100)
+  %t2 = call double @qi_runtime_math_max_float(double 3.14, double 2.718)
+  ; ...
+}
 ```
 
 ---
@@ -575,22 +895,78 @@ clang test.o -Wl,-force_load target/release/libqi_runtime.a -o test
 
 添加新的 Runtime 功能的完整流程：
 
-1. ✅ **定义函数** - 在 `src/runtime/lib.rs` 中添加 `#[no_mangle] extern "C"` 函数
-2. ✅ **验证导出** - 使用 `nm` 检查符号是否正确导出
-3. ✅ **注册到代码生成器** - 在 `builder.rs` 中添加映射、声明和类型推断
+1. ✅ **定义函数** - 在 `src/runtime/executor.rs` 中添加 `#[no_mangle] extern "C"` 函数
+2. ✅ **注册映射** - 在 `builder.rs` 的 `map_to_runtime_function` 中添加名称映射
+3. ✅ **添加声明** - 在 `builder.rs` 的 `emit_llvm_ir` 中添加 LLVM IR 函数声明
 4. ✅ **创建测试** - 编写 `.qi` 测试文件
 5. ✅ **运行验证** - 使用 `cargo run -- run` 测试功能
 6. ✅ **文档化** - 添加注释和使用示例
 
 **关键要点：**
 
-- 类型必须匹配（Rust FFI ↔ LLVM IR）
-- 使用 `#[no_mangle]` 和 `extern "C"`
-- macOS 需要 `-Wl,-force_load` 强制加载静态库符号
-- 测试先行，确保功能正常
+- **统一的命名体系**：所有运行时函数使用 `qi_runtime_...` 格式
+- **类型必须匹配**：Rust FFI ↔ LLVM IR 的类型签名必须完全一致
+- **使用 FFI 标记**：`#[no_mangle]` + `extern "C"` 是必需的
+- **平台差异**：macOS 需要 `-Wl,-force_load`，Linux 需要 `--whole-archive`
+- **自动类型推断**：大多数情况下不需要手动配置参数类型
+- **测试先行**：先写测试，确保功能正常
 
 ---
 
-**日期：** 2025-10-23  
-**版本：** 1.0  
+## 附录：架构演进说明
+
+### 历史架构（已废弃）
+
+早期版本使用了混乱的三种函数命名风格：
+
+1. **中文名称**：`"字符串长度"` → `qi_runtime_string_length`
+2. **英文别名**：`"len"` → `qi_runtime_string_length`
+3. **Hex 编码**：`"e5_ad_97_e7_ac_a6_e9_95_bf"` → `e5_ad_97_e7_ac_a6_e9_95_bf`（已删除）
+
+Hex 编码方式是为了绕过某些限制而引入的，但这导致了：
+
+- 代码库中存在冗余的函数定义
+- LLVM IR 中有重复的 declare 语句
+- 维护困难，新手难以理解
+
+### 当前架构（统一设计）
+
+**2025-10-23 重构：** 完全删除 Hex 相关代码，统一使用清晰的命名体系。
+
+```
+用户代码层：
+  中文关键字：打印、字符串长度、求平方根
+  英文别名：print, len, sqrt
+         ↓
+编译器映射层 (map_to_runtime_function):
+  统一映射到 → qi_runtime_println, qi_runtime_string_length, qi_runtime_math_sqrt
+         ↓
+LLVM IR 层:
+  declare i32 @qi_runtime_println(ptr)
+  declare i64 @qi_runtime_string_length(ptr)
+  declare double @qi_runtime_math_sqrt(double)
+         ↓
+运行时实现层 (executor.rs):
+  #[no_mangle] pub extern "C" fn qi_runtime_println(...)
+  #[no_mangle] pub extern "C" fn qi_runtime_string_length(...)
+  #[no_mangle] pub extern "C" fn qi_runtime_math_sqrt(...)
+```
+
+**优势：**
+
+- ✅ 清晰一致的命名规范
+- ✅ 无冗余代码
+- ✅ 易于维护和扩展
+- ✅ 新手友好
+
+**重构影响：**
+
+- 删除约 72 行冗余代码
+- 清理了 `builder.rs` 和 `executor.rs` 中的 Hex 函数
+- 所有现有测试通过，无功能损失
+
+---
+
+**文档更新日期：** 2025-10-23  
+**版本：** 2.0（重大架构更新）  
 **维护者：** Qi Language Team
