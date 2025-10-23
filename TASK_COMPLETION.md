@@ -21,7 +21,7 @@
 
 ### ✅ 1. 统一设计文档创建
 
-**文件**: `docs/qi-unified-design-zh-cn.md` (26.7 KB, 850+ 行)
+**文件**: `docs/qi-unified-design/`（分章版本）
 
 **内容包括**:
 - 完整的设计概述（核心原则、技术栈）
@@ -300,7 +300,12 @@ warning: `qi-compiler` (lib) generated 25 warnings
 **文档**:
 ```
 docs/
-  ├── qi-unified-design-zh-cn.md          # 统一设计文档 (26.7 KB)
+  ├── qi-unified-design/
+  │   ├── README.md                       # 统一设计文档索引
+  │   ├── 01-overview.md                  # 设计原则与项目结构
+  │   ├── 02-language-reference.md        # 语言要素与标准库
+  │   ├── 03-compiler-runtime.md          # 编译器架构与运行时
+  │   └── 04-implementation-and-tooling.md # 示例与工具链
   ├── IMPLEMENTATION_SUMMARY.md           # 实现总结 (15.3 KB)
   └── TASK_COMPLETION.md                  # 本文档
 ```

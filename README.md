@@ -18,7 +18,7 @@
 
 ## 文档
 
-- 📖 **[统一设计文档](docs/qi-unified-design-zh-cn.md)** - 完整的语言设计规范
+- 📖 **[统一设计文档](docs/qi-unified-design/README.md)** - 完整的语言设计规范
 - 📚 **[示例程序](examples/qi/)** - 中文代码示例
 - 🔧 **[开发指南](CLAUDE.md)** - 技术栈和开发指导
 
@@ -252,7 +252,7 @@ qi-compiler/
 │   ├── qi/                 # Qi 语言示例
 │   └── run_examples.sh     # 示例运行脚本
 ├── docs/                    # 文档
-│   └── qi-unified-design-zh-cn.md  # 统一设计文档
+│   └── qi-unified-design/   # 统一设计文档（分章版）
 └── build.rs                # 构建脚本（LALRPOP）
 ```
 
@@ -294,7 +294,7 @@ Qi 语言使用 100% 中文关键字。核心关键字包括：
 | 内存     | 拥有、借用、移动、克隆、释放、新建         |
 | 错误     | 抛出、捕获、尝试、结果、选项               |
 
-完整关键字列表见 [统一设计文档](docs/qi-unified-design-zh-cn.md)。
+完整关键字列表见 [统一设计文档](docs/qi-unified-design/02-language-reference.md)。
 
 ## 贡献
 

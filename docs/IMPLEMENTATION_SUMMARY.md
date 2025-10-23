@@ -21,7 +21,7 @@
 
 ### 1.1 统一设计文档
 
-**文件位置**: `docs/qi-unified-design-zh-cn.md`
+**文件位置**: `docs/qi-unified-design/README.md` （分章索引）
 
 **内容覆盖**:
 - ✅ 完整的设计概述和核心原则
@@ -565,7 +565,12 @@ Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
 新增文件：
 ```
 docs/
-  └── qi-unified-design-zh-cn.md          # 统一设计文档
+  └── qi-unified-design/
+      ├── README.md                       # 统一设计文档索引
+      ├── 01-overview.md                  # 设计原则与项目结构
+      ├── 02-language-reference.md        # 语言要素与标准库
+      ├── 03-compiler-runtime.md          # 编译器架构与运行时
+      └── 04-implementation-and-tooling.md # 示例与工具链
   └── IMPLEMENTATION_SUMMARY.md           # 本文档
 
 examples/
