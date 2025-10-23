@@ -85,35 +85,40 @@ impl OptimizationManager {
         let mut result = ir.to_string();
 
         // 匹配简单的算术表达式
+        // NOTE: 常量折叠后需要生成有效的LLVM IR,不能直接 `%x = 常数`
+        // 正确的做法是生成 `%x = add i64 0, 常数` 或者完全消除指令并替换所有使用
 
-        // 加法：x = add i64 5, 3 -> x = 8
+        // 加法：x = add i64 5, 3 -> x = add i64 0, 8
         let re = Regex::new(r"(\w+)\s*=\s*add\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
         result = re.replace_all(&result, |caps: &regex::Captures| {
             let dest = caps.get(1).unwrap().as_str();
             let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
             let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            format!("{} = {}", dest, a + b)
+            // 生成有效的LLVM IR: add i64 0, result
+            format!("{} = add i64 0, {}", dest, a + b)
         }).to_string();
 
-        // 减法：x = sub i64 10, 3 -> x = 7
+        // 减法：x = sub i64 10, 3 -> x = add i64 0, 7
         let re = Regex::new(r"(\w+)\s*=\s*sub\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
         result = re.replace_all(&result, |caps: &regex::Captures| {
             let dest = caps.get(1).unwrap().as_str();
             let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
             let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            format!("{} = {}", dest, a - b)
+            // 生成有效的LLVM IR: add i64 0, result
+            format!("{} = add i64 0, {}", dest, a - b)
         }).to_string();
 
-        // 乘法：x = mul i64 6, 7 -> x = 42
+        // 乘法：x = mul i64 6, 7 -> x = add i64 0, 42
         let re = Regex::new(r"(\w+)\s*=\s*mul\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
         result = re.replace_all(&result, |caps: &regex::Captures| {
             let dest = caps.get(1).unwrap().as_str();
             let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
             let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            format!("{} = {}", dest, a * b)
+            // 生成有效的LLVM IR: add i64 0, result
+            format!("{} = add i64 0, {}", dest, a * b)
         }).to_string();
 
         Ok(result)

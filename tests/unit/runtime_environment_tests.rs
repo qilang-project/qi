@@ -3,8 +3,8 @@
 //! This module provides comprehensive unit tests for the RuntimeEnvironment
 //! including lifecycle management, state transitions, and configuration validation.
 
-use qi_runtime::runtime::{RuntimeEnvironment, RuntimeConfig, RuntimeState};
-use qi_runtime::runtime::RuntimeResult;
+use qi_compiler::runtime::{RuntimeEnvironment, RuntimeConfig, RuntimeState};
+use qi_compiler::runtime::RuntimeResult;
 
 #[test]
 fn test_runtime_config_creation() -> RuntimeResult<()> {
@@ -219,8 +219,8 @@ fn test_runtime_error_handling() -> RuntimeResult<()> {
 #[cfg(test)]
 mod property_tests {
     use proptest::prelude::*;
-    use qi_runtime::runtime::{RuntimeEnvironment, RuntimeConfig};
-    use qi_runtime::runtime::RuntimeResult;
+    use qi_compiler::runtime::{RuntimeEnvironment, RuntimeConfig};
+    use qi_compiler::runtime::RuntimeResult;
 
     proptest! {
         #[test]
@@ -237,7 +237,7 @@ mod property_tests {
             config.network_timeout_ms = timeout;
 
             let runtime = RuntimeEnvironment::new(config)?;
-            assert_eq!(runtime.state, qi_runtime::runtime::RuntimeState::Initializing);
+            assert_eq!(runtime.state, qi_compiler::runtime::RuntimeState::Initializing);
 
             Ok(())
         }

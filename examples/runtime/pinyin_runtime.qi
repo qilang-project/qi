@@ -1,6 +1,0 @@
-// 拼音函数名运行时测试
-函数 主() {
-    dayin("你好，Qi运行时！");
-    dayin_zhengshu(42);
-    dayin_fudianshu(3.14);
-}

@@ -377,8 +377,10 @@ impl Cli {
             println!("  链接 Qi Runtime 库: {:?}", runtime_lib_path);
         }
 
+        // Use -force_load on macOS to ensure all symbols from static library are linked
         let output = Command::new("clang")
             .arg(&temp_executable.with_extension("o"))
+            .arg("-Wl,-force_load")
             .arg(&runtime_lib_path)
             .arg("-o")
             .arg(&temp_executable)

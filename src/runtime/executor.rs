@@ -835,63 +835,63 @@ pub extern "C" fn qi_runtime_float_to_int(value: f64) -> i64 {
 // Chinese Language Function Aliases
 // ============================================================================
 
-/// 打印字符串 - Chinese alias for qi_runtime_print (HEX: e68993e5b0b0)
+/// 打印字符串 - Chinese alias for qi_runtime_print (HEX: e6_89_93_e5_8d_b0)
 #[no_mangle]
-pub extern "C" fn e6_89_93_e5_b0_b0(s: *const c_char) -> c_int {
+pub extern "C" fn e6_89_93_e5_8d_b0(s: *const c_char) -> c_int {
     qi_runtime_print(s)
 }
 
-/// 打印字符串并换行 - Chinese alias for qi_runtime_println (HEX: e68993e5b0b0_e8a18c)
+/// 打印字符串并换行 - Chinese alias for qi_runtime_println (HEX: e6_89_93_e5_8d_b0_e8_a1_8c)
 #[no_mangle]
-pub extern "C" fn e6_89_93_e5_b0_b0_e8_a1_8c(s: *const c_char) -> c_int {
+pub extern "C" fn e6_89_93_e5_8d_b0_e8_a1_8c(s: *const c_char) -> c_int {
     qi_runtime_println(s)
 }
 
-/// 打印整数 - Chinese alias for qi_runtime_println_int (HEX: e68993e5b0b0_e695b4e695b0)
+/// 打印整数 - Chinese alias for qi_runtime_println_int (HEX: e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0)
 #[no_mangle]
-pub extern "C" fn e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4(value: i64) -> c_int {
+pub extern "C" fn e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0(value: i64) -> c_int {
     qi_runtime_println_int(value)
 }
 
-/// 打印浮点数 - Chinese alias for qi_runtime_println_float (HEX: e68993e5b0b0_e6b5aee782b9e695b0)
+/// 打印浮点数 - Chinese alias for qi_runtime_println_float (HEX: e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0)
 #[no_mangle]
-pub extern "C" fn e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4(value: f64) -> c_int {
+pub extern "C" fn e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0(value: f64) -> c_int {
     qi_runtime_println_float(value)
 }
 
-/// 求平方根 - Chinese alias for qi_runtime_math_sqrt (HEX: e6b1b2e5b9b3e6a0b9)
+/// 求平方根 - Chinese alias for qi_runtime_math_sqrt (HEX: e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9)
 #[no_mangle]
-pub extern "C" fn e6_b1_b2_e5_b9_b3_e6_a0_b9(x: f64) -> f64 {
+pub extern "C" fn e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9(x: f64) -> f64 {
     qi_runtime_math_sqrt(x)
 }
 
-/// 求绝对值 - Chinese alias for qi_runtime_math_abs_int (HEX: e6b182e7bb9de580bc)
+/// 求绝对值 - Chinese alias for qi_runtime_math_abs_int (HEX: e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc)
 #[no_mangle]
-pub extern "C" fn e6_b1_82_e7_bb_9d_e5_80_bc(x: i64) -> i64 {
+pub extern "C" fn e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc(x: i64) -> i64 {
     qi_runtime_math_abs_int(x)
 }
 
-/// 字符串长度 - Chinese alias for qi_runtime_string_length (HEX: e5ad97e7aca6e995bf)
+/// 字符串长度 - Chinese alias for qi_runtime_string_length (HEX: e5_ad_97_e7_ac_a6_e9_95_bf)
 #[no_mangle]
 pub extern "C" fn e5_ad_97_e7_ac_a6_e9_95_bf(s: *const c_char) -> i64 {
     qi_runtime_string_length(s)
 }
 
-/// 字符串连接 - Chinese alias for qi_runtime_string_concat (HEX: e5ad97e7aca6e8bf9ee68ea5)
+/// 字符串连接 - Chinese alias for qi_runtime_string_concat (HEX: e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5)
 #[no_mangle]
 pub extern "C" fn e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5(s1: *const c_char, s2: *const c_char) -> *mut c_char {
     qi_runtime_string_concat(s1, s2)
 }
 
-/// 读取文件字符串 - Chinese alias for qi_runtime_file_read_string (HEX: e8afbbe58f96e69687e4bbb6)
+/// 读取文件字符串 - Chinese alias for qi_runtime_file_read_string (HEX: e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6)
 #[no_mangle]
 pub extern "C" fn e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6(lujing: *const c_char) -> *mut c_char {
     qi_runtime_file_read_string(lujing)
 }
 
-/// 写入文件字符串 - Chinese alias for qi_runtime_file_write_string (HEX: e58599e585a5e69687e4bbb6)
+/// 写入文件字符串 - Chinese alias for qi_runtime_file_write_string (HEX: e5_86_99_e5_85_a5_e6_96_87_e4_bb_b6)
 #[no_mangle]
-pub extern "C" fn e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6(lujing: *const c_char, neirong: *const c_char) -> c_int {
+pub extern "C" fn e5_86_99_e5_85_a5_e6_96_87_e4_bb_b6(lujing: *const c_char, neirong: *const c_char) -> c_int {
     qi_runtime_file_write_string(lujing, neirong)
 }
 

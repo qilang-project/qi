@@ -373,12 +373,33 @@ Precedence4: AstNode = {
 
 // Level 5: Addition and subtraction
 Precedence5: AstNode = {
-    <left:Precedence5> "+" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::加,
-        right: Box::new(right),
-        span: Default::default(),
-    }),
+    <left:Precedence5> "+" <right:Precedence6> => {
+        // Check if both operands are strings - if so, create StringConcatExpression
+        let is_string_concat = match (&left, &right) {
+            (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
+                matches!(&lit_left.value, LiteralValue::字符串(_)) &&
+                matches!(&lit_right.value, LiteralValue::字符串(_))
+            },
+            (AstNode::字面量表达式(lit), _) => matches!(&lit.value, LiteralValue::字符串(_)),
+            (_, AstNode::字面量表达式(lit)) => matches!(&lit.value, LiteralValue::字符串(_)),
+            _ => false,
+        };
+
+        if is_string_concat {
+            AstNode::字符串连接表达式(StringConcatExpression {
+                left: Box::new(left),
+                right: Box::new(right),
+                span: Default::default(),
+            })
+        } else {
+            AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(left),
+                operator: BinaryOperator::加,
+                right: Box::new(right),
+                span: Default::default(),
+            })
+        }
+    },
     <left:Precedence5> "-" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,

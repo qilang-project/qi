@@ -208,15 +208,15 @@ impl IrBuilder {
     fn map_to_runtime_function(&self, name: &str) -> Option<String> {
         let runtime_func = match name {
             // HEX function names (direct mappings to avoid Chinese restrictions)
-            "e6_89_93_e5_b0_b0" => Some("e6_89_93_e5_b0_b0"), // 打印
-            "e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4" => Some("e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4"), // 打印整数
-            "e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4" => Some("e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4"), // 打印浮点数
-            "e6_b1_b2_e5_b9_b3_e6_a0_b9" => Some("e6_b1_b2_e5_b9_b3_e6_a0_b9"), // 求平方根
-            "e6_b1_82_e7_bb_9d_e5_80_bc" => Some("e6_b1_82_e7_bb_9d_e5_80_bc"), // 求绝对值
+            "e6_89_93_e5_8d_b0" => Some("e6_89_93_e5_8d_b0"), // 打印
+            "e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0" => Some("e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0"), // 打印整数
+            "e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0" => Some("e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0"), // 打印浮点数
+            "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" => Some("e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9"), // 求平方根
+            "e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc" => Some("e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc"), // 求绝对值
             "e5_ad_97_e7_ac_a6_e9_95_bf" => Some("e5_ad_97_e7_ac_a6_e9_95_bf"), // 字符串长度
             "e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5" => Some("e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5"), // 字符串连接
             "e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6" => Some("e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6"), // 读取文件
-            "e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6" => Some("e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6"), // 写入文件
+            "e5_86_99_e5_85_a5_e6_96_87_e4_bb_b6" => Some("e5_86_99_e5_85_a5_e6_96_87_e4_bb_b6"), // 写入文件
 
             // String operations
             "字符串长度" | "长度" => Some("qi_runtime_string_length"),
@@ -225,20 +225,20 @@ impl IrBuilder {
             "字符串比较" | "比较" => Some("qi_runtime_string_compare"),
 
             // Math operations
-            "平方根" | "根号" => Some("qi_runtime_math_sqrt"),
+            "平方根" | "根号" | "求平方根" => Some("qi_runtime_math_sqrt"),
             "幂" | "次方" => Some("qi_runtime_math_pow"),
             "正弦" | "sin" => Some("qi_runtime_math_sin"),
             "余弦" | "cos" => Some("qi_runtime_math_cos"),
             "正切" | "tan" => Some("qi_runtime_math_tan"),
-            "绝对值" => Some("qi_runtime_math_abs_int"), // Default to int, could be smarter
+            "绝对值" | "求绝对值" => Some("qi_runtime_math_abs_int"), // Default to int, could be smarter
             "向下取整" | "floor" => Some("qi_runtime_math_floor"),
             "向上取整" | "ceil" => Some("qi_runtime_math_ceil"),
             "四舍五入" | "round" => Some("qi_runtime_math_round"),
 
             // File I/O operations
             "打开文件" | "打开" => Some("qi_runtime_file_open"),
-            "读取文件" | "读取" => Some("qi_runtime_file_read"),
-            "写入文件" | "写入" => Some("qi_runtime_file_write"),
+            "读取文件" | "读取" => Some("qi_runtime_file_read_string"),
+            "写入文件" | "写入" => Some("qi_runtime_file_write_string"),
             "关闭文件" | "关闭" => Some("qi_runtime_file_close"),
             "读取文本" => Some("qi_runtime_file_read_string"),
             "写入文本" => Some("qi_runtime_file_write_string"),
@@ -263,6 +263,7 @@ impl IrBuilder {
             "打印整数" => Some("qi_runtime_print_int"),
             "打印浮点数" => Some("qi_runtime_print_float"),
             "打印字符串" => Some("qi_runtime_print"),
+            "打印行" => Some("qi_runtime_println"),
 
             _ => None,
         };
@@ -352,25 +353,80 @@ impl IrBuilder {
                 };
 
                 // Determine the type based on the initializer or type annotation
-                let type_name = if let Some(initializer) = &decl.initializer {
+                // For binary expressions, we need to evaluate them first to get their type
+                let (type_name, pre_evaluated_init) = if let Some(initializer) = &decl.initializer {
                     match &**initializer {
                         AstNode::字面量表达式(literal) => {
-                            match &literal.value {
+                            let ty = match &literal.value {
                                 crate::parser::ast::LiteralValue::字符串(_) => "ptr",
                                 crate::parser::ast::LiteralValue::整数(_) => "i64",
                                 crate::parser::ast::LiteralValue::浮点数(_) => "double",
                                 crate::parser::ast::LiteralValue::布尔(_) => "i1",
                                 crate::parser::ast::LiteralValue::字符(_) => "i8",
-                            }
+                            };
+                            (ty.to_string(), None)
                         }
-                        _ => &self.get_llvm_type(&decl.type_annotation)
+                        AstNode::二元操作表达式(_) => {
+                            // Build the initializer first to determine its type
+                            let init_value = self.build_node(&**initializer)?;
+                            let init_var_name = init_value.trim_start_matches('%');
+                            let ty = self.variable_types.get(init_var_name)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "i64".to_string());
+                            (ty, Some(init_value))
+                        }
+                        AstNode::字符串连接表达式(_) => {
+                            // String concatenation always returns ptr
+                            let init_value = self.build_node(&**initializer)?;
+                            ("ptr".to_string(), Some(init_value))
+                        }
+                        AstNode::函数调用表达式(call_expr) => {
+                            // Check if this is a function call that returns a string or number
+                            let ty = if let Some(runtime_func) = self.map_to_runtime_function(&call_expr.callee) {
+                                if runtime_func.contains("math_sqrt") || runtime_func.contains("math_pow") ||
+                                   runtime_func.contains("math_sin") || runtime_func.contains("math_cos") ||
+                                   runtime_func.contains("math_tan") || runtime_func.contains("math_floor") ||
+                                   runtime_func.contains("math_ceil") || runtime_func.contains("math_round") ||
+                                   runtime_func.contains("math_abs_float") || runtime_func.contains("int_to_float") ||
+                                   runtime_func.contains("string_to_float") {
+                                    "double"
+                                } else if runtime_func.contains("string_length") {
+                                    "i64"  // string_length returns integer, not string
+                                } else if runtime_func.contains("read_string") ||
+                                          runtime_func.contains("int_to_string") ||
+                                          runtime_func.contains("float_to_string") ||
+                                          runtime_func.contains("string") ||
+                                          runtime_func == "qi_string_concat" {
+                                    "ptr"
+                                } else if runtime_func.contains("math_abs_int") || runtime_func.contains("float_to_int") ||
+                                          runtime_func.contains("string_to_int") || runtime_func.contains("array_length") {
+                                    "i64"
+                                } else {
+                                    "i64"
+                                }
+                            } else {
+                                "i64"
+                            };
+                            (ty.to_string(), None)
+                        }
+                        _ => {
+                            let ty = self.get_llvm_type(&decl.type_annotation);
+                            (ty.to_string(), None)
+                        }
                     }
                 } else {
-                    &self.get_llvm_type(&decl.type_annotation)
+                    let ty = self.get_llvm_type(&decl.type_annotation);
+                    (ty.to_string(), None)
                 };
 
-                // Record the variable type for later use
+                // Record the variable type for later use (both original and mangled names)
+                let mangled_name = if decl.name.chars().any(|c| !c.is_ascii()) {
+                    format!("_Z_{}", self.mangle_function_name(&decl.name).trim_start_matches("_Z_"))
+                } else {
+                    decl.name.clone()
+                };
                 self.variable_types.insert(decl.name.clone(), type_name.to_string());
+                self.variable_types.insert(mangled_name, type_name.to_string());
 
                 // Allocate variable
                 self.add_instruction(IrInstruction::分配 {
@@ -380,7 +436,12 @@ impl IrBuilder {
 
                 // Initialize if there's an initializer
                 if let Some(initializer) = &decl.initializer {
-                    let value = self.build_node(initializer)?;
+                    // Use pre-evaluated value if available, otherwise evaluate now
+                    let value = if let Some(pre_eval) = pre_evaluated_init {
+                        pre_eval
+                    } else {
+                        self.build_node(initializer)?
+                    };
                     self.add_instruction(IrInstruction::存储 {
                         target: var_name.clone(),
                         value,
@@ -767,7 +828,15 @@ impl IrBuilder {
             AstNode::字面量表达式(literal) => {
                 match &literal.value {
                     crate::parser::ast::LiteralValue::整数(n) => Ok(n.to_string()),
-                    crate::parser::ast::LiteralValue::浮点数(f) => Ok(f.to_string()),
+                    crate::parser::ast::LiteralValue::浮点数(f) => {
+                        // Ensure float literals always have decimal point
+                        let s = f.to_string();
+                        if s.contains('.') || s.contains('e') || s.contains('E') {
+                            Ok(s)
+                        } else {
+                            Ok(format!("{}.0", s))
+                        }
+                    },
                     crate::parser::ast::LiteralValue::布尔(b) => Ok(if *b { "1".to_string() } else { "0".to_string() }),
                     crate::parser::ast::LiteralValue::字符串(s) => {
                         // Create a global string constant matching clang's format
@@ -775,7 +844,9 @@ impl IrBuilder {
                         let byte_len = s.as_bytes().len();
                         let total_len = byte_len + 1; // +1 for null terminator
 
+                        // Generate a unique string name by incrementing temp_counter
                         let str_name = format!("@.str{}", self.temp_counter);
+                        self.temp_counter += 1;
 
                         self.add_instruction(IrInstruction::字符串常量 {
                             name: format!("{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1",
@@ -792,7 +863,100 @@ impl IrBuilder {
                 let left = self.build_node(&binary_expr.left)?;
                 let right = self.build_node(&binary_expr.right)?;
 
+                // Check if this is string concatenation (加 operator with string operands)
+                if binary_expr.operator == crate::parser::ast::BinaryOperator::加 {
+                    // Check if either operand is a string (starts with @ for string constants or is ptr type)
+                    let left_is_string = left.starts_with('@') || 
+                        (left.starts_with('%') && 
+                         self.variable_types.get(left.trim_start_matches('%'))
+                             .map(|t| t == "ptr").unwrap_or(false));
+                    let right_is_string = right.starts_with('@') || 
+                        (right.starts_with('%') && 
+                         self.variable_types.get(right.trim_start_matches('%'))
+                             .map(|t| t == "ptr").unwrap_or(false));
+
+                    if left_is_string || right_is_string {
+                        // This is string concatenation - convert non-string operands to strings first
+                        let left_str = if left_is_string {
+                            left
+                        } else {
+                            // Convert non-string to string
+                            let conv_temp = self.generate_temp();
+                            let left_type = if left.starts_with('%') {
+                                self.variable_types.get(left.trim_start_matches('%'))
+                                    .map(|s| s.as_str()).unwrap_or("i64")
+                            } else if left.contains('.') {
+                                "double"
+                            } else {
+                                "i64"
+                            };
+                            let conv_func = if left_type == "double" {
+                                "qi_runtime_float_to_string"
+                            } else {
+                                "qi_runtime_int_to_string"
+                            };
+                            self.variable_types.insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(conv_temp.clone()),
+                                callee: conv_func.to_string(),
+                                arguments: vec![left],
+                            });
+                            conv_temp
+                        };
+
+                        let right_str = if right_is_string {
+                            right
+                        } else {
+                            // Convert non-string to string
+                            let conv_temp = self.generate_temp();
+                            let right_type = if right.starts_with('%') {
+                                self.variable_types.get(right.trim_start_matches('%'))
+                                    .map(|s| s.as_str()).unwrap_or("i64")
+                            } else if right.contains('.') {
+                                "double"
+                            } else {
+                                "i64"
+                            };
+                            let conv_func = if right_type == "double" {
+                                "qi_runtime_float_to_string"
+                            } else {
+                                "qi_runtime_int_to_string"
+                            };
+                            self.variable_types.insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(conv_temp.clone()),
+                                callee: conv_func.to_string(),
+                                arguments: vec![right],
+                            });
+                            conv_temp
+                        };
+
+                        // Now concatenate the two strings
+                        let temp = self.generate_temp();
+                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                        
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(temp.clone()),
+                            callee: "qi_string_concat".to_string(),
+                            arguments: vec![left_str, right_str],
+                        });
+                        return Ok(temp);
+                    }
+                }
+
+                // Determine the result type of the binary operation
+                let is_float_op = left.contains('.') || right.contains('.');
+                let result_type = if is_float_op {
+                    "double"
+                } else {
+                    "i64"
+                };
+
                 let temp = self.generate_temp();
+                
+                // Record the type of this temporary variable
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), result_type.to_string());
+                
                 self.add_instruction(IrInstruction::二元操作 {
                     dest: temp.clone(),
                     left,
@@ -879,6 +1043,7 @@ impl IrBuilder {
                                     _ => "integer", // Default to integer
                                 }
                             }
+                            AstNode::字符串连接表达式(_) => "string", // String concatenation returns string
                             AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
                             _ => "integer", // Default to integer
                         };
@@ -925,11 +1090,34 @@ impl IrBuilder {
 
                 // Generate function call
                 let temp = self.generate_temp();
+
+                // Record the return type of this function call for later use
+                let return_type = if mapped_callee.starts_with("qi_runtime_") {
+                    if mapped_callee.contains("string_length") {
+                        "i64"  // string_length returns integer, not string
+                    } else if mapped_callee.contains("string") || mapped_callee.contains("concat") ||
+                       mapped_callee.contains("read_string") || mapped_callee.contains("int_to_string") ||
+                       mapped_callee.contains("float_to_string") {
+                        "ptr"
+                    } else if mapped_callee.contains("sqrt") || mapped_callee.contains("abs") || 
+                              mapped_callee.contains("math") || mapped_callee.contains("float") {
+                        "double"
+                    } else {
+                        "i64"
+                    }
+                } else if mapped_callee == "qi_string_concat" {
+                    "ptr"
+                } else {
+                    "i64"
+                };
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), return_type.to_string());
+
                 self.add_instruction(IrInstruction::函数调用 {
                     dest: Some(temp.clone()),
                     callee: mapped_callee,
                     arguments: arg_temps,
                 });
+
                 Ok(temp)
             }
             AstNode::标识符表达式(ident) => {
@@ -939,6 +1127,24 @@ impl IrBuilder {
                 } else {
                     format!("%{}", ident.name)
                 };
+
+                // Get the variable type and record it for the loaded value
+                // Try multiple keys: original name, var_name without %, mangled name without _Z_
+                let var_type = self.variable_types.get(&ident.name)
+                    .or_else(|| self.variable_types.get(var_name.trim_start_matches('%')))
+                    .or_else(|| {
+                        let mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                            format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"))
+                        } else {
+                            ident.name.clone()
+                        };
+                        self.variable_types.get(&mangled)
+                    })
+                    .cloned();
+                
+                if let Some(vtype) = var_type {
+                    self.variable_types.insert(temp.trim_start_matches('%').to_string(), vtype);
+                }
 
                 // For simplicity, always load from variables
                 // Parameters will be treated as variables for now
@@ -993,13 +1199,87 @@ impl IrBuilder {
                 let left_var = self.build_node(&string_concat.left)?;
                 let right_var = self.build_node(&string_concat.right)?;
 
+                // Check if we need to convert left to string
+                let left_str = {
+                    let is_string = left_var.starts_with('@') || 
+                        (left_var.starts_with('%') && 
+                         self.variable_types.get(left_var.trim_start_matches('%'))
+                             .map(|t| t == "ptr").unwrap_or(false));
+                    
+                    if is_string {
+                        left_var
+                    } else {
+                        // Convert to string
+                        let conv_temp = self.generate_temp();
+                        let left_type = if left_var.starts_with('%') {
+                            self.variable_types.get(left_var.trim_start_matches('%'))
+                                .map(|s| s.as_str()).unwrap_or("i64")
+                        } else if left_var.contains('.') {
+                            "double"
+                        } else {
+                            "i64"
+                        };
+                        let conv_func = if left_type == "double" {
+                            "qi_runtime_float_to_string"
+                        } else {
+                            "qi_runtime_int_to_string"
+                        };
+                        self.variable_types.insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(conv_temp.clone()),
+                            callee: conv_func.to_string(),
+                            arguments: vec![left_var],
+                        });
+                        conv_temp
+                    }
+                };
+
+                // Check if we need to convert right to string
+                let right_str = {
+                    let is_string = right_var.starts_with('@') || 
+                        (right_var.starts_with('%') && 
+                         self.variable_types.get(right_var.trim_start_matches('%'))
+                             .map(|t| t == "ptr").unwrap_or(false));
+                    
+                    if is_string {
+                        right_var
+                    } else {
+                        // Convert to string
+                        let conv_temp = self.generate_temp();
+                        let right_type = if right_var.starts_with('%') {
+                            self.variable_types.get(right_var.trim_start_matches('%'))
+                                .map(|s| s.as_str()).unwrap_or("i64")
+                        } else if right_var.contains('.') {
+                            "double"
+                        } else {
+                            "i64"
+                        };
+                        let conv_func = if right_type == "double" {
+                            "qi_runtime_float_to_string"
+                        } else {
+                            "qi_runtime_int_to_string"
+                        };
+                        self.variable_types.insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(conv_temp.clone()),
+                            callee: conv_func.to_string(),
+                            arguments: vec![right_var],
+                        });
+                        conv_temp
+                    }
+                };
+
                 // Generate string concatenation
                 let temp = self.generate_temp();
                 self.add_instruction(IrInstruction::字符串连接 {
                     dest: temp.clone(),
-                    left: left_var,
-                    right: right_var,
+                    left: left_str,
+                    right: right_str,
                 });
+
+                // Record that this temporary variable is a string type
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+
                 Ok(temp)
             }
             AstNode::结构体声明(_struct_decl) => {
@@ -1194,16 +1474,16 @@ impl IrBuilder {
 
         // Add Chinese function aliases (HEX names)
         ir.push_str("; Chinese function aliases (HEX names)\n");
-        ir.push_str("declare i32 @e6_89_93_e5_b0_b0(ptr)\n"); // 打印
-        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e8_a1_8c(ptr)\n"); // 打印行
-        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e6_95_b4_e6_95_b4(i64)\n"); // 打印整数
-        ir.push_str("declare i32 @e6_89_93_e5_b0_b0_e6_b5_be_e7_82_b9_e6_95_b4(double)\n"); // 打印浮点数
-        ir.push_str("declare double @e6_b1_b2_e5_b9_b3_e6_a0_b9(double)\n"); // 求平方根
-        ir.push_str("declare i64 @e6_b1_82_e7_bb_9d_e5_80_bc(i64)\n"); // 求绝对值
+        ir.push_str("declare i32 @e6_89_93_e5_8d_b0(ptr)\n"); // 打印
+        ir.push_str("declare i32 @e6_89_93_e5_8d_b0_e8_a1_8c(ptr)\n"); // 打印行
+        ir.push_str("declare i32 @e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0(i64)\n"); // 打印整数
+        ir.push_str("declare i32 @e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0(double)\n"); // 打印浮点数
+        ir.push_str("declare double @e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9(double)\n"); // 求平方根
+        ir.push_str("declare i64 @e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc(i64)\n"); // 求绝对值
         ir.push_str("declare i64 @e5_ad_97_e7_ac_a6_e9_95_bf(ptr)\n"); // 字符串长度
         ir.push_str("declare ptr @e5_ad_97_e7_ac_a6_e8_bf_9e_e6_8e_a5(ptr, ptr)\n"); // 字符串连接
         ir.push_str("declare ptr @e8_af_bb_e5_8f_96_e6_96_87_e4_bb_b6(ptr)\n"); // 读取文件
-        ir.push_str("declare i32 @e5_85_99_e5_85_a5_e6_96_87_e4_bb_b6(ptr, ptr)\n"); // 写入文件
+        ir.push_str("declare i32 @e5_86_99_e5_85_a5_e6_96_87_e4_bb_b6(ptr, ptr)\n"); // 写入文件
         ir.push_str("\n");
 
         // Add external function declarations (for backward compatibility)
@@ -1253,16 +1533,33 @@ impl IrBuilder {
                         "double".to_string()
                     } else if value.parse::<i64>().is_ok() {
                         "i64".to_string()
+                    } else if value.starts_with('%') {
+                        // Look up the type from variable_types HashMap
+                        let var_name = value.trim_start_matches('%');
+                        self.variable_types.get(var_name)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "i64".to_string())
                     } else {
-                        // Default to i64 for variables
+                        // Default to i64 for unknown values
                         "i64".to_string()
                     };
                     ir.push_str(&format!("store {} {}, ptr {}\n", inferred_type, value, target));
                 }
                 IrInstruction::加载 { dest, source } => {
-                    // For now, default to i64 for most variables
-                    // In a more sophisticated implementation, we'd track variable types
-                    let load_type = "i64";
+                    // Check if we're loading a string constant (starts with @ and contains .str)
+                    let load_type = if source.starts_with('@') && source.contains(".str") {
+                        "ptr"
+                    } else if source.starts_with('%') {
+                        // Look up variable type from our tracking for variables
+                        // Remove the % prefix to get the original variable name
+                        let var_name = source.trim_start_matches('%');
+
+                        // Look up the variable type from our tracking (we store both original and mangled names)
+                        self.variable_types.get(var_name).map(|s| s.as_str()).unwrap_or("i64")
+                    } else {
+                        // Default to i64 for most variables
+                        "i64"
+                    };
                     ir.push_str(&format!("{} = load {}, ptr {}\n", dest, load_type, source));
                 }
                 IrInstruction::二元操作 { dest, left, operator, right } => {
@@ -1302,6 +1599,26 @@ impl IrBuilder {
                         }
                     };
 
+                    // Helper function to convert integer literals to float format
+                    let normalize_operand = |operand: &str, is_float_op: bool| -> String {
+                        if is_float_op && !operand.starts_with('%') && !operand.starts_with('@') {
+                            // It's a literal value in a float operation
+                            if let Ok(_int_val) = operand.parse::<i64>() {
+                                // It's an integer literal - convert to float
+                                format!("{}.0", operand)
+                            } else {
+                                // Already a float or variable
+                                operand.to_string()
+                            }
+                        } else {
+                            operand.to_string()
+                        }
+                    };
+
+                    // Normalize operands if this is a float operation
+                    let normalized_left = normalize_operand(&left, is_float);
+                    let normalized_right = normalize_operand(&right, is_float);
+
                     // For comparison operations (icmp, fcmp), use operand_type
                     // For arithmetic operations, use return_type
                     let type_for_instruction = if op_str.starts_with("icmp") || op_str.starts_with("fcmp") {
@@ -1310,7 +1627,7 @@ impl IrBuilder {
                         return_type
                     };
 
-                    ir.push_str(&format!("{} = {} {} {}, {}\n", dest, op_str, type_for_instruction, left, right));
+                    ir.push_str(&format!("{} = {} {} {}, {}\n", dest, op_str, type_for_instruction, normalized_left, normalized_right));
                 }
                 IrInstruction::函数调用 { dest, callee, arguments } => {
                     if callee == "printf" && !arguments.is_empty() {
@@ -1353,16 +1670,57 @@ impl IrBuilder {
                         // Regular function call - determine argument types and return type
                         let mut typed_args = Vec::new();
                         
+                        // Check if this is a math function that requires double arguments
+                        let needs_double_args = callee.contains("math_sqrt") || 
+                                               callee.contains("math_pow") ||
+                                               callee.contains("math_sin") ||
+                                               callee.contains("math_cos") ||
+                                               callee.contains("math_tan") ||
+                                               callee.contains("math_floor") ||
+                                               callee.contains("math_ceil") ||
+                                               callee.contains("math_round") ||
+                                               callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9"; // 求平方根
+                        
                         for arg in arguments {
                             if arg.starts_with('@') {
                                 // String constant
                                 typed_args.push(format!("ptr {}", arg));
                             } else if arg.starts_with('%') {
-                                // Variable or temporary - assume i64 for now
-                                typed_args.push(format!("i64 {}", arg));
+                                // Variable or temporary - look up in variable_types HashMap
+                                let arg_var_name = arg.trim_start_matches('%');
+                                let arg_type = self.variable_types.get(arg_var_name)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or_else(|| {
+                                        // Fallback: determine type based on specific function signatures
+                                        if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" ||
+                                           callee == "e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0" { // 打印整数
+                                            "i64"
+                                        } else if callee == "qi_runtime_print_float" || callee == "qi_runtime_println_float" ||
+                                                  callee == "e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0" || // 打印浮点数
+                                                  callee == "qi_runtime_float_to_string" {
+                                            "double"
+                                        } else if callee.contains("concat") || callee.contains("read_string") || callee.contains("file") {
+                                            "ptr"
+                                        } else {
+                                            "i64"
+                                        }
+                                    });
+                                
+                                // Convert i64 to double if needed for math functions
+                                if needs_double_args && arg_type == "i64" {
+                                    // Generate sitofp conversion instruction
+                                    let conv_temp = format!("%conv{}", arg_var_name);
+                                    ir.push_str(&format!("{} = sitofp i64 {} to double\n", conv_temp, arg));
+                                    typed_args.push(format!("double {}", conv_temp));
+                                } else {
+                                    typed_args.push(format!("{} {}", arg_type, arg));
+                                }
                             } else {
                                 // Literal values
-                                if arg.contains('.') {
+                                if needs_double_args && !arg.contains('.') {
+                                    // Convert integer literal to double for math functions
+                                    typed_args.push(format!("double {}.0", arg));
+                                } else if arg.contains('.') {
                                     typed_args.push(format!("double {}", arg));
                                 } else {
                                     typed_args.push(format!("i64 {}", arg));
@@ -1374,7 +1732,38 @@ impl IrBuilder {
                         
                         // Determine return type based on function name
                         let ret_type = if callee.starts_with("qi_runtime_") {
-                            "i32" // All runtime functions return i32
+                            // Math functions return double
+                            if callee.contains("math_sqrt") || callee.contains("math_pow") || 
+                               callee.contains("math_sin") || callee.contains("math_cos") || 
+                               callee.contains("math_tan") || callee.contains("math_floor") ||
+                               callee.contains("math_ceil") || callee.contains("math_round") ||
+                               callee.contains("math_abs_float") || callee.contains("int_to_float") ||
+                               callee.contains("string_to_float") {
+                                "double"
+                            // String length returns i64, not ptr
+                            } else if callee.contains("string_length") {
+                                "i64"
+                            // String functions return ptr
+                            } else if callee.contains("string") || callee.contains("concat") || 
+                                      callee.contains("read_string") || callee.contains("int_to_string") || 
+                                      callee.contains("float_to_string") {
+                                "ptr"
+                            // Integer math functions return i64
+                            } else if callee.contains("math_abs_int") || callee.contains("float_to_int") ||
+                                      callee.contains("string_to_int") || callee.contains("array_length") {
+                                "i64"
+                            } else {
+                                "i32"
+                            }
+                        } else if callee == "qi_string_concat" {
+                            "ptr"
+                        // Check hex-encoded Chinese function names
+                        } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根
+                            "double"
+                        } else if callee == "e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc" { // 求绝对值
+                            "i64"
+                        } else if callee == "e5_ad_97_e7_ac_a6_e9_95_bf" { // 字符串长度
+                            "i64"
                         } else {
                             "i64" // Default to i64
                         };
