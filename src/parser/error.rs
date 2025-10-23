@@ -487,10 +487,15 @@ impl ParserErrorRecovery {
             TokenKind::方法 => "方法".to_string(),
             TokenKind::自己 => "自己".to_string(),
             TokenKind::导入 => "导入".to_string(),
+            TokenKind::导出 => "导出".to_string(),
             TokenKind::作为 => "作为".to_string(),
             TokenKind::在 => "在".to_string(),
             TokenKind::字符 => "字符".to_string(),
             TokenKind::参数 => "参数".to_string(),
+            TokenKind::包 => "包".to_string(),
+            TokenKind::模块 => "模块".to_string(),
+            TokenKind::公开 => "公开".to_string(),
+            TokenKind::私有 => "私有".to_string(),
             TokenKind::错误 => "错误".to_string(),
         }
     }

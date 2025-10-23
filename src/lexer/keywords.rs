@@ -29,6 +29,7 @@ impl KeywordTable {
 
         // Additional keywords for grammar
         keywords.insert("导入".to_string(), TokenKind::导入);
+        keywords.insert("导出".to_string(), TokenKind::导出);
         keywords.insert("作为".to_string(), TokenKind::作为);
         keywords.insert("在".to_string(), TokenKind::在);
         keywords.insert("字符".to_string(), TokenKind::字符);
@@ -36,6 +37,10 @@ impl KeywordTable {
         keywords.insert("与".to_string(), TokenKind::与);
         keywords.insert("或".to_string(), TokenKind::或);
         keywords.insert("参数".to_string(), TokenKind::参数);
+        keywords.insert("包".to_string(), TokenKind::包);
+        keywords.insert("模块".to_string(), TokenKind::模块);
+        keywords.insert("公开".to_string(), TokenKind::公开);
+        keywords.insert("私有".to_string(), TokenKind::私有);
 
         // Boolean literals
         keywords.insert("真".to_string(), TokenKind::布尔字面量(true));

@@ -267,7 +267,7 @@ fn test_parse_array_literal() {
 
 #[test]
 fn test_parse_struct_declaration() {
-    let source = "结构体 Person { name: 字符串, age: 整数 }";
+    let source = "结构体 Person { 字符串 name; 整数 age; }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -289,7 +289,7 @@ fn test_parse_empty_struct() {
 
 #[test]
 fn test_parse_struct_with_single_field() {
-    let source = "结构体 Point { x: 整数 }";
+    let source = "结构体 Point { 整数 x; }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -300,7 +300,7 @@ fn test_parse_struct_with_single_field() {
 
 #[test]
 fn test_parse_struct_with_multiple_fields() {
-    let source = "结构体 Rectangle { width: 浮点数, height: 浮点数, color: 字符串 }";
+    let source = "结构体 Rectangle { 浮点数 width; 浮点数 height; 字符串 color; }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -311,7 +311,7 @@ fn test_parse_struct_with_multiple_fields() {
 
 #[test]
 fn test_parse_struct_with_chinese_field_names() {
-    let source = "结构体 学生 { 姓名: 字符串, 年龄: 整数, 成绩: 浮点数 }";
+    let source = "结构体 学生 { 字符串 姓名; 整数 年龄; 浮点数 成绩; }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -322,7 +322,7 @@ fn test_parse_struct_with_chinese_field_names() {
 
 #[test]
 fn test_parse_multiple_struct_declarations() {
-    let source = "结构体 Person { name: 字符串 } 结构体 Point { x: 整数, y: 整数 }";
+    let source = "结构体 Person { 字符串 name; } 结构体 Point { 整数 x; 整数 y; }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 

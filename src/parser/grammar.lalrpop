@@ -3,11 +3,38 @@ use crate::parser::ast::*;
 grammar;
 
 pub Program: Program = {
-    <statements:Statement*> => Program {
-        package_name: None,
-        imports: vec![],
+    <package:PackageDeclaration?> <imports:ImportStatement*> <statements:Statement*> => Program {
+        package_name: package,
+        imports,
         statements,
         source_span: Default::default(),
+    }
+};
+
+PackageDeclaration: String = {
+    "包" <name:Identifier> ";" => name
+};
+
+ImportStatement: ImportStatement = {
+    "导入" <path:ModulePath> ";" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: None,
+        span: Default::default(),
+    },
+    "导入" <path:ModulePath> "作为" <alias:Identifier> ";" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: Some(alias),
+        span: Default::default(),
+    }
+};
+
+ModulePath: Vec<String> = {
+    <first:Identifier> <rest:("." <Identifier>)*> => {
+        let mut path = vec![first];
+        path.extend(rest);
+        path
     }
 };
 
@@ -56,9 +83,14 @@ VariableDeclaration: AstNode = {
     }),
 };
 
+Visibility: Visibility = {
+    "公开" => Visibility::公开,
+    => Visibility::私有,  // Default to private if not specified
+};
+
 FunctionDeclaration: AstNode = {
     // 带接收器的函数(方法) - Go 风格
-    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -66,9 +98,10 @@ FunctionDeclaration: AstNode = {
         parameters: vec![],
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -76,9 +109,10 @@ FunctionDeclaration: AstNode = {
         parameters: vec![],
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -86,9 +120,10 @@ FunctionDeclaration: AstNode = {
         parameters: params,
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -96,10 +131,11 @@ FunctionDeclaration: AstNode = {
         parameters: params,
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
     // 可变接收器的函数
-    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -107,9 +143,10 @@ FunctionDeclaration: AstNode = {
         parameters: vec![],
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -117,9 +154,10 @@ FunctionDeclaration: AstNode = {
         parameters: vec![],
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -127,9 +165,10 @@ FunctionDeclaration: AstNode = {
         parameters: params,
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -137,35 +176,40 @@ FunctionDeclaration: AstNode = {
         parameters: params,
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
     // 普通函数(无接收器)
-    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: Some(return_type),
         body,
+        visibility: vis,
         span: Default::default(),
     }),
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
         body,
+        visibility: vis,
         span: Default::default(),
     }),
 };
@@ -243,29 +287,32 @@ ForStatement: AstNode = {
 };
 
 StructDeclaration: AstNode = {
-    "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+    <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields,
         methods: vec![],
+        visibility: vis,
         span: Default::default(),
     }),
-    "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
+    <vis:Visibility> "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields: vec![],
         methods: vec![],
+        visibility: vis,
         span: Default::default(),
     }),
 };
 
 StructFieldList: Vec<StructField> = {
-    <fields:Comma<StructField>> => fields,
+    <fields:SemiSeparated<StructField>> => fields,
 };
 
 StructField: StructField = {
-    <name:Identifier> ":" <type_annotation:Type> => StructField {
+    <vis:Visibility> <type_annotation:Type> <name:Identifier> => StructField {
         name,
         type_annotation,
         is_embedded: false,
+        visibility: vis,
         span: Default::default(),
     },
 };
@@ -611,6 +658,16 @@ Parameter: Parameter = {
 Comma<T>: Vec<T> = {
     <first:T> => vec![first],
     <first:T> "," <rest:Comma<T>> => {
+        let mut rest = rest;
+        rest.insert(0, first);
+        rest
+    },
+};
+
+// Helper macro for semicolon-separated lists
+SemiSeparated<T>: Vec<T> = {
+    <first:T> ";" => vec![first],
+    <first:T> ";" <rest:SemiSeparated<T>> => {
         let mut rest = rest;
         rest.insert(0, first);
         rest

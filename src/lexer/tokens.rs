@@ -63,6 +63,7 @@ pub enum TokenKind {
 
     // Additional keywords for grammar
     导入,      // import
+    导出,      // export
     作为,      // as
     在,        // in
     字符,      // char
@@ -70,6 +71,10 @@ pub enum TokenKind {
     参数,      // parameter
     与,        // and
     或,        // or
+    包,        // package
+    模块,      // module
+    公开,      // public
+    私有,      // private
 
     // Boolean literal constants
     真,                 // true
