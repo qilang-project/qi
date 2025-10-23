@@ -186,7 +186,7 @@ qi compile 示例文件.qi --target wasm32-wasi -o 输出.wasm
 ## 更多资源
 
 - [Qi 语言官方文档](https://qi-lang.org/docs)
-- [语言设计文档](../../docs/qi-unified-design-zh-cn.md)
+- [语言设计文档](../../docs/qi-unified-design/README.md)
 - [API 参考](https://qi-lang.org/api)
 - [社区论坛](https://community.qi-lang.org)
 

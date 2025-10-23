@@ -388,7 +388,7 @@ qi compile --help
 
 ## 更多资源
 
-- 📖 **[完整设计文档](qi-unified-design-zh-cn.md)** - 语言完整规范
+- 📖 **[完整设计文档](qi-unified-design/README.md)** - 语言完整规范
 - 📚 **[示例程序](../examples/qi/)** - 更多代码示例
 - 🔧 **[开发指南](../CLAUDE.md)** - 编译器开发
 - 📋 **[实现总结](IMPLEMENTATION_SUMMARY.md)** - 实现状态
