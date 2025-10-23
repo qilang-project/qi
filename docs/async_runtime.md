@@ -1,46 +1,60 @@
-# Qi 异步运行时文档 (Async Runtime Documentation)
+# Qi 异步运行时规范文档
 
-## 概述 (Overview)
+## 概述
 
-Qi 异步运行时是一个高性能、基于 Rust 和 C 的异步任务执行系统，为 Qi 编程语言提供并发和异步编程能力。
+Qi 异步运行时是一个高性能的 M:N 协程调度系统，支持大规模并发、异步 I/O 和高效的任务管理。运行时基于 Rust 的 `async/await` 模型设计，为 Qi 语言提供现代化的异步编程能力。
 
-The Qi async runtime is a high-performance asynchronous task execution system based on Rust and C, providing concurrency and asynchronous programming capabilities for the Qi programming language.
+## 异步模型
 
-## 架构 (Architecture)
+### 核心概念
 
-### 组件 (Components)
+**协程 (Coroutine)**: 轻量级的执行单元，由运行时调度
+**任务 (Task)**: 异步操作的抽象，可以等待 (await) 其他异步操作
+**调度器 (Scheduler)**: M:N 调度器，将多个协程映射到少量系统线程
+**事件循环 (Event Loop)**: 异步 I/O 事件的处理中心
 
-1. **执行器 (Executor)** - `src/runtime/async_runtime/executor.rs`
-   - 管理任务的创建和生命周期
-   - 基于 Tokio 的 Future 执行
-   - 任务计数和统计信息
+### 异步工作流程
 
-2. **调度器 (Scheduler)** - `src/runtime/async_runtime/scheduler.rs`
-   - 任务元数据管理
-   - 任务注册与注销
-   - 调度统计
+```
+1. 用户代码: await async_operation()
+2. 协程挂起: 保存当前执行状态
+3. 调度器切换: 切换到其他可运行协程
+4. 异步操作: 在后台执行 (如 I/O)
+5. 事件通知: 操作完成时唤醒协程
+6. 协程恢复: 从挂起点继续执行
+```
 
-3. **任务 (Task)** - `src/runtime/async_runtime/task.rs`
-   - 任务抽象与句柄
-   - 优先级支持 (Low, Normal, High, Critical)
-   - 任务状态追踪 (Pending, Running, Waiting, Completed, Cancelled, Failed)
+## 调度器架构
 
-4. **工作池 (Worker Pool)** - `src/runtime/async_runtime/pool.rs`
-   - 工作线程配置
-   - 任务队列管理
-   - 可配置的工作窃取
+### 1. 多线程调度器
 
-5. **任务队列 (Task Queue)** - `src/runtime/async_runtime/queue.rs`
-   - 线程安全的任务队列
-   - 支持任务插入、弹出和删除
+**架构图**:
+```
+┌─────────────────────────────────────────────────┐
+│                全局任务队列                     │
+├─────────────────────────────────────────────────┤
+│  Worker Thread 1  │  Worker Thread 2  │  ...    │
+│  ┌─────────────┐  │  ┌─────────────┐  │         │
+│  │ 本地队列    │  │  │ 本地队列    │  │         │
+│  └─────────────┘  │  └─────────────┘  │         │
+│  ┌─────────────┐  │  ┌─────────────┐  │         │
+│  │ 执行器      │  │  │ 执行器      │  │         │
+│  └─────────────┘  │  └─────────────┘  │         │
+│  ┌─────────────┐  │  ┌─────────────┐  │         │
+│  │ 工作窃取    │  │  │ 工作窃取    │  │         │
+│  └─────────────┘  │  └─────────────┘  │         │
+└─────────────────────────────────────────────────┘
+```
 
-6. **状态管理 (State Manager)** - `src/runtime/async_runtime/state.rs`
-   - 运行时状态追踪 (Idle, Running, ShuttingDown, Stopped)
+### 2. 核心组件
 
-7. **FFI/系统调用 (FFI/Syscalls)** - `src/runtime/async_runtime/ffi/`
-   - 平台特定的系统调用包装
-   - C 实现的底层操作：睡眠、计时、CPU 信息
-   - 事件循环抽象 (epoll/kqueue/IOCP)
+**执行器 (Executor)**: 管理任务的创建和生命周期
+**调度器 (Scheduler)**: 任务元数据管理和调度策略
+**任务 (Task)**: 任务抽象与句柄，支持优先级和状态追踪
+**工作池 (Worker Pool)**: 工作线程配置和任务队列管理
+**任务队列 (Task Queue)**: 线程安全的任务队列，支持工作窃取
+**状态管理 (State Manager)**: 运行时状态追踪
+**FFI/系统调用**: 平台特定的系统调用包装
 
 ### Rust vs C 分工 (Rust vs C Responsibilities)
 
