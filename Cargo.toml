@@ -94,6 +94,7 @@ tempfile = "3.23.0"
 
 [build-dependencies]
 lalrpop = "0.22.2"
+cc = "1.1"
 
 [features]
 default = []

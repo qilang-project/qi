@@ -68,6 +68,38 @@ pub enum Error {
         chinese_message: String,
         component: Option<String>,
     },
+
+    /// Async runtime task errors
+    TaskError {
+        message: String,
+        chinese_message: String,
+        task_id: Option<String>,
+    },
+
+    /// Thread-related errors
+    ThreadError {
+        message: String,
+        chinese_message: String,
+        thread_id: Option<String>,
+    },
+
+    /// Lock/synchronization errors
+    LockError {
+        message: String,
+        chinese_message: String,
+    },
+
+    /// Configuration errors
+    ConfigurationError {
+        message: String,
+        chinese_message: String,
+    },
+
+    /// General runtime errors
+    RuntimeError {
+        message: String,
+        chinese_message: String,
+    },
 }
 
 impl Error {
@@ -81,6 +113,11 @@ impl Error {
             Error::SystemError { message, .. } => message,
             Error::UserError { message, .. } => message,
             Error::InternalError { message, .. } => message,
+            Error::TaskError { message, .. } => message,
+            Error::ThreadError { message, .. } => message,
+            Error::LockError { message, .. } => message,
+            Error::ConfigurationError { message, .. } => message,
+            Error::RuntimeError { message, .. } => message,
         }
     }
 
@@ -94,6 +131,11 @@ impl Error {
             Error::SystemError { chinese_message, .. } => chinese_message,
             Error::UserError { chinese_message, .. } => chinese_message,
             Error::InternalError { chinese_message, .. } => chinese_message,
+            Error::TaskError { chinese_message, .. } => chinese_message,
+            Error::ThreadError { chinese_message, .. } => chinese_message,
+            Error::LockError { chinese_message, .. } => chinese_message,
+            Error::ConfigurationError { chinese_message, .. } => chinese_message,
+            Error::RuntimeError { chinese_message, .. } => chinese_message,
         }
     }
 
@@ -107,6 +149,11 @@ impl Error {
             Error::SystemError { .. } => ErrorSeverity::Fatal,
             Error::UserError { .. } => ErrorSeverity::Info,
             Error::InternalError { .. } => ErrorSeverity::Fatal,
+            Error::TaskError { .. } => ErrorSeverity::Warning,
+            Error::ThreadError { .. } => ErrorSeverity::Fatal,
+            Error::LockError { .. } => ErrorSeverity::Warning,
+            Error::ConfigurationError { .. } => ErrorSeverity::Fatal,
+            Error::RuntimeError { .. } => ErrorSeverity::Fatal,
         }
     }
 
@@ -120,6 +167,11 @@ impl Error {
             Error::SystemError { .. } => "系统错误",
             Error::UserError { .. } => "用户程序错误",
             Error::InternalError { .. } => "内部错误",
+            Error::TaskError { .. } => "任务错误",
+            Error::ThreadError { .. } => "线程错误",
+            Error::LockError { .. } => "锁错误",
+            Error::ConfigurationError { .. } => "配置错误",
+            Error::RuntimeError { .. } => "运行时错误",
         }
     }
 
@@ -245,6 +297,48 @@ impl Error {
             message: message.into(),
             chinese_message: chinese_message.into(),
             component: Some("安全".to_string()),
+        }
+    }
+
+    /// Create task error
+    pub fn task_error<S: Into<String>>(message: S, chinese_message: S) -> Self {
+        Self::TaskError {
+            message: message.into(),
+            chinese_message: chinese_message.into(),
+            task_id: None,
+        }
+    }
+
+    /// Create thread error
+    pub fn thread_error<S: Into<String>>(message: S, chinese_message: S) -> Self {
+        Self::ThreadError {
+            message: message.into(),
+            chinese_message: chinese_message.into(),
+            thread_id: None,
+        }
+    }
+
+    /// Create lock error
+    pub fn lock_error<S: Into<String>>(message: S, chinese_message: S) -> Self {
+        Self::LockError {
+            message: message.into(),
+            chinese_message: chinese_message.into(),
+        }
+    }
+
+    /// Create configuration error
+    pub fn configuration_error<S: Into<String>>(message: S, chinese_message: S) -> Self {
+        Self::ConfigurationError {
+            message: message.into(),
+            chinese_message: chinese_message.into(),
+        }
+    }
+
+    /// Create runtime error
+    pub fn runtime_error<S: Into<String>>(message: S, chinese_message: S) -> Self {
+        Self::RuntimeError {
+            message: message.into(),
+            chinese_message: chinese_message.into(),
         }
     }
 }
