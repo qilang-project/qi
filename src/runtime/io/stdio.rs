@@ -3,7 +3,7 @@
 //! This module provides standard input/output operations with
 //! Chinese language support and console interface management.
 
-use std::io::{self, Write, Read, BufRead};
+use std::io::{self, Write, Read};
 use super::{IoResult, IoError};
 
 /// Standard I/O interface

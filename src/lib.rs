@@ -4,6 +4,8 @@
 //! Compiles Qi source code to executable binaries for multiple platforms.
 
 #![allow(missing_docs)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 #![warn(clippy::all)]
 
 pub mod cli;

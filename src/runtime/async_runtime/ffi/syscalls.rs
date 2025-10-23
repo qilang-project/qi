@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::os::raw::{c_int, c_longlong};
 
-use crate::runtime::{RuntimeError, RuntimeResult};
+use crate::runtime::RuntimeError;
 
 /// Result type for syscalls
 pub type SyscallResult<T> = Result<T, RuntimeError>;

@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 // Note: Backtrace functionality requires nightly Rust
 // For now, we'll use a placeholder implementation
-use std::ptr;
 
 // Placeholder types for backtrace functionality
 struct Backtrace {

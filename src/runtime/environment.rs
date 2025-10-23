@@ -4,7 +4,6 @@
 //! memory, I/O operations, and system resources for Qi program execution.
 
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 

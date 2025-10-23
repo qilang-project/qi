@@ -6,7 +6,7 @@
 use std::ffi::{c_char, c_int, CStr};
 use std::sync::{Mutex, Once};
 
-use crate::runtime::{RuntimeEnvironment, RuntimeConfig, RuntimeResult};
+use crate::runtime::{RuntimeEnvironment, RuntimeConfig};
 
 static RUNTIME_INIT: Once = Once::new();
 static mut RUNTIME: Option<Mutex<RuntimeEnvironment>> = None;

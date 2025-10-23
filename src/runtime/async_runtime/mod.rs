@@ -49,7 +49,7 @@ pub use state::{AsyncState, StateManager};
 
 use std::sync::Arc;
 use std::time::Duration;
-use crate::runtime::{RuntimeResult, RuntimeError};
+use crate::runtime::RuntimeResult;
 
 /// Async runtime configuration
 #[derive(Debug, Clone)]

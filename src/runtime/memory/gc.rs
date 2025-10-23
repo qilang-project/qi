@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use super::{MemoryResult, MemoryError};
+use super::MemoryResult;
 
 /// Garbage collection strategies
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
