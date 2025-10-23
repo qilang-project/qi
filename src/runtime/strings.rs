@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::collections::HashMap;
 use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// String encoding types

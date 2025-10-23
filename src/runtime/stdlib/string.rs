@@ -4,7 +4,6 @@
 //! with full Unicode and Chinese language support.
 
 use super::{StdlibResult, StdlibError, StdlibValue};
-use std::collections::HashMap;
 
 /// String operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

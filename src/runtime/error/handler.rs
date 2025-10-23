@@ -210,7 +210,7 @@ impl ErrorHandler {
 
     /// Handle error with custom context
     pub fn handle_error_with_context(&mut self, error: Error, frame: StackFrame) -> RecoveryOption {
-        let mut context = ErrorContext::new(error.clone()).add_frame(frame);
+        let context = ErrorContext::new(error.clone()).add_frame(frame);
 
         // Update statistics and history
         if self.config.enable_statistics {

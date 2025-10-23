@@ -1,13 +1,13 @@
 //! Coroutine scheduler for the async runtime
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::runtime::{RuntimeResult, RuntimeError};
 
-use super::task::{TaskId, TaskPriority, TaskMetadata};
+use super::task::{TaskId, TaskMetadata};
 
 /// Scheduler configuration
 #[derive(Debug, Clone)]

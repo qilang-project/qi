@@ -5,8 +5,8 @@
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
-use std::io::{Read, Write, BufReader, BufWriter};
-use super::{IoResult, IoError, IoTimeout, IoStatistics};
+use std::io::{Read, Write};
+use super::{IoResult, IoError, IoStatistics};
 
 /// HTTP request methods
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

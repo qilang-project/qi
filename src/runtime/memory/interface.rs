@@ -5,10 +5,9 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::collections::HashMap;
 
 use crate::runtime::{RuntimeResult, RuntimeError};
-use super::{MemoryManager, AllocationStrategy, GcConfig, MemoryUsage};
+use super::{MemoryManager, GcConfig, MemoryUsage};
 
 /// Unified memory interface that provides access to all memory management functionality
 #[derive(Debug)]

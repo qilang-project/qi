@@ -10,9 +10,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::runtime::{RuntimeResult, RuntimeError};
-use super::{IoResult, IoError, IoStatistics};
-use super::filesystem::{FileSystemInterface, FileOperation, FileOperationType};
-use super::network::{NetworkInterface, HttpRequest, HttpResponse};
+use super::filesystem::FileSystemInterface;
+use super::network::NetworkInterface;
 use super::stdio::{StandardIo, ConsoleInterface};
 
 /// Unified I/O interface that provides access to all I/O functionality
@@ -193,7 +192,7 @@ impl IoInterface {
         let operation_id = self.generate_operation_id("read_file");
 
         let result = {
-            let mut fs = self.filesystem.lock().unwrap();
+            let fs = self.filesystem.lock().unwrap();
             fs.read_file_string(path)
         };
 
@@ -219,7 +218,7 @@ impl IoInterface {
         let operation_id = self.generate_operation_id("write_file");
 
         let result = {
-            let mut fs = self.filesystem.lock().unwrap();
+            let fs = self.filesystem.lock().unwrap();
             fs.write_file_string(path, content)
         };
 
@@ -245,7 +244,7 @@ impl IoInterface {
         let operation_id = self.generate_operation_id("append_file");
 
         let result = {
-            let mut fs = self.filesystem.lock().unwrap();
+            let fs = self.filesystem.lock().unwrap();
             fs.append_file_string(path, content)
         };
 
@@ -317,7 +316,7 @@ impl IoInterface {
             .with_timeout(config.network_config.request_timeout);
 
         let result = {
-            let mut network = self.network.lock().unwrap();
+            let network = self.network.lock().unwrap();
             network.make_request(&request).and_then(|response| {
                 String::from_utf8(response.body).map_err(|e| super::IoError::EncodingError {
                     message: format!("HTTP响应编码错误: {}", e)
@@ -351,7 +350,7 @@ impl IoInterface {
             .with_timeout(config.network_config.request_timeout);
 
         let result = {
-            let mut network = self.network.lock().unwrap();
+            let network = self.network.lock().unwrap();
             network.make_request(&request).and_then(|response| {
                 String::from_utf8(response.body).map_err(|e| super::IoError::EncodingError {
                     message: format!("HTTP响应编码错误: {}", e)
