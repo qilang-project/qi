@@ -31,6 +31,7 @@ pub mod error;
 pub mod executor;
 pub mod debug;
 pub mod async_runtime;
+pub mod interpreter;
 
 // Legacy modules for backward compatibility
 pub mod strings;

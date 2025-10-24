@@ -1,7 +1,9 @@
 //! CLI command implementations
 
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::runtime::{RuntimeEnvironment, RuntimeConfig as QiRuntimeConfig, RuntimeError as QiRuntimeError};
 
 /// Qi Language Compiler CLI
 #[derive(Parser)]
@@ -300,26 +302,53 @@ impl Cli {
             println!("  生成文件: {:?}", compile_result.executable_path);
         }
 
-        // Step 2: Determine how to run the executable based on target platform
-        match config.target_platform {
-            crate::config::CompilationTarget::MacOS => {
-                // For macOS, we need to compile LLVM IR to executable
-                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
+        // Step 2: Execute directly with the bundled runtime interpreter
+        self.execute_with_runtime(&file, &args, &config)
+    }
+
+    fn execute_with_runtime(
+        &self,
+        source_file: &Path,
+        _args: &[String],
+        config: &crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        if !_args.is_empty() {
+            if config.verbose {
+                println!("⚠️  当前解释器暂未实现命令行参数支持，输入参数将被忽略: {:?}", _args);
+            } else {
+                eprintln!("⚠️  当前解释器暂未实现命令行参数支持，输入参数将被忽略: {:?}", _args);
             }
-            crate::config::CompilationTarget::Linux => {
-                // For Linux, run the executable directly
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
-            }
-            crate::config::CompilationTarget::Windows => {
-                // For Windows, run the executable directly
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
-            }
-            crate::config::CompilationTarget::Wasm => {
-                // For WebAssembly, we need a different approach
-                return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 运行暂未实现".to_string()
-                )));
-            }
+        }
+
+        if config.verbose {
+            println!("正在使用解释器运行程序...");
+        }
+
+        let source_code = std::fs::read_to_string(source_file)?;
+
+        let mut runtime_config = QiRuntimeConfig::default();
+        runtime_config.debug_mode = config.debug_symbols || config.verbose;
+
+        let mut runtime = RuntimeEnvironment::new(runtime_config)?;
+        runtime.initialize()?;
+
+        let exit_code = runtime.execute_program(source_code.as_bytes())?;
+        let metrics_snapshot = runtime.get_metrics().clone();
+
+        runtime.terminate()?;
+
+        if config.verbose {
+            println!("程序退出码: {}", exit_code);
+            println!("  总执行次数: {}", metrics_snapshot.programs_executed);
+            println!("  总耗时: {:?}", metrics_snapshot.total_execution_time);
+            println!();
+        }
+
+        if exit_code != 0 {
+            return Err(CliError::Runtime(QiRuntimeError::program_execution_error(
+                format!("程序以非零退出码 {} 结束", exit_code),
+                format!("程序以非零退出码 {} 结束", exit_code),
+            )));
         }
 
         Ok(())
@@ -811,23 +840,8 @@ impl Cli {
         println!("📝 运行参数: {:?}", args);
         println!("{}", "─".repeat(40));
 
-        // Step 3: Run the program
-        match config.target_platform {
-            crate::config::CompilationTarget::MacOS => {
-                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
-            }
-            crate::config::CompilationTarget::Linux => {
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
-            }
-            crate::config::CompilationTarget::Windows => {
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
-            }
-            crate::config::CompilationTarget::Wasm => {
-                return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 运行暂未实现".to_string()
-                )));
-            }
-        }
+        // Step 3: Run the program using the embedded runtime
+        self.execute_with_runtime(&file, &args, &config)?;
 
         println!("{}", "─".repeat(40));
         println!("✅ 程序运行完成");
@@ -1043,4 +1057,8 @@ pub enum CliError {
     /// I/O 错误
     #[error("I/O 错误: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Runtime 错误
+    #[error("Runtime 错误: {0}")]
+    Runtime(#[from] QiRuntimeError),
 }

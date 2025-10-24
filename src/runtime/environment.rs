@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
+use crate::parser::Parser;
 use crate::runtime::{RuntimeResult, RuntimeError};
+use crate::runtime::interpreter::Interpreter;
 use crate::runtime::memory::MemoryManager;
 use crate::runtime::io::{FileSystemInterface, NetworkManager};
 use crate::runtime::stdlib::{StringModule, MathModule, SystemModule, ConversionModule, DebugModule};
@@ -301,6 +303,46 @@ impl RuntimeEnvironment {
     fn simulate_program_execution(&mut self, program_data: &[u8]) -> RuntimeResult<i32> {
         if self.config.debug_mode {
             println!("调试: 模拟执行程序，大小: {} 字节", program_data.len());
+        }
+
+        // Try to parse as UTF-8 source code
+        if let Ok(source) = std::str::from_utf8(program_data) {
+            if self.config.debug_mode {
+                println!("调试: 尝试解析源代码");
+            }
+
+            let parser = Parser::new();
+            match parser.parse_source(source) {
+                Ok(program) => {
+                    if self.config.debug_mode {
+                        println!("调试: 成功解析程序");
+                    }
+                    
+                    // Use the interpreter to execute
+                    let mut interpreter = Interpreter::new();
+                    match interpreter.execute(&program) {
+                        Ok(exit_code) => {
+                            if self.config.debug_mode {
+                                println!("调试: 程序执行完成，退出码: {}", exit_code);
+                            }
+                            self.increment_io_operations();
+                            self.update_memory_metrics();
+                            return Ok(exit_code as i32);
+                        }
+                        Err(e) => {
+                            if self.config.debug_mode {
+                                println!("调试: 程序执行错误: {}", e);
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if self.config.debug_mode {
+                        println!("调试: 解析错误: {:?}", e);
+                    }
+                }
+            }
         }
 
         // Simulate some basic operations
