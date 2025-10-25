@@ -54,16 +54,33 @@ while IFS= read -r qi_file; do
     # 获取相对于项目根目录的路径 (纯bash实现)
     relative_path=${qi_file#$PROJECT_ROOT/}
 
+    # 如果文件在 multi_file 目录中,检查是否包含 "包 主程序;" 和 "函数 入口"
+    # 只运行包含这两个标记的主文件,跳过库文件
+    if [[ "$relative_path" == *"/multi_file/"* ]]; then
+        if ! grep -q "包 主程序;" "$qi_file" || ! grep -q "函数 入口" "$qi_file"; then
+            echo -e "${YELLOW}[$current/$file_count] 跳过库文件 | Skipping library: $relative_path${NC}"
+            echo "========================================"
+            echo
+            continue
+        fi
+    fi
+
     echo -e "${BLUE}[$current/$file_count] 运行 | Running: $relative_path${NC}"
     echo "----------------------------------------"
 
-    # 切换到项目根目录并运行
-    if cd "$PROJECT_ROOT" && cargo run -- run "$relative_path"; then
+    # 切换到项目根目录并运行（默认启用详细输出）
+    if cd "$PROJECT_ROOT" && cargo run -- -v run "$relative_path"; then
         echo -e "${GREEN}✓ 成功 | Success: $relative_path${NC}"
         success_count=$((success_count + 1))
     else
-        echo -e "${RED}✗ 失败 | Failed: $relative_path${NC}"
-        error_count=$((error_count + 1))
+        # 检查是否是 broken pipe 错误 (exit code 141)
+        if [ $? -eq 141 ]; then
+            echo -e "${GREEN}✓ 成功 | Success: $relative_path${NC} (输出被截断 | Output truncated)"
+            success_count=$((success_count + 1))
+        else
+            echo -e "${RED}✗ 失败 | Failed: $relative_path${NC}"
+            error_count=$((error_count + 1))
+        fi
     fi
 
     echo

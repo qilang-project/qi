@@ -59,37 +59,284 @@ impl QiCompiler {
     /// Compile a Qi source file to an executable
     pub fn compile(&self, source_file: PathBuf) -> Result<CompilationResult, CompilerError> {
         let start_time = std::time::Instant::now();
+        let warnings: Vec<String> = Vec::new();
+
+        // Multi-file compilation with import resolution
+        let result = self.compile_project(source_file)?;
+
+        let duration = start_time.elapsed().as_millis() as u64;
+        Ok(CompilationResult {
+            executable_path: result.executable_path,
+            ir_paths: result.ir_paths,
+            object_paths: result.object_paths,
+            duration_ms: duration,
+            warnings: result.warnings,
+        })
+    }
+
+    /// Compile a project with multiple files and import resolution
+    fn compile_project(&self, entry_file: PathBuf) -> Result<CompilationResult, CompilerError> {
+        let mut module_registry = crate::semantic::module::ModuleRegistry::new();
+        let mut compiled_modules = std::collections::HashMap::new();
         let warnings = Vec::new();
 
-        // Read source file
-        let source_code = std::fs::read_to_string(&source_file)
+        // 1. Parse and register all modules
+        self.parse_and_collect_modules(
+            &entry_file,
+            &mut module_registry,
+            &mut compiled_modules
+        )?;
+
+    let mut object_files: Vec<PathBuf> = Vec::new();
+    let mut ir_files: Vec<PathBuf> = Vec::new();
+
+        // 2. Compile each module independently
+        for (module_path, ast) in &compiled_modules {
+            // Get module info to collect imported functions
+            let module_name = module_path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let current_module = module_registry.get_module(&module_name);
+
+            // Collect external function signatures from imported modules
+            let mut external_functions = std::collections::HashMap::new();
+            if let Some(module) = current_module {
+                for import in &module.imports {
+                    // Get the imported module
+                    let import_module_name = import.module_path.last().unwrap_or(&String::new()).clone();
+                    if let Some(imported_module) = module_registry.get_module(&import_module_name) {
+                        // Add all exported functions from imported module as external
+                        for (func_name, symbol) in &imported_module.exports {
+                            if symbol.kind == crate::semantic::module::SymbolKind::Function {
+                                if let Some(sig) = &symbol.function_signature {
+                                    // Mangle the function name same way as builder does
+                                    let mangled_name = self.mangle_function_name(func_name);
+                                    let param_types: Vec<String> = sig.parameters.iter()
+                                        .map(|(_, ty)| ty.clone())
+                                        .collect();
+                                    external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Generate LLVM IR for this module
+            let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
+            
+            // Set external functions for this module
+            codegen.set_external_functions(external_functions);
+
+            let ir_content = codegen.generate(&ast)
+                .map_err(|e| CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e)))?;
+
+            // Write LLVM IR to file
+            let ir_path = module_path.with_extension("ll");
+            std::fs::write(&ir_path, ir_content)
+                .map_err(CompilerError::Io)?;
+            ir_files.push(ir_path.clone());
+
+            // Compile IR to object file (.o)
+            let obj_path = self.compile_ir_to_object(&ir_path)?;
+            object_files.push(obj_path);
+        }
+
+        // 3. Link all object files
+        let executable_path = entry_file.with_extension(""); // e.g., "main"
+        self.link_objects(&object_files, &executable_path)?;
+
+        Ok(CompilationResult {
+            executable_path,
+            ir_paths: ir_files,
+            object_paths: object_files,
+            duration_ms: 0, // Will be set by caller
+            warnings,
+        })
+    }
+
+    /// Mangle function name (same logic as codegen::builder)
+    fn mangle_function_name(&self, name: &str) -> String {
+        // ASCII names remain unchanged
+        if name.chars().all(|c| c.is_ascii()) {
+            return name.to_string();
+        }
+
+        // Convert UTF-8 bytes to hex representation
+        let utf8_bytes = name.as_bytes();
+        let hex_string: String = utf8_bytes
+            .iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect();
+
+        // Add prefix to prevent symbol conflicts
+        format!("_Z_{}", hex_string)
+    }
+
+    /// Compile LLVM IR to object file
+    fn compile_ir_to_object(&self, ir_path: &PathBuf) -> Result<PathBuf, CompilerError> {
+        let obj_path = ir_path.with_extension("o");
+        
+        let output = std::process::Command::new("clang")
+            .arg("-c")
+            .arg(ir_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .output()
             .map_err(CompilerError::Io)?;
 
-        // Phase 1: Lexical analysis and parsing using manual parser
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CompilerError::Codegen(
+                format!("LLVM IR 编译为目标文件失败: {}", error)
+            ));
+        }
+
+        Ok(obj_path)
+    }
+
+    /// Link object files into executable
+    fn link_objects(
+        &self,
+        object_files: &[PathBuf],
+        executable_path: &PathBuf,
+    ) -> Result<(), CompilerError> {
+        // Get the compiler library path for linking runtime
+        let compiler_lib_path = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .map(|p| p.join("libqi_compiler.a"))
+            .ok_or_else(|| CompilerError::Codegen("无法找到编译器库路径".to_string()))?;
+
+        let mut command = std::process::Command::new("clang");
+        command.arg("-o").arg(executable_path);
+        
+        // Add all object files
+        for obj in object_files {
+            command.arg(obj);
+        }
+
+        // Link runtime library
+        if compiler_lib_path.exists() {
+            command.arg(&compiler_lib_path);
+        }
+
+        // Add pthread for async runtime
+        command.arg("-lpthread");
+
+        let output = command.output()
+            .map_err(CompilerError::Io)?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CompilerError::Codegen(
+                format!("链接失败: {}", error)
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Parse a file and recursively parse its imports
+    fn parse_and_collect_modules(
+        &self,
+        file_path: &PathBuf,
+        module_registry: &mut crate::semantic::module::ModuleRegistry,
+        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
+    ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+        // Check if already compiled
+        if let Some(ast) = compiled_modules.get(file_path) {
+            return Ok(ast.clone());
+        }
+
+        // Read and parse the file
+        let source_code = std::fs::read_to_string(file_path)
+            .map_err(CompilerError::Io)?;
+
         let mut lexer = crate::lexer::Lexer::new(source_code);
         let tokens = lexer.tokenize()
             .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
 
         let parser = crate::parser::Parser::new();
-        let ast = parser.parse(tokens)
-            .map_err(|e| CompilerError::Parse(format!("解析错误: {}", e)))?;
+        let program = parser.parse(tokens)
+            .map_err(|e| CompilerError::Parse(format!("解析错误 {}: {}", file_path.display(), e)))?;
 
-        // Phase 3: Generate LLVM IR from AST
-        let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
-        let ir_content = codegen.generate(&crate::parser::ast::AstNode::程序(ast))
-            .map_err(|e| CompilerError::Codegen(format!("Code generation failed: {:?}", e)))?;
+        // Convert program to AST node and extract imports
+        let ast = crate::parser::ast::AstNode::程序(program.clone());
 
-        // Write LLVM IR to file
-        let ir_path = source_file.with_extension("ll");
-        std::fs::write(&ir_path, ir_content)
-            .map_err(CompilerError::Io)?;
+        // Register current module
+        let module_name = file_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
 
-        let duration = start_time.elapsed().as_millis() as u64;
-        Ok(CompilationResult {
-            executable_path: ir_path,
-            duration_ms: duration,
-            warnings,
-        })
+        let module = crate::semantic::module::Module {
+            name: module_name.clone(),
+            path: file_path.clone(),
+            package_name: program.package_name.clone(),
+            exports: module_registry.extract_exports(&program),
+            imports: program.imports.iter().map(|imp| crate::semantic::module::Import {
+                module_path: imp.module_path.clone(),
+                items: imp.items.clone(),
+                alias: imp.alias.clone(),
+            }).collect(),
+        };
+
+        module_registry.register_module(module);
+
+        // Process imports
+        for import_stmt in &program.imports {
+            let import_path = self.resolve_import_path(file_path, &import_stmt.module_path)?;
+
+            // Recursively parse imported module
+            self.parse_and_collect_modules(
+                &import_path,
+                module_registry,
+                compiled_modules
+            )?;
+        }
+
+        // Store the compiled AST
+        compiled_modules.insert(file_path.clone(), ast.clone());
+
+        Ok(ast)
+    }
+
+    /// Resolve import path relative to current file
+    fn resolve_import_path(
+        &self,
+        current_file: &PathBuf,
+        module_path: &[String]
+    ) -> Result<PathBuf, CompilerError> {
+        let parent_dir = current_file.parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        // Simple path resolution - just join the module path with .qi extension
+        let mut import_path = parent_dir.to_path_buf();
+        for component in module_path {
+            import_path.push(component);
+        }
+        import_path.set_extension("qi");
+
+        // Check if file exists
+        if import_path.exists() {
+            return Ok(import_path);
+        }
+
+        // Try pattern: module_name.qi
+        if module_path.len() == 1 {
+            let simple_path = parent_dir.join(format!("{}.qi", module_path[0]));
+            if simple_path.exists() {
+                return Ok(simple_path);
+            }
+        }
+
+        Err(CompilerError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("无法找到导入模块: {:?}", import_path)
+        )))
     }
 }
 
@@ -98,6 +345,10 @@ impl QiCompiler {
 pub struct CompilationResult {
     /// Path to the generated executable
     pub executable_path: PathBuf,
+    /// Paths to generated LLVM IR files (.ll)
+    pub ir_paths: Vec<PathBuf>,
+    /// Paths to generated object files (.o)
+    pub object_paths: Vec<PathBuf>,
     /// Compilation duration in milliseconds
     pub duration_ms: u64,
     /// Warnings generated during compilation

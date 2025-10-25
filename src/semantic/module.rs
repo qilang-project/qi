@@ -28,6 +28,15 @@ pub struct Symbol {
     pub name: String,
     pub visibility: Visibility,
     pub kind: SymbolKind,
+    pub function_signature: Option<FunctionSignature>,
+}
+
+/// Function signature for external declarations
+#[derive(Debug, Clone)]
+pub struct FunctionSignature {
+    pub parameters: Vec<(String, String)>, // (param_name, type)
+    pub return_type: String,
+    pub is_async: bool,
 }
 
 /// Symbol kinds
@@ -99,10 +108,41 @@ impl ModuleRegistry {
             match statement {
                 AstNode::函数声明(func) => {
                     if func.visibility == Visibility::公开 {
+                        // Extract function signature
+                        let signature = Some(FunctionSignature {
+                            parameters: func.parameters.iter().map(|p| {
+                                let type_str = Self::type_node_to_llvm_type(&p.type_annotation);
+                                (p.name.clone(), type_str)
+                            }).collect(),
+                            return_type: Self::type_node_to_llvm_type(&func.return_type),
+                            is_async: false,
+                        });
+
                         exports.insert(func.name.clone(), Symbol {
                             name: func.name.clone(),
                             visibility: func.visibility,
                             kind: SymbolKind::Function,
+                            function_signature: signature,
+                        });
+                    }
+                }
+                AstNode::异步函数声明(async_func) => {
+                    if async_func.visibility == Visibility::公开 {
+                        // Extract async function signature
+                        let signature = Some(FunctionSignature {
+                            parameters: async_func.parameters.iter().map(|p| {
+                                let type_str = Self::type_node_to_llvm_type(&p.type_annotation);
+                                (p.name.clone(), type_str)
+                            }).collect(),
+                            return_type: "ptr".to_string(), // Async functions always return ptr (Future)
+                            is_async: true,
+                        });
+
+                        exports.insert(async_func.name.clone(), Symbol {
+                            name: async_func.name.clone(),
+                            visibility: async_func.visibility,
+                            kind: SymbolKind::Function,
+                            function_signature: signature,
                         });
                     }
                 }
@@ -112,6 +152,7 @@ impl ModuleRegistry {
                             name: struct_decl.name.clone(),
                             visibility: struct_decl.visibility,
                             kind: SymbolKind::Struct,
+                            function_signature: None,
                         });
                     }
                 }
@@ -121,6 +162,7 @@ impl ModuleRegistry {
                             name: enum_decl.name.clone(),
                             visibility: enum_decl.visibility,
                             kind: SymbolKind::Enum,
+                            function_signature: None,
                         });
                     }
                 }
@@ -129,6 +171,34 @@ impl ModuleRegistry {
         }
 
         exports
+    }
+
+    /// Convert TypeNode to LLVM type string
+    fn type_node_to_llvm_type(type_annotation: &Option<crate::parser::ast::TypeNode>) -> String {
+        use crate::parser::ast::{TypeNode, BasicType};
+        match type_annotation {
+            Some(TypeNode::基础类型(basic_type)) => {
+                match basic_type {
+                    BasicType::整数 => "i64".to_string(),
+                    BasicType::长整数 => "i64".to_string(),
+                    BasicType::短整数 => "i16".to_string(),
+                    BasicType::字节 => "i8".to_string(),
+                    BasicType::浮点数 => "double".to_string(),
+                    BasicType::布尔 => "i1".to_string(),
+                    BasicType::字符 => "i8".to_string(),
+                    BasicType::字符串 => "ptr".to_string(),
+                    BasicType::空 => "void".to_string(),
+                    BasicType::数组 => "ptr".to_string(),
+                    BasicType::字典 => "ptr".to_string(),
+                    BasicType::列表 => "ptr".to_string(),
+                    BasicType::集合 => "ptr".to_string(),
+                    BasicType::指针 => "ptr".to_string(),
+                    BasicType::引用 => "ptr".to_string(),
+                    BasicType::可变引用 => "ptr".to_string(),
+                }
+            }
+            _ => "i64".to_string(), // Default to i64
+        }
     }
 }
 
@@ -167,11 +237,13 @@ mod tests {
             name: "公开函数".to_string(),
             visibility: Visibility::公开,
             kind: SymbolKind::Function,
+            function_signature: None,
         });
         exports.insert("私有函数".to_string(), Symbol {
             name: "私有函数".to_string(),
             visibility: Visibility::私有,
             kind: SymbolKind::Function,
+            function_signature: None,
         });
         
         let module = Module {

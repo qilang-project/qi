@@ -379,6 +379,61 @@ pub extern "C" fn qi_runtime_println_float(value: c_double) -> c_int {
     0
 }
 
+/// Print string followed by integer
+#[no_mangle]
+pub extern "C" fn qi_runtime_println_str_int(s: *const c_char, value: c_long) -> c_int {
+    if s.is_null() {
+        return -1;
+    }
+    unsafe {
+        let c_str = std::ffi::CStr::from_ptr(s);
+        match c_str.to_str() {
+            Ok(text) => {
+                println!("{} {}", text, value);
+                0
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+/// Print string followed by float
+#[no_mangle]
+pub extern "C" fn qi_runtime_println_str_float(s: *const c_char, value: c_double) -> c_int {
+    if s.is_null() {
+        return -1;
+    }
+    unsafe {
+        let c_str = std::ffi::CStr::from_ptr(s);
+        match c_str.to_str() {
+            Ok(text) => {
+                println!("{} {}", text, value);
+                0
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+/// Print string followed by string
+#[no_mangle]
+pub extern "C" fn qi_runtime_println_str_str(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        return -1;
+    }
+    unsafe {
+        let c_str1 = std::ffi::CStr::from_ptr(s1);
+        let c_str2 = std::ffi::CStr::from_ptr(s2);
+        match (c_str1.to_str(), c_str2.to_str()) {
+            (Ok(text1), Ok(text2)) => {
+                println!("{} {}", text1, text2);
+                0
+            }
+            _ => -1,
+        }
+    }
+}
+
 // ============================================================================
 // Math Functions
 // ============================================================================

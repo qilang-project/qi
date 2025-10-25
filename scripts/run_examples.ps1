@@ -74,9 +74,9 @@ foreach ($qiFile in $qiFiles) {
     Write-Separator
 
     try {
-        # 切换到项目根目录并运行
+        # 切换到项目根目录并运行（默认启用详细输出）
         Push-Location $ProjectRoot
-        $result = cargo run -- run $relativePath
+        $result = cargo run -- -v run $relativePath
 
         if ($LASTEXITCODE -eq 0) {
             Write-ColorOutput "✓ 成功 | Success: $relativePath" "Green"

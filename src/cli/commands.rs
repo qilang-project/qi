@@ -3,152 +3,219 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Qi Language Compiler CLI
+/// Qi Language Compiler CLI | Qi 编程语言编译器
 #[derive(Parser)]
 #[command(name = "qi")]
-#[command(about = "Qi 编程语言编译器")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(author = "Qi Language Team <team@qi-lang.org>")]
+#[command(about = "Qi 编程语言编译器 | Qi Programming Language Compiler")]
+#[command(version = "Qi 编译器 v0.1.0 | Qi Compiler v0.1.0")]
+#[command(disable_help_flag = true)]
+#[command(disable_version_flag = true)]
+#[command(help_template = "\
+{name} {version}
+{about-with-newline}
+用法 | Usage: {usage}
+
+命令 | Commands:
+{subcommands}
+
+参数 | Arguments:
+{positionals}
+
+选项 | Options:
+{options}
+
+{after-help}\
+")]
+#[command(after_help = "示例 | Examples:
+  qi compile source.qi -o program    # 编译源文件 | Compile source file
+  qi 编译 source.qi -o program       # 中文命令示例 | Chinese command example
+  qi run source.qi                  # 编译并运行 | Compile and run
+  qi check source.qi                # 检查语法 | Check syntax
+  qi info --language                # 显示语言特性 | Show language features
+
+更多信息 | More information: https://qi-lang.org")]
 pub struct Cli {
-    /// 目标平台 (Linux, Windows, macOS, Wasm)
+    /// 目标平台 | Target platform (Linux, Windows, macOS, Wasm)
     #[arg(short, long, value_enum)]
     pub target: Option<crate::config::CompilationTarget>,
 
-    /// 优化级别 (none, basic, standard, maximum)
+    /// 优化级别 | Optimization level (none, basic, standard, maximum)
     #[arg(short = 'O', long, value_enum)]
     pub optimization: Option<crate::config::OptimizationLevel>,
 
-    /// 输出文件路径
+    /// 输出文件路径 | Output file path
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// 包含调试符号
+    /// 包含调试符号 | Include debug symbols
     #[arg(short, long)]
     pub debug_symbols: bool,
 
-    /// 禁用运行时检查
+    /// 禁用运行时检查 | Disable runtime checks
     #[arg(long)]
     pub no_runtime_checks: bool,
 
-    /// 将警告视为错误
+    /// 将警告视为错误 | Treat warnings as errors
     #[arg(long)]
     pub warnings_as_errors: bool,
 
-    /// 详细输出
+    /// 详细输出 | Verbose output
     #[arg(short, long)]
     pub verbose: bool,
 
-    /// 配置文件路径
+    /// 配置文件路径 | Config file path
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// 导入路径
+    /// 导入路径 | Import paths
     #[arg(long, value_delimiter = ':')]
     pub import_paths: Vec<PathBuf>,
 
-    /// 子命令
+    /// 子命令 | Command
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// 源文件路径
+    /// 源文件路径 | Source file paths
     pub source_files: Vec<PathBuf>,
+
+    /// 显示帮助信息 | Show help information
+    #[arg(short, long, action = clap::ArgAction::Help)]
+    help: Option<bool>,
+
+    /// 显示版本信息 | Show version information
+    #[arg(short = 'V', long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
 }
 
-/// CLI 子命令
+/// CLI 子命令 | CLI Commands
 #[derive(Subcommand)]
 pub enum Commands {
-    /// 编译 Qi 源文件
+    /// compile    编译    | 编译 Qi 源文件 | Compile Qi source files
+    #[command(aliases = &["编译"])]
+    #[command(help_template = "\
+{name} - {about}
+
+用法 | Usage: {usage}
+
+选项 | Options:
+{options}
+")]
     Compile {
-        /// 源文件路径
+        /// 源文件路径 | Source file paths
         #[arg(required = true)]
         files: Vec<PathBuf>,
 
-        /// 输出文件路径
+        /// 输出文件路径 | Output file path
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// 显示帮助信息 | Show help information
+        #[arg(short, long, action = clap::ArgAction::Help)]
+        help: Option<bool>,
     },
 
-    /// 检查源文件语法（不生成可执行文件）
+    /// check      检查    | 检查源文件语法 | Check source file syntax (no executable generation)
+    #[command(aliases = &["检查"])]
     Check {
-        /// 源文件路径
+        /// 源文件路径 | Source file paths
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
 
-    /// 格式化源代码
+    /// format     格式化  | 格式化源代码 | Format source code
+    #[command(aliases = &["格式化"])]
     Format {
-        /// 源文件路径
+        /// 源文件路径 | Source file paths
         files: Vec<PathBuf>,
 
-        /// 就地修改文件
+        /// 就地修改文件 | Modify files in place
         #[arg(short, long)]
         inplace: bool,
     },
 
-    /// 编译并运行 Qi 程序
+    /// run        运行    | 编译并运行 Qi 程序 | Compile and run Qi programs
+    #[command(aliases = &["运行"])]
+    #[command(help_template = "\
+{name} - {about}
+
+用法 | Usage: {usage}
+
+参数 | Arguments:
+{positionals}
+
+选项 | Options:
+{options}
+")]
     Run {
-        /// 源文件路径
+        /// 源文件路径 | Source file path
         #[arg(required = true)]
         file: PathBuf,
 
-        /// 运行参数
+        /// 运行参数 | Runtime arguments
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+
+        /// 显示帮助信息 | Show help information
+        #[arg(short, long, action = clap::ArgAction::Help)]
+        help: Option<bool>,
     },
 
-    /// 编译并调试运行 Qi 程序
+    /// debug      调试    | 编译并调试运行 Qi 程序 | Compile and debug Qi programs
+    #[command(aliases = &["调试"])]
     Debug {
-        /// 源文件路径
+        /// 源文件路径 | Source file path
         #[arg(required = true)]
         file: PathBuf,
 
-        /// 运行参数
+        /// 运行参数 | Runtime arguments
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
 
-        /// 启用详细调试信息
+        /// 启用详细调试信息 | Enable verbose debug info
         #[arg(short, long)]
         verbose: bool,
 
-        /// 启用内存监控
+        /// 启用内存监控 | Enable memory monitoring
         #[arg(long)]
         memory: bool,
 
-        /// 启用性能分析
+        /// 启用性能分析 | Enable performance profiling
         #[arg(long)]
         profile: bool,
 
-        /// 启用堆栈跟踪
+        /// 启用堆栈跟踪 | Enable stack tracing
         #[arg(long)]
         stack_trace: bool,
     },
 
-    /// 检查并运行 Qi 程序（仅语法检查后运行）
+    /// check-run  检查运行 | 检查并运行 Qi 程序 | Check and run Qi programs (syntax check only before run)
+    #[command(aliases = &["检查运行"])]
     CheckRun {
-        /// 源文件路径
+        /// 源文件路径 | Source file path
         #[arg(required = true)]
         file: PathBuf,
 
-        /// 运行参数
+        /// 运行参数 | Runtime arguments
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
 
-        /// 仅检查不运行
+        /// 仅检查不运行 | Check only, don't run
         #[arg(short, long)]
         check_only: bool,
     },
 
-    /// 显示编译器信息
+    /// info       信息    | 显示编译器信息 | Show compiler information
+    #[command(aliases = &["信息"])]
     Info {
-        /// 显示版本信息
+        /// 显示版本信息 | Show version information
         #[arg(short, long)]
         version: bool,
 
-        /// 显示支持的语言特性
+        /// 显示支持的语言特性 | Show supported language features
         #[arg(short, long)]
         language: bool,
 
-        /// 显示支持的目标平台
+        /// 显示支持的目标平台 | Show supported target platforms
         #[arg(short, long)]
         targets: bool,
     },
@@ -160,10 +227,10 @@ impl Cli {
         let command = std::mem::take(&mut self.command);
 
         match command {
-            Some(Commands::Compile { files, output }) => {
+            Some(Commands::Compile { files, output, help: _ }) => {
                 self.compile_files(files, output, config).await
             }
-            Some(Commands::Run { file, args }) => {
+            Some(Commands::Run { file, args, help: _ }) => {
                 self.run_file(file, args, config).await
             }
             Some(Commands::Debug { file, args, verbose, memory, profile, stack_trace }) => {
@@ -228,11 +295,32 @@ impl Cli {
                 eprintln!("警告: {}", warning);
             }
 
+            // For compile command, we need to create executable binary
+            let final_executable = match config.target_platform {
+                crate::config::CompilationTarget::MacOS => {
+                    // For macOS: compile LLVM IR to executable
+                    self.create_macos_executable(&result.executable_path, &config).await?
+                }
+                crate::config::CompilationTarget::Linux => {
+                    // For Linux: the result should already be executable
+                    result.executable_path
+                }
+                crate::config::CompilationTarget::Windows => {
+                    // For Windows: the result should already be executable
+                    result.executable_path
+                }
+                crate::config::CompilationTarget::Wasm => {
+                    return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                        "WebAssembly 编译为可执行文件暂未实现".to_string()
+                    )));
+                }
+            };
+
             // Move or rename output file if custom output is specified
             if let Some(output_path) = &output {
                 if files.len() == 1 {
                     // Single file: rename the output
-                    std::fs::rename(&result.executable_path, output_path)?;
+                    std::fs::rename(&final_executable, output_path)?;
                     if config.verbose {
                         println!("  输出文件: {:?}", output_path);
                     }
@@ -244,7 +332,7 @@ impl Cli {
                 }
             } else {
                 if config.verbose {
-                    println!("  生成文件: {:?}", result.executable_path);
+                    println!("  生成可执行文件: {:?}", final_executable);
                 }
             }
         }
@@ -257,10 +345,101 @@ impl Cli {
                 crate::config::CompilationTarget::MacOS => " (macOS)",
                 crate::config::CompilationTarget::Wasm => " (WebAssembly)",
             };
-            println!("成功编译 {} 个文件{}", count, target);
+            println!("成功编译 {} 个可执行文件{}", count, target);
         }
 
         Ok(())
+    }
+
+    /// Create macOS executable from LLVM IR
+    async fn create_macos_executable(
+        &self,
+        llvm_ir_path: &std::path::Path,
+        config: &crate::config::CompilerConfig,
+    ) -> Result<std::path::PathBuf, CliError> {
+        use std::process::Command;
+
+        // Generate executable path in current directory
+        let executable_name = llvm_ir_path.file_stem()
+            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
+                "无效的文件名".to_string()
+            )))?
+            .to_string_lossy()
+            .to_string();
+
+        let temp_executable = std::env::current_dir()?
+            .join(format!("{}.exec", executable_name));
+
+        if config.verbose {
+            println!("正在编译 LLVM IR 到可执行文件...");
+            println!("  集成 Qi Runtime 支持...");
+        }
+
+        // Compile LLVM IR to object file
+        if config.verbose {
+            eprintln!("DEBUG: Compiling IR to object file");
+        }
+        let output = Command::new("clang")
+            .arg("-c")
+            .arg("-x")
+            .arg("ir")
+            .arg(llvm_ir_path)
+            .arg("-o")
+            .arg(&temp_executable.with_extension("o"))
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if config.verbose {
+            eprintln!("DEBUG: clang -c finished, success={}", output.status.success());
+        }
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("LLVM IR 编译失败: {}", error)
+            )));
+        }
+
+        // Link with Qi compiler library (which contains runtime + async symbols)
+        if config.verbose {
+            eprintln!("DEBUG: Getting compiler library path");
+        }
+        let compiler_lib_path = self.get_compiler_library_path()?;
+        if config.verbose {
+            eprintln!("DEBUG: compiler_lib_path = {:?}", compiler_lib_path);
+        }
+
+        if config.verbose {
+            println!("  链接 Qi Compiler 库 (包含运行时和异步符号): {:?}", compiler_lib_path);
+        }
+
+        // Link the static library - let linker pull only needed symbols
+        if config.verbose {
+            eprintln!("DEBUG: Linking with clang");
+        }
+        let output = Command::new("clang")
+            .arg(&temp_executable.with_extension("o"))
+            .arg(&compiler_lib_path)
+            .arg("-o")
+            .arg(&temp_executable)
+            .output()
+            .map_err(|e| CliError::Io(e))?;
+
+        if config.verbose {
+            eprintln!("DEBUG: clang link finished, success={}", output.status.success());
+        }
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                format!("链接失败: {}", error)
+            )));
+        }
+
+        // Clean up object file, but keep executable
+        let _ = std::fs::remove_file(&temp_executable.with_extension("o"));
+
+        Ok(temp_executable)
     }
 
     async fn run_file(
@@ -281,7 +460,9 @@ impl Cli {
         // Step 1: Compile the file
         let compiler = crate::QiCompiler::with_config(config.clone());
 
-        eprintln!("DEBUG: About to compile");
+        if config.verbose {
+            eprintln!("DEBUG: About to compile");
+        }
 
         if config.verbose {
             println!("正在编译: {:?}", file);
@@ -289,7 +470,9 @@ impl Cli {
 
         let compile_result = compiler.compile(file.clone())?;
 
-        eprintln!("DEBUG: Compilation done");
+        if config.verbose {
+            eprintln!("DEBUG: Compilation done");
+        }
 
         if config.verbose {
             println!("  编译完成，耗时: {}ms", compile_result.duration_ms);
@@ -305,10 +488,11 @@ impl Cli {
         }
 
         // Step 2: Determine how to run the executable based on target platform
+        let verbose_after = config.verbose;
         match config.target_platform {
             crate::config::CompilationTarget::MacOS => {
-                // For macOS, we need to compile LLVM IR to executable
-                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
+                // For macOS, the executable is already compiled and linked
+                self.run_executable(&compile_result.executable_path, &args, config).await?;
             }
             crate::config::CompilationTarget::Linux => {
                 // For Linux, run the executable directly
@@ -326,6 +510,24 @@ impl Cli {
             }
         }
 
+        // Step 3: Cleanup intermediate files and final executable
+        if verbose_after {
+            println!("清理临时文件...");
+        }
+
+        // Remove object files
+        for obj in &compile_result.object_paths {
+            let _ = std::fs::remove_file(obj);
+        }
+
+        // Remove IR files
+        for ir in &compile_result.ir_paths {
+            let _ = std::fs::remove_file(ir);
+        }
+
+        // Remove the final executable
+        let _ = std::fs::remove_file(&compile_result.executable_path);
+
         Ok(())
     }
 
@@ -337,7 +539,9 @@ impl Cli {
     ) -> Result<(), CliError> {
         use std::process::Command;
 
-        eprintln!("DEBUG: run_macos_executable called");
+        if config.verbose {
+            eprintln!("DEBUG: run_macos_executable called");
+        }
 
         // Generate executable path in current directory
         let executable_name = llvm_ir_path.file_stem()
@@ -350,7 +554,9 @@ impl Cli {
         let temp_executable = std::env::current_dir()?
             .join(format!("{}.exec", executable_name));
 
-        eprintln!("DEBUG: temp_executable = {:?}", temp_executable);
+        if config.verbose {
+            eprintln!("DEBUG: temp_executable = {:?}", temp_executable);
+        }
 
         if config.verbose {
             println!("正在编译 LLVM IR 到可执行文件...");
@@ -358,7 +564,9 @@ impl Cli {
         }
 
         // Compile LLVM IR to object file
-        eprintln!("DEBUG: Compiling IR to object file");
+        if config.verbose {
+            eprintln!("DEBUG: Compiling IR to object file");
+        }
         let output = Command::new("clang")
             .arg("-c")
             .arg("-x")
@@ -369,7 +577,9 @@ impl Cli {
             .output()
             .map_err(|e| CliError::Io(e))?;
 
-        eprintln!("DEBUG: clang -c finished, success={}", output.status.success());
+        if config.verbose {
+            eprintln!("DEBUG: clang -c finished, success={}", output.status.success());
+        }
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -379,16 +589,22 @@ impl Cli {
         }
 
         // Link with Qi compiler library (which contains runtime + async symbols)
-        eprintln!("DEBUG: Getting compiler library path");
+        if config.verbose {
+            eprintln!("DEBUG: Getting compiler library path");
+        }
         let compiler_lib_path = self.get_compiler_library_path()?;
-        eprintln!("DEBUG: compiler_lib_path = {:?}", compiler_lib_path);
+        if config.verbose {
+            eprintln!("DEBUG: compiler_lib_path = {:?}", compiler_lib_path);
+        }
 
         if config.verbose {
             println!("  链接 Qi Compiler 库 (包含运行时和异步符号): {:?}", compiler_lib_path);
         }
 
         // Link the static library - let linker pull only needed symbols
-        eprintln!("DEBUG: Linking with clang");
+        if config.verbose {
+            eprintln!("DEBUG: Linking with clang");
+        }
         let output = Command::new("clang")
             .arg(&temp_executable.with_extension("o"))
             .arg(&compiler_lib_path)
@@ -397,7 +613,9 @@ impl Cli {
             .output()
             .map_err(|e| CliError::Io(e))?;
 
-        eprintln!("DEBUG: clang link finished, success={}", output.status.success());
+        if config.verbose {
+            eprintln!("DEBUG: clang link finished, success={}", output.status.success());
+        }
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -411,16 +629,22 @@ impl Cli {
         }
 
         // Run the executable
-        eprintln!("DEBUG: About to run executable: {:?}", temp_executable);
+        if config.verbose {
+            eprintln!("DEBUG: About to run executable: {:?}", temp_executable);
+        }
         let mut cmd = Command::new(&temp_executable);
         for arg in args {
             cmd.arg(arg);
         }
 
-        eprintln!("DEBUG: Calling cmd.output()");
+        if config.verbose {
+            eprintln!("DEBUG: Calling cmd.output()");
+        }
         let output = cmd.output().map_err(|e| CliError::Io(e))?;
 
-        eprintln!("DEBUG: executable finished, success={}", output.status.success());
+        if config.verbose {
+            eprintln!("DEBUG: executable finished, success={}", output.status.success());
+        }
 
         // Print stdout
         if !output.stdout.is_empty() {

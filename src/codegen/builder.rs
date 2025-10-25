@@ -137,6 +137,10 @@ pub struct IrBuilder {
     function_return_types: std::collections::HashMap<String, String>,
     /// Track if we're currently inside an async function
     in_async_context: bool,
+    /// Track defined functions in current module
+    defined_functions: std::collections::HashSet<String>,
+    /// Track external function signatures (name -> (params, return_type))
+    external_functions: std::collections::HashMap<String, (Vec<String>, String)>,
 }
 
 impl IrBuilder {
@@ -149,6 +153,8 @@ impl IrBuilder {
             async_function_types: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
             in_async_context: false,
+            defined_functions: std::collections::HashSet::new(),
+            external_functions: std::collections::HashMap::new(),
         }
     }
 
@@ -158,6 +164,8 @@ impl IrBuilder {
         self.label_counter = 0;
         self.variable_types.clear();
         self.async_function_types.clear();
+        // Note: We don't clear defined_functions and external_functions here
+        // so they can be set before calling build()
 
         self.build_node(ast)?;
         self.emit_llvm_ir()
@@ -189,6 +197,16 @@ impl IrBuilder {
         self.temp_counter = 0;
         self.label_counter = 0;
         self.async_function_types.clear();
+    }
+
+    /// Set external function signatures for cross-module calls
+    pub fn set_external_functions(&mut self, funcs: std::collections::HashMap<String, (Vec<String>, String)>) {
+        self.external_functions = funcs;
+    }
+
+    /// Set defined functions in the current module
+    pub fn set_defined_functions(&mut self, funcs: std::collections::HashSet<String>) {
+        self.defined_functions = funcs;
     }
 
     /// Escape special characters in strings for LLVM IR
@@ -363,6 +381,7 @@ impl IrBuilder {
     fn build_node(&mut self, node: &AstNode) -> Result<String, String> {
         match node {
             AstNode::程序(program) => {
+                // Process all statements in the program (functions, variables, etc.)
                 for stmt in &program.statements {
                     self.build_node(stmt)?;
                 }
@@ -545,6 +564,9 @@ impl IrBuilder {
 
                 // Record the function's return type for later function calls
                 self.function_return_types.insert(func_name.clone(), return_type.clone());
+                
+                // Record this function as defined in current module
+                self.defined_functions.insert(func_name.clone());
 
                 // Add function header label
                 self.add_instruction(IrInstruction::标签 {
@@ -613,7 +635,7 @@ impl IrBuilder {
                     }
                 }
 
-                // Add closing brace for the function
+                // // Function is already properly closed by function body processing
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
 
                 Ok(func_name.to_string())
@@ -641,6 +663,9 @@ impl IrBuilder {
                     "void".to_string()
                 };
                 self.async_function_types.insert(func_name.clone(), return_type_str);
+                
+                // Record this function as defined in current module
+                self.defined_functions.insert(func_name.clone());
 
                 // Build parameter list
                 let params: Vec<String> = async_func_decl.parameters
@@ -687,7 +712,7 @@ impl IrBuilder {
                     value: Some("null".to_string()) // Return null Future handle
                 });
 
-                // Add closing brace for the function
+                // // Function is already properly closed by function body processing
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
 
                 // Restore async context flag
@@ -727,21 +752,34 @@ impl IrBuilder {
 
                 // Then branch
                 self.add_instruction(IrInstruction::标签 { name: then_label.clone() });
+                let then_has_return = self.contains_return(&if_stmt.then_branch);
                 for stmt in &if_stmt.then_branch {
                     self.build_node(stmt)?;
                 }
-                self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                // Only add jump if there's no return
+                if !then_has_return {
+                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                }
 
                 // Else branch (if exists)
                 self.add_instruction(IrInstruction::标签 { name: else_label.clone() });
-                if let Some(else_branch) = &if_stmt.else_branch {
+                let else_has_return = if let Some(else_branch) = &if_stmt.else_branch {
+                    let has_ret = self.node_contains_return(else_branch);
                     self.build_node(else_branch)?;
+                    has_ret
+                } else {
+                    false
+                };
+                
+                // Only add jump if there's no return
+                if !else_has_return {
+                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
                 }
-                // Always add jump to end label after else branch (even if empty)
-                self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
 
-                // End label
-                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                // Only add end label if at least one branch doesn't return
+                if !then_has_return || !else_has_return {
+                    self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                }
 
                 Ok("if".to_string())
             }
@@ -1159,8 +1197,9 @@ impl IrBuilder {
             AstNode::函数调用表达式(call_expr) => {
                 // Special handling for 打印 function - map to appropriate runtime function
                 let runtime_function = if call_expr.callee == "打印" {
-                    // Determine the type of the first argument
-                    if let Some(first_arg) = call_expr.arguments.first() {
+                    if call_expr.arguments.len() == 1 {
+                        // Single argument - determine type
+                        let first_arg = &call_expr.arguments[0];
                         let expr_type = match first_arg {
                             AstNode::字面量表达式(literal) => {
                                 match &literal.value {
@@ -1205,8 +1244,8 @@ impl IrBuilder {
                     arg_temps.push(temp);
                 }
 
-                // Determine the callee name
-                let mapped_callee: String = if let Some(runtime_func) = runtime_function {
+                // Determine the callee name (mutable to allow printf override)
+                let mut mapped_callee: String = if let Some(runtime_func) = runtime_function {
                     // Use runtime function name directly
                     runtime_func
                 } else {
@@ -1224,11 +1263,91 @@ impl IrBuilder {
                     }
                 };
 
+                // Special handling: 打印 with two arguments -> map to printf with proper format
+                if call_expr.callee == "打印" && arg_temps.len() == 2 {
+                    // Infer type of second argument
+                    let second = &arg_temps[1];
+                    let second_ty = if second.starts_with('%') {
+                        let var_name = second.trim_start_matches('%');
+                        self.variable_types.get(var_name)
+                            .cloned()
+                            .unwrap_or_else(|| "i64".to_string())
+                    } else if second.starts_with('@') {
+                        "ptr".to_string()
+                    } else if second.contains('.') {
+                        "double".to_string()
+                    } else {
+                        "i64".to_string()
+                    };
+
+                    // Choose printf format based on type and its byte length (excluding null)
+                    let (fmt_spec, fmt_len) = if second_ty == "double" {
+                        ("%s %f\\0A", 6)
+                    } else if second_ty == "ptr" {
+                        ("%s %s\\0A", 6)
+                    } else {
+                        ("%s %lld\\0A", 8)
+                    };
+
+                    // Create a global format string constant
+                    let fmt_name = format!("@.fmt{}", self.temp_counter);
+                    self.temp_counter += 1;
+                    self.add_instruction(IrInstruction::字符串常量 {
+                        name: format!(
+                            "{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1",
+                            fmt_name,
+                            fmt_len + 1,
+                            fmt_spec
+                        ),
+                    });
+
+                    // Prepend format string to arguments and switch callee to printf
+                    let mut new_args = Vec::new();
+                    new_args.push(fmt_name);
+                    new_args.push(arg_temps[0].clone());
+                    new_args.push(arg_temps[1].clone());
+                    arg_temps = new_args;
+                    mapped_callee = "printf".to_string();
+                }
+
                 // Check if this is an async function call
                 // Use the async_function_types HashMap to determine if a function is async
                 let is_async_function = self.async_function_types.contains_key(&mapped_callee);
 
-                // Generate function call
+                // Check if this is an external function (called but not defined in current module)
+                if !mapped_callee.starts_with("qi_runtime_") && 
+                   mapped_callee != "printf" &&
+                   !self.defined_functions.contains(&mapped_callee) &&
+                   !self.external_functions.contains_key(&mapped_callee) {
+                    // This is an external function - record its signature
+                    // Determine parameter types from arguments
+                    let param_types: Vec<String> = arg_temps.iter().map(|arg| {
+                        if arg.starts_with('%') {
+                            let var_name = arg.trim_start_matches('%');
+                            self.variable_types.get(var_name)
+                                .cloned()
+                                .unwrap_or_else(|| "i64".to_string())
+                        } else if arg.parse::<i64>().is_ok() {
+                            "i64".to_string()
+                        } else if arg.parse::<f64>().is_ok() {
+                            "double".to_string()
+                        } else {
+                            "i64".to_string()
+                        }
+                    }).collect();
+                    
+                    // Determine return type
+                    // For async functions, always use ptr
+                    let ret_type = if self.async_function_types.contains_key(&mapped_callee) {
+                        "ptr".to_string()
+                    } else if let Some(rt) = self.function_return_types.get(&mapped_callee) {
+                        rt.clone()
+                    } else {
+                        "i64".to_string() // Default to i64
+                    };
+                    
+                    self.external_functions.insert(mapped_callee.clone(), (param_types, ret_type));
+                }                // Generate function call
                 let temp = self.generate_temp();
 
                 if is_async_function && !self.in_async_context {
@@ -1706,6 +1825,9 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_println_int(i64)\n");
         ir.push_str("declare i32 @qi_runtime_print_float(double)\n");
         ir.push_str("declare i32 @qi_runtime_println_float(double)\n");
+        ir.push_str("declare i32 @qi_runtime_println_str_int(ptr, i64)\n");
+        ir.push_str("declare i32 @qi_runtime_println_str_float(ptr, double)\n");
+        ir.push_str("declare i32 @qi_runtime_println_str_str(ptr, ptr)\n");
         ir.push_str("\n");
         
         ir.push_str("; Memory management\n");
@@ -1760,6 +1882,20 @@ impl IrBuilder {
         // Add external function declarations (for backward compatibility)
         ir.push_str("declare i32 @printf(ptr, ...)\n");
         ir.push_str("declare ptr @qi_string_concat(ptr, ptr)\n\n");
+
+        // Add external function declarations from imported modules
+        if !self.external_functions.is_empty() {
+            ir.push_str("; External function declarations from imported modules\n");
+            for (func_name, (param_types, return_type)) in &self.external_functions {
+                let params_str = param_types.iter()
+                    .enumerate()
+                    .map(|(i, ty)| format!("{} %{}", ty, i))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ir.push_str(&format!("declare {} @{}({})\n", return_type, func_name, params_str));
+            }
+            ir.push_str("\n");
+        }
 
         // Add string constants first
         for instruction in &string_constants {
@@ -1923,9 +2059,17 @@ impl IrBuilder {
                                 // String constant - pass as ptr
                                 processed_args.push(format!("ptr {}", arg));
                             } else if arg.starts_with('%') {
-                                // Variable or temporary - need to determine type
-                                // For simplicity, assume i64 for most variables
-                                processed_args.push(format!("i64 {}", arg));
+                                // Variable or temporary - determine type from tracking
+                                let var_name = arg.trim_start_matches('%');
+                                let vty = self.variable_types.get(var_name)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("i64");
+                                let llvm_ty = match vty {
+                                    "ptr" => "ptr",
+                                    "double" => "double",
+                                    _ => "i64",
+                                };
+                                processed_args.push(format!("{} {}", llvm_ty, arg));
                             } else {
                                 // Literal values - pass as-is with appropriate type
                                 if arg.parse::<i64>().is_ok() {
@@ -2190,6 +2334,31 @@ impl IrBuilder {
         }
 
         false
+    }
+
+    /// Check if a statement or block contains a return statement
+    fn contains_return(&self, stmts: &[AstNode]) -> bool {
+        for stmt in stmts {
+            if matches!(stmt, AstNode::返回语句(_)) {
+                return true;
+            }
+            // Check inside blocks
+            if let AstNode::块语句(block) = stmt {
+                if self.contains_return(&block.statements) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a node contains a return statement
+    fn node_contains_return(&self, node: &AstNode) -> bool {
+        match node {
+            AstNode::返回语句(_) => true,
+            AstNode::块语句(block) => self.contains_return(&block.statements),
+            _ => false,
+        }
     }
 }
 

@@ -114,9 +114,7 @@ impl AllocationStrategy for BumpAllocator {
     }
 
     fn reset(&mut self) {
-        unsafe {
-            self.current = self.start;
-        }
+        self.current = self.start;
         self.allocated = 0;
     }
 }

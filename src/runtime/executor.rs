@@ -3,6 +3,8 @@
 //! This module provides the interface for executing compiled Qi programs
 //! with the Rust runtime environment.
 
+#![allow(static_mut_refs)]
+
 use std::ffi::{c_char, c_int, CStr};
 use std::sync::{Mutex, Once};
 
@@ -76,7 +78,7 @@ pub extern "C" fn qi_runtime_execute(program_data: *const u8, data_len: usize) -
     unsafe {
         let data_slice = std::slice::from_raw_parts(program_data, data_len);
         
-        if let Some(runtime_mutex) = &RUNTIME {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
                 match runtime.execute_program(data_slice) {
                     Ok(exit_code) => exit_code,
@@ -108,7 +110,7 @@ pub extern "C" fn qi_runtime_print(s: *const c_char) -> c_int {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             print!("{}", rust_str);
             
-            if let Some(runtime_mutex) = &RUNTIME {
+            if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
                 }
@@ -132,7 +134,7 @@ pub extern "C" fn qi_runtime_println(s: *const c_char) -> c_int {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             println!("{}", rust_str);
             
-            if let Some(runtime_mutex) = &RUNTIME {
+            if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
                 }
@@ -151,11 +153,9 @@ pub extern "C" fn qi_runtime_print_int(value: i64) -> c_int {
     print!("{}", value);
     
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -168,11 +168,9 @@ pub extern "C" fn qi_runtime_println_int(value: i64) -> c_int {
     println!("{}", value);
     
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -185,11 +183,9 @@ pub extern "C" fn qi_runtime_print_float(value: f64) -> c_int {
     print!("{}", value);
     
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -202,11 +198,9 @@ pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
     println!("{}", value);
     
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -217,7 +211,7 @@ pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
 #[no_mangle]
 pub extern "C" fn qi_runtime_alloc(size: usize) -> *mut u8 {
     unsafe {
-        if let Some(runtime_mutex) = &RUNTIME {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
                 match runtime.memory_manager.allocate(size, None) {
                     Ok(ptr) => {
@@ -248,7 +242,7 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
     }
 
     unsafe {
-        if let Some(runtime_mutex) = &RUNTIME {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
                 match runtime.memory_manager.deallocate(ptr) {
                     Ok(_) => {
@@ -276,7 +270,7 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
 #[no_mangle]
 pub extern "C" fn qi_runtime_get_metrics() -> *const c_char {
     unsafe {
-        if let Some(runtime_mutex) = &RUNTIME {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(runtime) = runtime_mutex.lock() {
                 let metrics = runtime.get_metrics();
                 if let Ok(json) = serde_json::to_string(metrics) {
@@ -472,7 +466,7 @@ pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char)
             let handle = hasher.finish() as i64;
 
             // Update I/O operation count
-            if let Some(runtime_mutex) = &RUNTIME {
+            if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
                 }
@@ -509,11 +503,9 @@ pub extern "C" fn qi_runtime_file_read(
 
     // Update I/O operation count
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -538,11 +530,9 @@ pub extern "C" fn qi_runtime_file_write(
 
     // Update I/O operation count
     unsafe {
-        unsafe {
-            if let Some(runtime_mutex) = &RUNTIME {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
-                    runtime.increment_io_operations();
-                }
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
             }
         }
     }
@@ -634,7 +624,7 @@ pub extern "C" fn qi_runtime_http_get(url: *const c_char) -> *mut c_char {
 
             if let Ok(c_string) = std::ffi::CString::new(mock_response) {
                 // Update I/O operation count
-                if let Some(runtime_mutex) = &RUNTIME {
+                if let Some(runtime_mutex) = RUNTIME.as_ref() {
                     if let Ok(mut runtime) = runtime_mutex.lock() {
                         runtime.increment_io_operations();
                     }
@@ -670,7 +660,7 @@ pub extern "C" fn qi_runtime_http_post(url: *const c_char, data: *const c_char) 
 
             if let Ok(c_string) = std::ffi::CString::new(mock_response) {
                 // Update I/O operation count
-                if let Some(runtime_mutex) = &RUNTIME {
+                if let Some(runtime_mutex) = RUNTIME.as_ref() {
                     if let Ok(mut runtime) = runtime_mutex.lock() {
                         runtime.increment_io_operations();
                     }
@@ -705,7 +695,7 @@ pub extern "C" fn qi_runtime_tcp_connect(host: *const c_char, port: i32) -> i64 
             let handle = hasher.finish() as i64;
 
             // Update I/O operation count
-            if let Some(runtime_mutex) = &RUNTIME {
+            if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
                 }
