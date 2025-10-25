@@ -1,3 +1,5 @@
+包 主程序;
+
 // 无参数函数测试 | Function Without Parameters Test
 // 测试无参数函数定义和调用 | Test function definition and call without parameters
 
@@ -5,6 +7,6 @@
     打印("你好！欢迎使用Qi语言！");
 }
 
-函数 主() {
+函数 入口() {
     问候();
 }

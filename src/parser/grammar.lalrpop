@@ -685,6 +685,7 @@ ParameterList: Vec<Parameter> = {
 };
 
 Parameter: Parameter = {
+    // Fix syntax - use proper colon token
     <name:Identifier> ":" <type_annotation:Type> => Parameter {
         name,
         type_annotation: Some(type_annotation),
@@ -714,7 +715,7 @@ SemiSeparated<T>: Vec<T> = {
         let mut rest = rest;
         rest.insert(0, first);
         rest
-    },
+    }
 };
 
 ExprList: Vec<AstNode> = {
@@ -722,30 +723,88 @@ ExprList: Vec<AstNode> = {
 };
 
 Type: TypeNode = {
+    // 容器类型 - 使用特殊语法避免冲突
+    "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
+        element_type: Box::new(element_type),
+        size: None,
+    }),
+    "字典" "<" <key_type:Type> "," <value_type:Type> ">" => TypeNode::字典类型(DictionaryType {
+        key_type: Box::new(key_type),
+        value_type: Box::new(value_type),
+    }),
+    "列表" "<" <element_type:Type> ">" => TypeNode::列表类型(ListType {
+        element_type: Box::new(element_type),
+    }),
+    "集合" "<" <element_type:Type> ">" => TypeNode::集合类型(SetType {
+        element_type: Box::new(element_type),
+    }),
+
+    // 指针和引用类型
+    "指针" "<" <target_type:Type> ">" => TypeNode::指针类型(PointerType {
+        target_type: Box::new(target_type),
+    }),
+    "引用" "<" <target_type:Type> ">" => TypeNode::引用类型(ReferenceType {
+        target_type: Box::new(target_type),
+        is_mutable: false,
+    }),
+    "可变引用" "<" <target_type:Type> ">" => TypeNode::引用类型(ReferenceType {
+        target_type: Box::new(target_type),
+        is_mutable: true,
+    }),
+
+    // 基础类型 - 使用关键字而不是标识符
+    BasicTypeKeyword,
+
+    // 自定义类型 (struct names, etc.) - 使用TypeName避免冲突
+    <name:TypeName> => TypeNode::自定义类型(name),
+};
+
+// 用于类型名称的标识符，避免与其他Identifier冲突
+TypeName: String = {
+    <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
+        // Simplified check - use individual checks to avoid long match patterns
+        if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
+           id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
+           id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
+           id == "公开" || id == "私有" || id == "模块" || id == "类型" || id == "自己" ||
+           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" {
+            panic!("Keyword used as type name: {}", id);
+        }
+        id.to_string()
+    }
+};
+
+// 基础类型关键字解析
+BasicTypeKeyword: TypeNode = {
     "整数" => TypeNode::基础类型(BasicType::整数),
+    "长整数" => TypeNode::基础类型(BasicType::长整数),
+    "短整数" => TypeNode::基础类型(BasicType::短整数),
+    "字节" => TypeNode::基础类型(BasicType::字节),
     "浮点数" => TypeNode::基础类型(BasicType::浮点数),
     "布尔" => TypeNode::基础类型(BasicType::布尔),
     "字符" => TypeNode::基础类型(BasicType::字符),
     "字符串" => TypeNode::基础类型(BasicType::字符串),
     "空" => TypeNode::基础类型(BasicType::空),
-    "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
-        element_type: Box::new(element_type),
-        size: None,
-    }),
-    // Custom types (struct names, etc.)
-    <name:Identifier> => TypeNode::自定义类型(name),
 };
 
 Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
     <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
-        match id {
-            "变量" | "常量" | "函数" | "异步" | "返回" | "如果" | "否则" | "当" | "对于" | "在" | "真" | "假" |
-            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" |
-            "等待" =>
-                panic!("Keyword used as identifier: {}", id),
-            _ => id.to_string(),
+        // Check if it's a forbidden keyword using individual checks
+        if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
+           id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
+           id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
+           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
+           id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
+           id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
+           id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" || id == "类型" ||
+           id == "自我" || id == "自身" || id == "方法" || id == "自己" || id == "结构体" || id == "枚举" ||
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" {
+            panic!("Keyword used as identifier: {}", id);
         }
+        id.to_string()
     },
 };
 

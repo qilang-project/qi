@@ -237,18 +237,40 @@ pub enum TypeNode {
     数组类型(ArrayType),
     结构体类型(StructType),
     枚举类型(EnumType),
+    字典类型(DictionaryType),
+    列表类型(ListType),
+    集合类型(SetType),
+    指针类型(PointerType),
+    引用类型(ReferenceType),
     自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
 }
 
 /// Basic types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BasicType {
-    整数,
-    浮点数,
-    布尔,
-    字符,
-    字符串,
-    空,
+    // 数值类型
+    整数,      // i32
+    长整数,    // i64
+    短整数,    // i16
+    字节,      // u8
+    浮点数,    // f64
+
+    // 逻辑和文本类型
+    布尔,      // bool
+    字符,      // char
+    字符串,    // String
+    空,        // void/unit
+
+    // 容器类型
+    数组,      // array
+    字典,      // map/dict
+    列表,      // Vec/List
+    集合,      // Set
+
+    // 指针和引用类型
+    指针,      // pointer
+    引用,      // reference
+    可变引用,  // mutable reference
 }
 
 /// Function type
@@ -383,4 +405,38 @@ pub struct FieldAccessExpression {
 pub struct AwaitExpression {
     pub expression: Box<AstNode>,
     pub span: Span,
+}
+
+// Additional type definitions for complete type system support
+
+/// Dictionary type (map/dict)
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictionaryType {
+    pub key_type: Box<TypeNode>,
+    pub value_type: Box<TypeNode>,
+}
+
+/// List type (Vec/List)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListType {
+    pub element_type: Box<TypeNode>,
+}
+
+/// Set type
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetType {
+    pub element_type: Box<TypeNode>,
+}
+
+/// Pointer type
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointerType {
+    pub target_type: Box<TypeNode>,
+}
+
+/// Reference type
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceType {
+    pub target_type: Box<TypeNode>,
+    pub is_mutable: bool, // true for 可变引用, false for 引用
 }

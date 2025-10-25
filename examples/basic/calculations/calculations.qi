@@ -1,7 +1,9 @@
 // 简单算术运算测试 | Simple Arithmetic Test
 // 测试基本的数学运算 | Test basic mathematical operations
 
-函数 主() {
+包 主程序;
+
+函数 入口() {
     变量 a = 10;
     变量 b = 5;
     变量 c = a + b;

@@ -1,6 +1,8 @@
 // 基础打印测试 | Basic Print Test
 // 测试最基础的打印功能 | Test basic print functionality
 
-函数 主() {
+包 主程序;
+
+函数 入口() {
     打印("你好，世界！");
 }

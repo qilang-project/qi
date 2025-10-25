@@ -13,8 +13,9 @@ impl Span {
     }
 }
 
+
 /// Token kinds for Qi language
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     // Chinese Keywords (multi-character)
     如果,      // if
@@ -26,10 +27,8 @@ pub enum TokenKind {
     返回,      // return
     变量,      // variable
     常量,      // constant
-    整数,      // integer
     字符串,    // string
     布尔,      // boolean
-    浮点数,    // float
     结构体,    // struct
     枚举,      // enum
     数组,      // array
@@ -96,6 +95,9 @@ pub enum TokenKind {
     长度,               // length
     类型,               // type
 
+    // Type keywords
+    类型关键词(crate::parser::ast::BasicType),
+
     // Special
     文件结束,
     错误,               // Lexical error (stored in text field)
@@ -130,6 +132,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::整数字面量(n) => write!(f, "{}", n),
             TokenKind::布尔字面量(b) => write!(f, "{}", b),
             TokenKind::字符字面量(c) => write!(f, "'{}'", c),
+            TokenKind::类型关键词(bt) => write!(f, "{:?}", bt),
             _ => write!(f, "{:?}", self),
         }
     }

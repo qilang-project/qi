@@ -1,7 +1,9 @@
+包 主程序;
+
 // For Loop Example - Comprehensive Test
 // 展示 for 循环的各种用法
 
-函数 主() {
+函数 入口() {
     打印("=== For Loop Examples ===");
     
     // Example 1: Simple iteration

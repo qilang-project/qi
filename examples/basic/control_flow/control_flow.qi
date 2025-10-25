@@ -1,6 +1,8 @@
+包 主程序;
+
 // 综合控制流测试 | Comprehensive Control Flow Test
 
-函数 主() {
+函数 入口() {
     变量 数字 = 10;
     
     // 测试 if-else

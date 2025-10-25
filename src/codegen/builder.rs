@@ -32,6 +32,7 @@ pub enum IrInstruction {
         left: String,
         operator: BinaryOperator,
         right: String,
+        operand_type: String,  // "i64", "double", "i1", etc. - the type of left and right operands
     },
 
     /// Function call
@@ -486,7 +487,7 @@ impl IrBuilder {
             AstNode::函数声明(func_decl) => {
                 // Handle special cases and apply name mangling for Chinese function names
                 let func_name: String = match func_decl.name.as_str() {
-                    "主函数" | "主" | "主程序" => "main".to_string(), // Special case for main function
+                    "入口" => "main".to_string(), // Special case for main function
                     name => {
                         if name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(name)
@@ -496,7 +497,7 @@ impl IrBuilder {
                     }
                 };
 
-                let is_main = func_decl.name == "主函数" || func_decl.name == "主" || func_decl.name == "主程序" || func_name == "main";
+                let is_main = func_decl.name == "入口" || func_name == "main";
 
                 // Build parameter list with mangled names for Chinese identifiers
                 let params: Vec<String> = func_decl.parameters
@@ -511,6 +512,20 @@ impl IrBuilder {
                         format!("{} {}", type_str, param_name)
                     })
                     .collect();
+
+                // Mark parameters as direct values (not pointers) in variable_types
+                for param in &func_decl.parameters {
+                    let param_name = if param.name.chars().any(|c| !c.is_ascii()) {
+                        self.mangle_function_name(&param.name)
+                    } else {
+                        param.name.clone()
+                    };
+                    let type_str = self.get_llvm_type(&param.type_annotation);
+                    // Store with a special prefix to indicate this is a parameter (direct value)
+                    self.variable_types.insert(format!("param_{}", param_name), type_str.clone());
+                    self.variable_types.insert(param_name, type_str);
+                }
+
 
                 let params_str = if params.is_empty() {
                     String::new()
@@ -861,6 +876,7 @@ impl IrBuilder {
                     left: counter_val,
                     operator: BinaryOperator::小于,
                     right: max_iterations.to_string(),
+                    operand_type: "i64".to_string(),
                 });
                 
                 // Conditional jump
@@ -924,6 +940,7 @@ impl IrBuilder {
                     left: idx_val,
                     operator: BinaryOperator::加,
                     right: "1".to_string(),
+                    operand_type: "i64".to_string(),
                 });
                 
                 // Store new counter value
@@ -982,12 +999,12 @@ impl IrBuilder {
                 // Check if this is string concatenation (加 operator with string operands)
                 if binary_expr.operator == crate::parser::ast::BinaryOperator::加 {
                     // Check if either operand is a string (starts with @ for string constants or is ptr type)
-                    let left_is_string = left.starts_with('@') || 
-                        (left.starts_with('%') && 
+                    let left_is_string = left.starts_with('@') ||
+                        (left.starts_with('%') &&
                          self.variable_types.get(left.trim_start_matches('%'))
                              .map(|t| t == "ptr").unwrap_or(false));
-                    let right_is_string = right.starts_with('@') || 
-                        (right.starts_with('%') && 
+                    let right_is_string = right.starts_with('@') ||
+                        (right.starts_with('%') &&
                          self.variable_types.get(right.trim_start_matches('%'))
                              .map(|t| t == "ptr").unwrap_or(false));
 
@@ -1050,7 +1067,7 @@ impl IrBuilder {
                         // Now concatenate the two strings
                         let temp = self.generate_temp();
                         self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
-                        
+
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: Some(temp.clone()),
                             callee: "qi_string_concat".to_string(),
@@ -1061,7 +1078,9 @@ impl IrBuilder {
                 }
 
                 // Determine the result type of the binary operation
-                let is_float_op = left.contains('.') || right.contains('.');
+                // Check if either operand is a float type (either literal or variable)
+                let is_float_op = left.contains('.') || right.contains('.') ||
+                                  self.is_float_operand(&left) || self.is_float_operand(&right);
                 let result_type = if is_float_op {
                     "double"
                 } else {
@@ -1078,6 +1097,7 @@ impl IrBuilder {
                     left,
                     operator: binary_expr.operator,
                     right,
+                    operand_type: result_type.to_string(),
                 });
                 Ok(temp)
             }
@@ -1377,14 +1397,29 @@ impl IrBuilder {
                     self.variable_types.insert(temp.trim_start_matches('%').to_string(), vtype);
                 }
 
-                // For simplicity, always load from variables
-                // Parameters will be treated as variables for now
-                self.add_instruction(IrInstruction::加载 {
-                    dest: temp.clone(),
-                    source: var_name,
-                    load_type: None,
-                });
-                Ok(temp)
+                // Check if this is a parameter (direct value, not a pointer)
+                // Need to check both original name and mangled name
+                let param_key_original = format!("param_{}", ident.name);
+                let param_key_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                    format!("param_{}", self.mangle_function_name(&ident.name))
+                } else {
+                    param_key_original.clone()
+                };
+                
+                if self.variable_types.contains_key(&param_key_original) || 
+                   self.variable_types.contains_key(&param_key_mangled) {
+                    // This is a parameter - use it directly without load
+                    // Return the parameter name instead of generating a temp
+                    Ok(var_name)
+                } else {
+                    // This is a regular variable - load it
+                    self.add_instruction(IrInstruction::加载 {
+                        dest: temp.clone(),
+                        source: var_name,
+                        load_type: None,
+                    });
+                    Ok(temp)
+                }
             }
             AstNode::数组访问表达式(array_access) => {
                 // Build array expression
@@ -1599,11 +1634,21 @@ impl IrBuilder {
             Some(crate::parser::ast::TypeNode::基础类型(basic_type)) => {
                 match basic_type {
                     crate::parser::ast::BasicType::整数 => "i64".to_string(),
+                    crate::parser::ast::BasicType::长整数 => "i64".to_string(),
+                    crate::parser::ast::BasicType::短整数 => "i16".to_string(),
+                    crate::parser::ast::BasicType::字节 => "i8".to_string(),
                     crate::parser::ast::BasicType::浮点数 => "double".to_string(),
                     crate::parser::ast::BasicType::布尔 => "i1".to_string(),
-                    crate::parser::ast::BasicType::字符串 => "ptr".to_string(),
                     crate::parser::ast::BasicType::字符 => "i8".to_string(),
+                    crate::parser::ast::BasicType::字符串 => "ptr".to_string(),
                     crate::parser::ast::BasicType::空 => "void".to_string(),
+                    crate::parser::ast::BasicType::数组 => "ptr".to_string(),  // Simplified for now
+                    crate::parser::ast::BasicType::字典 => "ptr".to_string(), // Simplified for now
+                    crate::parser::ast::BasicType::列表 => "ptr".to_string(),  // Simplified for now
+                    crate::parser::ast::BasicType::集合 => "ptr".to_string(),  // Simplified for now
+                    crate::parser::ast::BasicType::指针 => "ptr".to_string(),
+                    crate::parser::ast::BasicType::引用 => "ptr".to_string(),
+                    crate::parser::ast::BasicType::可变引用 => "ptr".to_string(),
                 }
             }
             _ => "i64".to_string(), // Default to i64
@@ -1783,6 +1828,13 @@ impl IrBuilder {
                         // Remove the % prefix to get the original variable name
                         let var_name = source.trim_start_matches('%');
 
+                        // Check if this is a parameter (direct value, not a pointer)
+                        if self.variable_types.contains_key(&format!("param_{}", var_name)) {
+                            // This is a parameter - it should not generate a load instruction
+                            // Parameters are used directly, so we skip the load generation
+                            continue;
+                        }
+
                         // Look up the variable type from our tracking (we store both original and mangled names)
                         self.variable_types.get(var_name).map(|s| s.as_str()).unwrap_or("i64")
                     } else {
@@ -1791,10 +1843,10 @@ impl IrBuilder {
                     };
                     ir.push_str(&format!("{} = load {}, ptr {}\n", dest, inferred_type, source));
                 }
-                IrInstruction::二元操作 { dest, left, operator, right } => {
-                    // Determine operation type based on operands
-                    let is_float = left.contains('.') || right.contains('.');
-                    let (op_str, operand_type, return_type) = if is_float {
+                IrInstruction::二元操作 { dest, left, operator, right, operand_type } => {
+                    // Use the operand_type that was determined when creating the instruction
+                    let is_float = operand_type.contains("double") || operand_type.contains("float");
+                    let (op_str, _instr_operand_type, return_type) = if is_float {
                         match operator {
                             crate::parser::ast::BinaryOperator::加 => ("fadd", "double", "double"),
                             crate::parser::ast::BinaryOperator::减 => ("fsub", "double", "double"),
@@ -1848,10 +1900,10 @@ impl IrBuilder {
                     let normalized_left = normalize_operand(&left, is_float);
                     let normalized_right = normalize_operand(&right, is_float);
 
-                    // For comparison operations (icmp, fcmp), use operand_type
+                    // For comparison operations (icmp, fcmp), use _instr_operand_type
                     // For arithmetic operations, use return_type
                     let type_for_instruction = if op_str.starts_with("icmp") || op_str.starts_with("fcmp") {
-                        operand_type
+                        _instr_operand_type
                     } else {
                         return_type
                     };
@@ -2119,6 +2171,25 @@ impl IrBuilder {
         }
 
         Ok(ir)
+    }
+
+    /// Check if an operand is a float type parameter or variable
+    fn is_float_operand(&self, operand: &str) -> bool {
+        // Remove % prefix if present
+        let clean_operand = operand.trim_start_matches('%');
+
+        // Check if it's a parameter
+        let param_key = format!("param_{}", clean_operand);
+        if let Some(param_type) = self.variable_types.get(&param_key) {
+            return param_type.contains("double") || param_type.contains("float");
+        }
+
+        // Check if it's a regular variable
+        if let Some(var_type) = self.variable_types.get(clean_operand) {
+            return var_type.contains("double") || var_type.contains("float");
+        }
+
+        false
     }
 }
 

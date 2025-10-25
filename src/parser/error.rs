@@ -2,6 +2,7 @@
 //! 解析器错误处理和恢复机制
 
 use crate::lexer::{Token, TokenKind, Span};
+use crate::parser::ast::BasicType;
 use crate::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
 
 /// Parsing errors
@@ -473,14 +474,31 @@ impl ParserErrorRecovery {
             TokenKind::输入 => "输入".to_string(),
             TokenKind::长度 => "长度".to_string(),
             TokenKind::类型 => "类型".to_string(),
-            TokenKind::文件结束 => "文件结束".to_string(),
-
-            // Additional keywords that were missing
-            TokenKind::循环 => "循环".to_string(),
-            TokenKind::整数 => "整数".to_string(),
             TokenKind::字符串 => "字符串".to_string(),
             TokenKind::布尔 => "布尔".to_string(),
-            TokenKind::浮点数 => "浮点数".to_string(),
+            TokenKind::文件结束 => "文件结束".to_string(),
+
+            // Type keywords
+            TokenKind::类型关键词(basic_type) => match basic_type {
+                BasicType::整数 => "整数".to_string(),
+                BasicType::长整数 => "长整数".to_string(),
+                BasicType::短整数 => "短整数".to_string(),
+                BasicType::字节 => "字节".to_string(),
+                BasicType::浮点数 => "浮点数".to_string(),
+                BasicType::布尔 => "布尔".to_string(),
+                BasicType::字符 => "字符".to_string(),
+                BasicType::字符串 => "字符串".to_string(),
+                BasicType::空 => "空".to_string(),
+                BasicType::数组 => "数组".to_string(),
+                BasicType::字典 => "字典".to_string(),
+                BasicType::列表 => "列表".to_string(),
+                BasicType::集合 => "集合".to_string(),
+                BasicType::指针 => "指针".to_string(),
+                BasicType::引用 => "引用".to_string(),
+                BasicType::可变引用 => "可变引用".to_string(),
+            },
+            // Additional keywords that were missing
+            TokenKind::循环 => "循环".to_string(),
             TokenKind::结构体 => "结构体".to_string(),
             TokenKind::枚举 => "枚举".to_string(),
             TokenKind::数组 => "数组".to_string(),
