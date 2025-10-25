@@ -281,11 +281,15 @@ impl Cli {
         // Step 1: Compile the file
         let compiler = crate::QiCompiler::with_config(config.clone());
 
+        eprintln!("DEBUG: About to compile");
+
         if config.verbose {
             println!("正在编译: {:?}", file);
         }
 
         let compile_result = compiler.compile(file.clone())?;
+
+        eprintln!("DEBUG: Compilation done");
 
         if config.verbose {
             println!("  编译完成，耗时: {}ms", compile_result.duration_ms);
@@ -333,6 +337,8 @@ impl Cli {
     ) -> Result<(), CliError> {
         use std::process::Command;
 
+        eprintln!("DEBUG: run_macos_executable called");
+
         // Generate executable path in current directory
         let executable_name = llvm_ir_path.file_stem()
             .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
@@ -344,12 +350,15 @@ impl Cli {
         let temp_executable = std::env::current_dir()?
             .join(format!("{}.exec", executable_name));
 
+        eprintln!("DEBUG: temp_executable = {:?}", temp_executable);
+
         if config.verbose {
             println!("正在编译 LLVM IR 到可执行文件...");
             println!("  集成 Qi Runtime 支持...");
         }
 
         // Compile LLVM IR to object file
+        eprintln!("DEBUG: Compiling IR to object file");
         let output = Command::new("clang")
             .arg("-c")
             .arg("-x")
@@ -360,6 +369,8 @@ impl Cli {
             .output()
             .map_err(|e| CliError::Io(e))?;
 
+        eprintln!("DEBUG: clang -c finished, success={}", output.status.success());
+
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
@@ -367,25 +378,26 @@ impl Cli {
             )));
         }
 
-        // Build runtime library if needed
-        self.ensure_runtime_library_built(&config)?;
+        // Link with Qi compiler library (which contains runtime + async symbols)
+        eprintln!("DEBUG: Getting compiler library path");
+        let compiler_lib_path = self.get_compiler_library_path()?;
+        eprintln!("DEBUG: compiler_lib_path = {:?}", compiler_lib_path);
 
-        // Link with Qi runtime to create executable
-        let runtime_lib_path = self.get_runtime_library_path()?;
-        
         if config.verbose {
-            println!("  链接 Qi Runtime 库: {:?}", runtime_lib_path);
+            println!("  链接 Qi Compiler 库 (包含运行时和异步符号): {:?}", compiler_lib_path);
         }
 
-        // Use -force_load on macOS to ensure all symbols from static library are linked
+        // Link the static library - let linker pull only needed symbols
+        eprintln!("DEBUG: Linking with clang");
         let output = Command::new("clang")
             .arg(&temp_executable.with_extension("o"))
-            .arg("-Wl,-force_load")
-            .arg(&runtime_lib_path)
+            .arg(&compiler_lib_path)
             .arg("-o")
             .arg(&temp_executable)
             .output()
             .map_err(|e| CliError::Io(e))?;
+
+        eprintln!("DEBUG: clang link finished, success={}", output.status.success());
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -399,12 +411,16 @@ impl Cli {
         }
 
         // Run the executable
+        eprintln!("DEBUG: About to run executable: {:?}", temp_executable);
         let mut cmd = Command::new(&temp_executable);
         for arg in args {
             cmd.arg(arg);
         }
 
+        eprintln!("DEBUG: Calling cmd.output()");
         let output = cmd.output().map_err(|e| CliError::Io(e))?;
+
+        eprintln!("DEBUG: executable finished, success={}", output.status.success());
 
         // Print stdout
         if !output.stdout.is_empty() {
@@ -1021,6 +1037,21 @@ impl Cli {
 
         Err(CliError::Compilation(crate::CompilerError::Codegen(
             "无法编译 Qi Runtime 库文件".to_string()
+        )))
+    }
+
+    /// Get the path to the Qi compiler library (which contains async runtime symbols)
+    fn get_compiler_library_path(&self) -> Result<std::path::PathBuf, CliError> {
+        let project_root = std::env::current_dir()?;
+        let output_dir = project_root.join("target/debug");
+        let output_path = output_dir.join("libqi_compiler.a");
+
+        if output_path.exists() {
+            return Ok(output_path);
+        }
+
+        Err(CliError::Compilation(crate::CompilerError::Codegen(
+            "无法找到 Qi Compiler 库文件".to_string()
         )))
     }
 }

@@ -42,6 +42,44 @@ pub extern "C" fn qi_runtime_shutdown() -> c_int {
 }
 
 // ============================================================================
+// Async Runtime Functions
+// ============================================================================
+
+use std::ffi::c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TaskHandle(*mut c_void);
+
+/// Create a new async task
+#[no_mangle]
+pub extern "C" fn qi_runtime_create_task(function_ptr: *const c_void, arg_count: i64) -> TaskHandle {
+    // For now, just return the function pointer wrapped in a TaskHandle
+    TaskHandle(function_ptr as *mut c_void)
+}
+
+/// Spawn an async task
+#[no_mangle]
+pub extern "C" fn qi_runtime_spawn_task(task: TaskHandle) -> c_int {
+    // For now, just return success
+    // In a full implementation, this would schedule the task on an executor
+    0
+}
+
+/// Await an async task and return its result
+#[no_mangle]
+pub extern "C" fn qi_runtime_await(task: TaskHandle) -> *mut c_void {
+    // This implementation is deprecated in favor of the one in async_runtime/ffi/mod.rs
+    // But kept here as a fallback
+    unsafe {
+        let func = std::mem::transmute::<*mut c_void, extern "C" fn() -> *const c_void>(task.0);
+        let result = func();
+        let result_ptr = Box::into_raw(Box::new(result)) as *mut c_void;
+        result_ptr
+    }
+}
+
+// ============================================================================
 // English Runtime Functions
 // ============================================================================
 

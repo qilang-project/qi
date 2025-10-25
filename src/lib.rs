@@ -1,4 +1,4 @@
-//! Qi Language Compiler
+ //! Qi Language Compiler
 //!
 //! A compiler for the Qi programming language with 100% Chinese keywords.
 //! Compiles Qi source code to executable binaries for multiple platforms.
@@ -16,6 +16,21 @@ pub mod runtime;
 pub mod semantic;
 pub mod targets;
 pub mod utils;
+
+// Force export of async runtime FFI functions to ensure they're included in the static library
+pub use runtime::async_runtime::ffi::{qi_runtime_create_task, qi_runtime_await, qi_runtime_spawn_task};
+
+// Dummy function to ensure async runtime functions are not optimized out
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn _qi_force_link_async_runtime() {
+    // These functions need to be referenced to prevent optimization
+    unsafe {
+        std::ptr::read_volatile(&qi_runtime_create_task as *const _);
+        std::ptr::read_volatile(&qi_runtime_await as *const _);
+        std::ptr::read_volatile(&qi_runtime_spawn_task as *const _);
+    }
+}
 
 use std::path::PathBuf;
 
@@ -60,8 +75,6 @@ impl QiCompiler {
             .map_err(|e| CompilerError::Parse(format!("解析错误: {}", e)))?;
 
         // Phase 3: Generate LLVM IR from AST
-        println!("Parsed with LALRPOP: {:?}", ast);
-
         let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
         let ir_content = codegen.generate(&crate::parser::ast::AstNode::程序(ast))
             .map_err(|e| CompilerError::Codegen(format!("Code generation failed: {:?}", e)))?;

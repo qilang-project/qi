@@ -8,9 +8,9 @@ include!(concat!(env!("OUT_DIR"), "/parser/grammar.rs"));
 
 pub use ast::{
     AstNode, Program, TypeNode, BasicType, LiteralValue, LiteralExpression, IdentifierExpression,
-    VariableDeclaration, FunctionDeclaration, ReturnStatement, ExpressionStatement,
+    VariableDeclaration, FunctionDeclaration, AsyncFunctionDeclaration, ReturnStatement, ExpressionStatement,
     IfStatement, WhileStatement, LoopStatement, ForStatement, BinaryExpression, BinaryOperator,
-    AssignmentExpression, FunctionCallExpression, Parameter, ArrayAccessExpression,
+    AssignmentExpression, FunctionCallExpression, AwaitExpression, Parameter, ArrayAccessExpression,
     ArrayLiteralExpression, StringConcatExpression, ArrayType, StructDeclaration, StructField,
     EnumDeclaration, EnumVariant, StructType, EnumType, StructLiteralExpression,
     StructFieldValue, FieldAccessExpression

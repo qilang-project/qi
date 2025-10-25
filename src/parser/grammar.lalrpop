@@ -41,6 +41,7 @@ ModulePath: Vec<String> = {
 Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
+    AsyncFunctionDeclaration,
     StructDeclaration,
     ReturnStatement,
     IfStatement,
@@ -214,6 +215,43 @@ FunctionDeclaration: AstNode = {
     }),
 };
 
+// Async function declarations
+AsyncFunctionDeclaration: AstNode = {
+    // Async function without receiver
+    <vis:Visibility> "异步" "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "异步" "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "异步" "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "异步" "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+};
+
 ReturnStatement: AstNode = {
     "返回" <value:Expr> ";" => AstNode::返回语句(ReturnStatement {
         value: Some(Box::new(value)),
@@ -285,6 +323,7 @@ ForStatement: AstNode = {
         span: Default::default(),
     }),
 };
+
 
 StructDeclaration: AstNode = {
     <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
@@ -481,6 +520,10 @@ Precedence6: AstNode = {
 
 // Level 7: Unary operators
 Precedence7: AstNode = {
+    "等待" <expr:Precedence7> => AstNode::等待表达式(AwaitExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
     "-" <expr:Precedence7> => {
         match expr {
             AstNode::字面量表达式(lit) => AstNode::字面量表达式(LiteralExpression {
@@ -697,8 +740,9 @@ Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
     <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
         match id {
-            "变量" | "常量" | "函数" | "返回" | "如果" | "否则" | "当" | "对于" | "在" | "真" | "假" |
-            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" =>
+            "变量" | "常量" | "函数" | "异步" | "返回" | "如果" | "否则" | "当" | "对于" | "在" | "真" | "假" |
+            "整数" | "浮点数" | "布尔" | "字符" | "字符串" | "空" | "数组" | "结构体" | "枚举" |
+            "等待" =>
                 panic!("Keyword used as identifier: {}", id),
             _ => id.to_string(),
         }

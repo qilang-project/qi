@@ -23,6 +23,7 @@ pub enum IrInstruction {
     加载 {
         dest: String,
         source: String,
+        load_type: Option<String>,  // Explicit type to load
     },
 
     /// Binary operation
@@ -100,6 +101,26 @@ pub enum IrInstruction {
         object: String,
         field: String,
     },
+
+    /// Async function declaration
+    异步函数声明 {
+        name: String,
+        params: Vec<String>,
+        return_type: String,
+    },
+
+    /// Await expression
+    等待表达式 {
+        dest: String,
+        future: String,
+    },
+
+    /// Create async task
+    创建异步任务 {
+        dest: String,
+        function: String,
+        arguments: Vec<String>,
+    },
 }
 
 /// IR builder
@@ -109,6 +130,12 @@ pub struct IrBuilder {
     label_counter: usize,
     /// Track variable types for better code generation
     variable_types: std::collections::HashMap<String, String>,
+    /// Track async function return types
+    async_function_types: std::collections::HashMap<String, String>,
+    /// Track all function return types (including sync functions)
+    function_return_types: std::collections::HashMap<String, String>,
+    /// Track if we're currently inside an async function
+    in_async_context: bool,
 }
 
 impl IrBuilder {
@@ -118,6 +145,9 @@ impl IrBuilder {
             temp_counter: 0,
             label_counter: 0,
             variable_types: std::collections::HashMap::new(),
+            async_function_types: std::collections::HashMap::new(),
+            function_return_types: std::collections::HashMap::new(),
+            in_async_context: false,
         }
     }
 
@@ -126,6 +156,7 @@ impl IrBuilder {
         self.temp_counter = 0;
         self.label_counter = 0;
         self.variable_types.clear();
+        self.async_function_types.clear();
 
         self.build_node(ast)?;
         self.emit_llvm_ir()
@@ -156,6 +187,7 @@ impl IrBuilder {
         self.instructions.clear();
         self.temp_counter = 0;
         self.label_counter = 0;
+        self.async_function_types.clear();
     }
 
     /// Escape special characters in strings for LLVM IR
@@ -400,6 +432,15 @@ impl IrBuilder {
                             };
                             (ty.to_string(), None)
                         }
+                        AstNode::等待表达式(_) => {
+                            // Build the await expression first to determine its type
+                            let init_value = self.build_node(&**initializer)?;
+                            let init_var_name = init_value.trim_start_matches('%');
+                            let ty = self.variable_types.get(init_var_name)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "i64".to_string());
+                            (ty, Some(init_value))
+                        }
                         _ => {
                             let ty = self.get_llvm_type(&decl.type_annotation);
                             (ty.to_string(), None)
@@ -445,7 +486,7 @@ impl IrBuilder {
             AstNode::函数声明(func_decl) => {
                 // Handle special cases and apply name mangling for Chinese function names
                 let func_name: String = match func_decl.name.as_str() {
-                    "主函数" | "主" => "main".to_string(), // Special case for main function
+                    "主函数" | "主" | "主程序" => "main".to_string(), // Special case for main function
                     name => {
                         if name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(name)
@@ -455,7 +496,7 @@ impl IrBuilder {
                     }
                 };
 
-                let is_main = func_decl.name == "主函数" || func_decl.name == "主" || func_name == "main";
+                let is_main = func_decl.name == "主函数" || func_decl.name == "主" || func_decl.name == "主程序" || func_name == "main";
 
                 // Build parameter list with mangled names for Chinese identifiers
                 let params: Vec<String> = func_decl.parameters
@@ -486,6 +527,9 @@ impl IrBuilder {
                     // Infer from body if there's an explicit return with a value
                     self.infer_return_type_from_body(&func_decl.body).unwrap_or_else(|| "void".to_string())
                 };
+
+                // Record the function's return type for later function calls
+                self.function_return_types.insert(func_name.clone(), return_type.clone());
 
                 // Add function header label
                 self.add_instruction(IrInstruction::标签 {
@@ -556,6 +600,83 @@ impl IrBuilder {
 
                 // Add closing brace for the function
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+
+                Ok(func_name.to_string())
+            }
+            AstNode::异步函数声明(async_func_decl) => {
+                // Handle async function declaration similar to regular functions
+                let func_name: String = match async_func_decl.name.as_str() {
+                    name => {
+                        if name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(name)
+                        } else {
+                            name.to_string()
+                        }
+                    }
+                };
+
+                // Mark that we're entering an async context
+                let was_async = self.in_async_context;
+                self.in_async_context = true;
+
+                // Record the async function's return type
+                let return_type_str = if let Some(ref ret_type) = async_func_decl.return_type {
+                    self.get_llvm_type(&Some(ret_type.clone()))
+                } else {
+                    "void".to_string()
+                };
+                self.async_function_types.insert(func_name.clone(), return_type_str);
+
+                // Build parameter list
+                let params: Vec<String> = async_func_decl.parameters
+                    .iter()
+                    .map(|p| {
+                        let type_str = self.get_llvm_type(&p.type_annotation);
+                        let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
+                            format!("%{}", self.mangle_function_name(&p.name))
+                        } else {
+                            format!("%{}", p.name)
+                        };
+                        format!("{} {}", type_str, param_name)
+                    })
+                    .collect();
+
+                let params_str = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", params.join(", "))
+                };
+
+                // Async functions always return ptr (Future handle)
+                let return_type = "ptr".to_string();
+
+                // Add async function header label
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("define {} @{}({}) {{", return_type, func_name, params_str),
+                });
+
+                // Add entry block
+                self.add_instruction(IrInstruction::标签 {
+                    name: "entry:".to_string(),
+                });
+
+                // Process async function body
+                for stmt in &async_func_decl.body {
+                    self.build_node(stmt)?;
+                }
+
+                // Async functions should always return a Future handle
+                // For now, we'll return a null Future handle as a placeholder
+                // In a real implementation, we would create a proper Future object
+                self.add_instruction(IrInstruction::返回 {
+                    value: Some("null".to_string()) // Return null Future handle
+                });
+
+                // Add closing brace for the function
+                self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+
+                // Restore async context flag
+                self.in_async_context = was_async;
 
                 Ok(func_name.to_string())
             }
@@ -730,6 +851,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: counter_val.clone(),
                     source: loop_counter.clone(),
+                    load_type: None,
                 });
                 
                 // Check: counter < max_iterations
@@ -756,6 +878,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: curr_idx.clone(),
                     source: loop_counter.clone(),
+                    load_type: None,
                 });
                 
                 // Get element from array: array[counter]
@@ -771,6 +894,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: element_val.clone(),
                     source: element,
+                    load_type: None,
                 });
                 
                 // Store element value into loop variable
@@ -790,6 +914,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: idx_val.clone(),
                     source: loop_counter.clone(),
+                    load_type: None,
                 });
                 
                 // Increment counter
@@ -1067,7 +1192,7 @@ impl IrBuilder {
                 } else {
                     // Apply the same name mangling logic for user functions
                     match call_expr.callee.as_str() {
-                        "主函数" | "主" => "main".to_string(), // Special case for main function
+                        "主函数" | "主" | "主程序" => "main".to_string(), // Special case for main function
                         name => {
                             // Apply UTF-8 + Hex name mangling for non-ASCII names
                             if name.chars().any(|c| !c.is_ascii()) {
@@ -1079,37 +1204,152 @@ impl IrBuilder {
                     }
                 };
 
+                // Check if this is an async function call
+                // Use the async_function_types HashMap to determine if a function is async
+                let is_async_function = self.async_function_types.contains_key(&mapped_callee);
+
                 // Generate function call
                 let temp = self.generate_temp();
 
-                // Record the return type of this function call for later use
-                let return_type = if mapped_callee.starts_with("qi_runtime_") {
-                    if mapped_callee.contains("string_length") {
-                        "i64"  // string_length returns integer, not string
-                    } else if mapped_callee.contains("string") || mapped_callee.contains("concat") ||
-                       mapped_callee.contains("read_string") || mapped_callee.contains("int_to_string") ||
-                       mapped_callee.contains("float_to_string") {
-                        "ptr"
-                    } else if mapped_callee.contains("sqrt") || mapped_callee.contains("abs") || 
-                              mapped_callee.contains("math") || mapped_callee.contains("float") {
-                        "double"
-                    } else {
-                        "i64"
-                    }
-                } else if mapped_callee == "qi_string_concat" {
-                    "ptr"
+                if is_async_function && !self.in_async_context {
+                    // This is an async function call from a sync context - create a task
+                    let task_temp = self.generate_temp();
+
+                    // Create async task
+                    self.add_instruction(IrInstruction::创建异步任务 {
+                        dest: task_temp.clone(),
+                        function: mapped_callee.clone(),
+                        arguments: arg_temps.clone(),
+                    });
+
+                    // The task creation returns a future handle (ptr)
+                    self.variable_types.insert(task_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                    Ok(task_temp)
+                } else if is_async_function && self.in_async_context {
+                    // This is an async function call from an async context - call it directly
+                    // The async function returns ptr directly
+                    self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(temp.clone()),
+                        callee: mapped_callee,
+                        arguments: arg_temps,
+                    });
+
+                    Ok(temp)
                 } else {
-                    "i64"
+                    // Regular function call
+
+                    // Determine the return type to decide if we need a dest
+                    let has_return_value = if mapped_callee.starts_with("qi_runtime_") {
+                        // Runtime functions always have return values (even if void, they return status)
+                        true
+                    } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
+                        // User-defined function - check its declared return type
+                        ret_type != "void"
+                    } else {
+                        // Unknown function - assume it has a return value
+                        true
+                    };
+
+                    if has_return_value {
+                        // Record the return type of this function call for later use
+                        let return_type = if mapped_callee.starts_with("qi_runtime_") {
+                            if mapped_callee.contains("string_length") {
+                                "i64"  // string_length returns integer, not string
+                            } else if mapped_callee.contains("string") || mapped_callee.contains("concat") ||
+                               mapped_callee.contains("read_string") || mapped_callee.contains("int_to_string") ||
+                               mapped_callee.contains("float_to_string") {
+                                "ptr"
+                            } else if mapped_callee.contains("sqrt") || mapped_callee.contains("abs") ||
+                                      mapped_callee.contains("math") || mapped_callee.contains("float") {
+                                "double"
+                            } else {
+                                "i64"
+                            }
+                        } else if mapped_callee == "qi_string_concat" {
+                            "ptr"
+                        } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
+                            ret_type.as_str()
+                        } else {
+                            "i64"
+                        };
+                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), return_type.to_string());
+
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(temp.clone()),
+                            callee: mapped_callee,
+                            arguments: arg_temps,
+                        });
+
+                        Ok(temp)
+                    } else {
+                        // Void function - no return value
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: None,
+                            callee: mapped_callee,
+                            arguments: arg_temps,
+                        });
+
+                        Ok(String::new()) // Return empty string since there's no result
+                    }
+                }
+            }
+            AstNode::等待表达式(await_expr) => {
+                // Build the awaited expression first
+                let future_expr = self.build_node(&await_expr.expression)?;
+
+                // Try to infer the type from the expression
+                // If it's a function call, look up the async function's return type
+                let (inferred_type, is_async_call) = match await_expr.expression.as_ref() {
+                    AstNode::函数调用表达式(call_expr) => {
+                        let func_name = if call_expr.callee.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&call_expr.callee)
+                        } else {
+                            call_expr.callee.clone()
+                        };
+                        let type_opt = self.async_function_types.get(&func_name).cloned();
+                        let is_async = type_opt.is_some();
+                        (type_opt, is_async)
+                    }
+                    _ => (None, false)
                 };
-                self.variable_types.insert(temp.trim_start_matches('%').to_string(), return_type.to_string());
 
-                self.add_instruction(IrInstruction::函数调用 {
-                    dest: Some(temp.clone()),
-                    callee: mapped_callee,
-                    arguments: arg_temps,
-                });
+                // Record the type of the awaited value
+                let result_type = inferred_type.unwrap_or_else(|| "i64".to_string());
 
-                Ok(temp)
+                // In async context, if we're awaiting an async function call,
+                // it was already called directly and returned the result
+                if self.in_async_context && is_async_call {
+                    // The future_expr is already the result, no need for await
+                    // Just return it directly
+                    self.variable_types.insert(future_expr.trim_start_matches('%').to_string(), result_type);
+                    Ok(future_expr)
+                } else {
+                    // Generate await instruction - returns pointer to the result
+                    let await_temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::等待表达式 {
+                        dest: await_temp.clone(),
+                        future: future_expr,
+                    });
+
+                    // The await returns a pointer to the actual result
+                    // We need to load the value from that pointer
+                    let result_temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::加载 {
+                        dest: result_temp.clone(),
+                        source: await_temp.clone(),
+                        load_type: Some(result_type.clone()),
+                    });
+
+                    // Record the type of the awaited value
+                    self.variable_types.insert(result_temp.trim_start_matches('%').to_string(), result_type.clone());
+                    // Also record the await_temp as pointing to this type
+                    self.variable_types.insert(await_temp.trim_start_matches('%').to_string(), result_type);
+
+                    Ok(result_temp)
+                }
             }
             AstNode::标识符表达式(ident) => {
                 let temp = self.generate_temp();
@@ -1132,7 +1372,7 @@ impl IrBuilder {
                         self.variable_types.get(&mangled)
                     })
                     .cloned();
-                
+
                 if let Some(vtype) = var_type {
                     self.variable_types.insert(temp.trim_start_matches('%').to_string(), vtype);
                 }
@@ -1142,6 +1382,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: temp.clone(),
                     source: var_name,
+                    load_type: None,
                 });
                 Ok(temp)
             }
@@ -1333,6 +1574,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::加载 {
                     dest: load_temp.clone(),
                     source: temp,
+                    load_type: None,
                 });
 
                 Ok(load_temp)
@@ -1403,6 +1645,13 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_initialize()\n");
         ir.push_str("declare i32 @qi_runtime_shutdown()\n");
         ir.push_str("declare i32 @qi_runtime_execute(ptr, i64)\n");
+        ir.push_str("\n");
+
+        // Async runtime functions
+        ir.push_str("; Async runtime functions\n");
+        ir.push_str("declare ptr @qi_runtime_create_task(ptr, i64)\n");
+        ir.push_str("declare ptr @qi_runtime_await(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_spawn_task(ptr)\n");
         ir.push_str("\n");
         
         ir.push_str("; Print functions\n");
@@ -1522,9 +1771,12 @@ impl IrBuilder {
                     };
                     ir.push_str(&format!("store {} {}, ptr {}\n", inferred_type, value, target));
                 }
-                IrInstruction::加载 { dest, source } => {
-                    // Check if we're loading a string constant (starts with @ and contains .str)
-                    let load_type = if source.starts_with('@') && source.contains(".str") {
+                IrInstruction::加载 { dest, source, load_type } => {
+                    // Use explicit load type if provided, otherwise infer
+                    let inferred_type = if let Some(ref lt) = load_type {
+                        lt.as_str()
+                    } else if source.starts_with('@') && source.contains(".str") {
+                        // Check if we're loading a string constant (starts with @ and contains .str)
                         "ptr"
                     } else if source.starts_with('%') {
                         // Look up variable type from our tracking for variables
@@ -1537,7 +1789,7 @@ impl IrBuilder {
                         // Default to i64 for most variables
                         "i64"
                     };
-                    ir.push_str(&format!("{} = load {}, ptr {}\n", dest, load_type, source));
+                    ir.push_str(&format!("{} = load {}, ptr {}\n", dest, inferred_type, source));
                 }
                 IrInstruction::二元操作 { dest, left, operator, right } => {
                     // Determine operation type based on operands
@@ -1742,7 +1994,12 @@ impl IrBuilder {
                         } else if callee == "e5_ad_97_e7_ac_a6_e9_95_bf" { // 字符串长度
                             "i64"
                         } else {
-                            "i64" // Default to i64
+                            // Check if this is a known async function
+                            if self.async_function_types.contains_key(callee) {
+                                "ptr"
+                            } else {
+                                "i64" // Default to i64
+                            }
                         };
 
                         match dest {
@@ -1839,6 +2096,24 @@ impl IrBuilder {
                 }
                 IrInstruction::字符串常量 { .. } => {
                     // String constants are handled separately at the beginning
+                }
+                IrInstruction::异步函数声明 { name, params, return_type } => {
+                    // Async function declarations are already handled in the label processing
+                    // This is just a placeholder for completeness
+                }
+                IrInstruction::等待表达式 { dest, future } => {
+                    // Generate await call - this blocks until the future completes
+                    ir.push_str(&format!("{} = call ptr @qi_runtime_await(ptr {})\n", dest, future));
+                }
+                IrInstruction::创建异步任务 { dest, function, arguments } => {
+                    // Create async task - pass function pointer and argument count
+                    // Note: This is a simplified implementation. In a real async runtime,
+                    // we would need to handle argument passing more carefully.
+                    ir.push_str(&format!("{} = call ptr @qi_runtime_create_task(ptr @{}, i64 {})\n",
+                        dest, function, arguments.len()));
+
+                    // Spawn the task to start execution
+                    ir.push_str(&format!("call i32 @qi_runtime_spawn_task(ptr {})\n", dest));
                 }
             }
         }

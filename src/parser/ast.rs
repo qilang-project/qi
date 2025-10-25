@@ -24,6 +24,7 @@ pub enum AstNode {
     // Statements
     变量声明(VariableDeclaration),
     函数声明(FunctionDeclaration),
+    异步函数声明(AsyncFunctionDeclaration),
     结构体声明(StructDeclaration),
     方法声明(MethodDeclaration),
     枚举声明(EnumDeclaration),
@@ -40,6 +41,7 @@ pub enum AstNode {
     标识符表达式(IdentifierExpression),
     二元操作表达式(BinaryExpression),
     函数调用表达式(FunctionCallExpression),
+    等待表达式(AwaitExpression),
     赋值表达式(AssignmentExpression),
     数组访问表达式(ArrayAccessExpression),
     数组字面量表达式(ArrayLiteralExpression),
@@ -80,6 +82,17 @@ pub struct VariableDeclaration {
 /// Function declaration
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeNode>,
+    pub body: Vec<AstNode>,
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+/// Async function declaration
+#[derive(Debug, Clone)]
+pub struct AsyncFunctionDeclaration {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
@@ -362,5 +375,12 @@ pub struct StructFieldValue {
 pub struct FieldAccessExpression {
     pub object: Box<AstNode>,
     pub field: String,
+    pub span: Span,
+}
+
+/// Await expression (e.g., 等待 async_function())
+#[derive(Debug, Clone)]
+pub struct AwaitExpression {
+    pub expression: Box<AstNode>,
     pub span: Span,
 }

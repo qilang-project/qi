@@ -44,6 +44,8 @@ pub use stdlib::{StandardLibrary, StringModule, MathModule};
 pub use error::{ErrorHandler, ChineseErrorMessages};
 pub use debug::{DebugSystem, DebugSystemConfig, create_debug_system};
 pub use async_runtime::{Runtime as AsyncRuntime, RuntimeConfig as AsyncRuntimeConfig, RuntimeStats as AsyncRuntimeStats};
+// Re-export async runtime FFI functions
+pub use async_runtime::ffi::{qi_runtime_create_task, qi_runtime_await, qi_runtime_spawn_task};
 
 /// Runtime version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
