@@ -42,10 +42,10 @@ fn test_chinese_keywords() {
         TokenKind::返回,
         TokenKind::变量,
         TokenKind::常量,
-        TokenKind::整数,
-        TokenKind::字符串,
-        TokenKind::布尔,
-        TokenKind::浮点数,
+        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::整数),
+        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::字符串),
+        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::布尔),
+        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::浮点数),
         TokenKind::文件结束,
     ];
 
