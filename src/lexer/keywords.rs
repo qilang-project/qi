@@ -63,7 +63,7 @@ impl KeywordTable {
         keywords.insert("可变引用".to_string(), TokenKind::类型关键词(BasicType::可变引用));
 
         // Type keywords - 复合类型
-        keywords.insert("结构体".to_string(), TokenKind::结构体);
+        keywords.insert("类型".to_string(), TokenKind::类型);
         keywords.insert("枚举".to_string(), TokenKind::枚举);
         keywords.insert("数组".to_string(), TokenKind::数组);
         keywords.insert("方法".to_string(), TokenKind::方法);

@@ -473,6 +473,7 @@ impl ParserErrorRecovery {
             TokenKind::空 => "空".to_string(),
             TokenKind::输入 => "输入".to_string(),
             TokenKind::长度 => "长度".to_string(),
+            TokenKind::打印 => "打印".to_string(),
             TokenKind::类型 => "类型".to_string(),
             TokenKind::字符串 => "字符串".to_string(),
             TokenKind::布尔 => "布尔".to_string(),
@@ -499,7 +500,6 @@ impl ParserErrorRecovery {
             },
             // Additional keywords that were missing
             TokenKind::循环 => "循环".to_string(),
-            TokenKind::结构体 => "结构体".to_string(),
             TokenKind::枚举 => "枚举".to_string(),
             TokenKind::数组 => "数组".to_string(),
             TokenKind::方法 => "方法".to_string(),
@@ -515,6 +515,7 @@ impl ParserErrorRecovery {
             TokenKind::公开 => "公开".to_string(),
             TokenKind::私有 => "私有".to_string(),
             TokenKind::错误 => "错误".to_string(),
+            TokenKind::自定义类型 => "自定义类型".to_string(),
         }
     }
 

@@ -46,16 +46,12 @@ sudo cp target/release/qi /usr/local/bin/
 // 你好世界程序
 包 主程序;
 
-导入 标准库.输入输出;
-
-函数 整数 主程序入口() {
+函数 入口() {
     打印("欢迎使用 Qi 编程语言！");
     打印("这是一个完全使用中文关键字的现代编程语言。");
-    
+
     变量 问候语 = "你好，世界！";
     打印(问候语);
-    
-    返回 0;
 }
 ```
 
@@ -82,9 +78,6 @@ qi compile 你好世界.qi --output 你好世界
 变量 圆周率 = 3.14159;       // 浮点数类型
 变量 是否成年 = 真;           // 布尔类型 (真/假)
 变量 姓名 = "张三";           // 字符串类型
-
-// 不可变变量
-不可变 常量值 = 3.14159;
 ```
 
 ### 控制流
@@ -116,90 +109,100 @@ qi compile 你好世界.qi --output 你好世界
 
 ```qi
 // 基础函数
-函数 整数 加法(整数 a, 整数 b) {
+函数 加法(a: 整数, b: 整数): 整数 {
     返回 a + b;
 }
 
-// 递归函数
-函数 整数 阶乘(整数 n) {
-    如果 n <= 1 {
-        返回 1;
-    } 否则 {
-        返回 n * 阶乘(n - 1);
-    }
+// 函数调用
+函数 入口() {
+    变量 结果 = 加法(5, 3);
+    打印(结果);
 }
 ```
 
-### 结构体和枚举
+### 更多类型
+
+Qi 编译器支持多种数据类型：
 
 ```qi
-// 定义结构体
-结构体 用户 {
-    整数 ID;
-    字符串 姓名;
-    整数 年龄;
-    字符串 邮箱;
-}
+// 整数类型
+变量 整数 = 42;
+变量 长整数 = 1000000000;
 
-// 定义枚举
-枚举 结果<T, E> {
-    成功(T),
-    失败(E)
-}
+// 浮点数类型
+变量 浮点数 = 3.14;
 
-// 模式匹配
-匹配 结果值 {
-    结果::成功(数据) => {
-        打印("成功: {}", 数据);
-    }
-    结果::失败(错误) => {
-        打印("失败: {}", 错误);
-    }
-}
+// 布尔类型
+变量 布尔值 = 真;
+变量 假值 = 假;
+
+// 字符串类型
+变量 文本 = "Hello Qi";
 ```
 
-### 异步并发（M:N 协程）
+### 异步编程
 
 ```qi
 // 异步函数
-异步 函数 字符串 获取数据(整数 任务ID) {
-    打印("任务 {} 开始", 任务ID);
-    等待 时间.异步休眠(500);
-    返回 "数据-" + 任务ID.转字符串();
+异步 函数 网络请求(): 字符串 {
+    返回 "网络数据";
 }
 
-// 启动协程
-函数 主程序入口() {
-    启动 异步 {
-        变量 数据 = 等待 获取数据(1);
-        打印("收到: {}", 数据);
-    };
-    
-    启动 异步 {
-        变量 数据 = 等待 获取数据(2);
-        打印("收到: {}", 数据);
-    };
-    
-    // 等待所有任务完成
-    时间.休眠(2000);
-    返回 0;
+异步 函数 获取数据(): 字符串 {
+    变量 结果 = 等待 网络请求();
+    返回 结果;
+}
+
+函数 入口() {
+    变量 数据 = 等待 获取数据();
+    打印(数据);
 }
 ```
 
 ## 示例程序
 
-查看 `examples/qi/` 目录获取完整的中文示例程序：
+查看 `examples/basic/` 目录获取完整的中文示例程序：
 
-1. **[你好世界.qi](examples/qi/你好世界.qi)** - 最简单的 Qi 程序
-2. **[基础语法示例.qi](examples/qi/基础语法示例.qi)** - 展示核心语法特性
-3. **[异步并发示例.qi](examples/qi/异步并发示例.qi)** - M:N 协程调度演示
-4. **[结构体和枚举.qi](examples/qi/结构体和枚举.qi)** - 数据结构定义
+### 基础示例
+1. **[hello_world](examples/basic/hello_world/)** - 最简单的 Qi 程序
+   ```bash
+   cargo run -- run examples/basic/hello_world/hello_world.qi
+   ```
 
-运行示例脚本：
+2. **[showcase](examples/basic/showcase/)** - 编译器功能完整演示
+   ```bash
+   cargo run -- run examples/basic/showcase/showcase.qi
+   ```
+
+### 语法特性示例
+3. **[calculations](examples/basic/calculations/)** - 数学计算和运算符
+4. **[numbers](examples/basic/numbers/)** - 数字类型和操作
+5. **[type](examples/basic/type/)** - 类型系统演示
+6. **[function](examples/basic/function/)** - 函数定义和调用
+
+### 控制流示例
+7. **[branching](examples/basic/branching/)** - 条件语句和分支
+8. **[loop](examples/basic/loop/)** - 循环结构
+9. **[for_loop](examples/basic/for_loop/)** - For 循环语句
+10. **[control_flow](examples/basic/control_flow/)** - 综合控制流
+
+### 高级特性示例
+11. **[async](examples/basic/async/)** - 异步编程支持
+12. **[struct](examples/basic/struct/)** - 结构体定义
+13. **[multi_file](examples/basic/multi_file/)** - 多文件项目演示
+14. **[greet](examples/basic/greet/)** - 交互式程序
+
+运行示例：
 
 ```bash
-cd examples
-./run_examples.sh
+# 运行单个示例
+cargo run -- run examples/basic/hello_world/hello_world.qi
+
+# 检查语法
+cargo run -- check examples/basic/showcase/showcase.qi
+
+# 编译到 LLVM IR
+cargo run -- compile examples/basic/calculations/calculations.qi -o output.ll
 ```
 
 ## 开发
@@ -221,7 +224,13 @@ cargo build
 cargo test
 
 # 运行示例
-cargo run -- check examples/qi/你好世界.qi
+cargo run -- run examples/basic/hello_world/hello_world.qi
+
+# 检查语法
+cargo run -- check examples/basic/showcase/showcase.qi
+
+# 编译到 LLVM IR
+cargo run -- compile examples/basic/calculations/calculations.qi -o test.ll
 
 # 检查代码格式
 cargo fmt --check
@@ -249,8 +258,20 @@ qi-compiler/
 │   └── utils/              # 工具函数
 ├── tests/                   # 测试文件
 ├── examples/                # 示例程序
-│   ├── qi/                 # Qi 语言示例
-│   └── run_examples.sh     # 示例运行脚本
+│   └── basic/              # 基础示例
+│       ├── hello_world/    # Hello World 程序
+│       ├── showcase/       # 功能演示
+│       ├── calculations/   # 数学计算
+│       ├── async/          # 异步编程
+│       ├── function/       # 函数定义
+│       ├── struct/         # 结构体
+│       ├── branching/      # 分支结构
+│       ├── loop/           # 循环结构
+│       ├── multi_file/     # 多文件项目
+│       └── ...            # 更多示例
+├── scripts/                 # 构建和运行脚本
+│   ├── run_examples.sh     # 示例运行脚本
+│   └── run_examples.ps1    # PowerShell 脚本
 ├── docs/                    # 文档
 │   └── qi-unified-design/   # 统一设计文档（分章版）
 └── build.rs                # 构建脚本（LALRPOP）

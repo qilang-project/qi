@@ -101,6 +101,7 @@ pub enum IrInstruction {
         dest: String,
         object: String,
         field: String,
+        struct_type: String,  // The struct type name (e.g., "点")
     },
 
     /// Async function declaration
@@ -141,6 +142,12 @@ pub struct IrBuilder {
     defined_functions: std::collections::HashSet<String>,
     /// Track external function signatures (name -> (params, return_type))
     external_functions: std::collections::HashMap<String, (Vec<String>, String)>,
+    /// Track struct definitions (name -> field_types)
+    struct_definitions: std::collections::HashMap<String, Vec<String>>,
+    /// Track struct field names (struct_name -> field_names)
+    struct_field_names: std::collections::HashMap<String, Vec<String>>,
+    /// Track variable struct types (variable_name -> struct_type_name)
+    variable_struct_types: std::collections::HashMap<String, String>,
 }
 
 impl IrBuilder {
@@ -155,6 +162,9 @@ impl IrBuilder {
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
             external_functions: std::collections::HashMap::new(),
+            struct_definitions: std::collections::HashMap::new(),
+            struct_field_names: std::collections::HashMap::new(),
+            variable_struct_types: std::collections::HashMap::new(),
         }
     }
 
@@ -253,6 +263,32 @@ impl IrBuilder {
 
         // Add prefix to prevent symbol conflicts
         format!("_Z_{}", hex_string)
+    }
+    
+    /// Mangle type names (similar to function names)
+    /// For struct types, this handles Chinese characters in type names
+    fn mangle_type_name(&self, name: &str) -> String {
+        // Remove .type suffix if present
+        let base_name = name.strip_suffix(".type").unwrap_or(name);
+        
+        // ASCII names remain unchanged
+        if base_name.chars().all(|c| c.is_ascii()) {
+            return name.to_string();
+        }
+
+        // Convert UTF-8 bytes to hex representation
+        let utf8_bytes = base_name.as_bytes();
+        let hex_string: String = utf8_bytes
+            .iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect();
+
+        // Add prefix and .type suffix - use %struct. prefix for LLVM compatibility
+        if name.ends_with(".type") {
+            format!("%struct.ZT_{}", hex_string)
+        } else {
+            format!("struct.ZT_{}", hex_string)
+        }
     }
     
     /// Map Chinese function names to runtime function names
@@ -460,6 +496,16 @@ impl IrBuilder {
                                 .map(|s| s.to_string())
                                 .unwrap_or_else(|| "i64".to_string());
                             (ty, Some(init_value))
+                        }
+                        AstNode::结构体实例化表达式(struct_lit) => {
+                            // Struct literals return pointers
+                            let init_value = self.build_node(&**initializer)?;
+                            // Also propagate the struct type info
+                            let init_var_name = init_value.trim_start_matches('%');
+                            if let Some(struct_type_name) = self.variable_struct_types.get(init_var_name) {
+                                self.variable_struct_types.insert(decl.name.clone(), struct_type_name.clone());
+                            }
+                            ("ptr".to_string(), Some(init_value))
                         }
                         _ => {
                             let ty = self.get_llvm_type(&decl.type_annotation);
@@ -1168,6 +1214,7 @@ impl IrBuilder {
                             dest: field_addr.clone(),
                             object,
                             field: field_access.field.clone(),
+                            struct_type: "unknown".to_string(), // TODO: track struct types
                         });
                         
                         // Then store the value to that address
@@ -1497,41 +1544,47 @@ impl IrBuilder {
                 } else {
                     format!("%{}", ident.name)
                 };
+                
+                // Also compute the bare mangled name without %
+                let bare_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                    self.mangle_function_name(&ident.name)
+                } else {
+                    ident.name.clone()
+                };
 
                 // Get the variable type and record it for the loaded value
-                // Try multiple keys: original name, var_name without %, mangled name without _Z_
+                // Try multiple keys: original name, var_name without %, mangled name, mangled with _Z_ prefix
                 let var_type = self.variable_types.get(&ident.name)
                     .or_else(|| self.variable_types.get(var_name.trim_start_matches('%')))
+                    .or_else(|| self.variable_types.get(&bare_mangled))
                     .or_else(|| {
-                        let mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
-                            format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"))
-                        } else {
-                            ident.name.clone()
-                        };
-                        self.variable_types.get(&mangled)
+                        let with_prefix = format!("_Z_{}", bare_mangled.trim_start_matches("_Z_"));
+                        self.variable_types.get(&with_prefix)
                     })
                     .cloned();
 
-                if let Some(vtype) = var_type {
+                if let Some(vtype) = var_type.clone() {
                     self.variable_types.insert(temp.trim_start_matches('%').to_string(), vtype);
+                }
+                
+                // Also propagate struct type if it exists
+                if let Some(struct_type) = self.variable_struct_types.get(&ident.name).cloned() {
+                    self.variable_struct_types.insert(temp.trim_start_matches('%').to_string(), struct_type);
                 }
 
                 // Check if this is a parameter (direct value, not a pointer)
                 // Need to check both original name and mangled name
-                let param_key_original = format!("param_{}", ident.name);
-                let param_key_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
-                    format!("param_{}", self.mangle_function_name(&ident.name))
-                } else {
-                    param_key_original.clone()
-                };
+                let is_param = self.variable_types.contains_key(&format!("param_{}", ident.name)) ||
+                               self.variable_types.contains_key(&format!("param_{}", bare_mangled));
                 
-                if self.variable_types.contains_key(&param_key_original) || 
-                   self.variable_types.contains_key(&param_key_mangled) {
+                if is_param {
                     // This is a parameter - use it directly without load
                     // Return the parameter name instead of generating a temp
                     Ok(var_name)
                 } else {
-                    // This is a regular variable - load it
+                    // This is a regular variable or unknown identifier - load it
+                    // Even if var_type is None, we'll try to load it
+                    // (it might be an error, but let LLVM catch it)
                     self.add_instruction(IrInstruction::加载 {
                         dest: temp.clone(),
                         source: var_name,
@@ -1668,9 +1721,33 @@ impl IrBuilder {
 
                 Ok(temp)
             }
-            AstNode::结构体声明(_struct_decl) => {
-                // Struct declarations don't generate code directly
-                // They just define the type for later use
+            AstNode::结构体声明(struct_decl) => {
+                // Record struct definition for later type generation
+                let field_types: Vec<String> = struct_decl.fields.iter()
+                    .map(|field| {
+                        // Convert Qi types to LLVM types
+                        match &field.type_annotation {
+                            crate::parser::ast::TypeNode::基础类型(bt) => {
+                                match bt {
+                                    crate::parser::ast::BasicType::整数 => "i64".to_string(),
+                                    crate::parser::ast::BasicType::浮点数 => "double".to_string(),
+                                    crate::parser::ast::BasicType::布尔 => "i1".to_string(),
+                                    crate::parser::ast::BasicType::字符串 => "ptr".to_string(),
+                                    _ => "i64".to_string(),
+                                }
+                            }
+                            _ => "i64".to_string(),
+                        }
+                    })
+                    .collect();
+                
+                // Also collect field names
+                let field_names: Vec<String> = struct_decl.fields.iter()
+                    .map(|field| field.name.clone())
+                    .collect();
+                
+                self.struct_definitions.insert(struct_decl.name.clone(), field_types);
+                self.struct_field_names.insert(struct_decl.name.clone(), field_names);
                 Ok("".to_string())
             }
             AstNode::枚举声明(_enum_decl) => {
@@ -1699,6 +1776,7 @@ impl IrBuilder {
                         dest: field_ptr.clone(),
                         object: temp.clone(),
                         field: field.name.clone(),
+                        struct_type: struct_literal.struct_name.clone(),
                     });
 
                     // Store the field value
@@ -1709,11 +1787,22 @@ impl IrBuilder {
                     });
                 }
 
+                // Record that this is a pointer type
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                // Record the struct type for field access
+                self.variable_struct_types.insert(temp.trim_start_matches('%').to_string(), struct_literal.struct_name.clone());
+
                 Ok(temp)
             }
             AstNode::字段访问表达式(field_access) => {
                 // Build object expression
                 let object_var = self.build_node(&field_access.object)?;
+                
+                // Get the struct type from variable_struct_types
+                let object_var_name = object_var.trim_start_matches('%');
+                let struct_type = self.variable_struct_types.get(object_var_name)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
 
                 // Generate field access instruction
                 let temp = self.generate_temp();
@@ -1721,6 +1810,7 @@ impl IrBuilder {
                     dest: temp.clone(),
                     object: object_var,
                     field: field_access.field.clone(),
+                    struct_type,
                 });
 
                 // Load the field value
@@ -1739,6 +1829,176 @@ impl IrBuilder {
                     self.build_node(stmt)?;
                 }
                 Ok("block".to_string())
+            }
+            AstNode::方法声明(method_decl) => {
+                // Method is just a function with the receiver as the first parameter
+                // Generate method name: TypeName_methodName
+                let method_full_name = format!("{}_{}", method_decl.receiver_type, method_decl.method_name);
+                let func_name = if method_full_name.chars().any(|c| !c.is_ascii()) {
+                    self.mangle_function_name(&method_full_name)
+                } else {
+                    method_full_name.clone()
+                };
+
+                // Record the function for later reference
+                self.defined_functions.insert(func_name.clone());
+
+                // Build parameter list - receiver is first parameter
+                let receiver_type = "ptr"; // Receiver is always a pointer to the struct
+                let mut param_decls = vec![];
+                let mut param_names = vec![method_decl.receiver_name.clone()];
+                
+                // Add receiver parameter
+                let receiver_var = if method_decl.receiver_name.chars().any(|c| !c.is_ascii()) {
+                    format!("%{}", self.mangle_function_name(&method_decl.receiver_name))
+                } else {
+                    format!("%{}", method_decl.receiver_name)
+                };
+                param_decls.push(format!("{} {}", receiver_type, receiver_var));
+                
+                // Add other parameters
+                for param in &method_decl.parameters {
+                    let param_type = self.get_llvm_type(&param.type_annotation);
+                    let param_var = if param.name.chars().any(|c| !c.is_ascii()) {
+                        format!("%{}", self.mangle_function_name(&param.name))
+                    } else {
+                        format!("%{}", param.name)
+                    };
+                    param_decls.push(format!("{} {}", param_type, param_var));
+                    param_names.push(param.name.clone());
+                }
+
+                // Get return type
+                let return_type = if let Some(_) = method_decl.return_type {
+                    self.get_return_type(&method_decl.return_type)
+                } else {
+                    // Infer from body if there's an explicit return with a value
+                    self.infer_return_type_from_body(&method_decl.body).unwrap_or_else(|| "void".to_string())
+                };
+                self.function_return_types.insert(func_name.clone(), return_type.clone());
+
+                // Generate function definition start
+                let params_str = param_decls.join(", ");
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("define {} @{}({}) {{", return_type, func_name, params_str),
+                });
+
+                // Add entry label
+                self.add_instruction(IrInstruction::标签 {
+                    name: "entry:".to_string(),
+                });
+
+                // Track parameter types for use in function body
+                // Receiver parameter
+                let receiver_mangled = if method_decl.receiver_name.chars().any(|c| !c.is_ascii()) {
+                    format!("_Z_{}", self.mangle_function_name(&method_decl.receiver_name).trim_start_matches("_Z_"))
+                } else {
+                    method_decl.receiver_name.clone()
+                };
+                self.variable_types.insert(method_decl.receiver_name.clone(), receiver_type.to_string());
+                self.variable_types.insert(receiver_mangled.clone(), receiver_type.to_string());
+                self.variable_types.insert(format!("param_{}", method_decl.receiver_name), receiver_type.to_string());
+                self.variable_types.insert(format!("param_{}", receiver_mangled), receiver_type.to_string());
+                
+                // Track receiver struct type for field access
+                self.variable_struct_types.insert(method_decl.receiver_name.clone(), method_decl.receiver_type.clone());
+                self.variable_struct_types.insert(receiver_mangled.clone(), method_decl.receiver_type.clone());
+                
+                // Other parameters
+                for param in &method_decl.parameters {
+                    let param_type = self.get_llvm_type(&param.type_annotation);
+                    let mangled_param_name = if param.name.chars().any(|c| !c.is_ascii()) {
+                        format!("_Z_{}", self.mangle_function_name(&param.name).trim_start_matches("_Z_"))
+                    } else {
+                        param.name.clone()
+                    };
+                    self.variable_types.insert(param.name.clone(), param_type.clone());
+                    self.variable_types.insert(mangled_param_name.clone(), param_type.clone());
+                    
+                    // Mark as parameter (direct value, not pointer)
+                    self.variable_types.insert(format!("param_{}", param.name), param_type.clone());
+                    self.variable_types.insert(format!("param_{}", mangled_param_name), param_type.clone());
+                }
+
+                // Process method body
+                for (i, stmt) in method_decl.body.iter().enumerate() {
+                    self.build_node(stmt)?;
+                }
+
+                // Add default return if no explicit return
+                if return_type == "void" {
+                    self.add_instruction(IrInstruction::返回 { value: None });
+                } else if !method_decl.body.iter().any(|stmt| matches!(stmt, AstNode::返回语句(_))) {
+                    // Add default return for non-void functions if missing
+                    let default_value = match return_type.as_str() {
+                        "i64" => "0",
+                        "double" => "0.0",
+                        "i1" => "false",
+                        "ptr" => "null",
+                        _ => "0",
+                    };
+                    self.add_instruction(IrInstruction::返回 {
+                        value: Some(default_value.to_string()),
+                    });
+                }
+
+                // Close function
+                self.add_instruction(IrInstruction::标签 {
+                    name: "}".to_string(),
+                });
+
+                Ok(format!("method_{}", func_name))
+            }
+            AstNode::方法调用表达式(method_call) => {
+                // Method call: object.method(args)
+                // 1. Get the object
+                let object_var = self.build_node(&method_call.object)?;
+                
+                // 2. Get the struct type
+                let object_var_name = object_var.trim_start_matches('%');
+                let struct_type = self.variable_struct_types.get(object_var_name)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                
+                // 3. Build method name: TypeName_methodName
+                let method_full_name = format!("{}_{}", struct_type, method_call.method_name);
+                let func_name = if method_full_name.chars().any(|c| !c.is_ascii()) {
+                    self.mangle_function_name(&method_full_name)
+                } else {
+                    method_full_name
+                };
+                
+                // 4. Build arguments - object is first argument
+                let mut args = vec![object_var];
+                for arg in &method_call.arguments {
+                    args.push(self.build_node(arg)?);
+                }
+                
+                // 5. Call the method
+                // Check if the method has a return value
+                let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
+                    ret_type != "void"
+                } else {
+                    // Unknown - assume it has a return value
+                    true
+                };
+                
+                if has_return_value {
+                    let temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(temp.clone()),
+                        callee: func_name,
+                        arguments: args,
+                    });
+                    Ok(temp)
+                } else {
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: None,
+                        callee: func_name,
+                        arguments: args,
+                    });
+                    Ok(String::new()) // Return empty string for void methods
+                }
             }
             _ => {
                 #[allow(unreachable_patterns)]
@@ -1802,6 +2062,17 @@ impl IrBuilder {
         // Add module header
         ir.push_str("; Generated by Qi Language Compiler\n");
         ir.push_str("; Module ID = 'qi_program'\n\n");
+
+        // Add struct type definitions
+        if !self.struct_definitions.is_empty() {
+            ir.push_str("; Struct type definitions\n");
+            for (struct_name, field_types) in &self.struct_definitions {
+                let mangled_name = self.mangle_type_name(&format!("{}.type", struct_name));
+                let fields_str = field_types.join(", ");
+                ir.push_str(&format!("{} = type {{ {} }}\n", mangled_name, fields_str));
+            }
+            ir.push_str("\n");
+        }
 
         // Add Qi Runtime function declarations
         ir.push_str("; Qi Runtime declarations\n");
@@ -1928,7 +2199,8 @@ impl IrBuilder {
         for instruction in &other_instructions {
             match instruction {
                 IrInstruction::分配 { dest, type_name } => {
-                    ir.push_str(&format!("{} = alloca {}\n", dest, type_name));
+                    let mangled_type = self.mangle_type_name(type_name);
+                    ir.push_str(&format!("{} = alloca {}\n", dest, mangled_type));
                 }
                 IrInstruction::存储 { target, value, value_type } => {
                     // Determine the type based on the value_type if provided, otherwise infer
@@ -1964,12 +2236,10 @@ impl IrBuilder {
                         // Remove the % prefix to get the original variable name
                         let var_name = source.trim_start_matches('%');
 
-                        // Check if this is a parameter (direct value, not a pointer)
-                        if self.variable_types.contains_key(&format!("param_{}", var_name)) {
-                            // This is a parameter - it should not generate a load instruction
-                            // Parameters are used directly, so we skip the load generation
-                            continue;
-                        }
+                        // NOTE: We used to check for param_ here and skip the load, but this caused issues
+                        // because variable_types accumulates state across multiple functions.
+                        // If a load instruction was generated, we should trust it and emit the load.
+                        // The decision of whether to load or not should be made earlier, in build_node.
 
                         // Look up the variable type from our tracking (we store both original and mangled names)
                         self.variable_types.get(var_name).map(|s| s.as_str()).unwrap_or("i64")
@@ -2284,11 +2554,18 @@ impl IrBuilder {
                     // Simplified string concatenation using external function
                     ir.push_str(&format!("{} = call i8* @qi_string_concat(i8* {}, i8* {})\n", dest, left, right));
                 }
-                IrInstruction::字段访问 { dest, object, field: _ } => {
-                    // Simplified field access using getelementptr
-                    // In a real implementation, this would use struct field indices based on the field name
-                    ir.push_str(&format!("{} = getelementptr %{}.type, %{}* {}, i32 0, i32 {}\n",
-                        dest, object, object, object, 0));
+                IrInstruction::字段访问 { dest, object, field, struct_type } => {
+                    // Get field index from struct field names
+                    let field_index = if let Some(field_names) = self.struct_field_names.get(struct_type) {
+                        // Find field index by name
+                        field_names.iter().position(|f| f == field).unwrap_or(0)
+                    } else {
+                        0 // Unknown struct, use 0
+                    };
+                    
+                    let mangled_type = self.mangle_type_name(&format!("{}.type", struct_type));
+                    ir.push_str(&format!("{} = getelementptr {}, ptr {}, i32 0, i32 {}\n",
+                        dest, mangled_type, object, field_index));
                 }
                 IrInstruction::字符串常量 { .. } => {
                     // String constants are handled separately at the beginning

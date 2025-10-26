@@ -149,3 +149,6 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 - M:N async runtime provides lightweight concurrency
 - LLVM optimization passes in release builds
 - Memory pools for coroutine stack management
+- 可执行的 文件必须 包 主程序;
+
+函数 入口() { ！！！

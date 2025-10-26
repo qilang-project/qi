@@ -5,6 +5,7 @@ pub mod scope;
 pub mod symbol_table;
 pub mod type_checker;
 pub mod module;
+pub mod methods;
 
 pub use symbol_table::SymbolTable;
 pub use type_checker::TypeChecker;
@@ -17,6 +18,7 @@ use crate::lexer::Span;
 #[allow(dead_code)]
 pub struct SemanticAnalyzer {
     type_checker: TypeChecker,
+    method_system: methods::MethodSystem,
     diagnostics: DiagnosticManager,
 }
 
@@ -27,6 +29,7 @@ impl SemanticAnalyzer {
         let type_checker = TypeChecker::new();
         Self {
             type_checker,
+            method_system: methods::MethodSystem::new(),
             diagnostics: DiagnosticManager::new(),
         }
     }
@@ -86,6 +89,7 @@ impl SemanticAnalyzer {
             AstNode::变量声明(decl) => self.analyze_variable_declaration(decl),
             AstNode::函数声明(func) => self.analyze_function_declaration(func),
             AstNode::结构体声明(struct_decl) => self.analyze_struct_declaration(struct_decl),
+            AstNode::方法声明(method_decl) => self.analyze_method_declaration(method_decl),
             AstNode::枚举声明(enum_decl) => self.analyze_enum_declaration(enum_decl),
             AstNode::如果语句(if_stmt) => self.analyze_if_statement(if_stmt),
             AstNode::当语句(while_stmt) => self.analyze_while_statement(while_stmt),
@@ -474,6 +478,19 @@ impl SemanticAnalyzer {
         };
 
         self.type_checker.symbol_table.define_symbol(symbol.clone())
+            .map_err(|e| SemanticError::ScopeError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Analyze method declaration
+    fn analyze_method_declaration(&mut self, method_decl: &crate::parser::ast::MethodDeclaration) -> Result<(), SemanticError> {
+        // Register the method in the method system
+        // Note: The receiver type should be determined from the context or explicit type annotation
+        // For now, we'll use a placeholder approach
+        let receiver_type_name = method_decl.receiver_type.clone(); // This would need to be resolved
+
+        self.method_system.register_method(receiver_type_name, method_decl.clone())
             .map_err(|e| SemanticError::ScopeError(e.to_string()))?;
 
         Ok(())

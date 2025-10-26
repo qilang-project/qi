@@ -42,7 +42,7 @@ Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
     AsyncFunctionDeclaration,
-    StructDeclaration,
+    TypeDeclaration,
     ReturnStatement,
     IfStatement,
     WhileStatement,
@@ -91,7 +91,7 @@ Visibility: Visibility = {
 
 FunctionDeclaration: AstNode = {
     // 带接收器的函数(方法) - Go 风格
-    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -102,7 +102,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -113,7 +113,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -124,7 +124,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -136,7 +136,7 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 可变接收器的函数
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -147,7 +147,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -158,7 +158,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -169,7 +169,7 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:Identifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -325,15 +325,15 @@ ForStatement: AstNode = {
 };
 
 
-StructDeclaration: AstNode = {
-    <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+TypeDeclaration: AstNode = {
+    <vis:Visibility> "类型" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields,
         methods: vec![],
         visibility: vis,
         span: Default::default(),
     }),
-    <vis:Visibility> "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
+    <vis:Visibility> "类型" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
         name,
         fields: vec![],
         methods: vec![],
@@ -563,6 +563,12 @@ Precedence8: AstNode = {
                 arguments: args,
                 span: Default::default(),
             }),
+            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
+                object: field_access.object,
+                method_name: field_access.field,
+                arguments: args,
+                span: Default::default(),
+            }),
             _ => callee,
         }
     },
@@ -570,6 +576,12 @@ Precedence8: AstNode = {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 callee: ident.name,
+                arguments: vec![],
+                span: Default::default(),
+            }),
+            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
+                object: field_access.object,
+                method_name: field_access.field,
                 arguments: vec![],
                 span: Default::default(),
             }),
@@ -767,8 +779,8 @@ TypeName: String = {
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
-           id == "公开" || id == "私有" || id == "模块" || id == "类型" || id == "自己" ||
-           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" {
+           id == "公开" || id == "私有" || id == "模块" || id == "自己" ||
+           id == "枚举" || id == "实现" || id == "特性" {
             panic!("Keyword used as type name: {}", id);
         }
         id.to_string()
@@ -792,6 +804,7 @@ Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
     <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
         // Check if it's a forbidden keyword using individual checks
+        // Note: 自身, 自己, 自我 are allowed as they are used for method receivers
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
@@ -799,10 +812,32 @@ Identifier: String = {
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
-           id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" || id == "类型" ||
-           id == "自我" || id == "自身" || id == "方法" || id == "自己" || id == "结构体" || id == "枚举" ||
+           id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
+           id == "方法" || id == "枚举" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" {
             panic!("Keyword used as identifier: {}", id);
+        }
+        id.to_string()
+    },
+};
+
+// 方法接收者标识符 - 允许使用 "自身"、"自己" 等关键字
+ReceiverIdentifier: String = {
+    <id:r"[a-zA-Z_][a-zA-Z0-9_]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
+        // Allow 自身, 自己, 自我 as receiver names
+        // Still forbid other keywords
+        if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
+           id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
+           id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
+           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
+           id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
+           id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
+           id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
+           id == "方法" || id == "枚举" ||
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" {
+            panic!("Keyword used as receiver identifier: {}", id);
         }
         id.to_string()
     },

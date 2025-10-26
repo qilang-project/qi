@@ -29,7 +29,7 @@ pub enum TokenKind {
     常量,      // constant
     字符串,    // string
     布尔,      // boolean
-    结构体,    // struct
+    类型,    // type
     枚举,      // enum
     数组,      // array
     方法,      // method
@@ -93,7 +93,8 @@ pub enum TokenKind {
     继续,               // continue
     输入,               // input
     长度,               // length
-    类型,               // type
+    打印,               // print
+    自定义类型,         // custom type declaration keyword
 
     // Type keywords
     类型关键词(crate::parser::ast::BasicType),

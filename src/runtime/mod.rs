@@ -34,7 +34,6 @@ pub mod async_runtime;
 
 // Legacy modules for backward compatibility
 pub mod strings;
-pub mod errors;
 
 // Re-export core components for convenience
 pub use environment::{RuntimeEnvironment, RuntimeState, RuntimeConfig};
@@ -62,7 +61,6 @@ pub type RuntimeError = error::Error;
 pub struct RuntimeLibrary {
     memory_interface: memory::MemoryInterface,
     string_interface: strings::StringInterface,
-    error_interface: errors::ErrorInterface,
     io_interface: io::IoInterface,
 }
 
@@ -72,7 +70,6 @@ impl RuntimeLibrary {
         Ok(Self {
             memory_interface: memory::MemoryInterface::new()?,
             string_interface: strings::StringInterface::new(),
-            error_interface: errors::ErrorInterface::new(),
             io_interface: io::IoInterface::new()?,
         })
     }
@@ -81,7 +78,6 @@ impl RuntimeLibrary {
     pub fn initialize(&mut self) -> Result<(), RuntimeError> {
         self.memory_interface.initialize()?;
         self.string_interface.initialize()?;
-        self.error_interface.initialize()?;
         self.io_interface.initialize()?;
         Ok(())
     }
@@ -99,11 +95,6 @@ impl RuntimeLibrary {
     /// Get string operations interface
     pub fn strings(&self) -> &strings::StringInterface {
         &self.string_interface
-    }
-
-    /// Get error handling interface
-    pub fn errors(&self) -> &errors::ErrorInterface {
-        &self.error_interface
     }
 
     /// Get I/O operations interface
