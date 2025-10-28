@@ -145,7 +145,11 @@ impl QiCompiler {
         }
 
         // 3. Link all object files
-        let executable_path = entry_file.with_extension(""); // e.g., "main"
+        let executable_path = if cfg!(windows) {
+            entry_file.with_extension("exe") // e.g., "main.exe"
+        } else {
+            entry_file.with_extension("")   // e.g., "main"
+        };
         self.link_objects(&object_files, &executable_path)?;
 
         Ok(CompilationResult {
@@ -204,28 +208,82 @@ impl QiCompiler {
         executable_path: &PathBuf,
     ) -> Result<(), CompilerError> {
         // Get the compiler library path for linking runtime
-        let compiler_lib_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .map(|p| p.join("libqi_compiler.a"))
-            .ok_or_else(|| CompilerError::Codegen("无法找到编译器库路径".to_string()))?;
+        let lib_name = if cfg!(windows) {
+            "qi_compiler.lib"
+        } else {
+            "libqi_compiler.a"
+        };
+
+        // The library should be in target/debug directory relative to compiler executable
+        let compiler_exe_path = std::env::current_exe()?;
+        let compiler_dir = compiler_exe_path.parent()
+            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
+
+        // The library should be in the same directory as the compiler executable
+        let compiler_lib_path = compiler_dir.join(lib_name);
+
+        // If not found there, try target/debug relative to compiler directory (development build)
+        let compiler_lib_path = if compiler_lib_path.exists() {
+            compiler_lib_path
+        } else {
+            // Go up from compiler/bin to project root, then to target/debug
+            let project_root = compiler_dir.parent()
+                .and_then(|p| p.parent())
+                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?;
+            project_root.join("target").join("debug").join(lib_name)
+        };
 
         let mut command = std::process::Command::new("clang");
         command.arg("-o").arg(executable_path);
-        
+
         // Add all object files
         for obj in object_files {
             command.arg(obj);
         }
 
+        // Get the compiler library path for linking runtime
+        let compiler_exe_path = std::env::current_exe()?;
+        let compiler_dir = compiler_exe_path.parent()
+            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
+
+        // The library should be in the same directory as the compiler executable
+        let compiler_lib_path = compiler_dir.join(lib_name);
+
+        // If not found there, try target/debug relative to compiler directory (development build)
+        let compiler_lib_path = if compiler_lib_path.exists() {
+            compiler_lib_path
+        } else {
+            // Go up from compiler/bin to project root, then to target/debug
+            let project_root = compiler_dir.parent()
+                .and_then(|p| p.parent())
+                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?;
+            project_root.join("target").join("debug").join(lib_name)
+        };
+
         // Link runtime library
         if compiler_lib_path.exists() {
             command.arg(&compiler_lib_path);
+        } else {
+            eprintln!("Warning: Runtime library not found at: {:?}", compiler_lib_path);
         }
 
-        // Add pthread for async runtime
-        command.arg("-lpthread");
+        // Add threading libraries (platform-specific)
+        if cfg!(windows) {
+            // On Windows, link with essential Windows API libraries
+            command.args(&[
+                "-lkernel32",     // Core Windows API functions
+                "-luser32",       // User interface functions
+                "-ladvapi32",     // Advanced Windows API
+                "-lntdll",        // NT native API
+                "-luserenv",      // User environment functions (including GetUserProfileDirectoryW)
+                "-lws2_32",       // Windows Sockets API
+            ]);
+        } else {
+            // On Unix-like systems, use pthread
+            command.arg("-lpthread");
+        }
 
+        
         let output = command.output()
             .map_err(CompilerError::Io)?;
 

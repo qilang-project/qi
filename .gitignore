@@ -33,6 +33,8 @@ Thumbs.db
 *.qi.bc
 *.ll
 *.s
+*.exe
+*.o
 
 # Runtime library build artifacts
 runtime/build/

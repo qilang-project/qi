@@ -1394,7 +1394,8 @@ impl IrBuilder {
                     };
                     
                     self.external_functions.insert(mapped_callee.clone(), (param_types, ret_type));
-                }                // Generate function call
+                }                
+                // Generate function call
                 let temp = self.generate_temp();
 
                 if is_async_function && !self.in_async_context {

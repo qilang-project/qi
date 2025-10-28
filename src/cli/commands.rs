@@ -316,6 +316,7 @@ impl Cli {
                 }
             };
 
+            
             // Move or rename output file if custom output is specified
             if let Some(output_path) = &output {
                 if files.len() == 1 {
@@ -1224,14 +1225,29 @@ impl Cli {
     fn get_runtime_library_path(&self) -> Result<std::path::PathBuf, CliError> {
         let project_root = std::env::current_dir()?;
 
-        // Compile our runtime as a simple static library
+        // Check if runtime library source exists
         let runtime_src = project_root.join("src/runtime/lib.rs");
+        if !runtime_src.exists() {
+            // Fallback: try to use the compiler library instead
+            return self.get_compiler_library_path();
+        }
+
         let output_dir = project_root.join("target/debug");
 
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(&output_dir)?;
 
-        let output_path = output_dir.join("libqi_runtime.a");
+        // Platform-specific library name
+        let output_path = if cfg!(windows) {
+            output_dir.join("qi_runtime.lib")
+        } else {
+            output_dir.join("libqi_runtime.a")
+        };
+
+        // If library already exists, return it
+        if output_path.exists() {
+            return Ok(output_path);
+        }
 
         // We don't have access to config here, so we'll assume verbose for now
         println!("  编译 runtime 源文件到: {:?}", output_path);
@@ -1266,16 +1282,47 @@ impl Cli {
 
     /// Get the path to the Qi compiler library (which contains async runtime symbols)
     fn get_compiler_library_path(&self) -> Result<std::path::PathBuf, CliError> {
-        let project_root = std::env::current_dir()?;
-        let output_dir = project_root.join("target/debug");
-        let output_path = output_dir.join("libqi_compiler.a");
+        // Get the compiler executable path
+        let compiler_exe_path = std::env::current_exe()?;
+        let compiler_dir = compiler_exe_path.parent()
+            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
+                "无法确定编译器目录".to_string()
+            )))?;
 
-        if output_path.exists() {
-            return Ok(output_path);
+        // Platform-specific library name
+        let lib_name = if cfg!(windows) {
+            "qi_compiler.lib"
+        } else {
+            "libqi_compiler.a"
+        };
+
+        // First try: same directory as compiler executable (for deployed builds)
+        let lib_path = compiler_dir.join(lib_name);
+        if lib_path.exists() {
+            return Ok(lib_path);
+        }
+
+        // Second try: target/debug relative to project root (for development builds)
+        let project_root = compiler_dir.parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
+                "无法确定项目根目录".to_string()
+            )))?;
+
+        let lib_path = project_root.join("target").join("debug").join(lib_name);
+        if lib_path.exists() {
+            return Ok(lib_path);
+        }
+
+        // Third try: use current directory (fallback)
+        let current_dir = std::env::current_dir()?;
+        let lib_path = current_dir.join("target").join("debug").join(lib_name);
+        if lib_path.exists() {
+            return Ok(lib_path);
         }
 
         Err(CliError::Compilation(crate::CompilerError::Codegen(
-            "无法找到 Qi Compiler 库文件".to_string()
+            format!("无法找到 Qi Compiler 库文件: {:?}", lib_path)
         )))
     }
 }

@@ -213,10 +213,14 @@ impl TcpConnection {
             })?;
 
         // Connect with timeout
-        let stream = if cfg!(unix) {
+        #[cfg(unix)]
+        let stream = {
             // Use platform-specific timeout on Unix
             Self::connect_with_timeout_unix(&addr, config.timeout)?
-        } else {
+        };
+
+        #[cfg(not(unix))]
+        let stream = {
             // Fallback for other platforms
             TcpStream::connect(addr).map_err(|e| IoError::NetworkOperationFailed {
                 endpoint: config.host.clone(),
