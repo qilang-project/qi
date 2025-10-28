@@ -207,31 +207,8 @@ impl QiCompiler {
         object_files: &[PathBuf],
         executable_path: &PathBuf,
     ) -> Result<(), CompilerError> {
-        // Get the compiler library path for linking runtime
-        let lib_name = if cfg!(windows) {
-            "qi_compiler.lib"
-        } else {
-            "libqi_compiler.a"
-        };
-
-        // The library should be in target/debug directory relative to compiler executable
-        let compiler_exe_path = std::env::current_exe()?;
-        let compiler_dir = compiler_exe_path.parent()
-            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
-
-        // The library should be in the same directory as the compiler executable
-        let compiler_lib_path = compiler_dir.join(lib_name);
-
-        // If not found there, try target/debug relative to compiler directory (development build)
-        let compiler_lib_path = if compiler_lib_path.exists() {
-            compiler_lib_path
-        } else {
-            // Go up from compiler/bin to project root, then to target/debug
-            let project_root = compiler_dir.parent()
-                .and_then(|p| p.parent())
-                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?;
-            project_root.join("target").join("debug").join(lib_name)
-        };
+        // Find the runtime library path
+        let lib_path = self.find_runtime_library()?;
 
         let mut command = std::process::Command::new("clang");
         command.arg("-o").arg(executable_path);
@@ -241,31 +218,8 @@ impl QiCompiler {
             command.arg(obj);
         }
 
-        // Get the compiler library path for linking runtime
-        let compiler_exe_path = std::env::current_exe()?;
-        let compiler_dir = compiler_exe_path.parent()
-            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
-
-        // The library should be in the same directory as the compiler executable
-        let compiler_lib_path = compiler_dir.join(lib_name);
-
-        // If not found there, try target/debug relative to compiler directory (development build)
-        let compiler_lib_path = if compiler_lib_path.exists() {
-            compiler_lib_path
-        } else {
-            // Go up from compiler/bin to project root, then to target/debug
-            let project_root = compiler_dir.parent()
-                .and_then(|p| p.parent())
-                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?;
-            project_root.join("target").join("debug").join(lib_name)
-        };
-
         // Link runtime library
-        if compiler_lib_path.exists() {
-            command.arg(&compiler_lib_path);
-        } else {
-            eprintln!("Warning: Runtime library not found at: {:?}", compiler_lib_path);
-        }
+        command.arg(&lib_path);
 
         // Add threading libraries (platform-specific)
         if cfg!(windows) {
@@ -295,6 +249,63 @@ impl QiCompiler {
         }
 
         Ok(())
+    }
+
+    /// Find the runtime library using multiple search strategies
+    fn find_runtime_library(&self) -> Result<PathBuf, CompilerError> {
+        let lib_name = if cfg!(windows) {
+            "qi_compiler.lib"
+        } else {
+            "libqi_compiler.a"
+        };
+
+        // Get the compiler executable location
+        let compiler_exe_path = std::env::current_exe()?;
+        let compiler_dir = compiler_exe_path.parent()
+            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
+
+        // Search strategies in order of preference:
+        let search_paths = vec![
+            // 1. Same directory as compiler executable (for deployed releases)
+            compiler_dir.join(lib_name),
+
+            // 2. Current working directory (for local development)
+            std::env::current_dir()?.join(lib_name),
+
+            // 3. target/release/ relative to current directory (for release builds)
+            std::env::current_dir()?.join("target").join("release").join(lib_name),
+
+            // 4. target/debug/ relative to current directory (for debug builds)
+            std::env::current_dir()?.join("target").join("debug").join(lib_name),
+
+            // 5. target/release/ relative to project root (go up from compiler dir)
+            compiler_dir.parent()
+                .and_then(|p| p.parent())
+                .map(|root| root.join("target").join("release").join(lib_name))
+                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
+
+            // 6. target/debug/ relative to project root (go up from compiler dir)
+            compiler_dir.parent()
+                .and_then(|p| p.parent())
+                .map(|root| root.join("target").join("debug").join(lib_name))
+                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
+        ];
+
+        // Try each path in order
+        for path in &search_paths {
+            if path.exists() {
+                eprintln!("Found runtime library at: {:?}", path);
+                return Ok(path.clone());
+            }
+        }
+
+        // If none found, return error with list of attempted paths
+        let paths_str: Vec<String> = search_paths.iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        Err(CompilerError::Codegen(
+            format!("找不到运行时库 {}\n尝试的路径:\n{}", lib_name, paths_str.join("\n"))
+        ))
     }
 
     /// Parse a file and recursively parse its imports
