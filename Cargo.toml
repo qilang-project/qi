@@ -50,6 +50,7 @@ serde_json = "1.0.107"
 # File handling and path management
 glob = "0.3.1"
 walkdir = "2.4.0"
+dirs = "5.0.1"
 
 # Performance measurement
 criterion = { version = "0.7.0", optional = true }

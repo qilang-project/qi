@@ -202,13 +202,16 @@ impl IrBuilder {
     /// Get the full function name from a function call expression, including module prefix
     fn get_full_function_name(&self, call_expr: &crate::parser::ast::FunctionCallExpression) -> String {
         if let Some(module_qualifier) = &call_expr.module_qualifier {
-            // 检查是否为别名，如果是则映射回原始模块名
-            let actual_module = self.import_aliases
-                .get(module_qualifier)
-                .unwrap_or(module_qualifier);
-            
-            // 模块前缀调用，如 数学工具.最大值 -> 数学_最大值（使用原始模块名）
-            format!("{}_{}", actual_module, call_expr.callee)
+            // 检查是否为导入的模块（存在于 import_aliases 中）
+            if self.import_aliases.contains_key(module_qualifier) {
+                // 这是导入的函数，直接使用函数名，不加模块前缀
+                // 例如：数学.最大值 -> 最大值（直接使用导入的函数名）
+                call_expr.callee.clone()
+            } else {
+                // 这是本地模块，使用模块前缀
+                // 模块前缀调用，如 数学工具.最大值 -> 数学_最大值
+                format!("{}_{}", module_qualifier, call_expr.callee)
+            }
         } else {
             // 普通函数调用
             call_expr.callee.clone()
@@ -2126,44 +2129,88 @@ impl IrBuilder {
                     if is_module || !is_variable {
                         // 这是模块前缀调用，如 数学.最大值()
                         let module_name = &ident.name;
-                        let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
-                        let qualified_function_name = format!("{}_{}", actual_module, method_call.method_name);
-                        
-                        // 构造函数调用
-                        let func_name = if qualified_function_name.chars().any(|c| !c.is_ascii()) {
-                            self.mangle_function_name(&qualified_function_name)
+
+                        // 检查是否为导入的模块
+                        if self.import_aliases.contains_key(module_name) {
+                            // 这是导入的函数，直接使用函数名，不加模块前缀
+                            // 例如：数学.最大值 -> 最大值（直接使用导入的函数名）
+                            let func_name = if method_call.method_name.chars().any(|c| !c.is_ascii()) {
+                                self.mangle_function_name(&method_call.method_name)
+                            } else {
+                                method_call.method_name.clone()
+                            };
+
+                            // 构建参数
+                            let mut args = vec![];
+                            for arg in &method_call.arguments {
+                                args.push(self.build_node(arg)?);
+                            }
+
+                            // 检查返回值类型
+                            let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
+                                ret_type != "void"
+                            } else {
+                                true // 默认假设有返回值
+                            };
+
+                            if has_return_value {
+                                let temp = self.generate_temp();
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(temp.clone()),
+                                    callee: func_name,
+                                    arguments: args,
+                                });
+                                return Ok(temp);
+                            } else {
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: None,
+                                    callee: func_name,
+                                    arguments: args,
+                                });
+                                return Ok(String::new());
+                            }
                         } else {
-                            qualified_function_name
-                        };
-                        
-                        // 构建参数
-                        let mut args = vec![];
-                        for arg in &method_call.arguments {
-                            args.push(self.build_node(arg)?);
-                        }
-                        
-                        // 检查返回值类型
-                        let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
-                            ret_type != "void"
-                        } else {
-                            true // 默认假设有返回值
-                        };
-                        
-                        if has_return_value {
-                            let temp = self.generate_temp();
-                            self.add_instruction(IrInstruction::函数调用 {
-                                dest: Some(temp.clone()),
-                                callee: func_name,
-                                arguments: args,
-                            });
-                            return Ok(temp);
-                        } else {
-                            self.add_instruction(IrInstruction::函数调用 {
-                                dest: None,
-                                callee: func_name,
-                                arguments: args,
-                            });
-                            return Ok(String::new());
+                            // 这是本地模块，使用模块前缀
+                            // 模块前缀调用，如 数学工具.最大值 -> 数学工具_最大值
+                            let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
+                            let qualified_function_name = format!("{}_{}", actual_module, method_call.method_name);
+
+                            // 构造函数调用
+                            let func_name = if qualified_function_name.chars().any(|c| !c.is_ascii()) {
+                                self.mangle_function_name(&qualified_function_name)
+                            } else {
+                                qualified_function_name
+                            };
+
+                            // 构建参数
+                            let mut args = vec![];
+                            for arg in &method_call.arguments {
+                                args.push(self.build_node(arg)?);
+                            }
+
+                            // 检查返回值类型
+                            let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
+                                ret_type != "void"
+                            } else {
+                                true // 默认假设有返回值
+                            };
+
+                            if has_return_value {
+                                let temp = self.generate_temp();
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(temp.clone()),
+                                    callee: func_name,
+                                    arguments: args,
+                                });
+                                return Ok(temp);
+                            } else {
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: None,
+                                    callee: func_name,
+                                    arguments: args,
+                                });
+                                return Ok(String::new());
+                            }
                         }
                     }
                 }

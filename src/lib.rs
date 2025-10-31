@@ -109,6 +109,9 @@ impl QiCompiler {
             let mut import_aliases = std::collections::HashMap::new();
 
             if let Some(module) = current_module {
+                // Get current module's package name
+                let current_package_name = module.package_name.as_ref();
+
                 for import in &module.imports {
                     // Resolve import path to actual module
                     let import_path = self.resolve_import_path(module_path, &import.module_path)?;
@@ -116,34 +119,38 @@ impl QiCompiler {
                         .unwrap_or_else(|_| import_path.clone())
                         .to_string_lossy()
                         .to_string();
-                    
+
                     if let Some(imported_module) = module_registry.get_module(&import_path_key) {
                         // Use package name for the alias
                         let import_module_name = imported_module.package_name.as_ref()
                             .unwrap_or(&imported_module.name);
-                        
+
                         // Set up alias mapping
                         let alias_name = import.alias.as_ref().unwrap_or(import_module_name);
                         import_aliases.insert(alias_name.clone(), import_module_name.clone());
 
-                        // Add all exported functions from imported module as external
-                        for (func_name, symbol) in &imported_module.exports {
-                            if symbol.kind == crate::semantic::module::SymbolKind::Function {
-                                if let Some(sig) = &symbol.function_signature {
-                                    // Mangle the function name same way as builder does
-                                    let mangled_name = self.mangle_function_name(func_name);
-                                    let param_types: Vec<String> = sig.parameters.iter()
-                                        .map(|(_, ty)| ty.clone())
-                                        .collect();
-                                    
-                                    // Register function with both flat name and module-qualified name
-                                    // 1. Flat import: 最大值
-                                    external_functions.insert(mangled_name.clone(), (param_types.clone(), sig.return_type.clone()));
-                                    
-                                    // 2. Module-qualified import: 数学_最大值
-                                    let module_qualified_name = format!("{}_{}", import_module_name, func_name);
-                                    let module_qualified_mangled = self.mangle_function_name(&module_qualified_name);
-                                    external_functions.insert(module_qualified_mangled, (param_types, sig.return_type.clone()));
+                        // IMPORTANT: Only add functions from different packages as external
+                        // Functions from the same package are compiled together and should be local
+                        let is_same_package = match (current_package_name, imported_module.package_name.as_ref()) {
+                            (Some(current), Some(imported)) => current == imported,
+                            (None, None) => true, // Both have no package name
+                            _ => false, // One has package name, other doesn't
+                        };
+
+                        if !is_same_package {
+                            // Add all exported functions from imported module as external
+                            for (func_name, symbol) in &imported_module.exports {
+                                if symbol.kind == crate::semantic::module::SymbolKind::Function {
+                                    if let Some(sig) = &symbol.function_signature {
+                                        // Mangle the function name same way as builder does
+                                        let mangled_name = self.mangle_function_name(func_name);
+                                        let param_types: Vec<String> = sig.parameters.iter()
+                                            .map(|(_, ty)| ty.clone())
+                                            .collect();
+
+                                        // Only register the original function name
+                                        external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                    }
                                 }
                             }
                         }
@@ -345,10 +352,40 @@ impl QiCompiler {
         module_registry: &mut crate::semantic::module::ModuleRegistry,
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
     ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+        self.parse_and_collect_modules_internal(
+            file_path,
+            module_registry,
+            compiled_modules,
+            &mut std::collections::HashSet::new()
+        )
+    }
+
+    /// Internal implementation with visited set to prevent infinite recursion
+    fn parse_and_collect_modules_internal(
+        &self,
+        file_path: &PathBuf,
+        module_registry: &mut crate::semantic::module::ModuleRegistry,
+        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
+        visited: &mut std::collections::HashSet<PathBuf>,
+    ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+        // Prevent infinite recursion
+        if visited.contains(file_path) {
+            return Ok(compiled_modules.get(file_path).cloned()
+                .unwrap_or_else(|| crate::parser::ast::AstNode::程序(crate::parser::ast::Program {
+                    package_name: None,
+                    imports: vec![],
+                    statements: vec![],
+                    source_span: Default::default(),
+                })));
+        }
+
         // Check if already compiled
         if let Some(ast) = compiled_modules.get(file_path) {
             return Ok(ast.clone());
         }
+
+        // Mark as visited to prevent cycles
+        visited.insert(file_path.clone());
 
         // Read and parse the file
         let source_code = std::fs::read_to_string(file_path)
@@ -385,15 +422,27 @@ impl QiCompiler {
 
         module_registry.register_module(module);
 
+        // FIXED: Auto-discovery with improved conflict handling
+        if let Some(package_name) = &program.package_name {
+            self.discover_and_parse_same_package_files_fixed(
+                file_path,
+                package_name,
+                module_registry,
+                compiled_modules,
+                visited
+            )?;
+        }
+
         // Process imports
         for import_stmt in &program.imports {
             let import_path = self.resolve_import_path(file_path, &import_stmt.module_path)?;
 
             // Recursively parse imported module
-            self.parse_and_collect_modules(
+            self.parse_and_collect_modules_internal(
                 &import_path,
                 module_registry,
-                compiled_modules
+                compiled_modules,
+                visited
             )?;
         }
 
@@ -403,7 +452,7 @@ impl QiCompiler {
         Ok(ast)
     }
 
-    /// Resolve import path relative to current file
+    /// Resolve import path with support for third-party packages
     fn resolve_import_path(
         &self,
         current_file: &PathBuf,
@@ -412,19 +461,17 @@ impl QiCompiler {
         let parent_dir = current_file.parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
-        // Simple path resolution - just join the module path with .qi extension
+        // 1. Try relative path import (current directory first)
         let mut import_path = parent_dir.to_path_buf();
         for component in module_path {
             import_path.push(component);
         }
         import_path.set_extension("qi");
-
-        // Check if file exists
         if import_path.exists() {
             return Ok(import_path);
         }
 
-        // Try pattern: module_name.qi
+        // 2. Try pattern: module_name.qi in current directory
         if module_path.len() == 1 {
             let simple_path = parent_dir.join(format!("{}.qi", module_path[0]));
             if simple_path.exists() {
@@ -432,15 +479,200 @@ impl QiCompiler {
             }
         }
 
+        // 3. Try package directory structure: module_name/module_name.qi
+        if module_path.len() == 1 {
+            let package_dir_path = parent_dir.join(&module_path[0]);
+            let package_entry_path = package_dir_path.join(format!("{}.qi", module_path[0]));
+            if package_entry_path.exists() {
+                return Ok(package_entry_path);
+            }
+        }
+
+        // 4. Try third-party package paths
+        if !module_path.is_empty() {
+            if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
+                let packages_root = std::path::Path::new(&package_root);
+                let package_path = packages_root.join(&module_path[0]).join(format!("{}.qi", module_path[0]));
+                if package_path.exists() {
+                    return Ok(package_path);
+                }
+            }
+
+            // 5. Try default third-party package locations
+            let default_package_paths = vec![
+                // Current directory packages
+                std::env::current_dir().unwrap().join("qi_packages"),
+                // Home directory packages
+                dirs::home_dir().unwrap().join(".qi").join("packages"),
+                // System-wide packages
+                std::path::Path::new("/usr/local/lib/qi/packages").to_path_buf(),
+            ];
+
+            for packages_root in default_package_paths {
+                let package_path = packages_root.join(&module_path[0]).join(format!("{}.qi", module_path[0]));
+                if package_path.exists() {
+                    return Ok(package_path);
+                }
+            }
+        }
+
         Err(CompilerError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("无法找到导入模块: {:?}", import_path)
+            format!("无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)", module_path.join("/"))
         )))
     }
     
+    /// Discover and parse all files in the same package directory
+    fn discover_and_parse_same_package_files(
+        &self,
+        entry_file: &PathBuf,
+        package_name: &str,
+        module_registry: &mut crate::semantic::module::ModuleRegistry,
+        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
+        visited: &mut std::collections::HashSet<PathBuf>,
+    ) -> Result<(), CompilerError> {
+        // Get the directory containing the entry file
+        let dir = entry_file.parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        // Read all .qi files in the directory
+        let entries = std::fs::read_dir(dir)
+            .map_err(CompilerError::Io)?;
+
+        for entry in entries {
+            let entry = entry.map_err(CompilerError::Io)?;
+            let path = entry.path();
+
+            // Skip directories and non-.qi files
+            if path.is_dir() || path.extension().and_then(|s| s.to_str()) != Some("qi") {
+                continue;
+            }
+
+            // Skip the entry file itself
+            if path == *entry_file {
+                continue;
+            }
+
+            // Try to parse the file to check if it belongs to the same package
+            if let Ok(source_code) = std::fs::read_to_string(&path) {
+                if let Ok(package_info) = self.extract_package_info(&source_code) {
+                    if let Some(file_package_name) = package_info {
+                        if file_package_name == package_name {
+                            // Check if this file contains a main function (入口函数)
+                            // If it does, skip it to avoid duplicate main symbols
+                            let has_main_function = source_code.contains("函数 入口");
+
+                            // Also check if this file has imports to avoid conflicts
+                            let has_imports = source_code.contains("导入 ");
+
+                            if !has_main_function && !has_imports {
+                                // This file belongs to the same package, has no main function, and no imports
+                                // It's safe to auto-include it
+                                if !compiled_modules.contains_key(&path) {
+                                    self.parse_and_collect_modules_internal(
+                                        &path,
+                                        module_registry,
+                                        compiled_modules,
+                                        visited
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// FIXED VERSION: Discover and parse same-package files without causing external function conflicts
+    fn discover_and_parse_same_package_files_fixed(
+        &self,
+        entry_file: &PathBuf,
+        package_name: &str,
+        module_registry: &mut crate::semantic::module::ModuleRegistry,
+        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
+        visited: &mut std::collections::HashSet<PathBuf>,
+    ) -> Result<(), CompilerError> {
+        // Only auto-discover files that don't have imports to avoid conflicts
+        // This is a conservative approach to prevent external function declaration issues
+        let dir = entry_file.parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        let entries = std::fs::read_dir(dir)
+            .map_err(CompilerError::Io)?;
+
+        for entry in entries {
+            let entry = entry.map_err(CompilerError::Io)?;
+            let path = entry.path();
+
+            // Skip directories and non-.qi files
+            if path.is_dir() || path.extension().and_then(|s| s.to_str()) != Some("qi") {
+                continue;
+            }
+
+            // Skip the entry file itself
+            if path == *entry_file {
+                continue;
+            }
+
+            // Only auto-include files that:
+            // 1. Belong to the same package
+            // 2. Have no main function (to avoid duplicate main symbols)
+            // 3. Have no imports (to avoid external function conflicts)
+            if let Ok(source_code) = std::fs::read_to_string(&path) {
+                if let Ok(file_package_info) = self.extract_package_info(&source_code) {
+                    if let Some(file_package_name) = file_package_info {
+                        if file_package_name == package_name {
+                            let has_main_function = source_code.contains("函数 入口");
+                            let has_imports = source_code.contains("导入 ");
+
+                            // Only auto-include pure utility files with no imports and no main function
+                            if !has_main_function && !has_imports {
+                                if !compiled_modules.contains_key(&path) {
+                                    self.parse_and_collect_modules_internal(
+                                        &path,
+                                        module_registry,
+                                        compiled_modules,
+                                        visited
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract package name from source code without full parsing
+    fn extract_package_info(&self, source_code: &str) -> Result<Option<String>, CompilerError> {
+        // Simple extraction: look for "包 <name>;" pattern
+        for line in source_code.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("包") {
+                // Find the package declaration
+                let rest = trimmed.strip_prefix("包").unwrap_or("").trim();
+                if let Some((name_part, _)) = rest.split_once(';') {
+                    let name = name_part.trim().to_string();
+                    return Ok(Some(name));
+                }
+                // Try Chinese semicolon
+                if let Some((name_part, _)) = rest.split_once('；') {
+                    let name = name_part.trim().to_string();
+                    return Ok(Some(name));
+                }
+            }
+        }
+        Ok(None) // No package declaration found
+    }
+
     /// Process public imports to populate re-exports
     fn process_public_imports(
-        &self, 
+        &self,
         module_registry: &mut ModuleRegistry,
         compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>
     ) -> Result<(), CompilerError> {

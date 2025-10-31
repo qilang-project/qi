@@ -1,0 +1,7 @@
+包 数学;
+
+// 第三方数学库 - 公开导出所有功能
+// Third-party math library - publicly export all functionality
+
+公开 导入 最大值;
+公开 导入 最小值;
