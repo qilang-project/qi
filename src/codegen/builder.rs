@@ -148,6 +148,10 @@ pub struct IrBuilder {
     struct_field_names: std::collections::HashMap<String, Vec<String>>,
     /// Track variable struct types (variable_name -> struct_type_name)
     variable_struct_types: std::collections::HashMap<String, String>,
+    /// Track import aliases (alias -> actual_module_name)
+    import_aliases: std::collections::HashMap<String, String>,
+    /// Track current module/package name
+    current_package_name: Option<String>,
 }
 
 impl IrBuilder {
@@ -165,6 +169,8 @@ impl IrBuilder {
             struct_definitions: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
             variable_struct_types: std::collections::HashMap::new(),
+            import_aliases: std::collections::HashMap::new(),
+            current_package_name: None,
         }
     }
 
@@ -193,6 +199,22 @@ impl IrBuilder {
         format!("L{}", self.label_counter)
     }
 
+    /// Get the full function name from a function call expression, including module prefix
+    fn get_full_function_name(&self, call_expr: &crate::parser::ast::FunctionCallExpression) -> String {
+        if let Some(module_qualifier) = &call_expr.module_qualifier {
+            // 检查是否为别名，如果是则映射回原始模块名
+            let actual_module = self.import_aliases
+                .get(module_qualifier)
+                .unwrap_or(module_qualifier);
+            
+            // 模块前缀调用，如 数学工具.最大值 -> 数学_最大值（使用原始模块名）
+            format!("{}_{}", actual_module, call_expr.callee)
+        } else {
+            // 普通函数调用
+            call_expr.callee.clone()
+        }
+    }
+
     #[allow(dead_code)]
     fn add_instruction(&mut self, instruction: IrInstruction) {
         self.instructions.push(instruction);
@@ -217,6 +239,11 @@ impl IrBuilder {
     /// Set defined functions in the current module
     pub fn set_defined_functions(&mut self, funcs: std::collections::HashSet<String>) {
         self.defined_functions = funcs;
+    }
+
+    /// Set import aliases for namespace resolution
+    pub fn set_import_aliases(&mut self, aliases: std::collections::HashMap<String, String>) {
+        self.import_aliases = aliases;
     }
 
     /// Escape special characters in strings for LLVM IR
@@ -441,6 +468,9 @@ impl IrBuilder {
     fn build_node(&mut self, node: &AstNode) -> Result<String, String> {
         match node {
             AstNode::程序(program) => {
+                // Save the package name for function aliasing
+                self.current_package_name = program.package_name.clone();
+                
                 // Process all statements in the program (functions, variables, etc.)
                 for stmt in &program.statements {
                     self.build_node(stmt)?;
@@ -485,7 +515,8 @@ impl IrBuilder {
                         }
                         AstNode::函数调用表达式(call_expr) => {
                             // Check if this is a function call that returns a string or number
-                            let ty = if let Some(runtime_func) = self.map_to_runtime_function(&call_expr.callee) {
+                            let function_name = self.get_full_function_name(call_expr);
+                            let ty = if let Some(runtime_func) = self.map_to_runtime_function(&function_name) {
                                 if runtime_func.contains("math_sqrt") || runtime_func.contains("math_pow") ||
                                    runtime_func.contains("math_sin") || runtime_func.contains("math_cos") ||
                                    runtime_func.contains("math_tan") || runtime_func.contains("math_floor") ||
@@ -708,6 +739,28 @@ impl IrBuilder {
                 // // Function is already properly closed by function body processing
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
 
+                // Add module-qualified alias if we have a package name and this is not main
+                if let Some(package_name) = &self.current_package_name {
+                    if !is_main {
+                        // Create an alias: @数学_最大值 = alias i64 (i64, i64), ptr @最大值
+                        let alias_name = format!("{}_{}", package_name, &func_decl.name);
+                        let alias_mangled = self.mangle_function_name(&alias_name);
+                        
+                        // Build parameter types list (without parameter names)
+                        let param_types: Vec<String> = func_decl.parameters
+                            .iter()
+                            .map(|p| self.get_llvm_type(&p.type_annotation))
+                            .collect();
+                        let param_types_str = param_types.join(", ");
+                        
+                        // Generate function signature for alias
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("@{} = alias {} ({}), ptr @{}", 
+                                alias_mangled, return_type, param_types_str, func_name)
+                        });
+                    }
+                }
+
                 Ok(func_name.to_string())
             }
             AstNode::异步函数声明(async_func_decl) => {
@@ -784,6 +837,26 @@ impl IrBuilder {
 
                 // // Function is already properly closed by function body processing
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+
+                // Add module-qualified alias if we have a package name
+                if let Some(package_name) = &self.current_package_name {
+                    // Create an alias: @数学_异步函数 = alias ptr (), ptr @异步函数
+                    let alias_name = format!("{}_{}", package_name, &async_func_decl.name);
+                    let alias_mangled = self.mangle_function_name(&alias_name);
+                    
+                    // Build parameter types list (without parameter names)
+                    let param_types: Vec<String> = async_func_decl.parameters
+                        .iter()
+                        .map(|p| self.get_llvm_type(&p.type_annotation))
+                        .collect();
+                    let param_types_str = param_types.join(", ");
+                    
+                    // Generate function signature for alias
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("@{} = alias {} ({}), ptr @{}", 
+                            alias_mangled, return_type, param_types_str, func_name)
+                    });
+                }
 
                 // Restore async context flag
                 self.in_async_context = was_async;
@@ -1267,7 +1340,8 @@ impl IrBuilder {
             }
             AstNode::函数调用表达式(call_expr) => {
                 // Special handling for 打印 and 打印行 functions - map to appropriate runtime function
-                let runtime_function = if call_expr.callee == "打印" || call_expr.callee == "打印行" {
+                let function_name = self.get_full_function_name(call_expr);
+                let runtime_function = if function_name == "打印" || function_name == "打印行" {
                     if call_expr.arguments.len() == 1 {
                         // Single argument - determine type
                         let first_arg = &call_expr.arguments[0];
@@ -1295,7 +1369,7 @@ impl IrBuilder {
                         };
 
                         // Map to appropriate runtime function
-                        let is_println = call_expr.callee == "打印行";
+                        let is_println = function_name == "打印行";
                         Some(match expr_type {
                             "string" => if is_println { "qi_runtime_println" } else { "qi_runtime_print" },
                             "float" => if is_println { "qi_runtime_println_float" } else { "qi_runtime_print_float" },
@@ -1306,7 +1380,7 @@ impl IrBuilder {
                     }
                 } else {
                     // Check if this is a builtin runtime function
-                    self.map_to_runtime_function(&call_expr.callee)
+                    self.map_to_runtime_function(&function_name)
                 };
                 
                 // Evaluate arguments
@@ -1322,7 +1396,7 @@ impl IrBuilder {
                     runtime_func
                 } else {
                     // Apply the same name mangling logic for user functions
-                    match call_expr.callee.as_str() {
+                    match function_name.as_str() {
                         "主函数" | "主" | "主程序" => "main".to_string(), // Special case for main function
                         name => {
                             // Apply UTF-8 + Hex name mangling for non-ASCII names
@@ -1336,7 +1410,7 @@ impl IrBuilder {
                 };
 
                 // Special handling: 打印 or 打印行 with two arguments -> map to printf with proper format
-                if (call_expr.callee == "打印" || call_expr.callee == "打印行") && arg_temps.len() == 2 {
+                if (function_name == "打印" || function_name == "打印行") && arg_temps.len() == 2 {
                     // Infer type of second argument
                     let second = &arg_temps[1];
                     let second_ty = if second.starts_with('%') {
@@ -1353,7 +1427,7 @@ impl IrBuilder {
                     };
 
                     // Choose printf format based on type and whether to add newline
-                    let is_println = call_expr.callee == "打印行";
+                    let is_println = function_name == "打印行";
                     let (fmt_spec, fmt_len) = if second_ty == "double" {
                         if is_println { ("%s %f\\0A", 6) } else { ("%s %f", 5) }
                     } else if second_ty == "ptr" {
@@ -1517,10 +1591,11 @@ impl IrBuilder {
                 // If it's a function call, look up the async function's return type
                 let (inferred_type, is_async_call) = match await_expr.expression.as_ref() {
                     AstNode::函数调用表达式(call_expr) => {
-                        let func_name = if call_expr.callee.chars().any(|c| !c.is_ascii()) {
-                            self.mangle_function_name(&call_expr.callee)
+                        let function_name = self.get_full_function_name(call_expr);
+                        let func_name = if function_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&function_name)
                         } else {
-                            call_expr.callee.clone()
+                            function_name
                         };
                         let type_opt = self.async_function_types.get(&func_name).cloned();
                         let is_async = type_opt.is_some();
@@ -1822,33 +1897,96 @@ impl IrBuilder {
                 Ok(temp)
             }
             AstNode::字段访问表达式(field_access) => {
-                // Build object expression
-                let object_var = self.build_node(&field_access.object)?;
-                
-                // Get the struct type from variable_struct_types
-                let object_var_name = object_var.trim_start_matches('%');
-                let struct_type = self.variable_struct_types.get(object_var_name)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
+                // Check if this is a module access (module.function) or struct field access (obj.field)
+                match &*field_access.object {
+                    AstNode::标识符表达式(ident) => {
+                        // This could be a module access: module.function
+                        let module_name = &ident.name;
 
-                // Generate field access instruction
-                let temp = self.generate_temp();
-                self.add_instruction(IrInstruction::字段访问 {
-                    dest: temp.clone(),
-                    object: object_var,
-                    field: field_access.field.clone(),
-                    struct_type,
-                });
+                        // Check if this is a known import alias or module
+                        if let Some(actual_module) = self.import_aliases.get(module_name).or_else(|| {
+                            // If no alias, check if it's a direct module name
+                            // Always treat identifier.field as module access if we have an alias
+                            // Otherwise, only treat as module access if it's not a known variable
+                            if self.import_aliases.contains_key(module_name) || !self.variable_types.contains_key(module_name) {
+                                Some(module_name)
+                            } else {
+                                None
+                            }
+                        }) {
+                            // This is module access: generate a function call with module qualifier
+                            let qualified_function_name = format!("{}_{}", actual_module, field_access.field);
 
-                // Load the field value
-                let load_temp = self.generate_temp();
-                self.add_instruction(IrInstruction::加载 {
-                    dest: load_temp.clone(),
-                    source: temp,
-                    load_type: None,
-                });
+                            // Use the existing function call mechanism by creating a function call expression
+                            let func_call = AstNode::函数调用表达式(crate::parser::ast::FunctionCallExpression {
+                                module_qualifier: Some(actual_module.clone()),
+                                callee: field_access.field.clone(),
+                                arguments: vec![],
+                                span: Default::default(),  // Use default span
+                            });
 
-                Ok(load_temp)
+                            // Build the function call
+                            self.build_node(&func_call)
+                        } else {
+                            // This is struct field access
+                            let object_var = self.build_node(&field_access.object)?;
+
+                            // Get the struct type from variable_struct_types
+                            let object_var_name = object_var.trim_start_matches('%');
+                            let struct_type = self.variable_struct_types.get(object_var_name)
+                                .cloned()
+                                .unwrap_or_else(|| "unknown".to_string());
+
+                            // Generate field access instruction
+                            let temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::字段访问 {
+                                dest: temp.clone(),
+                                object: object_var,
+                                field: field_access.field.clone(),
+                                struct_type,
+                            });
+
+                            // Load the field value
+                            let load_temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::加载 {
+                                dest: load_temp.clone(),
+                                source: temp,
+                                load_type: None,
+                            });
+
+                            Ok(load_temp)
+                        }
+                    }
+                    _ => {
+                        // This is definitely struct field access (complex expression)
+                        let object_var = self.build_node(&field_access.object)?;
+
+                        // Get the struct type from variable_struct_types
+                        let object_var_name = object_var.trim_start_matches('%');
+                        let struct_type = self.variable_struct_types.get(object_var_name)
+                            .cloned()
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        // Generate field access instruction
+                        let temp = self.generate_temp();
+                        self.add_instruction(IrInstruction::字段访问 {
+                            dest: temp.clone(),
+                            object: object_var,
+                            field: field_access.field.clone(),
+                            struct_type,
+                        });
+
+                        // Load the field value
+                        let load_temp = self.generate_temp();
+                        self.add_instruction(IrInstruction::加载 {
+                            dest: load_temp.clone(),
+                            source: temp,
+                            load_type: None,
+                        });
+
+                        Ok(load_temp)
+                    }
+                }
             }
             AstNode::块语句(block_stmt) => {
                 // Process all statements in the block
@@ -1977,7 +2115,60 @@ impl IrBuilder {
                 Ok(format!("method_{}", func_name))
             }
             AstNode::方法调用表达式(method_call) => {
-                // Method call: object.method(args)
+                // 检查是否为模块前缀调用（object 是标识符且不是变量）
+                if let AstNode::标识符表达式(ident) = &*method_call.object {
+                    // 检查是否为已知变量（排除模块名）
+                    let is_module = self.import_aliases.contains_key(&ident.name) || 
+                                   self.import_aliases.values().any(|v| v == &ident.name);
+                    let is_variable = self.variable_types.contains_key(&ident.name) ||
+                                     self.variable_types.contains_key(&self.mangle_function_name(&ident.name));
+                    
+                    if is_module || !is_variable {
+                        // 这是模块前缀调用，如 数学.最大值()
+                        let module_name = &ident.name;
+                        let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
+                        let qualified_function_name = format!("{}_{}", actual_module, method_call.method_name);
+                        
+                        // 构造函数调用
+                        let func_name = if qualified_function_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&qualified_function_name)
+                        } else {
+                            qualified_function_name
+                        };
+                        
+                        // 构建参数
+                        let mut args = vec![];
+                        for arg in &method_call.arguments {
+                            args.push(self.build_node(arg)?);
+                        }
+                        
+                        // 检查返回值类型
+                        let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
+                            ret_type != "void"
+                        } else {
+                            true // 默认假设有返回值
+                        };
+                        
+                        if has_return_value {
+                            let temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(temp.clone()),
+                                callee: func_name,
+                                arguments: args,
+                            });
+                            return Ok(temp);
+                        } else {
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: None,
+                                callee: func_name,
+                                arguments: args,
+                            });
+                            return Ok(String::new());
+                        }
+                    }
+                }
+                
+                // 这是真正的方法调用：object.method(args)
                 // 1. Get the object
                 let object_var = self.build_node(&method_call.object)?;
                 

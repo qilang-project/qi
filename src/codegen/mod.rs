@@ -45,6 +45,11 @@ impl CodeGenerator {
         self.ir_builder.set_defined_functions(defined_funcs);
     }
 
+    /// Set import aliases for namespace resolution
+    pub fn set_import_aliases(&mut self, import_aliases: std::collections::HashMap<String, String>) {
+        self.ir_builder.set_import_aliases(import_aliases);
+    }
+
     /// Generate LLVM IR from AST
     pub fn generate(&mut self, ast: &crate::parser::ast::AstNode) -> Result<String, CodegenError> {
         let ir = self.ir_builder.build(ast)

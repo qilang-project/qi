@@ -268,13 +268,27 @@ impl LlvmCodeGenerator {
         }
     }
 
+    /// Generate function call expression with module prefix support
+    pub fn generate_function_call_expr(&mut self, call: &crate::parser::ast::FunctionCallExpression) -> Result<BasicValueEnum, LlvmError> {
+        // 构建完整的函数名
+        let function_name = if let Some(module_qualifier) = &call.module_qualifier {
+            // 模块前缀调用，如 数学.最大值
+            format!("{}_{}", module_qualifier, call.callee)
+        } else {
+            // 普通函数调用
+            call.callee.clone()
+        };
+
+        self.generate_function_call(&function_name, &call.arguments)
+    }
+
     /// Generate expression (simplified implementation)
     pub fn generate_expression(&mut self, expr: &AstNode) -> Result<BasicValueEnum, LlvmError> {
         match expr {
             AstNode::字面量表达式(literal) => self.generate_literal(literal),
             AstNode::标识符表达式(identifier) => self.generate_identifier(identifier),
             AstNode::二元操作表达式(binary) => self.generate_binary_expression(binary),
-            AstNode::函数调用表达式(call) => self.generate_function_call(&call.callee, &call.arguments),
+            AstNode::函数调用表达式(call) => self.generate_function_call_expr(call),
             _ => Err(LlvmError::IrGeneration(format!("不支持的表达式类型: {:?}", expr))),
         }
     }

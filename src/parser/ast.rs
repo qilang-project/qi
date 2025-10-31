@@ -66,6 +66,7 @@ pub struct ImportStatement {
     pub module_path: Vec<String>,  // Changed to Vec for module paths like "标准库.输入输出"
     pub items: Option<Vec<String>>,  // Optional specific items to import
     pub alias: Option<String>,
+    pub is_public: bool,  // 是否是公开导入（重新导出）
     pub span: Span,
 }
 
@@ -207,6 +208,7 @@ pub enum BinaryOperator {
 /// Function call expression
 #[derive(Debug, Clone)]
 pub struct FunctionCallExpression {
+    pub module_qualifier: Option<String>, // 模块前缀，如 "数学" 在 "数学.最大值" 中
     pub callee: String,
     pub arguments: Vec<AstNode>,
     pub span: Span,

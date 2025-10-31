@@ -21,26 +21,44 @@ ImportStatement: ImportStatement = {
         module_path: path,
         items: None,
         alias: None,
+        is_public: false,
         span: Default::default(),
     },
     "导入" <path:ModulePath> "；" => ImportStatement {
         module_path: path,
         items: None,
         alias: None,
+        is_public: false,
         span: Default::default(),
     },
     "导入" <path:ModulePath> "作为" <alias:Identifier> ";" => ImportStatement {
         module_path: path,
         items: None,
         alias: Some(alias),
+        is_public: false,
         span: Default::default(),
     },
     "导入" <path:ModulePath> "作为" <alias:Identifier> "；" => ImportStatement {
         module_path: path,
         items: None,
         alias: Some(alias),
+        is_public: false,
         span: Default::default(),
-    }
+    },
+    "公开" "导入" <path:ModulePath> ";" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: None,
+        is_public: true,
+        span: Default::default(),
+    },
+    "公开" "导入" <path:ModulePath> "；" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: None,
+        is_public: true,
+        span: Default::default(),
+    },
 };
 
 ModulePath: Vec<String> = {
@@ -740,32 +758,40 @@ Precedence8: AstNode = {
     <callee:Precedence8> "(" <args:ExprList> ")" => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
                 callee: ident.name,
                 arguments: args,
                 span: Default::default(),
             }),
-            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
-                object: field_access.object,
-                method_name: field_access.field,
-                arguments: args,
-                span: Default::default(),
-            }),
+            AstNode::字段访问表达式(field_access) => {
+                // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
+                AstNode::方法调用表达式(MethodCallExpression {
+                    object: field_access.object,
+                    method_name: field_access.field,
+                    arguments: args,
+                    span: Default::default(),
+                })
+            },
             _ => callee,
         }
     },
     <callee:Precedence8> "(" ")" => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
                 callee: ident.name,
                 arguments: vec![],
                 span: Default::default(),
             }),
-            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
-                object: field_access.object,
-                method_name: field_access.field,
-                arguments: vec![],
-                span: Default::default(),
-            }),
+            AstNode::字段访问表达式(field_access) => {
+                // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
+                AstNode::方法调用表达式(MethodCallExpression {
+                    object: field_access.object,
+                    method_name: field_access.field,
+                    arguments: vec![],
+                    span: Default::default(),
+                })
+            },
             _ => callee,
         }
     },
@@ -773,32 +799,40 @@ Precedence8: AstNode = {
     <callee:Precedence8> "（" <args:ExprList> "）" => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
                 callee: ident.name,
                 arguments: args,
                 span: Default::default(),
             }),
-            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
-                object: field_access.object,
-                method_name: field_access.field,
-                arguments: args,
-                span: Default::default(),
-            }),
+            AstNode::字段访问表达式(field_access) => {
+                // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
+                AstNode::方法调用表达式(MethodCallExpression {
+                    object: field_access.object,
+                    method_name: field_access.field,
+                    arguments: args,
+                    span: Default::default(),
+                })
+            },
             _ => callee,
         }
     },
     <callee:Precedence8> "（" "）" => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
                 callee: ident.name,
                 arguments: vec![],
                 span: Default::default(),
             }),
-            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
-                object: field_access.object,
-                method_name: field_access.field,
-                arguments: vec![],
-                span: Default::default(),
-            }),
+            AstNode::字段访问表达式(field_access) => {
+                // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
+                AstNode::方法调用表达式(MethodCallExpression {
+                    object: field_access.object,
+                    method_name: field_access.field,
+                    arguments: vec![],
+                    span: Default::default(),
+                })
+            },
             _ => callee,
         }
     },

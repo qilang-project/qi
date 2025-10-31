@@ -50,7 +50,8 @@ pub enum SymbolKind {
 
 /// Module registry for tracking all modules in a compilation
 pub struct ModuleRegistry {
-    modules: HashMap<String, Module>,
+    modules: HashMap<String, Module>,  // Key: normalized file path
+    modules_by_package: HashMap<String, Vec<String>>,  // Package name -> file paths
     current_module: Option<String>,
 }
 
@@ -58,25 +59,62 @@ impl ModuleRegistry {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
+            modules_by_package: HashMap::new(),
             current_module: None,
         }
     }
 
     /// Register a new module
     pub fn register_module(&mut self, module: Module) {
-        let name = module.name.clone();
-        self.modules.insert(name.clone(), module);
-        self.current_module = Some(name);
+        // Normalize path for consistent lookup
+        let path_key = module.path.canonicalize()
+            .unwrap_or_else(|_| module.path.clone())
+            .to_string_lossy()
+            .to_string();
+        
+        // Track by package name for lookup
+        if let Some(package_name) = &module.package_name {
+            self.modules_by_package
+                .entry(package_name.clone())
+                .or_insert_with(Vec::new)
+                .push(path_key.clone());
+        }
+        
+        self.modules.insert(path_key.clone(), module);
+        self.current_module = Some(path_key);
     }
 
-    /// Get a module by name
+    /// Get a module by file path
     pub fn get_module(&self, name: &str) -> Option<&Module> {
         self.modules.get(name)
+    }
+    
+    /// Get a module by package name (returns first match if multiple)
+    pub fn get_module_by_package(&self, package_name: &str) -> Option<&Module> {
+        self.modules_by_package.get(package_name)
+            .and_then(|paths| paths.first())
+            .and_then(|path| self.modules.get(path))
+    }
+    
+    /// Get all modules with a given package name
+    pub fn get_modules_by_package(&self, package_name: &str) -> Vec<&Module> {
+        self.modules_by_package.get(package_name)
+            .map(|paths| paths.iter().filter_map(|p| self.modules.get(p)).collect())
+            .unwrap_or_default()
     }
 
     /// Get the current module
     pub fn current_module(&self) -> Option<&Module> {
         self.current_module.as_ref().and_then(|name| self.modules.get(name))
+    }
+    
+    /// Add re-exported symbols to a module
+    pub fn add_reexports(&mut self, module_path: &str, exports: Vec<(String, Symbol)>) {
+        if let Some(module) = self.modules.get_mut(module_path) {
+            for (name, symbol) in exports {
+                module.exports.insert(name, symbol);
+            }
+        }
     }
 
     /// Check if a symbol is visible in the current module

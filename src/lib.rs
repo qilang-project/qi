@@ -33,6 +33,7 @@ pub extern "C" fn _qi_force_link_async_runtime() {
 }
 
 use std::path::PathBuf;
+use crate::semantic::module::ModuleRegistry;
 
 /// Compiler configuration and settings
 pub mod config;
@@ -86,27 +87,45 @@ impl QiCompiler {
             &mut module_registry,
             &mut compiled_modules
         )?;
+        
+        // 1.5. Process public imports (re-exports)
+        self.process_public_imports(&mut module_registry, &compiled_modules)?;
 
     let mut object_files: Vec<PathBuf> = Vec::new();
     let mut ir_files: Vec<PathBuf> = Vec::new();
 
         // 2. Compile each module independently
         for (module_path, ast) in &compiled_modules {
-            // Get module info to collect imported functions
-            let module_name = module_path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
+            // Get module info by file path (normalize for consistent lookup)
+            let path_key = module_path.canonicalize()
+                .unwrap_or_else(|_| module_path.clone())
+                .to_string_lossy()
                 .to_string();
-
-            let current_module = module_registry.get_module(&module_name);
+            let current_module = module_registry.get_module(&path_key);
 
             // Collect external function signatures from imported modules
             let mut external_functions = std::collections::HashMap::new();
+            // Collect import aliases for namespace resolution
+            let mut import_aliases = std::collections::HashMap::new();
+
             if let Some(module) = current_module {
                 for import in &module.imports {
-                    // Get the imported module
-                    let import_module_name = import.module_path.last().unwrap_or(&String::new()).clone();
-                    if let Some(imported_module) = module_registry.get_module(&import_module_name) {
+                    // Resolve import path to actual module
+                    let import_path = self.resolve_import_path(module_path, &import.module_path)?;
+                    let import_path_key = import_path.canonicalize()
+                        .unwrap_or_else(|_| import_path.clone())
+                        .to_string_lossy()
+                        .to_string();
+                    
+                    if let Some(imported_module) = module_registry.get_module(&import_path_key) {
+                        // Use package name for the alias
+                        let import_module_name = imported_module.package_name.as_ref()
+                            .unwrap_or(&imported_module.name);
+                        
+                        // Set up alias mapping
+                        let alias_name = import.alias.as_ref().unwrap_or(import_module_name);
+                        import_aliases.insert(alias_name.clone(), import_module_name.clone());
+
                         // Add all exported functions from imported module as external
                         for (func_name, symbol) in &imported_module.exports {
                             if symbol.kind == crate::semantic::module::SymbolKind::Function {
@@ -116,7 +135,15 @@ impl QiCompiler {
                                     let param_types: Vec<String> = sig.parameters.iter()
                                         .map(|(_, ty)| ty.clone())
                                         .collect();
-                                    external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                    
+                                    // Register function with both flat name and module-qualified name
+                                    // 1. Flat import: 最大值
+                                    external_functions.insert(mangled_name.clone(), (param_types.clone(), sig.return_type.clone()));
+                                    
+                                    // 2. Module-qualified import: 数学_最大值
+                                    let module_qualified_name = format!("{}_{}", import_module_name, func_name);
+                                    let module_qualified_mangled = self.mangle_function_name(&module_qualified_name);
+                                    external_functions.insert(module_qualified_mangled, (param_types, sig.return_type.clone()));
                                 }
                             }
                         }
@@ -129,6 +156,9 @@ impl QiCompiler {
             
             // Set external functions for this module
             codegen.set_external_functions(external_functions);
+
+            // Set import aliases for namespace resolution
+            codegen.set_import_aliases(import_aliases);
 
             let ir_content = codegen.generate(&ast)
                 .map_err(|e| CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e)))?;
@@ -406,6 +436,73 @@ impl QiCompiler {
             std::io::ErrorKind::NotFound,
             format!("无法找到导入模块: {:?}", import_path)
         )))
+    }
+    
+    /// Process public imports to populate re-exports
+    fn process_public_imports(
+        &self, 
+        module_registry: &mut ModuleRegistry,
+        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>
+    ) -> Result<(), CompilerError> {
+        // Collect all modules that need re-export processing
+        let module_paths: Vec<PathBuf> = compiled_modules.keys().cloned().collect();
+        
+        for module_path in module_paths {
+            let path_key = module_path.canonicalize()
+                .unwrap_or_else(|_| module_path.clone())
+                .to_string_lossy()
+                .to_string();
+            
+            // Get current module (we'll need to modify it)
+            let imports_to_process: Vec<Vec<String>> = {
+                let module = match module_registry.get_module(&path_key) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                
+                // Collect public imports
+                module.imports.iter()
+                    .filter(|imp| {
+                        // Check if this is a public import by looking at AST
+                        if let Some(ast_node) = compiled_modules.get(&module_path) {
+                            if let crate::parser::ast::AstNode::程序(ast) = ast_node {
+                                ast.imports.iter().any(|ast_imp| {
+                                    ast_imp.is_public && ast_imp.module_path == imp.module_path
+                                })
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    })
+                    .map(|imp| imp.module_path.clone())
+                    .collect()
+            };
+            
+            // Process each public import
+            for import_path_parts in imports_to_process {
+                let import_path = self.resolve_import_path(&module_path, &import_path_parts)?;
+                let import_path_key = import_path.canonicalize()
+                    .unwrap_or_else(|_| import_path.clone())
+                    .to_string_lossy()
+                    .to_string();
+                
+                // Get exports from imported module
+                let exports_to_add: Vec<_> = {
+                    if let Some(imported_module) = module_registry.get_module(&import_path_key) {
+                        imported_module.exports.clone().into_iter().collect()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                
+                // Add exports to current module (we need mutable access)
+                module_registry.add_reexports(&path_key, exports_to_add);
+            }
+        }
+        
+        Ok(())
     }
 }
 
