@@ -208,10 +208,17 @@ impl Lexer {
                 }
             }
 
-            // Chinese punctuation (treat as whitespace/end of statements)
-            c if "，。！？；：".contains(c) ||
+            // Chinese punctuation tokens
+            '（' => Ok(Some(self.make_single_char_token(TokenKind::中文左括号, start_pos, start_line, start_column))),
+            '）' => Ok(Some(self.make_single_char_token(TokenKind::中文右括号, start_pos, start_line, start_column))),
+            '【' => Ok(Some(self.make_single_char_token(TokenKind::中文左大括号, start_pos, start_line, start_column))),
+            '】' => Ok(Some(self.make_single_char_token(TokenKind::中文右大括号, start_pos, start_line, start_column))),
+            '，' => Ok(Some(self.make_single_char_token(TokenKind::中文逗号, start_pos, start_line, start_column))),
+            '；' => Ok(Some(self.make_single_char_token(TokenKind::中文分号, start_pos, start_line, start_column))),
+
+            // Other Chinese punctuation (treat as whitespace/end of statements)
+            c if "。！？：".contains(c) ||
                c == '"' || c == '"' ||
-               c == '（' || c == '）' || c == '【' || c == '】' ||
                c == '《' || c == '》' => {
                 self.advance();
                 return self.next_token(); // Skip Chinese punctuation

@@ -265,6 +265,33 @@ impl IrBuilder {
         format!("_Z_{}", hex_string)
     }
     
+    /// Get the alignment requirement for a type
+    fn get_type_alignment(&self, type_name: &str) -> usize {
+        match type_name {
+            "i64" => 8,
+            "i32" => 4,
+            "i16" => 2,
+            "i8" | "bool" => 1,
+            "double" => 8,
+            "float" => 4,
+            "ptr" => 8, // Pointer alignment on 64-bit systems
+            _ => {
+                // Default alignment for custom types
+                if type_name.contains("ptr") || type_name.starts_with('%') {
+                    8 // Assume pointer alignment for struct types
+                } else if type_name.contains("i64") {
+                    8
+                } else if type_name.contains("i32") {
+                    4
+                } else if type_name.contains("double") {
+                    8
+                } else {
+                    4 // Default fallback
+                }
+            }
+        }
+    }
+
     /// Mangle type names (similar to function names)
     /// For struct types, this handles Chinese characters in type names
     fn mangle_type_name(&self, name: &str) -> String {
@@ -336,11 +363,8 @@ impl IrBuilder {
             "分配内存" | "alloc" => Some("qi_runtime_alloc"),
             "释放内存" | "dealloc" => Some("qi_runtime_dealloc"),
 
-            // Print operations (for explicit calls)
-            // Note: The generic "打印" is handled specially in build_node for polymorphic dispatch
-            "打印整数" | "print_int" => Some("qi_runtime_print_int"),
-            "打印浮点数" | "print_float" => Some("qi_runtime_print_float"),
-            "打印字符串" | "print_string" => Some("qi_runtime_print"),
+            // Print operations
+            "打印" | "print" | "printf" => Some("qi_runtime_print"),
             "打印行" | "println" => Some("qi_runtime_println"),
 
             _ => None,
@@ -1242,8 +1266,8 @@ impl IrBuilder {
                 }
             }
             AstNode::函数调用表达式(call_expr) => {
-                // Special handling for 打印 function - map to appropriate runtime function
-                let runtime_function = if call_expr.callee == "打印" {
+                // Special handling for 打印 and 打印行 functions - map to appropriate runtime function
+                let runtime_function = if call_expr.callee == "打印" || call_expr.callee == "打印行" {
                     if call_expr.arguments.len() == 1 {
                         // Single argument - determine type
                         let first_arg = &call_expr.arguments[0];
@@ -1269,12 +1293,13 @@ impl IrBuilder {
                             AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
                             _ => "integer", // Default to integer
                         };
-                        
+
                         // Map to appropriate runtime function
+                        let is_println = call_expr.callee == "打印行";
                         Some(match expr_type {
-                            "string" => "qi_runtime_println",
-                            "float" => "qi_runtime_println_float",
-                            _ => "qi_runtime_println_int",
+                            "string" => if is_println { "qi_runtime_println" } else { "qi_runtime_print" },
+                            "float" => if is_println { "qi_runtime_println_float" } else { "qi_runtime_print_float" },
+                            _ => if is_println { "qi_runtime_println_int" } else { "qi_runtime_print_int" },
                         }.to_string())
                     } else {
                         None
@@ -1310,8 +1335,8 @@ impl IrBuilder {
                     }
                 };
 
-                // Special handling: 打印 with two arguments -> map to printf with proper format
-                if call_expr.callee == "打印" && arg_temps.len() == 2 {
+                // Special handling: 打印 or 打印行 with two arguments -> map to printf with proper format
+                if (call_expr.callee == "打印" || call_expr.callee == "打印行") && arg_temps.len() == 2 {
                     // Infer type of second argument
                     let second = &arg_temps[1];
                     let second_ty = if second.starts_with('%') {
@@ -1327,13 +1352,14 @@ impl IrBuilder {
                         "i64".to_string()
                     };
 
-                    // Choose printf format based on type and its byte length (excluding null)
+                    // Choose printf format based on type and whether to add newline
+                    let is_println = call_expr.callee == "打印行";
                     let (fmt_spec, fmt_len) = if second_ty == "double" {
-                        ("%s %f\\0A", 6)
+                        if is_println { ("%s %f\\0A", 6) } else { ("%s %f", 5) }
                     } else if second_ty == "ptr" {
-                        ("%s %s\\0A", 6)
+                        if is_println { ("%s %s\\0A", 6) } else { ("%s %s", 5) }
                     } else {
-                        ("%s %lld\\0A", 8)
+                        if is_println { ("%s %lld\\0A", 8) } else { ("%s %lld", 7) }
                     };
 
                     // Create a global format string constant
@@ -2062,7 +2088,9 @@ impl IrBuilder {
 
         // Add module header
         ir.push_str("; Generated by Qi Language Compiler\n");
-        ir.push_str("; Module ID = 'qi_program'\n\n");
+        ir.push_str("; Module ID = 'qi_program'\n");
+        ir.push_str("target datalayout = \"e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32\"\n");
+        ir.push_str("target triple = \"arm64-apple-macosx26.0.0\"\n\n");
 
         // Add struct type definitions
         if !self.struct_definitions.is_empty() {
@@ -2183,6 +2211,23 @@ impl IrBuilder {
             ir.push('\n');
         }
 
+        // Process all instructions in order
+        let all_instructions = &other_instructions;
+
+        // Check if there's already a main function being generated
+        let has_main_function = other_instructions.iter().any(|instruction| {
+            match instruction {
+                IrInstruction::标签 { name } => {
+                    name.contains("@main") || name.contains("define.*@main")
+                }
+                _ => false,
+            }
+        });
+
+        // For now, disable main function wrapper completely
+        // All functions should be properly generated by the AST to IR conversion
+        let should_create_main = false;
+
         // Helper to get zero value by type
         fn zero_for_ty(ty: &str) -> &'static str {
             match ty {
@@ -2196,12 +2241,13 @@ impl IrBuilder {
             }
         }
 
-        // Process other instructions
-        for instruction in &other_instructions {
+        // Process all instructions in order
+        for instruction in all_instructions {
             match instruction {
                 IrInstruction::分配 { dest, type_name } => {
                     let mangled_type = self.mangle_type_name(type_name);
-                    ir.push_str(&format!("{} = alloca {}\n", dest, mangled_type));
+                    // Add explicit type annotation for the destination and alignment
+                    ir.push_str(&format!("{} = alloca {}, align {}\n", dest, mangled_type, self.get_type_alignment(type_name)));
                 }
                 IrInstruction::存储 { target, value, value_type } => {
                     // Determine the type based on the value_type if provided, otherwise infer
@@ -2388,11 +2434,9 @@ impl IrBuilder {
                                     .map(|s| s.as_str())
                                     .unwrap_or_else(|| {
                                         // Fallback: determine type based on specific function signatures
-                                        if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" ||
-                                           callee == "e6_89_93_e5_8d_b0_e6_95_b4_e6_95_b0" { // 打印整数
+                                        if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" {
                                             "i64"
                                         } else if callee == "qi_runtime_print_float" || callee == "qi_runtime_println_float" ||
-                                                  callee == "e6_89_93_e5_8d_b0_e6_b5_ae_e7_82_b9_e6_95_b0" || // 打印浮点数
                                                   callee == "qi_runtime_float_to_string" {
                                             "double"
                                         } else if callee.contains("concat") || callee.contains("read_string") || callee.contains("file") {
@@ -2592,6 +2636,7 @@ impl IrBuilder {
             }
         }
 
+        
         Ok(ir)
     }
 

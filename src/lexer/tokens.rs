@@ -60,6 +60,14 @@ pub enum TokenKind {
     箭头,      // ->
     点,        // .
 
+    // Chinese punctuation tokens
+    中文左括号,  // （
+    中文右括号,  // ）
+    中文左大括号, // 【
+    中文右大括号, // 】
+    中文逗号,    // ，
+    中文分号,    // ；
+
     // Additional keywords for grammar
     导入,      // import
     导出,      // export

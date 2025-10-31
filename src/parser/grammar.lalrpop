@@ -12,7 +12,8 @@ pub Program: Program = {
 };
 
 PackageDeclaration: String = {
-    "包" <name:Identifier> ";" => name
+    "包" <name:Identifier> ";" => name,
+    "包" <name:Identifier> "；" => name
 };
 
 ImportStatement: ImportStatement = {
@@ -22,7 +23,19 @@ ImportStatement: ImportStatement = {
         alias: None,
         span: Default::default(),
     },
+    "导入" <path:ModulePath> "；" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: None,
+        span: Default::default(),
+    },
     "导入" <path:ModulePath> "作为" <alias:Identifier> ";" => ImportStatement {
+        module_path: path,
+        items: None,
+        alias: Some(alias),
+        span: Default::default(),
+    },
+    "导入" <path:ModulePath> "作为" <alias:Identifier> "；" => ImportStatement {
         module_path: path,
         items: None,
         alias: Some(alias),
@@ -51,10 +64,35 @@ Statement: AstNode = {
         expression: Box::new(e),
         span: Default::default(),
     }),
+    <e:Expr> "；" => AstNode::表达式语句(ExpressionStatement {
+        expression: Box::new(e),
+        span: Default::default(),
+    }),
 };
 
 VariableDeclaration: AstNode = {
     "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: true,
+        span: Default::default(),
+    }),
+    "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: true,
+        span: Default::default(),
+    }),
+    "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: true,
+        span: Default::default(),
+    }),
+    "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
@@ -68,6 +106,13 @@ VariableDeclaration: AstNode = {
         is_mutable: true,
         span: Default::default(),
     }),
+    "变量" <name:Identifier> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: None,
+        initializer: Some(Box::new(value)),
+        is_mutable: true,
+        span: Default::default(),
+    }),
     "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
@@ -75,7 +120,35 @@ VariableDeclaration: AstNode = {
         is_mutable: false,
         span: Default::default(),
     }),
+    "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: false,
+        span: Default::default(),
+    }),
+    "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: false,
+        span: Default::default(),
+    }),
+    "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: Some(type_annotation),
+        initializer: Some(Box::new(value)),
+        is_mutable: false,
+        span: Default::default(),
+    }),
     "常量" <name:Identifier> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+        name,
+        type_annotation: None,
+        initializer: Some(Box::new(value)),
+        is_mutable: false,
+        span: Default::default(),
+    }),
+    "常量" <name:Identifier> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
@@ -213,6 +286,105 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
+    // 中文标点符号版本
+    <vis:Visibility> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    // 混合标点符号版本：英文括号 + 中文大括号
+    <vis:Visibility> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    // 混合标点符号版本：中文括号 + 英文大括号
+    <vis:Visibility> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: vis,
+        span: Default::default(),
+    }),
 };
 
 // Async function declarations
@@ -257,14 +429,23 @@ ReturnStatement: AstNode = {
         value: Some(Box::new(value)),
         span: Default::default(),
     }),
+    "返回" <value:Expr> "；" => AstNode::返回语句(ReturnStatement {
+        value: Some(Box::new(value)),
+        span: Default::default(),
+    }),
     "返回" ";" => AstNode::返回语句(ReturnStatement {
+        value: None,
+        span: Default::default(),
+    }),
+    "返回" "；" => AstNode::返回语句(ReturnStatement {
         value: None,
         span: Default::default(),
     }),
 };
 
 Block: Vec<AstNode> = {
-    "{" <statements:Statement*> "}" => statements
+    "{" <statements:Statement*> "}" => statements,
+    "【" <statements:Statement*> "】" => statements
 };
 
 IfStatement: AstNode = {
@@ -588,6 +769,39 @@ Precedence8: AstNode = {
             _ => callee,
         }
     },
+    // 中文括号版本
+    <callee:Precedence8> "（" <args:ExprList> "）" => {
+        match callee {
+            AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                callee: ident.name,
+                arguments: args,
+                span: Default::default(),
+            }),
+            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
+                object: field_access.object,
+                method_name: field_access.field,
+                arguments: args,
+                span: Default::default(),
+            }),
+            _ => callee,
+        }
+    },
+    <callee:Precedence8> "（" "）" => {
+        match callee {
+            AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
+                callee: ident.name,
+                arguments: vec![],
+                span: Default::default(),
+            }),
+            AstNode::字段访问表达式(field_access) => AstNode::方法调用表达式(MethodCallExpression {
+                object: field_access.object,
+                method_name: field_access.field,
+                arguments: vec![],
+                span: Default::default(),
+            }),
+            _ => callee,
+        }
+    },
     Primary,
 };
 
@@ -614,6 +828,7 @@ Atom: AstNode = {
     ArrayLiteral,
     // Parenthesized expressions, including struct literals
     "(" <Expr> ")",
+    "（" <Expr> "）",
     // Struct literals (must be in safe context or parenthes)
     "(" <name:Identifier> "{" <fields:StructFieldValueList> "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
@@ -621,6 +836,16 @@ Atom: AstNode = {
         span: Default::default(),
     }),
     "(" <name:Identifier> "{" "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields: vec![],
+        span: Default::default(),
+    }),
+    "（" <name:Identifier> "{" <fields:StructFieldValueList> "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields,
+        span: Default::default(),
+    }),
+    "（" <name:Identifier> "{" "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         fields: vec![],
         span: Default::default(),
@@ -703,6 +928,11 @@ Parameter: Parameter = {
         type_annotation: Some(type_annotation),
         span: Default::default(),
     },
+    <name:Identifier> "：" <type_annotation:Type> => Parameter {
+        name,
+        type_annotation: Some(type_annotation),
+        span: Default::default(),
+    },
     <name:Identifier> => Parameter {
         name,
         type_annotation: None,
@@ -718,12 +948,23 @@ Comma<T>: Vec<T> = {
         rest.insert(0, first);
         rest
     },
+    <first:T> "，" <rest:Comma<T>> => {
+        let mut rest = rest;
+        rest.insert(0, first);
+        rest
+    },
 };
 
 // Helper macro for semicolon-separated lists
 SemiSeparated<T>: Vec<T> = {
     <first:T> ";" => vec![first],
     <first:T> ";" <rest:SemiSeparated<T>> => {
+        let mut rest = rest;
+        rest.insert(0, first);
+        rest
+    },
+    <first:T> "；" => vec![first],
+    <first:T> "；" <rest:SemiSeparated<T>> => {
         let mut rest = rest;
         rest.insert(0, first);
         rest
