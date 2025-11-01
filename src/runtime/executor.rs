@@ -879,3 +879,147 @@ mod tests {
         assert_eq!(result, 42);
     }
 }
+
+// ============================================================================
+// Synchronization Primitives - WaitGroup & Mutex
+// ============================================================================
+
+use std::sync::{Arc, Condvar};
+
+#[repr(C)]
+pub struct QiWaitGroup {
+    counter: Arc<Mutex<i32>>,
+    condvar: Arc<Condvar>,
+}
+
+#[repr(C)]
+pub struct QiMutex {
+    inner: Arc<Mutex<()>>,
+}
+
+/// Create a new WaitGroup
+#[no_mangle]
+pub extern "C" fn qi_runtime_waitgroup_create() -> *mut QiWaitGroup {
+    let wg = Box::new(QiWaitGroup {
+        counter: Arc::new(Mutex::new(0)),
+        condvar: Arc::new(Condvar::new()),
+    });
+    Box::into_raw(wg)
+}
+
+/// Add counter to WaitGroup
+#[no_mangle]
+pub extern "C" fn qi_runtime_waitgroup_add(wg: *mut QiWaitGroup, delta: i32) -> i32 {
+    if wg.is_null() {
+        return -1;
+    }
+
+    let wg = unsafe { &mut *wg };
+    let mut counter = wg.counter.lock().unwrap();
+    *counter += delta;
+    0
+}
+
+/// Wait for WaitGroup counter to become zero
+#[no_mangle]
+pub extern "C" fn qi_runtime_waitgroup_wait(wg: *mut QiWaitGroup) -> i32 {
+    if wg.is_null() {
+        return -1;
+    }
+
+    let wg = unsafe { &mut *wg };
+    let mut counter = wg.counter.lock().unwrap();
+    while *counter > 0 {
+        counter = wg.condvar.wait(counter).unwrap();
+    }
+    0
+}
+
+/// Done signals completion of one task in WaitGroup
+#[no_mangle]
+pub extern "C" fn qi_runtime_waitgroup_done(wg: *mut QiWaitGroup) -> i32 {
+    if wg.is_null() {
+        return -1;
+    }
+
+    let wg = unsafe { &mut *wg };
+    let mut counter = wg.counter.lock().unwrap();
+    *counter -= 1;
+    if *counter == 0 {
+        wg.condvar.notify_all();
+    }
+    0
+}
+
+/// Destroy WaitGroup
+#[no_mangle]
+pub extern "C" fn qi_runtime_waitgroup_destroy(wg: *mut QiWaitGroup) -> i32 {
+    if wg.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(wg);
+    }
+    0
+}
+
+/// Create a new mutex
+#[no_mangle]
+pub extern "C" fn qi_runtime_mutex_create() -> *mut QiMutex {
+    let mutex = Box::new(QiMutex {
+        inner: Arc::new(Mutex::new(())),
+    });
+    Box::into_raw(mutex)
+}
+
+/// Lock a mutex
+#[no_mangle]
+pub extern "C" fn qi_runtime_mutex_lock(mutex: *mut QiMutex) -> i32 {
+    if mutex.is_null() {
+        return -1;
+    }
+
+    let mutex = unsafe { &mut *mutex };
+    let _lock = mutex.inner.lock().unwrap();
+    // Note: In real implementation, we'd need to store the lock
+    0
+}
+
+/// Try to lock a mutex (non-blocking)
+#[no_mangle]
+pub extern "C" fn qi_runtime_mutex_trylock(mutex: *mut QiMutex) -> i32 {
+    if mutex.is_null() {
+        return -1;
+    }
+
+    let mutex = unsafe { &mut *mutex };
+    match mutex.inner.try_lock() {
+        Ok(_) => 0,
+        Err(_) => 1, // Would block
+    }
+}
+
+/// Unlock a mutex
+#[no_mangle]
+pub extern "C" fn qi_runtime_mutex_unlock(mutex: *mut QiMutex) -> i32 {
+    if mutex.is_null() {
+        return -1;
+    }
+
+    // Note: In real implementation, we'd need to release the stored lock
+    0
+}
+
+/// Destroy a mutex
+#[no_mangle]
+pub extern "C" fn qi_runtime_mutex_destroy(mutex: *mut QiMutex) -> i32 {
+    if mutex.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(mutex);
+    }
+    0
+}

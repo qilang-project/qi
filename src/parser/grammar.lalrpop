@@ -86,6 +86,12 @@ Statement: AstNode = {
         expression: Box::new(e),
         span: Default::default(),
     }),
+    // Select statement must be separate to avoid conflicts with expressions
+    "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" => AstNode::选择表达式(SelectExpression {
+        cases,
+        default_case,
+        span: Default::default(),
+    }),
 };
 
 VariableDeclaration: AstNode = {
@@ -524,6 +530,7 @@ ForStatement: AstNode = {
 };
 
 
+
 TypeDeclaration: AstNode = {
     <vis:Visibility> "类型" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
@@ -554,6 +561,62 @@ StructField: StructField = {
         span: Default::default(),
     },
 };
+
+
+SelectCaseList: Vec<SelectCase> = {
+    <cases:SelectCase+> => cases,
+};
+
+SelectCase: SelectCase = {
+    // Send case must come first: 情况 channel <- value:
+    // This has higher priority to avoid ambiguity
+    "情况" <channel:ChannelExpr> "<-" <value:Expr> ":" <body:StatementList> => SelectCase {
+        kind: SelectCaseKind::通道发送 {
+            channel: Box::new(channel),
+            value: Box::new(value),
+        },
+        body,
+        span: Default::default(),
+    },
+    
+    // Receive case with variable: 情况 variable := <-channel:
+    "情况" <var:Identifier> ":=" "<-" <channel:Expr> ":" <body:StatementList> => SelectCase {
+        kind: SelectCaseKind::通道接收 {
+            channel: Box::new(channel),
+            variable: Some(var),
+        },
+        body,
+        span: Default::default(),
+    },
+    
+    // Receive case without variable: 情况 <-channel:
+    "情况" "<-" <channel:Expr> ":" <body:StatementList> => SelectCase {
+        kind: SelectCaseKind::通道接收 {
+            channel: Box::new(channel),
+            variable: None,
+        },
+        body,
+        span: Default::default(),
+    },
+};
+
+// Channel expression (no arrow operator to avoid conflicts)
+ChannelExpr: AstNode = {
+    Primary,
+};
+
+DefaultCase: SelectCase = {
+    "默认" ":" <body:StatementList> => SelectCase {
+        kind: SelectCaseKind::默认,
+        body,
+        span: Default::default(),
+    },
+};
+
+StatementList: Vec<AstNode> = {
+    <stmts:Statement*> => stmts,
+};
+
 // Expression hierarchy using tiered approach like Solang
 // Each level handles operators of the same precedence
 Expr: AstNode = {
@@ -578,6 +641,11 @@ Precedence1: AstNode = {
             _ => panic!("Invalid assignment target: only identifiers, field access, and array subscript are allowed")
         }
     },
+    <channel:Precedence8> "<-" <value:Precedence1> => AstNode::通道发送表达式(ChannelSendExpression {
+        channel: Box::new(channel),
+        value: Box::new(value),
+        span: Default::default(),
+    }),
     Precedence2,
 };
 
@@ -723,6 +791,24 @@ Precedence7: AstNode = {
         expression: Box::new(expr),
         span: Default::default(),
     }),
+    "启动" <expr:Precedence7> => AstNode::协程启动表达式(GoroutineSpawnExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
+    "创建通道" "(" <element_type:Type> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type,
+        capacity: None,
+        span: Default::default(),
+    }),
+    "创建通道" "(" <element_type:Type> "," <capacity:Precedence7> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type,
+        capacity: Some(Box::new(capacity)),
+        span: Default::default(),
+    }),
+    "<-" <channel:Precedence7> => AstNode::通道接收表达式(ChannelReceiveExpression {
+        channel: Box::new(channel),
+        span: Default::default(),
+    }),
     "-" <expr:Precedence7> => {
         match expr {
             AstNode::字面量表达式(lit) => AstNode::字面量表达式(LiteralExpression {
@@ -755,6 +841,27 @@ Precedence8: AstNode = {
             span: Default::default(),
         })
     },
+    // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
+    <channel_type:ChannelTypeConstructor> "(" ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type: channel_type,
+        capacity: None,
+        span: Default::default(),
+    }),
+    <channel_type:ChannelTypeConstructor> "(" <capacity:Expr> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type: channel_type,
+        capacity: Some(Box::new(capacity)),
+        span: Default::default(),
+    }),
+    <channel_type:ChannelTypeConstructor> "（" "）" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type: channel_type,
+        capacity: None,
+        span: Default::default(),
+    }),
+    <channel_type:ChannelTypeConstructor> "（" <capacity:Expr> "）" => AstNode::通道创建表达式(ChannelCreateExpression {
+        element_type: channel_type,
+        capacity: Some(Box::new(capacity)),
+        span: Default::default(),
+    }),
     <callee:Precedence8> "(" <args:ExprList> ")" => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
@@ -1022,6 +1129,9 @@ Type: TypeNode = {
     "列表" "<" <element_type:Type> ">" => TypeNode::列表类型(ListType {
         element_type: Box::new(element_type),
     }),
+    "通道" "<" <element_type:Type> ">" => TypeNode::通道类型(ChannelType {
+        element_type: Box::new(element_type),
+    }),
     "集合" "<" <element_type:Type> ">" => TypeNode::集合类型(SetType {
         element_type: Box::new(element_type),
     }),
@@ -1086,6 +1196,7 @@ Identifier: String = {
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "通道" || id == "选择" || id == "情况" ||
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
@@ -1108,6 +1219,7 @@ ReceiverIdentifier: String = {
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "通道" || id == "选择" || id == "情况" ||
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
@@ -1118,9 +1230,16 @@ ReceiverIdentifier: String = {
     },
 };
 
+
 IdentifierExpression: AstNode = {
     <name:Identifier> => AstNode::标识符表达式(IdentifierExpression {
         name,
         span: Default::default(),
+    }),
+};
+
+ChannelTypeConstructor: TypeNode = {
+    "通道" "<" <element_type:Type> ">" => TypeNode::通道类型(ChannelType {
+        element_type: Box::new(element_type),
     }),
 };

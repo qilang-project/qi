@@ -64,6 +64,18 @@ pub enum IrInstruction {
         name: String,
     },
 
+    /// Integer constant
+    整数常量 {
+        dest: String,
+        value: i64,
+    },
+
+    /// Float constant
+    浮点数常量 {
+        dest: String,
+        value: f64,
+    },
+
     /// Label
     标签 {
         name: String,
@@ -123,6 +135,53 @@ pub enum IrInstruction {
         function: String,
         arguments: Vec<String>,
     },
+
+    /// Spawn goroutine
+    协程启动 {
+        function: String,
+        arguments: Vec<String>,
+    },
+
+    /// Create channel
+    创建通道 {
+        dest: String,
+        channel_type: String,
+        buffer_size: Option<String>,
+    },
+
+    /// Send to channel
+    通道发送 {
+        channel: String,
+        value: String,
+    },
+
+    /// Receive from channel
+    通道接收 {
+        dest: String,
+        channel: String,
+    },
+
+    /// Select statement
+    选择语句 {
+        cases: Vec<SelectCase>,
+        default_case: Option<String>,
+    },
+}
+
+/// Select case for channel operations
+#[derive(Debug, Clone)]
+pub struct SelectCase {
+    pub operation_type: SelectOperationType,
+    pub channel: String,
+    pub value: Option<String>, // For send operations
+    pub dest: Option<String>,  // For receive operations
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SelectOperationType {
+    接收,  // Receive
+    发送,  // Send
 }
 
 /// IR builder
@@ -397,6 +456,32 @@ impl IrBuilder {
             "打印" | "print" | "printf" => Some("qi_runtime_print"),
             "打印行" | "println" => Some("qi_runtime_println"),
 
+            // Synchronization operations
+            "创建等待组" | "新建等待组" | "new_waitgroup" => Some("qi_runtime_waitgroup_create"),
+            "等待组增加" | "等待组添加" | "waitgroup_add" | "添加等待" => Some("qi_runtime_waitgroup_add"),
+            "等待组完成" | "waitgroup_done" | "完成" => Some("qi_runtime_waitgroup_done"),
+            "等待组等待" | "waitgroup_wait" | "等待" => Some("qi_runtime_waitgroup_wait"),
+
+            "创建互斥锁" | "新建互斥锁" | "new_mutex" => Some("qi_runtime_mutex_create"),
+            "互斥锁加锁" | "互斥锁锁定" | "mutex_lock" | "加锁" => Some("qi_runtime_mutex_lock"),
+            "互斥锁解锁" | "mutex_unlock" | "解锁" => Some("qi_runtime_mutex_unlock"),
+            "尝试加锁" | "try_lock" => Some("qi_runtime_mutex_trylock"),
+
+            // Channel operations
+            "创建通道" => Some("qi_runtime_create_channel"),
+            "发送" | "send" => Some("qi_runtime_channel_send"), // Default to int for now
+            "接收" | "receive" => Some("qi_runtime_channel_receive"), // Default to int for now
+            "关闭通道" | "close_channel" => Some("qi_runtime_channel_close"),
+
+            // Timeout and error handling operations
+            "设置超时" | "set_timeout" | "timeout" => Some("qi_runtime_set_timeout"),
+            "获取时间" | "get_time" => Some("qi_runtime_get_time_ms"),
+            "检查超时" | "check_timeout" => Some("qi_runtime_check_timeout"),
+            "创建定时器" | "new_timer" => Some("qi_runtime_timer_create"),
+            "定时器过期" | "timer_expired" => Some("qi_runtime_timer_expired"),
+            "停止定时器" | "stop_timer" => Some("qi_runtime_timer_stop"),
+            "重试操作" | "retry_operation" => Some("e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c"), // Chinese function name
+
             _ => None,
         };
 
@@ -538,6 +623,17 @@ impl IrBuilder {
                                 } else if runtime_func.contains("math_abs_int") || runtime_func.contains("float_to_int") ||
                                           runtime_func.contains("string_to_int") || runtime_func.contains("array_length") {
                                     "i64"
+                                } else if runtime_func.contains("waitgroup_create") ||
+                                          runtime_func.contains("mutex_create") ||
+                                          runtime_func.contains("rwlock_create") {
+                                    "ptr"  // Synchronization primitives return pointers
+                                } else if runtime_func.contains("timer_create") {
+                                    "ptr"  // Timer returns pointer
+                                } else if runtime_func.contains("set_timeout") ||
+                                          runtime_func.contains("timeout") ||
+                                          runtime_func.contains("retry") ||
+                                          runtime_func.contains("catch_error") {
+                                    "i32"  // Timeout and error operations return status codes
                                 } else {
                                     "i64"
                                 }
@@ -563,6 +659,11 @@ impl IrBuilder {
                             if let Some(struct_type_name) = self.variable_struct_types.get(init_var_name) {
                                 self.variable_struct_types.insert(decl.name.clone(), struct_type_name.clone());
                             }
+                            ("ptr".to_string(), Some(init_value))
+                        }
+                        AstNode::通道创建表达式(_) => {
+                            // Channel creation returns a pointer to the channel
+                            let init_value = self.build_node(&**initializer)?;
                             ("ptr".to_string(), Some(init_value))
                         }
                         _ => {
@@ -2265,9 +2366,245 @@ impl IrBuilder {
                     Ok(String::new()) // Return empty string for void methods
                 }
             }
+            AstNode::协程启动表达式(goroutine_expr) => {
+                // Handle different types of goroutine spawns
+                match goroutine_expr.expression.as_ref() {
+                    AstNode::函数调用表达式(call_expr) => {
+                        // Spawn function call as goroutine
+                        let function_name = self.get_full_function_name(call_expr);
+                        let mangled_name = if function_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&function_name)
+                        } else {
+                            function_name
+                        };
+
+                        // Build arguments
+                        let mut arg_temps = Vec::new();
+                        for arg in &call_expr.arguments {
+                            arg_temps.push(self.build_node(arg)?);
+                        }
+
+                        // Generate goroutine spawn call
+                        self.add_instruction(IrInstruction::协程启动 {
+                            function: mangled_name,
+                            arguments: arg_temps,
+                        });
+                    }
+                    _ => {
+                        // For other expressions, just evaluate them (simplified)
+                        self.build_node(&goroutine_expr.expression)?;
+                    }
+                }
+
+                Ok("goroutine".to_string())
+            }
+
+            AstNode::通道创建表达式(channel_expr) => {
+                // Generate a temporary variable for the channel
+                let channel_temp = self.generate_temp();
+
+                // Get the channel type
+                let channel_type = self.get_llvm_type(&Some(channel_expr.element_type.clone()));
+
+                // Convert buffer size if present
+                let buffer_size = channel_expr.capacity.as_ref().map(|size_expr| {
+                    self.build_node(size_expr).unwrap_or_else(|_| "0".to_string())
+                });
+
+                self.add_instruction(IrInstruction::创建通道 {
+                    dest: channel_temp.clone(),
+                    channel_type,
+                    buffer_size,
+                });
+
+                Ok(channel_temp)
+            }
+
+            AstNode::通道发送表达式(send_expr) => {
+                // Build the channel expression
+                let channel = self.build_node(&send_expr.channel)?;
+
+                // Build the value to send, ensuring it's properly converted to pointer
+                let value = self.build_node_for_channel(&send_expr.value)?;
+
+                self.add_instruction(IrInstruction::通道发送 {
+                    channel,
+                    value,
+                });
+
+                Ok("send".to_string())
+            }
+
+            AstNode::通道接收表达式(recv_expr) => {
+                // Build the channel expression
+                let channel = self.build_node(&recv_expr.channel)?;
+
+                // Generate a temporary for the received value
+                let recv_temp = self.generate_temp();
+
+                self.add_instruction(IrInstruction::通道接收 {
+                    dest: recv_temp.clone(),
+                    channel,
+                });
+
+                Ok(recv_temp)
+            }
+
+            AstNode::选择表达式(select_expr) => {
+                // Build each select case
+                let mut cases = Vec::new();
+
+                for case in &select_expr.cases {
+                    let case_label = self.generate_label();
+
+                    match &case.kind {
+                        crate::parser::ast::SelectCaseKind::通道接收 { channel, variable } => {
+                            let channel_expr = self.build_node(channel)?;
+                            let dest_temp = self.generate_temp();
+                            cases.push(SelectCase {
+                                operation_type: SelectOperationType::接收,
+                                channel: channel_expr,
+                                value: None,
+                                dest: Some(dest_temp),
+                                label: case_label.clone(),
+                            });
+                        }
+                        crate::parser::ast::SelectCaseKind::通道发送 { channel, value } => {
+                            let channel_expr = self.build_node(channel)?;
+                            let value_expr = self.build_node(value)?;
+                            cases.push(SelectCase {
+                                operation_type: SelectOperationType::发送,
+                                channel: channel_expr,
+                                value: Some(value_expr),
+                                dest: None,
+                                label: case_label.clone(),
+                            });
+                        }
+                        crate::parser::ast::SelectCaseKind::默认 => {
+                            // Default case handled separately
+                        }
+                    }
+                }
+
+                // Generate select instruction
+                self.add_instruction(IrInstruction::选择语句 {
+                    cases: cases.clone(),
+                    default_case: None, // TODO: Handle default case
+                });
+
+                Ok("select".to_string())
+            }
+
             _ => {
                 #[allow(unreachable_patterns)]
                 Err(format!("Unsupported AST node: {:?}", node))
+            }
+        }
+    }
+
+    /// Build a node and ensure it's properly converted for channel operations
+    /// Returns a pointer to the value
+    fn build_node_for_channel(&mut self, expr: &AstNode) -> Result<String, String> {
+        match expr {
+            AstNode::字面量表达式(literal) => {
+                // For literals, we need to allocate storage and store the value
+                let temp = self.generate_temp();
+                let (value_type, value_temp) = match &literal.value {
+                    crate::parser::ast::LiteralValue::整数(n) => {
+                        let temp_val = self.generate_temp();
+                        self.add_instruction(IrInstruction::整数常量 {
+                            dest: temp_val.clone(),
+                            value: *n,
+                        });
+                        ("i64", temp_val)
+                    }
+                    crate::parser::ast::LiteralValue::浮点数(f) => {
+                        let temp_val = self.generate_temp();
+                        self.add_instruction(IrInstruction::浮点数常量 {
+                            dest: temp_val.clone(),
+                            value: *f,
+                        });
+                        ("double", temp_val)
+                    }
+                    crate::parser::ast::LiteralValue::布尔(b) => {
+                        let temp_val = self.generate_temp();
+                        self.add_instruction(IrInstruction::整数常量 {
+                            dest: temp_val.clone(),
+                            value: if *b { 1 } else { 0 },
+                        });
+                        ("i1", temp_val)
+                    }
+                    crate::parser::ast::LiteralValue::字符(c) => {
+                        let temp_val = self.generate_temp();
+                        self.add_instruction(IrInstruction::整数常量 {
+                            dest: temp_val.clone(),
+                            value: *c as i64,
+                        });
+                        ("i8", temp_val)
+                    }
+                    crate::parser::ast::LiteralValue::字符串(s) => {
+                        // For string literals, use the existing string constant handling
+                        let str_name = format!("@.str{}", self.temp_counter);
+                        self.temp_counter += 1;
+                        let escaped_str = s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\0A");
+                        self.add_instruction(IrInstruction::字符串常量 {
+                            name: format!("{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1",
+                                str_name, s.len() + 1, escaped_str),
+                        });
+                        ("ptr", str_name.clone())
+                    }
+                };
+
+                // Allocate storage for the value
+                self.add_instruction(IrInstruction::分配 {
+                    dest: temp.clone(),
+                    type_name: value_type.to_string(),
+                });
+
+                // Store the value
+                self.add_instruction(IrInstruction::存储 {
+                    target: temp.clone(),
+                    value: value_temp.clone(),
+                    value_type: Some(value_type.to_string()),
+                });
+
+                Ok(temp)
+            }
+            AstNode::标识符表达式(ident_expr) => {
+                // For identifiers, we need to load the value and ensure it's a pointer
+                let var_name = format!("%{}", ident_expr.name);
+                let temp = self.generate_temp();
+
+                // Load the value from the variable
+                self.add_instruction(IrInstruction::加载 {
+                    dest: temp.clone(),
+                    source: var_name.clone(),
+                    load_type: None,
+                });
+
+                // Allocate storage for the value copy
+                let temp_copy = self.generate_temp();
+                let var_type = self.variable_types.get(&ident_expr.name)
+                    .unwrap_or(&"i64".to_string())
+                    .clone();
+
+                self.add_instruction(IrInstruction::分配 {
+                    dest: temp_copy.clone(),
+                    type_name: var_type,
+                });
+
+                // Store the loaded value
+                self.add_instruction(IrInstruction::存储 {
+                    target: temp_copy.clone(),
+                    value: temp,
+                    value_type: None,
+                });
+
+                Ok(temp_copy)
+            }
+            _ => {
+                // For other expressions, build normally
+                self.build_node(expr)
             }
         }
     }
@@ -2295,6 +2632,10 @@ impl IrBuilder {
                     crate::parser::ast::BasicType::可变引用 => "ptr".to_string(),
                 }
             }
+            Some(crate::parser::ast::TypeNode::通道类型(_)) => {
+                // Channel creation returns a pointer (handle) to the channel
+                "ptr".to_string()
+            }
             _ => "i64".to_string(), // Default to i64
         }
     }
@@ -2305,15 +2646,18 @@ impl IrBuilder {
     }
 
     /// Emit LLVM IR from instructions
-    fn emit_llvm_ir(&self) -> Result<String, String> {
+    fn emit_llvm_ir(&mut self) -> Result<String, String> {
         let mut ir = String::new();
         let mut string_constants = Vec::new();
         let mut other_instructions = Vec::new();
         let _temp_counter = self.temp_counter; // reserved for future use
         let mut current_function_ret_ty: Option<String> = None;
 
+        // Clone instructions to avoid borrow checker issues
+        let instructions = self.instructions.clone();
+
         // Separate string constants from other instructions
-        for instruction in &self.instructions {
+        for instruction in &instructions {
             match instruction {
                 IrInstruction::字符串常量 { .. } => {
                     string_constants.push(instruction);
@@ -2355,7 +2699,77 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_runtime_await(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_spawn_task(ptr)\n");
         ir.push_str("\n");
-        
+
+        // Concurrency functions - Channel operations
+        ir.push_str("; Concurrency functions - Channel operations\n");
+        ir.push_str("declare ptr @qi_runtime_create_channel(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_channel_send(ptr, i64)\n");
+        ir.push_str("declare i32 @qi_runtime_channel_receive(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_channel_close(ptr)\n");
+        ir.push_str("\n");
+
+        // Synchronization functions - WaitGroup operations
+        ir.push_str("; Synchronization functions - WaitGroup operations\n");
+        ir.push_str("declare ptr @qi_runtime_waitgroup_create()\n");
+        ir.push_str("declare i32 @qi_runtime_waitgroup_add(ptr, i32)\n");
+        ir.push_str("declare i32 @qi_runtime_waitgroup_wait(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_waitgroup_done(ptr)\n");
+        ir.push_str("\n");
+
+        // Synchronization functions - Mutex operations
+        ir.push_str("; Synchronization functions - Mutex operations\n");
+        ir.push_str("declare ptr @qi_runtime_mutex_create()\n");
+        ir.push_str("declare i32 @qi_runtime_mutex_lock(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_mutex_unlock(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_mutex_trylock(ptr)\n");
+        ir.push_str("\n");
+
+        // Timeout and error handling functions
+        ir.push_str("; Timeout and error handling functions\n");
+        ir.push_str("declare i64 @qi_runtime_get_time_ms()\n");
+        ir.push_str("declare i32 @qi_runtime_set_timeout(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_check_timeout(i64)\n");
+        ir.push_str("declare ptr @qi_runtime_timer_create(i64)\n");
+        ir.push_str("declare i32 @qi_runtime_timer_expired(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_timer_stop(ptr)\n");
+        ir.push_str("\n");
+
+        // Chinese function names (HEX encoded)
+        ir.push_str("; Chinese function names (HEX encoded)\n");
+        ir.push_str("declare ptr @e5_88_9b_e5_bb_ba_e9_80_9a_e9_81_93(i64)\n");  // 创建通道
+        ir.push_str("declare i32 @e5_8f_91_e9_80_81_int(ptr, i64)\n");       // 发送
+        ir.push_str("declare i64 @e6_a5_a5_e6_8e_af_int(ptr)\n");           // 接收
+        ir.push_str("declare i32 @e5_85_b3_e9_97_ad_e9_80_9a_e9_81_93(ptr)\n"); // 关闭通道
+        ir.push_str("\n");
+
+        ir.push_str("declare ptr @e5_88_9b_e5_bb_ba_e7_ad_89_e5_be_85_e7_bb_84()\n"); // 创建等待组
+        ir.push_str("declare i32 @e6_8b_89_e5_a0_80_e7_ad_89_e5_be_85(ptr, i32)\n"); // 添加等待
+        ir.push_str("declare i32 @e7_ad_89_e5_be_85(ptr)\n");                     // 等待
+        ir.push_str("declare i32 @e5_ae_8c_e6_88_90(ptr)\n");                     // 完成
+        ir.push_str("\n");
+
+        ir.push_str("declare ptr @e5_88_9b_e5_bb_ba_e4_ba_92_e6_96_a5_e9_94_81()\n"); // 创建互斥锁
+        ir.push_str("declare i32 @e5_8a_a0_e9_94_81(ptr)\n");                      // 加锁
+        ir.push_str("declare i32 @e8_a3_a3_e9_94_81(ptr)\n");                      // 解锁
+        ir.push_str("declare i32 @e5_b0_9d_e8_af_95_e5_8a_a0_e9_94_81(ptr)\n");   // 尝试加锁
+        ir.push_str("\n");
+
+        ir.push_str("declare i64 @e8_b7_a5_e5_8f_96_e9_97_b4_e9_97_b4()\n");       // 获取时间
+        ir.push_str("declare i32 @e8_ae_bd_e7_ba_ae_e8_b6_85_e6_97_b6(i64)\n");   // 设置超时
+        ir.push_str("declare i32 @e6_8f_a5_e6_9f_a5_e8_b6_85_e6_97_b6(i64)\n");   // 检查超时
+        ir.push_str("declare ptr @e5_88_9b_e5_bb_ba_e5_b0_a8_e6_97_b6_e5_99_a8(i64)\n"); // 创建定时器
+        ir.push_str("declare i32 @e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c(i32, i32, i32)\n"); // 重试操作
+        ir.push_str("\n");
+
+        // Legacy function declarations (for backward compatibility)
+        ir.push_str("; Legacy function declarations\n");
+        ir.push_str("declare void @qi_runtime_spawn_goroutine(ptr)\n");
+        ir.push_str("declare ptr @qi_runtime_select(ptr)\n");
+        ir.push_str("declare void @qi_runtime_timer_cancel(ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_retry(ptr, i32)\n");
+        ir.push_str("declare i32 @qi_runtime_catch_error(ptr)\n");
+        ir.push_str("\n");
+
         ir.push_str("; Print functions\n");
         ir.push_str("declare i32 @qi_runtime_print(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_println(ptr)\n");
@@ -2422,15 +2836,31 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_string_concat(ptr, ptr)\n\n");
 
         // Add external function declarations from imported modules
+        // Only declare functions that haven't been declared above
+        let already_declared = std::collections::HashSet::from([
+            "qi_channel_create", "qi_channel_send_int", "qi_channel_receive_int", "qi_channel_close",
+            "qi_waitgroup_create", "qi_waitgroup_add", "qi_waitgroup_wait", "qi_waitgroup_done",
+            "qi_mutex_create", "qi_mutex_lock", "qi_mutex_unlock", "qi_mutex_trylock",
+            "qi_get_time_ms", "qi_set_timeout", "qi_check_timeout", "qi_timer_create",
+            "qi_timer_expired", "qi_timer_stop",
+            "e5_88_9b_e5_bb_ba_e9_80_9a_e9_81_93", "e5_8f_91_e9_80_81_int", "e6_a5_a5_e6_8e_af_int", "e5_85_b3_e9_97_ad_e9_80_9a_e9_81_93",
+            "e5_88_9b_e5_bb_ba_e7_ad_89_e5_be_85_e7_bb_84", "e6_8b_89_e5_a0_80_e7_ad_89_e5_be_85", "e7_ad_89_e5_be_85", "e5_ae_8c_e6_88_90",
+            "e5_88_9b_e5_bb_ba_e4_ba_92_e6_96_a5_e9_94_81", "e5_8a_a0_e9_94_81", "e8_a3_a3_e9_94_81", "e5_b0_9d_e8_af_95_e5_8a_a0_e9_94_81",
+            "e8_b7_a5_e5_8f_96_e9_97_b4_e9_97_b4", "e8_ae_bd_e7_ba_ae_e8_b6_85_e6_97_b6", "e6_8f_a5_e6_9f_a5_e8_b6_85_e6_97_b6",
+            "e5_88_9b_e5_bb_ba_e5_b0_a8_e6_97_b6_e5_99_a8", "e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c"
+        ]);
+
         if !self.external_functions.is_empty() {
             ir.push_str("; External function declarations from imported modules\n");
             for (func_name, (param_types, return_type)) in &self.external_functions {
-                let params_str = param_types.iter()
-                    .enumerate()
-                    .map(|(i, ty)| format!("{} %{}", ty, i))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                ir.push_str(&format!("declare {} @{}({})\n", return_type, func_name, params_str));
+                if !already_declared.contains(func_name.as_str()) {
+                    let params_str = param_types.iter()
+                        .enumerate()
+                        .map(|(i, ty)| format!("{} %{}", ty, i))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ir.push_str(&format!("declare {} @{}({})\n", return_type, func_name, params_str));
+                }
             }
             ir.push_str("\n");
         }
@@ -2508,6 +2938,12 @@ impl IrBuilder {
                         "i64".to_string()
                     };
                     ir.push_str(&format!("store {} {}, ptr {}\n", inferred_type, value, target));
+                }
+                IrInstruction::整数常量 { dest, value } => {
+                    ir.push_str(&format!("{} = add i64 0, {}\n", dest, value));
+                }
+                IrInstruction::浮点数常量 { dest, value } => {
+                    ir.push_str(&format!("{} = fadd double 0.0, {}\n", dest, value));
                 }
                 IrInstruction::加载 { dest, source, load_type } => {
                     // Use explicit load type if provided, otherwise infer
@@ -2710,9 +3146,15 @@ impl IrBuilder {
                         
                         // Determine return type based on function name
                         let ret_type = if callee.starts_with("qi_runtime_") {
+                            // Create functions return ptr - MUST BE FIRST
+                            if callee == "qi_runtime_create_channel" || callee == "qi_runtime_waitgroup_create" ||
+                               callee == "qi_runtime_mutex_create" || callee == "qi_runtime_rwlock_create" ||
+                               callee == "qi_runtime_condvar_create" || callee == "qi_runtime_once_create" ||
+                               callee == "qi_runtime_timer_create" {
+                                "ptr"
                             // Math functions return double
-                            if callee.contains("math_sqrt") || callee.contains("math_pow") || 
-                               callee.contains("math_sin") || callee.contains("math_cos") || 
+                            } else if callee.contains("math_sqrt") || callee.contains("math_pow") ||
+                               callee.contains("math_sin") || callee.contains("math_cos") ||
                                callee.contains("math_tan") || callee.contains("math_floor") ||
                                callee.contains("math_ceil") || callee.contains("math_round") ||
                                callee.contains("math_abs_float") || callee.contains("int_to_float") ||
@@ -2722,10 +3164,18 @@ impl IrBuilder {
                             } else if callee.contains("string_length") {
                                 "i64"
                             // String functions return ptr
-                            } else if callee.contains("string") || callee.contains("concat") || 
-                                      callee.contains("read_string") || callee.contains("int_to_string") || 
+                            } else if callee.contains("string") || callee.contains("concat") ||
+                                      callee.contains("read_string") || callee.contains("int_to_string") ||
                                       callee.contains("float_to_string") {
                                 "ptr"
+                            // Channel receive returns i64 (the actual value)
+                            } else if callee == "qi_runtime_channel_receive" {
+                                "i64"
+                            // All other synchronization functions return i32 (status)
+                            } else if callee.contains("waitgroup") || callee.contains("mutex") || callee.contains("timer") ||
+                                      callee.contains("rwlock") || callee.contains("condvar") || callee.contains("once") ||
+                                      callee.contains("channel") || callee == "qi_runtime_set_timeout" || callee == "qi_runtime_check_timeout" {
+                                "i32"
                             // Integer math functions return i64
                             } else if callee.contains("math_abs_int") || callee.contains("float_to_int") ||
                                       callee.contains("string_to_int") || callee.contains("array_length") {
@@ -2740,7 +3190,7 @@ impl IrBuilder {
                             "double"
                         } else if callee == "e6_b1_82_e7_bb_9d_e5_af_b9_e5_80_bc" { // 求绝对值
                             "i64"
-                        } else if callee == "e5_ad_97_e7_ac_a6_e9_95_bf" { // 字符串长度
+                        } else if callee == "e5ad_97_e7_ac_a6_e9_95_bf" { // 字符串长度
                             "i64"
                         } else {
                             // Check if this is a known async function
@@ -2751,12 +3201,26 @@ impl IrBuilder {
                             }
                         };
 
-                        match dest {
-                            Some(dest_var) => {
-                                ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, callee, args_str));
+                        // Special handling for channel functions
+                        if callee == "qi_runtime_channel_receive" {
+                            // Channel receive needs special handling to allocate pointer for received value
+                            let received_ptr = self.generate_temp();
+                            let temp_status = self.generate_temp();
+                            let temp_ptr = self.generate_temp();
+                            ir.push_str(&format!("{} = alloca ptr, align 8\n", received_ptr));
+                            ir.push_str(&format!("{} = call i32 @{}({}, ptr {})\n", temp_status, callee, typed_args[0], received_ptr));
+                            ir.push_str(&format!("{} = load ptr, ptr {}\n", temp_ptr, received_ptr));
+                            if let Some(dest_var) = dest {
+                                ir.push_str(&format!("{} = load i64, ptr {}\n", dest_var, temp_ptr));
                             }
-                            None => {
-                                ir.push_str(&format!("call void @{}({})\n", callee, args_str));
+                        } else {
+                            match dest {
+                                Some(dest_var) => {
+                                    ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, callee, args_str));
+                                }
+                                None => {
+                                    ir.push_str(&format!("call void @{}({})\n", callee, args_str));
+                                }
                             }
                         }
                     }
@@ -2870,6 +3334,40 @@ impl IrBuilder {
 
                     // Spawn the task to start execution
                     ir.push_str(&format!("call i32 @qi_runtime_spawn_task(ptr {})\n", dest));
+                }
+                IrInstruction::协程启动 { function, arguments } => {
+                    // Spawn goroutine using the runtime
+                    // Get function pointer for the goroutine
+                    let temp1 = self.generate_temp();
+                    ir.push_str(&format!("{} = ptrtoint ptr @{} to i64\n", temp1, function));
+                    let temp2 = self.generate_temp();
+                    ir.push_str(&format!("{} = inttoptr i64 {} to ptr\n", temp2, temp1));
+                    ir.push_str(&format!("call void @qi_runtime_spawn_goroutine(ptr {})\n", temp2));
+                }
+                IrInstruction::创建通道 { dest, channel_type, buffer_size } => {
+                    // Create channel - generate runtime call
+                    let size = buffer_size.as_ref().unwrap_or(&"0".to_string()).clone();
+                    ir.push_str(&format!("{} = call ptr @qi_runtime_create_channel(i64 {})\n", dest, size));
+                }
+                IrInstruction::通道发送 { channel, value } => {
+                    // Send value to channel using runtime
+                    ir.push_str(&format!("call i32 @qi_runtime_channel_send(ptr {}, i64 {})\n", channel, value));
+                }
+                IrInstruction::通道接收 { dest, channel } => {
+                    // Receive value from channel using runtime
+                    let received_ptr = self.generate_temp();
+                    ir.push_str(&format!("{} = alloca ptr, align 8\n", received_ptr));
+                    ir.push_str(&format!("{} = call i32 @qi_runtime_channel_receive(ptr {}, ptr {})\n", self.generate_temp(), channel, received_ptr));
+                    ir.push_str(&format!("{} = load ptr, ptr {}\n", received_ptr, received_ptr));
+                    ir.push_str(&format!("{} = load i64, ptr {}\n", dest, received_ptr));
+                }
+                IrInstruction::选择语句 { cases, default_case } => {
+                    // Generate select statement using runtime
+                    ir.push_str("; Select statement - runtime implementation\n");
+
+                    // For now, implement a simple blocking select
+                    // TODO: Implement proper non-blocking select with multiple cases
+                    ir.push_str("call ptr @qi_runtime_select(ptr null)\n");
                 }
             }
         }

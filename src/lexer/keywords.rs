@@ -69,6 +69,28 @@ impl KeywordTable {
         keywords.insert("方法".to_string(), TokenKind::方法);
         keywords.insert("自己".to_string(), TokenKind::自己);
 
+        // Concurrency keywords - 并发关键字
+        keywords.insert("启动".to_string(), TokenKind::启动);
+        keywords.insert("协程".to_string(), TokenKind::协程);
+        keywords.insert("通道".to_string(), TokenKind::通道);
+        keywords.insert("选择".to_string(), TokenKind::选择);
+        keywords.insert("情况".to_string(), TokenKind::情况);
+        keywords.insert("并发".to_string(), TokenKind::并发);
+
+        // Synchronization keywords - 同步关键字
+        keywords.insert("等待组".to_string(), TokenKind::等待组);
+        keywords.insert("互斥锁".to_string(), TokenKind::互斥锁);
+        keywords.insert("读写锁".to_string(), TokenKind::读写锁);
+        keywords.insert("条件变量".to_string(), TokenKind::条件变量);
+        keywords.insert("仅一次".to_string(), TokenKind::仅一次);
+
+        // Timeout and error handling keywords - 超时和错误处理关键字
+        keywords.insert("尝试".to_string(), TokenKind::尝试);
+        keywords.insert("捕获".to_string(), TokenKind::捕获);
+        keywords.insert("重试".to_string(), TokenKind::重试);
+        keywords.insert("超时".to_string(), TokenKind::超时);
+        keywords.insert("否则".to_string(), TokenKind::否则);
+
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);
         keywords.insert("print".to_string(), TokenKind::标识符);

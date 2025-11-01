@@ -522,6 +522,25 @@ impl ParserErrorRecovery {
             TokenKind::私有 => "私有".to_string(),
             TokenKind::错误 => "错误".to_string(),
             TokenKind::自定义类型 => "自定义类型".to_string(),
+            TokenKind::启动 => "启动".to_string(),
+            TokenKind::协程 => "协程".to_string(),
+            TokenKind::通道 => "通道".to_string(),
+            TokenKind::选择 => "选择".to_string(),
+            TokenKind::情况 => "情况".to_string(),
+            TokenKind::并发 => "并发".to_string(),
+
+            // Synchronization keywords
+            TokenKind::等待组 => "等待组".to_string(),
+            TokenKind::互斥锁 => "互斥锁".to_string(),
+            TokenKind::读写锁 => "读写锁".to_string(),
+            TokenKind::条件变量 => "条件变量".to_string(),
+            TokenKind::仅一次 => "仅一次".to_string(),
+
+            // Timeout and error handling keywords
+            TokenKind::尝试 => "尝试".to_string(),
+            TokenKind::捕获 => "捕获".to_string(),
+            TokenKind::重试 => "重试".to_string(),
+            TokenKind::超时 => "超时".to_string(),
         }
     }
 

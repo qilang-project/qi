@@ -93,6 +93,11 @@ impl TypeChecker {
             AstNode::块语句(block_stmt) => self.check_block_statement(block_stmt),
             AstNode::方法声明(method_decl) => self.check_method_declaration(method_decl),
             AstNode::方法调用表达式(method_call) => self.check_method_call(method_call),
+            AstNode::协程启动表达式(goroutine_expr) => self.check_goroutine_spawn(goroutine_expr),
+            AstNode::通道创建表达式(channel_expr) => self.check_channel_create(channel_expr),
+            AstNode::通道发送表达式(send_expr) => self.check_channel_send(send_expr),
+            AstNode::通道接收表达式(recv_expr) => self.check_channel_receive(recv_expr),
+            AstNode::选择表达式(select_expr) => self.check_select(select_expr),
         }
     }
 
@@ -1045,6 +1050,72 @@ impl TypeChecker {
         // For now, assume await expressions return the type of the awaited expression
         // TODO: Add proper async type checking when futures/promises are implemented
         Ok(awaited_type)
+    }
+
+    fn check_goroutine_spawn(&mut self, goroutine_expr: &crate::parser::ast::GoroutineSpawnExpression) -> Result<TypeNode, TypeError> {
+        // Type check the goroutine expression
+        self.check(&goroutine_expr.expression)?;
+
+        // Goroutine spawn expressions return void (no meaningful return value)
+        Ok(TypeNode::基础类型(BasicType::空))
+    }
+
+    fn check_channel_create(&mut self, channel_expr: &crate::parser::ast::ChannelCreateExpression) -> Result<TypeNode, TypeError> {
+        // Type check the capacity if present
+        if let Some(capacity) = &channel_expr.capacity {
+            self.check(capacity)?;
+        }
+
+        // Channel creation returns a channel type
+        // TODO: Add proper channel type representation
+        Ok(TypeNode::基础类型(BasicType::字符串)) // Temporary placeholder
+    }
+
+    fn check_channel_send(&mut self, send_expr: &crate::parser::ast::ChannelSendExpression) -> Result<TypeNode, TypeError> {
+        // Type check the channel
+        self.check(&send_expr.channel)?;
+
+        // Type check the value to send
+        self.check(&send_expr.value)?;
+
+        // Channel send expressions return void
+        Ok(TypeNode::基础类型(BasicType::空))
+    }
+
+    fn check_channel_receive(&mut self, recv_expr: &crate::parser::ast::ChannelReceiveExpression) -> Result<TypeNode, TypeError> {
+        // Type check the channel
+        self.check(&recv_expr.channel)?;
+
+        // Channel receive expressions return the channel element type
+        // TODO: Add proper channel type inference
+        Ok(TypeNode::基础类型(BasicType::整数)) // Temporary placeholder
+    }
+
+    fn check_select(&mut self, select_expr: &crate::parser::ast::SelectExpression) -> Result<TypeNode, TypeError> {
+        // Type check each select case
+        for case in &select_expr.cases {
+            match &case.kind {
+                crate::parser::ast::SelectCaseKind::通道接收 { channel, variable } => {
+                    self.check(channel)?;
+                    // TODO: Check variable type if present
+                }
+                crate::parser::ast::SelectCaseKind::通道发送 { channel, value } => {
+                    self.check(channel)?;
+                    self.check(value)?;
+                }
+                crate::parser::ast::SelectCaseKind::默认 => {
+                    // Default case has no type checking requirements
+                }
+            }
+
+            // Type check case body
+            for stmt in &case.body {
+                self.check(stmt)?;
+            }
+        }
+
+        // Select statements return void
+        Ok(TypeNode::基础类型(BasicType::空))
     }
 }
 

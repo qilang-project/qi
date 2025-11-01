@@ -35,6 +35,9 @@ pub mod async_runtime;
 // Legacy modules for backward compatibility
 pub mod strings;
 
+// Runtime library with C FFI exports (temporarily disabled due to duplicate symbols)
+// pub mod lib;
+
 // Re-export core components for convenience
 pub use environment::{RuntimeEnvironment, RuntimeState, RuntimeConfig};
 pub use memory::{MemoryManager, AllocationStrategy};

@@ -197,6 +197,165 @@ pub extern "C" fn qi_runtime_spawn_task(task: TaskHandle) -> i32 {
     0
 }
 
+/// Spawn a goroutine (lightweight thread)
+#[no_mangle]
+pub extern "C" fn qi_runtime_spawn_goroutine(function_ptr: *const c_void) {
+    ensure_runtime_initialized();
+    if debug_enabled() {
+        eprintln!("DEBUG: spawn_goroutine called with function pointer {:?}", function_ptr);
+    }
+
+    // Convert function pointer to a Rust function
+    // The function pointer should be a void function pointer
+    let func = unsafe {
+        std::mem::transmute::<*const c_void, fn()>(function_ptr)
+    };
+
+    // Spawn the goroutine in a new thread
+    std::thread::spawn(move || {
+        if debug_enabled() {
+            eprintln!("DEBUG: Goroutine thread started");
+        }
+        func();
+        if debug_enabled() {
+            eprintln!("DEBUG: Goroutine thread completed");
+        }
+    });
+}
+
+// Channel implementation
+use std::sync::mpsc::{self, Sender, Receiver};
+use std::sync::Arc;
+
+/// Global channel registry
+static CHANNEL_REGISTRY: OnceLock<Mutex<HashMap<u64, Arc<ChannelInstance>>>> = OnceLock::new();
+static mut NEXT_CHANNEL_ID: u64 = 1;
+
+/// Channel instance for runtime
+struct ChannelInstance {
+    sender: Arc<Mutex<Sender<*mut c_void>>>,
+    receiver: Arc<Mutex<Receiver<*mut c_void>>>,
+    buffer_size: i32,
+}
+
+unsafe impl Send for ChannelInstance {}
+unsafe impl Sync for ChannelInstance {}
+
+/// Create a new channel
+#[no_mangle]
+pub extern "C" fn qi_runtime_create_channel(buffer_size: i32) -> *mut c_void {
+    ensure_runtime_initialized();
+    if debug_enabled() {
+        eprintln!("DEBUG: create_channel called with buffer_size {}", buffer_size);
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    let channel = Arc::new(ChannelInstance {
+        sender: Arc::new(Mutex::new(sender)),
+        receiver: Arc::new(Mutex::new(receiver)),
+        buffer_size,
+    });
+
+    let channel_id = unsafe {
+        let id = NEXT_CHANNEL_ID;
+        NEXT_CHANNEL_ID += 1;
+        id
+    };
+
+    if let Some(registry) = CHANNEL_REGISTRY.get() {
+        if let Ok(mut registry_guard) = registry.lock() {
+            registry_guard.insert(channel_id, channel);
+            if debug_enabled() {
+                eprintln!("DEBUG: Created channel with ID {}", channel_id);
+            }
+            return channel_id as *mut c_void;
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// Send a value to a channel
+#[no_mangle]
+pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: *mut c_void) {
+    ensure_runtime_initialized();
+    if debug_enabled() {
+        eprintln!("DEBUG: channel_send called with channel {:?}, value {:?}", channel, value);
+    }
+
+    let channel_id = channel as u64;
+
+    if let Some(registry) = CHANNEL_REGISTRY.get() {
+        if let Ok(registry_guard) = registry.lock() {
+            if let Some(channel_instance) = registry_guard.get(&channel_id) {
+                if let Ok(sender) = channel_instance.sender.lock() {
+                    if let Err(_) = sender.send(value) {
+                        if debug_enabled() {
+                            eprintln!("DEBUG: Failed to send value to channel - channel might be closed");
+                        }
+                    }
+                }
+            } else {
+                if debug_enabled() {
+                    eprintln!("DEBUG: Channel not found for ID {}", channel_id);
+                }
+            }
+        }
+    }
+}
+
+/// Receive a value from a channel
+#[no_mangle]
+pub extern "C" fn qi_runtime_channel_receive(channel: *mut c_void) -> *mut c_void {
+    ensure_runtime_initialized();
+    if debug_enabled() {
+        eprintln!("DEBUG: channel_receive called with channel {:?}", channel);
+    }
+
+    let channel_id = channel as u64;
+
+    if let Some(registry) = CHANNEL_REGISTRY.get() {
+        if let Ok(registry_guard) = registry.lock() {
+            if let Some(channel_instance) = registry_guard.get(&channel_id) {
+                if let Ok(receiver) = channel_instance.receiver.lock() {
+                    match receiver.recv() {
+                        Ok(value) => {
+                            if debug_enabled() {
+                                eprintln!("DEBUG: Received value {:?} from channel", value);
+                            }
+                            return value;
+                        }
+                        Err(_) => {
+                            if debug_enabled() {
+                                eprintln!("DEBUG: Failed to receive value from channel - channel might be closed");
+                            }
+                        }
+                    }
+                }
+            } else {
+                if debug_enabled() {
+                    eprintln!("DEBUG: Channel not found for ID {}", channel_id);
+                }
+            }
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// Select statement implementation
+#[no_mangle]
+pub extern "C" fn qi_runtime_select(select_cases: *mut c_void) -> *mut c_void {
+    ensure_runtime_initialized();
+    if debug_enabled() {
+        eprintln!("DEBUG: select called with cases {:?}", select_cases);
+    }
+
+    // For now, implement a simple blocking select
+    // In a real implementation, this would use a more sophisticated mechanism
+    std::ptr::null_mut()
+}
+
 /// Platform-specific I/O event loop interface
 pub trait IoEventLoop {
     /// Initialize the event loop

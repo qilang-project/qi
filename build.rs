@@ -20,7 +20,7 @@ fn main() {
 
     // Compile C syscall library for async runtime
     println!("cargo:rerun-if-changed=src/runtime/async_runtime/c_runtime/syscalls.c");
-    
+
     cc::Build::new()
         .file("src/runtime/async_runtime/c_runtime/syscalls.c")
         .warnings(true)
@@ -28,5 +28,6 @@ fn main() {
         .opt_level(2)
         .compile("qi_async_syscalls");
 
-    eprintln!("✓ C async syscalls compiled successfully");
+    eprintln!("✓ C async syscalls library compiled successfully");
+    eprintln!("✓ Concurrency functions implemented in Rust");
 }

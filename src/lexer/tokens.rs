@@ -83,6 +83,27 @@ pub enum TokenKind {
     公开,      // public
     私有,      // private
 
+    // Concurrency keywords - 并发关键字
+    启动,      // go/spawn
+    协程,      // coroutine/goroutine
+    通道,      // channel
+    选择,      // select
+    情况,      // case (for select statements)
+    并发,      // concurrent/parallel
+
+    // Synchronization keywords - 同步关键字
+    等待组,    // waitgroup
+    互斥锁,    // mutex
+    读写锁,    // rwmutex
+    条件变量,  // condvar
+    仅一次,    // once
+
+    // Timeout and error handling keywords - 超时和错误处理关键字
+    尝试,      // try
+    捕获,      // catch
+    重试,      // retry
+    超时,      // timeout
+
     // Boolean literal constants
     真,                 // true
     假,                 // false

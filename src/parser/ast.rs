@@ -42,6 +42,7 @@ pub enum AstNode {
     二元操作表达式(BinaryExpression),
     函数调用表达式(FunctionCallExpression),
     等待表达式(AwaitExpression),
+    协程启动表达式(GoroutineSpawnExpression),
     赋值表达式(AssignmentExpression),
     数组访问表达式(ArrayAccessExpression),
     数组字面量表达式(ArrayLiteralExpression),
@@ -49,6 +50,10 @@ pub enum AstNode {
     结构体实例化表达式(StructLiteralExpression),
     字段访问表达式(FieldAccessExpression),
     方法调用表达式(MethodCallExpression),
+    通道创建表达式(ChannelCreateExpression),
+    通道发送表达式(ChannelSendExpression),
+    通道接收表达式(ChannelReceiveExpression),
+    选择表达式(SelectExpression),
 }
 
 /// Program node
@@ -242,6 +247,7 @@ pub enum TypeNode {
     字典类型(DictionaryType),
     列表类型(ListType),
     集合类型(SetType),
+    通道类型(ChannelType),
     指针类型(PointerType),
     引用类型(ReferenceType),
     自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
@@ -430,6 +436,12 @@ pub struct SetType {
     pub element_type: Box<TypeNode>,
 }
 
+/// Channel type
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelType {
+    pub element_type: Box<TypeNode>,
+}
+
 /// Pointer type
 #[derive(Debug, Clone, PartialEq)]
 pub struct PointerType {
@@ -441,4 +453,63 @@ pub struct PointerType {
 pub struct ReferenceType {
     pub target_type: Box<TypeNode>,
     pub is_mutable: bool, // true for 可变引用, false for 引用
+}
+
+// ===== 并发语法节点 | Concurrency Syntax Nodes =====
+
+/// Goroutine spawn expression (e.g., 启动 function();)
+#[derive(Debug, Clone)]
+pub struct GoroutineSpawnExpression {
+    pub expression: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Channel create expression (e.g., 通道<类型>())
+#[derive(Debug, Clone)]
+pub struct ChannelCreateExpression {
+    pub element_type: TypeNode,
+    pub capacity: Option<Box<AstNode>>, // Optional buffer capacity
+    pub span: Span,
+}
+
+/// Channel send expression (e.g., channel <- value)
+#[derive(Debug, Clone)]
+pub struct ChannelSendExpression {
+    pub channel: Box<AstNode>,
+    pub value: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Channel receive expression (e.g., <-channel)
+#[derive(Debug, Clone)]
+pub struct ChannelReceiveExpression {
+    pub channel: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Select expression (e.g., 选择 { case <-channel: ... })
+#[derive(Debug, Clone)]
+pub struct SelectExpression {
+    pub cases: Vec<SelectCase>,
+    pub default_case: Option<SelectCase>,
+    pub span: Span,
+}
+
+/// Select case (branch in select statement)
+#[derive(Debug, Clone)]
+pub struct SelectCase {
+    pub kind: SelectCaseKind,
+    pub body: Vec<AstNode>,
+    pub span: Span,
+}
+
+/// Select case kinds
+#[derive(Debug, Clone)]
+pub enum SelectCaseKind {
+    /// Channel receive case: case <-channel:
+    通道接收 { channel: Box<AstNode>, variable: Option<String> },
+    /// Channel send case: case channel <- value:
+    通道发送 { channel: Box<AstNode>, value: Box<AstNode> },
+    /// Default case: 默认:
+    默认,
 }
