@@ -91,6 +91,10 @@ impl KeywordTable {
         keywords.insert("超时".to_string(), TokenKind::超时);
         keywords.insert("否则".to_string(), TokenKind::否则);
 
+        // Control flow keywords - 控制流关键字
+        keywords.insert("跳出".to_string(), TokenKind::跳出);
+        keywords.insert("继续".to_string(), TokenKind::继续);
+
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);
         keywords.insert("print".to_string(), TokenKind::标识符);

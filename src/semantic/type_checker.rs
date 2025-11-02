@@ -85,6 +85,8 @@ impl TypeChecker {
             AstNode::当语句(while_stmt) => self.check_while_statement(while_stmt),
             AstNode::对于语句(for_stmt) => self.check_for_statement(for_stmt),
             AstNode::返回语句(return_stmt) => self.check_return_statement(return_stmt),
+            AstNode::跳出语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::继续语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
             AstNode::表达式语句(expr_stmt) => self.check_expression_statement(expr_stmt),
             AstNode::程序(program) => self.check_program(program),
             AstNode::结构体声明(struct_decl) => self.check_struct_declaration(struct_decl),

@@ -75,6 +75,8 @@ Statement: AstNode = {
     AsyncFunctionDeclaration,
     TypeDeclaration,
     ReturnStatement,
+    BreakStatement,
+    ContinueStatement,
     IfStatement,
     WhileStatement,
     ForStatement,
@@ -463,6 +465,24 @@ ReturnStatement: AstNode = {
     }),
     "返回" "；" => AstNode::返回语句(ReturnStatement {
         value: None,
+        span: Default::default(),
+    }),
+};
+
+BreakStatement: AstNode = {
+    "跳出" ";" => AstNode::跳出语句(BreakStatement {
+        span: Default::default(),
+    }),
+    "跳出" "；" => AstNode::跳出语句(BreakStatement {
+        span: Default::default(),
+    }),
+};
+
+ContinueStatement: AstNode = {
+    "继续" ";" => AstNode::继续语句(ContinueStatement {
+        span: Default::default(),
+    }),
+    "继续" "；" => AstNode::继续语句(ContinueStatement {
         span: Default::default(),
     }),
 };

@@ -33,6 +33,8 @@ pub enum AstNode {
     当语句(WhileStatement),
     对于语句(ForStatement),
     返回语句(ReturnStatement),
+    跳出语句(BreakStatement),
+    继续语句(ContinueStatement),
     表达式语句(ExpressionStatement),
     块语句(BlockStatement),
 
@@ -159,6 +161,18 @@ pub struct ForStatement {
 #[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub value: Option<Box<AstNode>>,
+    pub span: Span,
+}
+
+/// Break statement
+#[derive(Debug, Clone)]
+pub struct BreakStatement {
+    pub span: Span,
+}
+
+/// Continue statement
+#[derive(Debug, Clone)]
+pub struct ContinueStatement {
     pub span: Span,
 }
 

@@ -70,6 +70,12 @@ pub enum IrInstruction {
         value: i64,
     },
 
+    /// Boolean constant
+    布尔常量 {
+        dest: String,
+        value: i8,  // Use i8 to represent 0 or 1
+    },
+
     /// Float constant
     浮点数常量 {
         dest: String,
@@ -195,6 +201,8 @@ pub struct IrBuilder {
     async_function_types: std::collections::HashMap<String, String>,
     /// Track all function return types (including sync functions)
     function_return_types: std::collections::HashMap<String, String>,
+    /// Track defined function parameter types (name -> params)
+    function_param_types: std::collections::HashMap<String, Vec<String>>,
     /// Track if we're currently inside an async function
     in_async_context: bool,
     /// Track defined functions in current module
@@ -211,6 +219,10 @@ pub struct IrBuilder {
     import_aliases: std::collections::HashMap<String, String>,
     /// Track current module/package name
     current_package_name: Option<String>,
+    /// Track loop labels for break/continue (continue_label, break_label)
+    loop_stack: Vec<(String, String)>,
+    /// Wrapper functions for goroutine spawn (generated at the end)
+    goroutine_wrappers: Vec<String>,
 }
 
 impl IrBuilder {
@@ -222,6 +234,7 @@ impl IrBuilder {
             variable_types: std::collections::HashMap::new(),
             async_function_types: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            function_param_types: std::collections::HashMap::new(),
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
             external_functions: std::collections::HashMap::new(),
@@ -230,6 +243,8 @@ impl IrBuilder {
             variable_struct_types: std::collections::HashMap::new(),
             import_aliases: std::collections::HashMap::new(),
             current_package_name: None,
+            loop_stack: Vec::new(),
+            goroutine_wrappers: Vec::new(),
         }
     }
 
@@ -242,8 +257,68 @@ impl IrBuilder {
         // Note: We don't clear defined_functions and external_functions here
         // so they can be set before calling build()
 
+        // First pass: collect all function signatures
+        self.collect_function_signatures(ast)?;
+
+        // Second pass: generate code
         self.build_node(ast)?;
         self.emit_llvm_ir()
+    }
+
+    /// First pass: collect function signatures (parameter types and return types)
+    /// This allows goroutine spawns to know the correct types even if the function
+    /// is defined later in the source file
+    fn collect_function_signatures(&mut self, node: &AstNode) -> Result<(), String> {
+        match node {
+            AstNode::程序(program) => {
+                // Process all statements to find function declarations
+                for stmt in &program.statements {
+                    self.collect_function_signatures(stmt)?;
+                }
+            }
+            AstNode::函数声明(func_decl) => {
+                // Mangle function name
+                let func_name: String = match func_decl.name.as_str() {
+                    "入口" => "main".to_string(),
+                    name => {
+                        if name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(name)
+                        } else {
+                            name.to_string()
+                        }
+                    }
+                };
+
+                // Collect parameter types
+                let param_types: Vec<String> = func_decl.parameters
+                    .iter()
+                    .map(|p| self.get_llvm_type(&p.type_annotation))
+                    .collect();
+
+                // Determine return type
+                let return_type = if func_decl.name == "入口" || func_name == "main" {
+                    "i32".to_string()
+                } else if let Some(_) = func_decl.return_type {
+                    self.get_return_type(&func_decl.return_type)
+                } else {
+                    // For now, default to void if no return type specified
+                    "void".to_string()
+                };
+
+                // Store in function_param_types and function_return_types
+                self.function_param_types.insert(func_name.clone(), param_types);
+                self.function_return_types.insert(func_name.clone(), return_type);
+
+                eprintln!("[DEBUG] Collected signature for {}: {:?} -> {:?}",
+                    func_name,
+                    self.function_param_types.get(&func_name),
+                    self.function_return_types.get(&func_name));
+            }
+            _ => {
+                // Ignore other node types in signature collection pass
+            }
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -618,25 +693,34 @@ impl IrBuilder {
                                           runtime_func.contains("int_to_string") ||
                                           runtime_func.contains("float_to_string") ||
                                           runtime_func.contains("string") ||
-                                          runtime_func == "qi_string_concat" {
+                                          runtime_func == "qi_runtime_string_concat" {
                                     "ptr"
                                 } else if runtime_func.contains("math_abs_int") || runtime_func.contains("float_to_int") ||
-                                          runtime_func.contains("string_to_int") || runtime_func.contains("array_length") {
-                                    "i64"
+                                          runtime_func.contains("string_to_int") || runtime_func.contains("array_length") ||
+                                          runtime_func.contains("get_time_ms") || runtime_func.contains("file_open") ||
+                                          runtime_func.contains("file_read") || runtime_func.contains("file_write") ||
+                                          runtime_func.contains("tcp_connect") {
+                                    "i64"  // Functions that return i64
                                 } else if runtime_func.contains("waitgroup_create") ||
                                           runtime_func.contains("mutex_create") ||
-                                          runtime_func.contains("rwlock_create") {
-                                    "ptr"  // Synchronization primitives return pointers
-                                } else if runtime_func.contains("timer_create") {
-                                    "ptr"  // Timer returns pointer
-                                } else if runtime_func.contains("set_timeout") ||
-                                          runtime_func.contains("timeout") ||
-                                          runtime_func.contains("retry") ||
-                                          runtime_func.contains("catch_error") {
-                                    "i32"  // Timeout and error operations return status codes
+                                          runtime_func.contains("rwlock_create") ||
+                                          runtime_func.contains("timer_create") ||
+                                          runtime_func.contains("create_channel") ||
+                                          runtime_func.contains("create_task") {
+                                    "ptr"  // Synchronization primitives and async constructs return pointers
+                                } else if runtime_func == "qi_runtime_set_timeout" || runtime_func == "qi_runtime_timer_expired" ||
+                                          runtime_func == "qi_runtime_timer_stop" {
+                                    "i64"  // Timer status functions return i64
+                                } else if runtime_func.contains("trylock") || runtime_func.contains("timeout") ||
+                                          runtime_func.contains("retry") || runtime_func.contains("catch_error") ||
+                                          runtime_func.contains("mutex") || runtime_func.contains("waitgroup") ||
+                                          runtime_func.contains("channel") {
+                                    "i32"  // Most synchronization and status functions return i32 status codes
                                 } else {
-                                    "i64"
+                                    "i32"  // Default to i32 for unknown runtime functions (most return status codes)
                                 }
+                            } else if let Some(ret_type) = self.function_return_types.get(&self.mangle_function_name(&function_name) as &str) {
+                                ret_type  // Use stored return type from function signature
                             } else {
                                 "i64"
                             };
@@ -723,6 +807,11 @@ impl IrBuilder {
 
                 let is_main = func_decl.name == "入口" || func_name == "main";
 
+                // Clear variable types for this new function scope
+                // (but keep function_param_types, function_return_types, etc.)
+                self.variable_types.clear();
+                self.variable_struct_types.clear();
+
                 // Build parameter list with mangled names for Chinese identifiers
                 let params: Vec<String> = func_decl.parameters
                     .iter()
@@ -747,7 +836,8 @@ impl IrBuilder {
                     let type_str = self.get_llvm_type(&param.type_annotation);
                     // Store with a special prefix to indicate this is a parameter (direct value)
                     self.variable_types.insert(format!("param_{}", param_name), type_str.clone());
-                    self.variable_types.insert(param_name, type_str);
+                    self.variable_types.insert(param_name.clone(), type_str.clone());
+                    eprintln!("[DEBUG] Function {} parameter: {} -> type {}", func_name, param_name, type_str);
                 }
 
 
@@ -767,9 +857,16 @@ impl IrBuilder {
                     self.infer_return_type_from_body(&func_decl.body).unwrap_or_else(|| "void".to_string())
                 };
 
+                // Record the function's parameter types for later function calls
+                let param_types: Vec<String> = func_decl.parameters
+                    .iter()
+                    .map(|p| self.get_llvm_type(&p.type_annotation))
+                    .collect();
+                self.function_param_types.insert(func_name.clone(), param_types);
+
                 // Record the function's return type for later function calls
                 self.function_return_types.insert(func_name.clone(), return_type.clone());
-                
+
                 // Record this function as defined in current module
                 self.defined_functions.insert(func_name.clone());
 
@@ -890,7 +987,7 @@ impl IrBuilder {
                     "void".to_string()
                 };
                 self.async_function_types.insert(func_name.clone(), return_type_str);
-                
+
                 // Record this function as defined in current module
                 self.defined_functions.insert(func_name.clone());
 
@@ -977,6 +1074,24 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::返回 { value });
                 Ok("ret".to_string())
             }
+            AstNode::跳出语句(_) => {
+                // Break: jump to the end label of the innermost loop
+                if let Some((_, end_label)) = self.loop_stack.last() {
+                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    Ok("break".to_string())
+                } else {
+                    Err("跳出语句必须在循环内使用".to_string())
+                }
+            }
+            AstNode::继续语句(_) => {
+                // Continue: jump to the start label of the innermost loop
+                if let Some((start_label, _)) = self.loop_stack.last() {
+                    self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                    Ok("continue".to_string())
+                } else {
+                    Err("继续语句必须在循环内使用".to_string())
+                }
+            }
             AstNode::表达式语句(expr_stmt) => {
                 self.build_node(&expr_stmt.expression)
             }
@@ -1036,6 +1151,9 @@ impl IrBuilder {
                 let body_label = self.generate_label();
                 let end_label = self.generate_label();
 
+                // Push loop labels onto stack for break/continue
+                self.loop_stack.push((start_label.clone(), end_label.clone()));
+
                 // Jump to start label (condition check)
                 self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
 
@@ -1066,6 +1184,9 @@ impl IrBuilder {
 
                 // End label
                 self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+
+                // Pop loop labels from stack
+                self.loop_stack.pop();
 
                 Ok("while".to_string())
             }
@@ -1255,7 +1376,19 @@ impl IrBuilder {
                             Ok(format!("{}.0", s))
                         }
                     },
-                    crate::parser::ast::LiteralValue::布尔(b) => Ok(if *b { "1".to_string() } else { "0".to_string() }),
+                    crate::parser::ast::LiteralValue::布尔(b) => {
+                        // Generate a temporary variable and boolean constant instruction
+                        let temp_val = self.generate_temp();
+                        let bool_value = if *b { 1 } else { 0 };
+                        self.add_instruction(IrInstruction::布尔常量 {
+                            dest: temp_val.clone(),
+                            value: bool_value as i8,
+                        });
+                        // Track the temporary variable type
+                        let temp_var_name = temp_val.trim_start_matches('%');
+                        self.variable_types.insert(temp_var_name.to_string(), "i1".to_string());
+                        Ok(temp_val)
+                    },
                     crate::parser::ast::LiteralValue::字符串(s) => {
                         // Create a global string constant matching clang's format
                         let escaped_str = self.escape_string(s);
@@ -1355,34 +1488,51 @@ impl IrBuilder {
 
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: Some(temp.clone()),
-                            callee: "qi_string_concat".to_string(),
+                            callee: "qi_runtime_string_concat".to_string(),
                             arguments: vec![left_str, right_str],
                         });
                         return Ok(temp);
                     }
                 }
 
-                // Determine the result type of the binary operation
+                // Determine the operand type and result type of the binary operation
                 // Check if either operand is a float type (either literal or variable)
                 let is_float_op = left.contains('.') || right.contains('.') ||
                                   self.is_float_operand(&left) || self.is_float_operand(&right);
-                let result_type = if is_float_op {
-                    "double"
+
+                // Determine the operand type for the operation
+                let operand_type = if is_float_op {
+                    "double".to_string()
                 } else {
-                    "i64"
+                    // Check if left operand has a specific type (i32, i64, etc.)
+                    let left_type = if left.starts_with('%') {
+                        self.variable_types.get(left.trim_start_matches('%'))
+                            .map(|s| s.as_str()).unwrap_or("i64")
+                    } else {
+                        "i64"
+                    };
+                    left_type.to_string()
+                };
+
+                // For comparison operators, result is i1 (boolean), otherwise same as operand type
+                let result_type = match binary_expr.operator {
+                    BinaryOperator::等于 | BinaryOperator::不等于 |
+                    BinaryOperator::大于 | BinaryOperator::小于 |
+                    BinaryOperator::大于等于 | BinaryOperator::小于等于 => "i1".to_string(),
+                    _ => operand_type.clone(),
                 };
 
                 let temp = self.generate_temp();
-                
+
                 // Record the type of this temporary variable
-                self.variable_types.insert(temp.trim_start_matches('%').to_string(), result_type.to_string());
-                
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), result_type.clone());
+
                 self.add_instruction(IrInstruction::二元操作 {
                     dest: temp.clone(),
                     left,
                     operator: binary_expr.operator,
                     right,
-                    operand_type: result_type.to_string(),
+                    operand_type: operand_type,
                 });
                 Ok(temp)
             }
@@ -1455,7 +1605,7 @@ impl IrBuilder {
                                     crate::parser::ast::LiteralValue::字符串(_) => "string",
                                     crate::parser::ast::LiteralValue::整数(_) => "integer",
                                     crate::parser::ast::LiteralValue::浮点数(_) => "float",
-                                    crate::parser::ast::LiteralValue::布尔(_) => "integer",
+                                    crate::parser::ast::LiteralValue::布尔(_) => "boolean",
                                     crate::parser::ast::LiteralValue::字符(_) => "integer",
                                 }
                             }
@@ -1464,6 +1614,7 @@ impl IrBuilder {
                                 match self.variable_types.get(&ident.name) {
                                     Some(vtype) if vtype == "double" => "float",
                                     Some(vtype) if vtype == "ptr" => "string",
+                                    Some(vtype) if vtype == "i1" => "boolean",
                                     _ => "integer", // Default to integer
                                 }
                             }
@@ -1477,6 +1628,7 @@ impl IrBuilder {
                         Some(match expr_type {
                             "string" => if is_println { "qi_runtime_println" } else { "qi_runtime_print" },
                             "float" => if is_println { "qi_runtime_println_float" } else { "qi_runtime_print_float" },
+                            "boolean" => if is_println { "qi_runtime_println_bool" } else { "qi_runtime_print_bool" },
                             _ => if is_println { "qi_runtime_println_int" } else { "qi_runtime_print_int" },
                         }.to_string())
                     } else {
@@ -1513,32 +1665,52 @@ impl IrBuilder {
                     }
                 };
 
-                // Special handling: 打印 or 打印行 with two arguments -> map to printf with proper format
-                if (function_name == "打印" || function_name == "打印行") && arg_temps.len() == 2 {
-                    // Infer type of second argument
-                    let second = &arg_temps[1];
-                    let second_ty = if second.starts_with('%') {
-                        let var_name = second.trim_start_matches('%');
-                        self.variable_types.get(var_name)
-                            .cloned()
-                            .unwrap_or_else(|| "i64".to_string())
-                    } else if second.starts_with('@') {
-                        "ptr".to_string()
-                    } else if second.contains('.') {
-                        "double".to_string()
-                    } else {
-                        "i64".to_string()
-                    };
-
-                    // Choose printf format based on type and whether to add newline
+                // Special handling: 打印 or 打印行 with multiple arguments -> map to printf with proper format
+                if (function_name == "打印" || function_name == "打印行") && arg_temps.len() >= 2 {
                     let is_println = function_name == "打印行";
-                    let (fmt_spec, fmt_len) = if second_ty == "double" {
-                        if is_println { ("%s %f\\0A", 6) } else { ("%s %f", 5) }
-                    } else if second_ty == "ptr" {
-                        if is_println { ("%s %s\\0A", 6) } else { ("%s %s", 5) }
-                    } else {
-                        if is_println { ("%s %lld\\0A", 8) } else { ("%s %lld", 7) }
-                    };
+                    let mut fmt_parts = Vec::new();
+
+                    // Build format string based on argument types
+                    for (i, arg) in arg_temps.iter().enumerate() {
+                        if i > 0 {
+                            fmt_parts.push(" ".to_string());
+                        }
+
+                        // Infer type of each argument
+                        let arg_ty = if arg.starts_with('%') {
+                            let var_name = arg.trim_start_matches('%');
+                            self.variable_types.get(var_name)
+                                .cloned()
+                                .unwrap_or_else(|| "i64".to_string())
+                        } else if arg.starts_with('@') {
+                            "ptr".to_string()
+                        } else if arg.contains('.') {
+                            "double".to_string()
+                        } else {
+                            "i64".to_string()
+                        };
+
+                        // Add appropriate format specifier
+                        let fmt = if arg_ty == "double" {
+                            "%f"
+                        } else if arg_ty == "ptr" {
+                            "%s"
+                        } else {
+                            "%lld"
+                        };
+                        fmt_parts.push(fmt.to_string());
+                    }
+
+                    // Join all format parts and add newline if needed
+                    let mut fmt_spec = fmt_parts.join("");
+                    if is_println {
+                        fmt_spec.push_str("\\0A");
+                    }
+
+                    // Calculate actual byte length:
+                    // Each \XX escape sequence (like \0A) is 3 chars in source but 1 byte in binary
+                    let escape_count = fmt_spec.matches("\\0A").count();
+                    let actual_len = fmt_spec.len() - (escape_count * 2); // Each escape saves 2 chars (3 chars -> 1 byte)
 
                     // Create a global format string constant
                     let fmt_name = format!("@.fmt{}", self.temp_counter);
@@ -1547,7 +1719,7 @@ impl IrBuilder {
                         name: format!(
                             "{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1",
                             fmt_name,
-                            fmt_len + 1,
+                            actual_len + 1,  // +1 for null terminator
                             fmt_spec
                         ),
                     });
@@ -1555,8 +1727,7 @@ impl IrBuilder {
                     // Prepend format string to arguments and switch callee to printf
                     let mut new_args = Vec::new();
                     new_args.push(fmt_name);
-                    new_args.push(arg_temps[0].clone());
-                    new_args.push(arg_temps[1].clone());
+                    new_args.extend(arg_temps);
                     arg_temps = new_args;
                     mapped_callee = "printf".to_string();
                 }
@@ -1566,10 +1737,10 @@ impl IrBuilder {
                 let is_async_function = self.async_function_types.contains_key(&mapped_callee);
 
                 // Check if this is an external function (called but not defined in current module)
-                if !mapped_callee.starts_with("qi_runtime_") && 
+                if !mapped_callee.starts_with("qi_runtime_") &&
                    mapped_callee != "printf" &&
                    !self.defined_functions.contains(&mapped_callee) &&
-                   !self.external_functions.contains_key(&mapped_callee) {
+                   !self.external_functions.contains_key(&mapped_callee as &str) {
                     // This is an external function - record its signature
                     // Determine parameter types from arguments
                     let param_types: Vec<String> = arg_temps.iter().map(|arg| {
@@ -1644,6 +1815,42 @@ impl IrBuilder {
                         true
                     };
 
+                    // For printf, resolve argument types NOW while we have access to variable_types
+                    // Store them as "type:value" so they persist when emitting IR later
+                    let typed_args = if mapped_callee == "printf" {
+                        arg_temps.iter().enumerate().map(|(i, arg)| {
+                            if i == 0 {
+                                // Format string - always ptr
+                                format!("ptr:{}", arg)
+                            } else if arg.starts_with('@') {
+                                // String constant
+                                format!("ptr:{}", arg)
+                            } else if arg.starts_with('%') {
+                                // Variable - look up its type NOW
+                                let var_name = arg.trim_start_matches('%');
+                                let vty = self.variable_types.get(var_name)
+                                    .or_else(|| self.variable_types.get(&format!("param_{}", var_name)))
+                                    .map(|s| s.as_str())
+                                    .unwrap_or_else(|| {
+                                        eprintln!("[WARN] Printf arg {} type not found during instruction creation, defaulting to i64", var_name);
+                                        "i64"
+                                    });
+                                format!("{}:{}", vty, arg)
+                            } else {
+                                // Literal value
+                                if arg.parse::<i64>().is_ok() {
+                                    format!("i64:{}", arg)
+                                } else if arg.parse::<f64>().is_ok() {
+                                    format!("double:{}", arg)
+                                } else {
+                                    format!("i64:{}", arg)
+                                }
+                            }
+                        }).collect()
+                    } else {
+                        arg_temps
+                    };
+
                     if has_return_value {
                         // Record the return type of this function call for later use
                         let return_type = if mapped_callee.starts_with("qi_runtime_") {
@@ -1656,13 +1863,23 @@ impl IrBuilder {
                             } else if mapped_callee.contains("sqrt") || mapped_callee.contains("abs") ||
                                       mapped_callee.contains("math") || mapped_callee.contains("float") {
                                 "double"
+                            } else if mapped_callee.contains("get_time_ms") || mapped_callee.contains("array_length") ||
+                                      mapped_callee.contains("file_open") || mapped_callee.contains("file_read") ||
+                                      mapped_callee.contains("file_write") || mapped_callee.contains("tcp_connect") ||
+                                      mapped_callee.contains("string_to_int") || mapped_callee.contains("float_to_int") ||
+                                      mapped_callee.contains("create_channel") || mapped_callee.contains("create_task") ||
+                                      mapped_callee.contains("create_timer") {
+                                "i64"  // Functions that explicitly return i64 or pointers treated as i64
+                            } else if mapped_callee == "qi_runtime_set_timeout" || mapped_callee == "qi_runtime_timer_expired" ||
+                                      mapped_callee == "qi_runtime_timer_stop" {
+                                "i64"  // Timer status functions return i64
                             } else {
-                                "i64"
+                                "i32"  // Most runtime functions return i32 status codes
                             }
-                        } else if mapped_callee == "qi_string_concat" {
+                        } else if mapped_callee == "qi_runtime_string_concat" {
                             "ptr"
                         } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
-                            ret_type.as_str()
+                            ret_type
                         } else {
                             "i64"
                         };
@@ -1671,7 +1888,7 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: Some(temp.clone()),
                             callee: mapped_callee,
-                            arguments: arg_temps,
+                            arguments: typed_args.clone(),
                         });
 
                         Ok(temp)
@@ -1680,7 +1897,7 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: None,
                             callee: mapped_callee,
-                            arguments: arg_temps,
+                            arguments: typed_args,
                         });
 
                         Ok(String::new()) // Return empty string since there's no result
@@ -1769,6 +1986,11 @@ impl IrBuilder {
                     })
                     .cloned();
 
+                eprintln!("[DEBUG] Identifier: {} (mangled: {}), type: {:?}, is_param: {}", 
+                         ident.name, bare_mangled, var_type,
+                         self.variable_types.contains_key(&format!("param_{}", ident.name)) ||
+                         self.variable_types.contains_key(&format!("param_{}", bare_mangled)));
+
                 if let Some(vtype) = var_type.clone() {
                     self.variable_types.insert(temp.trim_start_matches('%').to_string(), vtype);
                 }
@@ -1780,21 +2002,29 @@ impl IrBuilder {
 
                 // Check if this is a parameter (direct value, not a pointer)
                 // Need to check both original name and mangled name
-                let is_param = self.variable_types.contains_key(&format!("param_{}", ident.name)) ||
-                               self.variable_types.contains_key(&format!("param_{}", bare_mangled));
-                
+                let param_key1 = format!("param_{}", ident.name);
+                let param_key2 = format!("param_{}", bare_mangled);
+                let has_param_key1 = self.variable_types.contains_key(&param_key1);
+                let has_param_key2 = self.variable_types.contains_key(&param_key2);
+                let is_param = has_param_key1 || has_param_key2;
+
+                eprintln!("[DEBUG] Identifier {} check: param_key1='{}' ({}), param_key2='{}' ({}), is_param={}",
+                         ident.name, param_key1, has_param_key1, param_key2, has_param_key2, is_param);
+
                 if is_param {
                     // This is a parameter - use it directly without load
                     // Return the parameter name instead of generating a temp
+                    eprintln!("[DEBUG] Using parameter directly: {}", var_name);
                     Ok(var_name)
                 } else {
                     // This is a regular variable or unknown identifier - load it
                     // Even if var_type is None, we'll try to load it
                     // (it might be an error, but let LLVM catch it)
+                    eprintln!("[DEBUG] Loading variable: {}", var_name);
                     self.add_instruction(IrInstruction::加载 {
                         dest: temp.clone(),
                         source: var_name,
-                        load_type: None,
+                        load_type: var_type,
                     });
                     Ok(temp)
                 }
@@ -2381,13 +2611,46 @@ impl IrBuilder {
                         // Build arguments
                         let mut arg_temps = Vec::new();
                         for arg in &call_expr.arguments {
-                            arg_temps.push(self.build_node(arg)?);
+                            let arg_result = self.build_node(arg)?;
+                            eprintln!("[DEBUG] Goroutine argument built: {:?} -> {}", arg, arg_result);
+                            arg_temps.push(arg_result);
                         }
 
+                        // Resolve argument types NOW while we have access to variable_types
+                        // Look up the target function's parameter types
+                        let typed_args: Vec<String> = if let Some(param_types) = self.function_param_types.get(&mangled_name) {
+                            eprintln!("[DEBUG] Found param types for {}: {:?}", mangled_name, param_types);
+                            arg_temps.iter().zip(param_types.iter()).map(|(arg, expected_type)| {
+                                let arg_type = if arg.starts_with('%') {
+                                    let var_name = arg.trim_start_matches('%');
+                                    let resolved_type = self.variable_types.get(var_name)
+                                        .or_else(|| self.variable_types.get(&format!("param_{}", var_name)))
+                                        .map(|s| s.as_str())
+                                        .unwrap_or(expected_type.as_str());
+                                    eprintln!("[DEBUG] Resolving arg {} (var {}): resolved as {}", arg, var_name, resolved_type);
+                                    resolved_type
+                                } else if arg.starts_with('@') {
+                                    "ptr"
+                                } else if arg.parse::<i64>().is_ok() {
+                                    "i64"
+                                } else {
+                                    expected_type.as_str()
+                                };
+                                let typed = format!("{}:{}", arg_type, arg);
+                                eprintln!("[DEBUG] Typed arg: {}", typed);
+                                typed
+                            }).collect()
+                        } else {
+                            eprintln!("[DEBUG] No param types found for {}, using raw args", mangled_name);
+                            // No type info available, pass through as-is
+                            arg_temps
+                        };
+
                         // Generate goroutine spawn call
+                        eprintln!("[DEBUG] Spawning goroutine {} with {} arguments: {:?}", mangled_name, typed_args.len(), typed_args);
                         self.add_instruction(IrInstruction::协程启动 {
                             function: mangled_name,
-                            arguments: arg_temps,
+                            arguments: typed_args,
                         });
                     }
                     _ => {
@@ -2528,10 +2791,14 @@ impl IrBuilder {
                     }
                     crate::parser::ast::LiteralValue::布尔(b) => {
                         let temp_val = self.generate_temp();
-                        self.add_instruction(IrInstruction::整数常量 {
+                        let bool_value = if *b { 1 } else { 0 };
+                        self.add_instruction(IrInstruction::布尔常量 {
                             dest: temp_val.clone(),
-                            value: if *b { 1 } else { 0 },
+                            value: bool_value as i8,
                         });
+                        // Track the temporary variable type
+                        let temp_var_name = temp_val.trim_start_matches('%');
+                        self.variable_types.insert(temp_var_name.to_string(), "i1".to_string());
                         ("i1", temp_val)
                     }
                     crate::parser::ast::LiteralValue::字符(c) => {
@@ -2636,6 +2903,10 @@ impl IrBuilder {
                 // Channel creation returns a pointer (handle) to the channel
                 "ptr".to_string()
             }
+            Some(crate::parser::ast::TypeNode::数组类型(_)) => {
+                // Array types (e.g., 数组<整数>) are represented as pointers to array data
+                "ptr".to_string()
+            }
             _ => "i64".to_string(), // Default to i64
         }
     }
@@ -2727,11 +2998,11 @@ impl IrBuilder {
         // Timeout and error handling functions
         ir.push_str("; Timeout and error handling functions\n");
         ir.push_str("declare i64 @qi_runtime_get_time_ms()\n");
-        ir.push_str("declare i32 @qi_runtime_set_timeout(i64)\n");
+        ir.push_str("declare i64 @qi_runtime_set_timeout(i64)\n");
         ir.push_str("declare i32 @qi_runtime_check_timeout(i64)\n");
         ir.push_str("declare ptr @qi_runtime_timer_create(i64)\n");
-        ir.push_str("declare i32 @qi_runtime_timer_expired(ptr)\n");
-        ir.push_str("declare i32 @qi_runtime_timer_stop(ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_timer_expired(ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_timer_stop(ptr)\n");
         ir.push_str("\n");
 
         // Chinese function names (HEX encoded)
@@ -2761,9 +3032,10 @@ impl IrBuilder {
         ir.push_str("declare i32 @e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c(i32, i32, i32)\n"); // 重试操作
         ir.push_str("\n");
 
-        // Legacy function declarations (for backward compatibility)
-        ir.push_str("; Legacy function declarations\n");
+        // Goroutine spawn functions
+        ir.push_str("; Goroutine spawn functions\n");
         ir.push_str("declare void @qi_runtime_spawn_goroutine(ptr)\n");
+        ir.push_str("declare void @qi_runtime_spawn_goroutine_with_args(ptr, ptr)\n");
         ir.push_str("declare ptr @qi_runtime_select(ptr)\n");
         ir.push_str("declare void @qi_runtime_timer_cancel(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_retry(ptr, i32)\n");
@@ -2777,6 +3049,8 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_println_int(i64)\n");
         ir.push_str("declare i32 @qi_runtime_print_float(double)\n");
         ir.push_str("declare i32 @qi_runtime_println_float(double)\n");
+        ir.push_str("declare i32 @qi_runtime_print_bool(i1)\n");
+        ir.push_str("declare i32 @qi_runtime_println_bool(i1)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_int(ptr, i64)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_float(ptr, double)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_str(ptr, ptr)\n");
@@ -2833,7 +3107,7 @@ impl IrBuilder {
 
         // Add external function declarations (for backward compatibility)
         ir.push_str("declare i32 @printf(ptr, ...)\n");
-        ir.push_str("declare ptr @qi_string_concat(ptr, ptr)\n\n");
+        // qi_runtime_string_concat is already declared above in string operations section\n
 
         // Add external function declarations from imported modules
         // Only declare functions that haven't been declared above
@@ -2925,14 +3199,17 @@ impl IrBuilder {
                         "ptr".to_string()
                     } else if value.contains('.') {
                         "double".to_string()
-                    } else if value.parse::<i64>().is_ok() {
-                        "i64".to_string()
                     } else if value.starts_with('%') {
                         // Look up the type from variable_types HashMap
                         let var_name = value.trim_start_matches('%');
                         self.variable_types.get(var_name)
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| "i64".to_string())
+                    } else if value == "0" || value == "1" {
+                        // These could be boolean values - prefer i1 for boolean constants
+                        "i1".to_string()
+                    } else if value.parse::<i64>().is_ok() {
+                        "i64".to_string()
                     } else {
                         // Default to i64 for unknown values
                         "i64".to_string()
@@ -2941,6 +3218,10 @@ impl IrBuilder {
                 }
                 IrInstruction::整数常量 { dest, value } => {
                     ir.push_str(&format!("{} = add i64 0, {}\n", dest, value));
+                }
+                IrInstruction::布尔常量 { dest, value } => {
+                    // Standard boolean constant generation
+                    ir.push_str(&format!("{} = add i1 0, {}\n", dest, value));
                 }
                 IrInstruction::浮点数常量 { dest, value } => {
                     ir.push_str(&format!("{} = fadd double 0.0, {}\n", dest, value));
@@ -2973,37 +3254,37 @@ impl IrBuilder {
                 IrInstruction::二元操作 { dest, left, operator, right, operand_type } => {
                     // Use the operand_type that was determined when creating the instruction
                     let is_float = operand_type.contains("double") || operand_type.contains("float");
-                    let (op_str, _instr_operand_type, return_type) = if is_float {
+                    let (op_str, return_type) = if is_float {
                         match operator {
-                            crate::parser::ast::BinaryOperator::加 => ("fadd", "double", "double"),
-                            crate::parser::ast::BinaryOperator::减 => ("fsub", "double", "double"),
-                            crate::parser::ast::BinaryOperator::乘 => ("fmul", "double", "double"),
-                            crate::parser::ast::BinaryOperator::除 => ("fdiv", "double", "double"),
-                            crate::parser::ast::BinaryOperator::取余 => ("frem", "double", "double"),
-                            crate::parser::ast::BinaryOperator::等于 => ("fcmp oeq", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::不等于 => ("fcmp one", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::大于 => ("fcmp ogt", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::小于 => ("fcmp olt", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::大于等于 => ("fcmp oge", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::小于等于 => ("fcmp ole", "double", "i1"),
-                            crate::parser::ast::BinaryOperator::与 => ("and", "i1", "i1"),
-                            crate::parser::ast::BinaryOperator::或 => ("or", "i1", "i1"),
+                            crate::parser::ast::BinaryOperator::加 => ("fadd", "double"),
+                            crate::parser::ast::BinaryOperator::减 => ("fsub", "double"),
+                            crate::parser::ast::BinaryOperator::乘 => ("fmul", "double"),
+                            crate::parser::ast::BinaryOperator::除 => ("fdiv", "double"),
+                            crate::parser::ast::BinaryOperator::取余 => ("frem", "double"),
+                            crate::parser::ast::BinaryOperator::等于 => ("fcmp oeq", "i1"),
+                            crate::parser::ast::BinaryOperator::不等于 => ("fcmp one", "i1"),
+                            crate::parser::ast::BinaryOperator::大于 => ("fcmp ogt", "i1"),
+                            crate::parser::ast::BinaryOperator::小于 => ("fcmp olt", "i1"),
+                            crate::parser::ast::BinaryOperator::大于等于 => ("fcmp oge", "i1"),
+                            crate::parser::ast::BinaryOperator::小于等于 => ("fcmp ole", "i1"),
+                            crate::parser::ast::BinaryOperator::与 => ("and", "i1"),
+                            crate::parser::ast::BinaryOperator::或 => ("or", "i1"),
                         }
                     } else {
                         match operator {
-                            crate::parser::ast::BinaryOperator::加 => ("add", "i64", "i64"),
-                            crate::parser::ast::BinaryOperator::减 => ("sub", "i64", "i64"),
-                            crate::parser::ast::BinaryOperator::乘 => ("mul", "i64", "i64"),
-                            crate::parser::ast::BinaryOperator::除 => ("sdiv", "i64", "i64"),
-                            crate::parser::ast::BinaryOperator::取余 => ("srem", "i64", "i64"),
-                            crate::parser::ast::BinaryOperator::等于 => ("icmp eq", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::不等于 => ("icmp ne", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::大于 => ("icmp sgt", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::小于 => ("icmp slt", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::大于等于 => ("icmp sge", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::小于等于 => ("icmp sle", "i64", "i1"),
-                            crate::parser::ast::BinaryOperator::与 => ("and", "i1", "i1"),
-                            crate::parser::ast::BinaryOperator::或 => ("or", "i1", "i1"),
+                            crate::parser::ast::BinaryOperator::加 => ("add", operand_type.as_str()),
+                            crate::parser::ast::BinaryOperator::减 => ("sub", operand_type.as_str()),
+                            crate::parser::ast::BinaryOperator::乘 => ("mul", operand_type.as_str()),
+                            crate::parser::ast::BinaryOperator::除 => ("sdiv", operand_type.as_str()),
+                            crate::parser::ast::BinaryOperator::取余 => ("srem", operand_type.as_str()),
+                            crate::parser::ast::BinaryOperator::等于 => ("icmp eq", "i1"),
+                            crate::parser::ast::BinaryOperator::不等于 => ("icmp ne", "i1"),
+                            crate::parser::ast::BinaryOperator::大于 => ("icmp sgt", "i1"),
+                            crate::parser::ast::BinaryOperator::小于 => ("icmp slt", "i1"),
+                            crate::parser::ast::BinaryOperator::大于等于 => ("icmp sge", "i1"),
+                            crate::parser::ast::BinaryOperator::小于等于 => ("icmp sle", "i1"),
+                            crate::parser::ast::BinaryOperator::与 => ("and", "i1"),
+                            crate::parser::ast::BinaryOperator::或 => ("or", "i1"),
                         }
                     };
 
@@ -3027,10 +3308,10 @@ impl IrBuilder {
                     let normalized_left = normalize_operand(&left, is_float);
                     let normalized_right = normalize_operand(&right, is_float);
 
-                    // For comparison operations (icmp, fcmp), use _instr_operand_type
+                    // For comparison operations (icmp, fcmp), use the operand_type from the instruction
                     // For arithmetic operations, use return_type
                     let type_for_instruction = if op_str.starts_with("icmp") || op_str.starts_with("fcmp") {
-                        _instr_operand_type
+                        operand_type.as_str()
                     } else {
                         return_type
                     };
@@ -3039,10 +3320,29 @@ impl IrBuilder {
                 }
                 IrInstruction::函数调用 { dest, callee, arguments } => {
                     if callee == "printf" && !arguments.is_empty() {
-                        // Handle printf calls matching clang's format
+                        // Handle printf calls - arguments are now in "type:value" format
                         let mut processed_args = Vec::new();
 
                         for (i, arg) in arguments.iter().enumerate() {
+                            // Check if argument has "type:value" format (from new typed_args approach)
+                            if arg.contains(':') {
+                                let parts: Vec<&str> = arg.splitn(2, ':').collect();
+                                if parts.len() == 2 {
+                                    let arg_type = parts[0];
+                                    let arg_value = parts[1];
+
+                                    if i == 0 {
+                                        // Format string
+                                        processed_args.push(format!("ptr noundef {}", arg_value));
+                                    } else {
+                                        // Regular argument with embedded type
+                                        processed_args.push(format!("{} {}", arg_type, arg_value));
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            // Fall back to old logic for arguments without type prefix
                             if i == 0 {
                                 // First argument is always format string
                                 processed_args.push(format!("ptr noundef {}", arg));
@@ -3053,6 +3353,7 @@ impl IrBuilder {
                                 // Variable or temporary - determine type from tracking
                                 let var_name = arg.trim_start_matches('%');
                                 let vty = self.variable_types.get(var_name)
+                                    .or_else(|| self.variable_types.get(&format!("param_{}", var_name)))
                                     .map(|s| s.as_str())
                                     .unwrap_or("i64");
                                 let llvm_ty = match vty {
@@ -3085,65 +3386,220 @@ impl IrBuilder {
                     } else {
                         // Regular function call - determine argument types and return type
                         let mut typed_args = Vec::new();
-                        
-                        // Check if this is a math function that requires double arguments
-                        let needs_double_args = callee.contains("math_sqrt") || 
-                                               callee.contains("math_pow") ||
-                                               callee.contains("math_sin") ||
-                                               callee.contains("math_cos") ||
-                                               callee.contains("math_tan") ||
-                                               callee.contains("math_floor") ||
-                                               callee.contains("math_ceil") ||
-                                               callee.contains("math_round") ||
-                                               callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9"; // 求平方根
-                        
-                        for arg in arguments {
+
+                        // Get the expected parameter types from function signature if available
+                        let mangled_callee = self.mangle_function_name(&callee);
+                        let expected_param_types = if let Some(param_types) = self.function_param_types.get(&mangled_callee as &str) {
+                            Some(param_types.clone())
+                        } else if let Some((param_types, _)) = self.external_functions.get(&callee as &str) {
+                            Some(param_types.clone())
+                        } else {
+                            None
+                        };
+
+                        for (i, arg) in arguments.iter().enumerate() {
                             if arg.starts_with('@') {
                                 // String constant
                                 typed_args.push(format!("ptr {}", arg));
                             } else if arg.starts_with('%') {
                                 // Variable or temporary - look up in variable_types HashMap
                                 let arg_var_name = arg.trim_start_matches('%');
-                                let arg_type = self.variable_types.get(arg_var_name)
+                                let current_arg_type = self.variable_types.get(arg_var_name)
                                     .map(|s| s.as_str())
-                                    .unwrap_or_else(|| {
-                                        // Fallback: determine type based on specific function signatures
-                                        if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" {
-                                            "i64"
-                                        } else if callee == "qi_runtime_print_float" || callee == "qi_runtime_println_float" ||
-                                                  callee == "qi_runtime_float_to_string" {
-                                            "double"
-                                        } else if callee.contains("concat") || callee.contains("read_string") || callee.contains("file") {
-                                            "ptr"
-                                        } else {
-                                            "i64"
-                                        }
-                                    });
-                                
-                                // Convert i64 to double if needed for math functions
-                                if needs_double_args && arg_type == "i64" {
-                                    // Generate sitofp conversion instruction
-                                    let conv_temp = format!("%conv{}", arg_var_name);
-                                    ir.push_str(&format!("{} = sitofp i64 {} to double\n", conv_temp, arg));
-                                    typed_args.push(format!("double {}", conv_temp));
+                                    .unwrap_or("i64");
+
+                                // Determine expected type for this parameter
+                                let expected_type = if let Some(ref param_types) = expected_param_types {
+                                    if i < param_types.len() {
+                                        &param_types[i]
+                                    } else {
+                                        "i64" // Default to i64 if no expected type available
+                                    }
                                 } else {
-                                    typed_args.push(format!("{} {}", arg_type, arg));
+                                    // Fallback: determine type based on specific function signatures
+                                    if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" {
+                                        "i64"
+                                    } else if callee == "qi_runtime_print_float" || callee == "qi_runtime_println_float" ||
+                                              callee == "qi_runtime_float_to_string" {
+                                        "double"
+                                    } else if callee == "qi_runtime_print_bool" || callee == "qi_runtime_println_bool" {
+                                        "i1"
+                                    } else if callee.contains("concat") || callee.contains("read_string") || callee.contains("file") {
+                                        "ptr"
+                                    } else if callee == "qi_runtime_waitgroup_add" {
+                                        // waitgroup_add(ptr, i32)
+                                        if i == 0 { "ptr" } else { "i32" }
+                                    } else if callee == "qi_runtime_waitgroup_create" ||
+                                              callee == "qi_runtime_waitgroup_wait" ||
+                                              callee == "qi_runtime_waitgroup_done" ||
+                                              callee == "qi_runtime_mutex_create" ||
+                                              callee == "qi_runtime_mutex_lock" ||
+                                              callee == "qi_runtime_mutex_unlock" ||
+                                              callee == "qi_runtime_mutex_trylock" {
+                                        // All these take ptr as first parameter
+                                        "ptr"
+                                    } else if callee == "qi_runtime_channel_send" {
+                                        // channel_send(ptr, i64)
+                                        if i == 0 { "ptr" } else { "i64" }
+                                    } else if callee == "qi_runtime_channel_receive" ||
+                                              callee == "qi_runtime_channel_close" {
+                                        // channel operations take ptr
+                                        "ptr"
+                                    } else if callee == "qi_runtime_create_channel" {
+                                        // create_channel(i64) -> ptr
+                                        "i64"
+                                    } else {
+                                        current_arg_type // Use the variable's actual type
+                                    }
+                                };
+
+                                // Special handling for boolean arguments: if we expect a boolean but get a variable,
+                                // ensure the variable is actually a boolean type
+                                let final_expected_type = if expected_type == "i1" && current_arg_type != "i1" {
+                                    // Check if this variable was originally a boolean literal
+                                    // Look for any indication that this should be boolean
+                                    if let Some(temp_val) = self.variable_types.get(arg_var_name) {
+                                        if temp_val == "i1" {
+                                            "i1"
+                                        } else {
+                                            expected_type  // Keep original expectation
+                                        }
+                                    } else {
+                                        expected_type  // Keep original expectation
+                                    }
+                                } else {
+                                    expected_type
+                                };
+
+                                // Special handling for boolean arguments to ensure correct value
+                                if current_arg_type == "i1" && final_expected_type == "i1" {
+                                    // Boolean argument to boolean parameter - ensure value is preserved
+                                    // Check if we have stored boolean value information from literal processing
+                                    let mut fixed_arg = None;
+
+                                    // Check for bool_ prefix (stores the actual boolean value)
+                                    if let Some(bool_val) = self.variable_types.get(&format!("bool_{}", arg_var_name)) {
+                                        if bool_val == "bool_1" {
+                                            // This should be true - fix it
+                                            let true_temp = format!("%true_fix_{}", arg_var_name);
+                                            ir.push_str(&format!("{} = add i1 0, 1\n", true_temp));
+                                            fixed_arg = Some(format!("i1 {}", true_temp));
+                                        } else if bool_val == "bool_0" {
+                                            // This should be false - ensure it's correct
+                                            let false_temp = format!("%false_fix_{}", arg_var_name);
+                                            ir.push_str(&format!("{} = add i1 0, 0\n", false_temp));
+                                            fixed_arg = Some(format!("i1 {}", false_temp));
+                                        }
+                                    }
+
+                                    // Check for raw_ prefix (stores raw numeric value)
+                                    if fixed_arg.is_none() {
+                                        if let Some(raw_val) = self.variable_types.get(&format!("raw_{}", arg_var_name)) {
+                                            if raw_val == "1" {
+                                                // Raw value is 1, should be true
+                                                let true_temp = format!("%true_raw_{}", arg_var_name);
+                                                ir.push_str(&format!("{} = add i1 0, 1\n", true_temp));
+                                                fixed_arg = Some(format!("i1 {}", true_temp));
+                                            } else if raw_val == "0" {
+                                                // Raw value is 0, should be false
+                                                let false_temp = format!("%false_raw_{}", arg_var_name);
+                                                ir.push_str(&format!("{} = add i1 0, 0\n", false_temp));
+                                                fixed_arg = Some(format!("i1 {}", false_temp));
+                                            }
+                                        }
+                                    }
+
+                                    // Use the fixed argument if we created one, otherwise use original
+                                    if let Some(fixed) = fixed_arg {
+                                        typed_args.push(fixed);
+                                    } else {
+                                        // Use original argument as fallback
+                                        typed_args.push(format!("i1 {}", arg));
+                                    }
+                                } else if current_arg_type != final_expected_type {
+                                    let conv_temp = format!("%conv{}_{}", arg_var_name, i);
+                                    if current_arg_type == "i64" && final_expected_type == "double" {
+                                        // Convert i64 to double
+                                        ir.push_str(&format!("{} = sitofp i64 {} to double\n", conv_temp, arg));
+                                        typed_args.push(format!("double {}", conv_temp));
+                                    } else if current_arg_type == "double" && final_expected_type == "i64" {
+                                        // Convert double to i64
+                                        ir.push_str(&format!("{} = fptosi double {} to i64\n", conv_temp, arg));
+                                        typed_args.push(format!("i64 {}", conv_temp));
+                                    } else if current_arg_type == "i1" && final_expected_type == "i64" {
+                                        // Convert bool to i64
+                                        ir.push_str(&format!("{} = zext i1 {} to i64\n", conv_temp, arg));
+                                        typed_args.push(format!("i64 {}", conv_temp));
+                                    } else {
+                                        // No conversion needed or unsupported conversion
+                                        typed_args.push(format!("{} {}", final_expected_type, arg));
+                                    }
+                                } else {
+                                    // No conversion needed
+                                    typed_args.push(format!("{} {}", final_expected_type, arg));
                                 }
                             } else {
-                                // Literal values
-                                if needs_double_args && !arg.contains('.') {
-                                    // Convert integer literal to double for math functions
-                                    typed_args.push(format!("double {}.0", arg));
-                                } else if arg.contains('.') {
-                                    typed_args.push(format!("double {}", arg));
+                                // Literal values - determine expected type
+                                let expected_type = if let Some(ref param_types) = expected_param_types {
+                                    if i < param_types.len() {
+                                        &param_types[i]
+                                    } else {
+                                        "i64"
+                                    }
                                 } else {
-                                    typed_args.push(format!("i64 {}", arg));
+                                    // Fallback: infer from literal content
+                                    if arg.contains('.') {
+                                        "double"
+                                    } else if arg == "真" || arg == "假" {
+                                        "i1"
+                                    } else {
+                                        "i64"
+                                    }
+                                };
+
+                                // Format literal according to expected type
+                                match expected_type {
+                                    "double" => {
+                                        if arg.contains('.') {
+                                            typed_args.push(format!("double {}", arg));
+                                        } else {
+                                            typed_args.push(format!("double {}.0", arg));
+                                        }
+                                    }
+                                    "i1" => {
+                                        let bool_val = if arg == "真" { "1" } else { "0" };
+                                        typed_args.push(format!("i1 {}", bool_val));
+                                    }
+                                    _ => {
+                                        typed_args.push(format!("i64 {}", arg));
+                                    }
                                 }
                             }
                         }
                         
                         let args_str = typed_args.join(", ");
-                        
+
+                        // For print functions, map to typed versions based on argument types
+                        let final_callee = if callee == "qi_runtime_print" || callee == "qi_runtime_println" {
+                            // Check the first argument type to determine which print function to use
+                            if let Some(first_arg) = typed_args.first() {
+                                if first_arg.contains("double") {
+                                    format!("{}_float", callee)
+                                } else if first_arg.contains("i1") {
+                                    format!("{}_bool", callee)
+                                } else if first_arg.contains("ptr") {
+                                    // For string arguments, use the base print function (no suffix)
+                                    callee.clone()
+                                } else {
+                                    format!("{}_int", callee)
+                                }
+                            } else {
+                                callee.clone()
+                            }
+                        } else {
+                            callee.clone()
+                        };
+
                         // Determine return type based on function name
                         let ret_type = if callee.starts_with("qi_runtime_") {
                             // Create functions return ptr - MUST BE FIRST
@@ -3171,10 +3627,14 @@ impl IrBuilder {
                             // Channel receive returns i64 (the actual value)
                             } else if callee == "qi_runtime_channel_receive" {
                                 "i64"
+                            // Timer functions that return i64
+                            } else if callee == "qi_runtime_set_timeout" || callee == "qi_runtime_timer_expired" ||
+                                      callee == "qi_runtime_timer_stop" || callee == "qi_runtime_get_time_ms" {
+                                "i64"
                             // All other synchronization functions return i32 (status)
                             } else if callee.contains("waitgroup") || callee.contains("mutex") || callee.contains("timer") ||
                                       callee.contains("rwlock") || callee.contains("condvar") || callee.contains("once") ||
-                                      callee.contains("channel") || callee == "qi_runtime_set_timeout" || callee == "qi_runtime_check_timeout" {
+                                      callee.contains("channel") || callee == "qi_runtime_check_timeout" {
                                 "i32"
                             // Integer math functions return i64
                             } else if callee.contains("math_abs_int") || callee.contains("float_to_int") ||
@@ -3183,7 +3643,7 @@ impl IrBuilder {
                             } else {
                                 "i32"
                             }
-                        } else if callee == "qi_string_concat" {
+                        } else if callee == "qi_runtime_string_concat" {
                             "ptr"
                         // Check hex-encoded Chinese function names
                         } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根
@@ -3196,6 +3656,8 @@ impl IrBuilder {
                             // Check if this is a known async function
                             if self.async_function_types.contains_key(callee) {
                                 "ptr"
+                            } else if let Some(ret_type) = self.function_return_types.get(&self.mangle_function_name(&callee) as &str) {
+                                ret_type  // Use stored return type from function signature
                             } else {
                                 "i64" // Default to i64
                             }
@@ -3216,10 +3678,10 @@ impl IrBuilder {
                         } else {
                             match dest {
                                 Some(dest_var) => {
-                                    ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, callee, args_str));
+                                    ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, final_callee, args_str));
                                 }
                                 None => {
-                                    ir.push_str(&format!("call void @{}({})\n", callee, args_str));
+                                    ir.push_str(&format!("call void @{}({})\n", final_callee, args_str));
                                 }
                             }
                         }
@@ -3243,10 +3705,12 @@ impl IrBuilder {
                         if ty == "void" {
                             ir.push_str("ret void\n");
                         } else {
+                            eprintln!("[DEBUG] Generating return: ret {} {}", ty, val);
                             ir.push_str(&format!("ret {} {}\n", ty, val));
                         }
                     } else {
                         // Default to i64 if not within a function context
+                        eprintln!("[DEBUG] Generating return (default): ret i64 {}", val);
                         ir.push_str(&format!("ret i64 {}\n", val));
                     }
                 }
@@ -3299,7 +3763,7 @@ impl IrBuilder {
                 }
                 IrInstruction::字符串连接 { dest, left, right } => {
                     // Simplified string concatenation using external function
-                    ir.push_str(&format!("{} = call i8* @qi_string_concat(i8* {}, i8* {})\n", dest, left, right));
+                    ir.push_str(&format!("{} = call ptr @qi_runtime_string_concat(ptr {}, ptr {})\n", dest, left, right));
                 }
                 IrInstruction::字段访问 { dest, object, field, struct_type } => {
                     // Get field index from struct field names
@@ -3336,13 +3800,98 @@ impl IrBuilder {
                     ir.push_str(&format!("call i32 @qi_runtime_spawn_task(ptr {})\n", dest));
                 }
                 IrInstruction::协程启动 { function, arguments } => {
-                    // Spawn goroutine using the runtime
-                    // Get function pointer for the goroutine
-                    let temp1 = self.generate_temp();
-                    ir.push_str(&format!("{} = ptrtoint ptr @{} to i64\n", temp1, function));
-                    let temp2 = self.generate_temp();
-                    ir.push_str(&format!("{} = inttoptr i64 {} to ptr\n", temp2, temp1));
-                    ir.push_str(&format!("call void @qi_runtime_spawn_goroutine(ptr {})\n", temp2));
+                    // For functions with arguments, generate a wrapper function and use generic spawn
+                    if arguments.is_empty() {
+                        // No arguments - use simple spawn
+                        let temp1 = self.generate_temp();
+                        ir.push_str(&format!("{} = ptrtoint ptr @{} to i64\n", temp1, function));
+                        let temp2 = self.generate_temp();
+                        ir.push_str(&format!("{} = inttoptr i64 {} to ptr\n", temp2, temp1));
+                        ir.push_str(&format!("call void @qi_runtime_spawn_goroutine(ptr {})\n", temp2));
+                    } else {
+                        // Generate wrapper function name
+                        let wrapper_name = format!("__goroutine_wrapper_{}_{}", function, self.label_counter);
+                        self.label_counter += 1;
+
+                        // Parse argument types and values
+                        let mut arg_types = Vec::new();
+                        let mut arg_values = Vec::new();
+                        for arg in arguments {
+                            let (arg_type, arg_value) = if arg.contains(':') {
+                                let parts: Vec<&str> = arg.splitn(2, ':').collect();
+                                (parts[0].to_string(), parts[1].to_string())
+                            } else {
+                                ("i64".to_string(), arg.clone())
+                            };
+                            arg_types.push(arg_type);
+                            arg_values.push(arg_value);
+                        }
+
+                        // Generate wrapper function definition (to be added at the end)
+                        let mut wrapper_def = String::new();
+                        wrapper_def.push_str(&format!("define void @{}(ptr %args) {{\n", wrapper_name));
+
+                        // Load each argument from the array and call the target function
+                        let mut call_args = Vec::new();
+                        for (i, (arg_type, _)) in arg_types.iter().zip(&arg_values).enumerate() {
+                            let arg_temp = format!("%arg{}", i);
+                            let ptr_temp = format!("%argptr{}", i);
+
+                            // Get pointer to array element: args[i]
+                            wrapper_def.push_str(&format!("  {} = getelementptr i64, ptr %args, i32 {}\n", ptr_temp, i));
+
+                            // Load the i64 value
+                            wrapper_def.push_str(&format!("  {} = load i64, ptr {}\n", arg_temp, ptr_temp));
+
+                            // Convert to appropriate type and add to call args
+                            if arg_type == "ptr" {
+                                let cast_temp = format!("%argcast{}", i);
+                                wrapper_def.push_str(&format!("  {} = inttoptr i64 {} to ptr\n", cast_temp, arg_temp));
+                                call_args.push(format!("ptr {}", cast_temp));
+                            } else {
+                                call_args.push(format!("{} {}", arg_type, arg_temp));
+                            }
+                        }
+
+                        // Call the actual function
+                        wrapper_def.push_str(&format!("  call void @{}({})\n", function, call_args.join(", ")));
+                        wrapper_def.push_str("  ret void\n");
+                        wrapper_def.push_str("}\n");
+
+                        // Store wrapper for later emission
+                        self.goroutine_wrappers.push(wrapper_def);
+
+                        // Allocate array for arguments
+                        let args_array = format!("%goroutine_args_{}", self.temp_counter);
+                        self.temp_counter += 1;
+                        ir.push_str(&format!("{} = alloca [{}  x i64], align 8\n", args_array, arguments.len()));
+
+                        // Store each argument value into the array
+                        for (i, (arg_type, arg_value)) in arg_types.iter().zip(&arg_values).enumerate() {
+                            let element_ptr = self.generate_temp();
+                            ir.push_str(&format!("{} = getelementptr [{} x i64], ptr {}, i32 0, i32 {}\n",
+                                element_ptr, arguments.len(), args_array, i));
+
+                            // Convert to i64 if needed
+                            if arg_type == "ptr" {
+                                let as_int = self.generate_temp();
+                                ir.push_str(&format!("{} = ptrtoint ptr {} to i64\n", as_int, arg_value));
+                                ir.push_str(&format!("store i64 {}, ptr {}\n", as_int, element_ptr));
+                            } else {
+                                ir.push_str(&format!("store i64 {}, ptr {}\n", arg_value, element_ptr));
+                            }
+                        }
+
+                        // Get wrapper function pointer
+                        let wrapper_ptr1 = self.generate_temp();
+                        ir.push_str(&format!("{} = ptrtoint ptr @{} to i64\n", wrapper_ptr1, wrapper_name));
+                        let wrapper_ptr2 = self.generate_temp();
+                        ir.push_str(&format!("{} = inttoptr i64 {} to ptr\n", wrapper_ptr2, wrapper_ptr1));
+
+                        // Call qi_runtime_spawn_goroutine_with_args(wrapper, args)
+                        ir.push_str(&format!("call void @qi_runtime_spawn_goroutine_with_args(ptr {}, ptr {})\n",
+                            wrapper_ptr2, args_array));
+                    }
                 }
                 IrInstruction::创建通道 { dest, channel_type, buffer_size } => {
                     // Create channel - generate runtime call
@@ -3351,15 +3900,31 @@ impl IrBuilder {
                 }
                 IrInstruction::通道发送 { channel, value } => {
                     // Send value to channel using runtime
-                    ir.push_str(&format!("call i32 @qi_runtime_channel_send(ptr {}, i64 {})\n", channel, value));
+                    // If value is a pointer (from build_node_for_channel), load it first
+                    let value_to_send = if value.starts_with('%') {
+                        // Get variable type to determine if we need to load
+                        let var_name = value.trim_start_matches('%');
+                        let var_type = self.variable_types.get(var_name).map(|s| s.as_str());
+
+                        // For now, assume channel values are always i64
+                        // TODO: Support other types when type system is enhanced
+                        let loaded_temp = self.generate_temp();
+                        ir.push_str(&format!("{} = load i64, ptr {}\n", loaded_temp, value));
+                        loaded_temp
+                    } else {
+                        value.clone()
+                    };
+                    ir.push_str(&format!("call i32 @qi_runtime_channel_send(ptr {}, i64 {})\n", channel, value_to_send));
                 }
                 IrInstruction::通道接收 { dest, channel } => {
                     // Receive value from channel using runtime
                     let received_ptr = self.generate_temp();
+                    let status_temp = self.generate_temp();
+                    let value_ptr_temp = self.generate_temp();
                     ir.push_str(&format!("{} = alloca ptr, align 8\n", received_ptr));
-                    ir.push_str(&format!("{} = call i32 @qi_runtime_channel_receive(ptr {}, ptr {})\n", self.generate_temp(), channel, received_ptr));
-                    ir.push_str(&format!("{} = load ptr, ptr {}\n", received_ptr, received_ptr));
-                    ir.push_str(&format!("{} = load i64, ptr {}\n", dest, received_ptr));
+                    ir.push_str(&format!("{} = call i32 @qi_runtime_channel_receive(ptr {}, ptr {})\n", status_temp, channel, received_ptr));
+                    ir.push_str(&format!("{} = load ptr, ptr {}\n", value_ptr_temp, received_ptr));
+                    ir.push_str(&format!("{} = load i64, ptr {}\n", dest, value_ptr_temp));
                 }
                 IrInstruction::选择语句 { cases, default_case } => {
                     // Generate select statement using runtime
@@ -3372,7 +3937,12 @@ impl IrBuilder {
             }
         }
 
-        
+        // Emit collected goroutine wrapper functions at the end
+        for wrapper in &self.goroutine_wrappers {
+            ir.push_str("\n");
+            ir.push_str(wrapper);
+        }
+
         Ok(ir)
     }
 

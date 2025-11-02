@@ -109,7 +109,9 @@ pub extern "C" fn qi_runtime_print(s: *const c_char) -> c_int {
     unsafe {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             print!("{}", rust_str);
-            
+            // Force flush to ensure output appears immediately
+            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
@@ -133,7 +135,9 @@ pub extern "C" fn qi_runtime_println(s: *const c_char) -> c_int {
     unsafe {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             println!("{}", rust_str);
-            
+            // Ensure output is flushed (println! should flush, but let's be explicit)
+            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
                 if let Ok(mut runtime) = runtime_mutex.lock() {
                     runtime.increment_io_operations();
@@ -151,7 +155,9 @@ pub extern "C" fn qi_runtime_println(s: *const c_char) -> c_int {
 #[no_mangle]
 pub extern "C" fn qi_runtime_print_int(value: i64) -> c_int {
     print!("{}", value);
-    
+    // Force flush to ensure output appears immediately
+    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
@@ -181,7 +187,9 @@ pub extern "C" fn qi_runtime_println_int(value: i64) -> c_int {
 #[no_mangle]
 pub extern "C" fn qi_runtime_print_float(value: f64) -> c_int {
     print!("{}", value);
-    
+    // Force flush to ensure output appears immediately
+    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
@@ -195,8 +203,47 @@ pub extern "C" fn qi_runtime_print_float(value: f64) -> c_int {
 /// Print a float with newline
 #[no_mangle]
 pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
-    println!("{}", value);
-    
+    // Format to always show decimal point for float values
+    if value.fract() == 0.0 {
+        println!("{:.1}", value);  // Show one decimal place for whole numbers
+    } else {
+        println!("{}", value);      // Show normal format for fractions
+    }
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
+            }
+        }
+    }
+    0
+}
+
+/// Print a boolean value
+#[no_mangle]
+pub extern "C" fn qi_runtime_print_bool(value: bool) -> c_int {
+    let text = if value { "真" } else { "假" };
+    print!("{}", text);
+    // Force flush to ensure output appears immediately
+    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                runtime.increment_io_operations();
+            }
+        }
+    }
+    0
+}
+
+/// Print a boolean value with newline
+#[no_mangle]
+pub extern "C" fn qi_runtime_println_bool(value: bool) -> c_int {
+    let text = if value { "真" } else { "假" };
+    println!("{}", text);
+
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(mut runtime) = runtime_mutex.lock() {
