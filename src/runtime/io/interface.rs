@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::runtime::{RuntimeResult, RuntimeError};
 use super::filesystem::FileSystemInterface;
-use super::network::NetworkInterface;
+use super::http::NetworkInterface;
 use super::stdio::{StandardIo, ConsoleInterface};
 
 /// Unified I/O interface that provides access to all I/O functionality
@@ -312,7 +312,7 @@ impl IoInterface {
         let operation_id = self.generate_operation_id("http_get");
 
         let config = self.config.lock().unwrap();
-        let request = super::network::HttpRequest::get(url.to_string())
+        let request = super::http::HttpRequest::get(url.to_string())
             .with_timeout(config.network_config.request_timeout);
 
         let result = {
@@ -346,7 +346,7 @@ impl IoInterface {
         let operation_id = self.generate_operation_id("http_post");
 
         let config = self.config.lock().unwrap();
-        let request = super::network::HttpRequest::post(url.to_string(), body.as_bytes().to_vec())
+        let request = super::http::HttpRequest::post(url.to_string(), body.as_bytes().to_vec())
             .with_timeout(config.network_config.request_timeout);
 
         let result = {

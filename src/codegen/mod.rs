@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod llvm;
 pub mod optimization;
+pub mod module_registry;
 
 use builder::IrBuilder;
 use optimization::OptimizationManager;

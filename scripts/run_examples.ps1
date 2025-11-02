@@ -1,5 +1,5 @@
-# run_examples.ps1 - 运行examples目录下所有Qi文件的PowerShell脚本
-# PowerShell script to run all Qi files in the examples directory
+# run_examples.ps1 - 运行示例目录下所有Qi文件的PowerShell脚本
+# PowerShell script to run all Qi files in the 示例 directory
 
 # 设置错误处理
 $ErrorActionPreference = "Stop"
@@ -35,11 +35,11 @@ Write-Separator
 # 获取脚本所在目录的父目录（项目根目录）
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
-$ExamplesDir = Join-Path $ProjectRoot "examples"
+$ExamplesDir = Join-Path $ProjectRoot "示例"
 
-# 检查examples目录是否存在
+# 检查示例目录是否存在
 if (-not (Test-Path $ExamplesDir)) {
-    Write-ColorOutput "错误: examples目录不存在 | Error: examples directory not found" "Red"
+    Write-ColorOutput "错误: 示例目录不存在 | Error: 示例 directory not found" "Red"
     exit 1
 }
 

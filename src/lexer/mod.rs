@@ -400,7 +400,8 @@ impl Lexer {
     fn scan_identifier(&mut self, start_pos: usize, start_line: usize, start_column: usize) -> Token {
         while !self.is_at_end() {
             let c = self.current_char().unwrap();
-            if c.is_alphanumeric() || c == '_' {
+            // Support mixed Latin and Chinese identifiers (e.g., MD5哈希, SHA256哈希)
+            if c.is_alphanumeric() || c == '_' || self.unicode_handler.is_chinese_char(c) {
                 self.advance();
             } else {
                 break;

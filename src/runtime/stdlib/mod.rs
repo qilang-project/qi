@@ -9,6 +9,8 @@ pub mod math;
 pub mod system;
 pub mod conversion;
 pub mod debug;
+pub mod crypto;
+pub mod crypto_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};
@@ -16,6 +18,7 @@ pub use math::{MathModule, MathOperation};
 pub use system::{SystemModule, SystemInfo};
 pub use conversion::{ConversionModule, TypeConversion};
 pub use debug::{DebugModule, DebugInfo};
+pub use crypto::{加密模块, 加密操作, 编码格式};
 // StandardLibrary is defined below, no need to re-export
 
 /// Standard library result type
@@ -46,6 +49,12 @@ pub enum StdlibError {
     ConversionError {
         from_type: String,
         to_type: String,
+        message: String,
+    },
+
+    #[error("加密操作错误: {operation} - {message}")]
+    CryptoError {
+        operation: String,
         message: String,
     },
 
@@ -277,6 +286,8 @@ pub struct StandardLibrary {
     pub conversion_module: ConversionModule,
     /// Debug module
     pub debug_module: DebugModule,
+    /// 加密模块
+    pub 加密模块: 加密模块,
     /// Function registry
     pub registry: StdlibRegistry,
 }
@@ -290,6 +301,7 @@ impl StandardLibrary {
             system_module: SystemModule::new(),
             conversion_module: ConversionModule::new(),
             debug_module: DebugModule::new(),
+            加密模块: 加密模块::创建(),
             registry: StdlibRegistry::new(),
         })
     }

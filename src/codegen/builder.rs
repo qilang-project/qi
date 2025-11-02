@@ -1,6 +1,7 @@
 //! IR builder for Qi language
 
 use crate::parser::ast::{AstNode, BinaryOperator};
+use super::module_registry::{ModuleRegistry, ModuleFunction};
 
 /// IR instruction
 #[derive(Debug, Clone)]
@@ -223,6 +224,10 @@ pub struct IrBuilder {
     loop_stack: Vec<(String, String)>,
     /// Wrapper functions for goroutine spawn (generated at the end)
     goroutine_wrappers: Vec<String>,
+    /// Module registry for standard library modules
+    module_registry: ModuleRegistry,
+    /// Imported modules in current compilation unit (module_path -> alias or module_name)
+    imported_modules: std::collections::HashMap<String, String>,
 }
 
 impl IrBuilder {
@@ -245,6 +250,8 @@ impl IrBuilder {
             current_package_name: None,
             loop_stack: Vec::new(),
             goroutine_wrappers: Vec::new(),
+            module_registry: ModuleRegistry::new(),
+            imported_modules: std::collections::HashMap::new(),
         }
     }
 
@@ -381,6 +388,60 @@ impl IrBuilder {
     /// Set import aliases for namespace resolution
     pub fn set_import_aliases(&mut self, aliases: std::collections::HashMap<String, String>) {
         self.import_aliases = aliases;
+    }
+
+    /// Process an import statement and register the imported module
+    fn process_import(&mut self, import_stmt: &crate::parser::ast::ImportStatement) -> Result<(), String> {
+        // Resolve module path from import statement
+        let module_path = self.module_registry.resolve_module_path(&import_stmt.module_path)
+            .ok_or_else(|| {
+                format!(
+                    "模块 '{}' 不存在。可用的模块: {:?}",
+                    import_stmt.module_path.join("."),
+                    self.module_registry.module_paths()
+                )
+            })?;
+
+        // Get the last component as the module name
+        let module_name = import_stmt.module_path.last()
+            .ok_or_else(|| "导入路径为空".to_string())?
+            .clone();
+
+        // Use alias if provided, otherwise use the module name
+        let import_key = import_stmt.alias.clone().unwrap_or(module_name);
+
+        // Register the import
+        self.imported_modules.insert(module_path.clone(), import_key.clone());
+        self.import_aliases.insert(import_key, module_path);
+
+        Ok(())
+    }
+
+    /// Check if a function is available in an imported module
+    fn check_module_function_available(
+        &self,
+        module_name: &str,
+        function_name: &str,
+    ) -> Result<&ModuleFunction, String> {
+        // Resolve the module name (could be an alias)
+        let module_path = self.import_aliases.get(module_name)
+            .ok_or_else(|| {
+                format!(
+                    "模块 '{}' 未导入。请先使用 '导入 标准库.{};'",
+                    module_name,
+                    module_name
+                )
+            })?;
+
+        // Get the function from the module
+        self.module_registry.get_function(module_path, function_name)
+            .ok_or_else(|| {
+                format!(
+                    "模块 '{}' 中不存在函数 '{}'",
+                    module_name,
+                    function_name
+                )
+            })
     }
 
     /// Escape special characters in strings for LLVM IR
@@ -557,6 +618,14 @@ impl IrBuilder {
             "停止定时器" | "stop_timer" => Some("qi_runtime_timer_stop"),
             "重试操作" | "retry_operation" => Some("e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c"), // Chinese function name
 
+            // Crypto operations
+            "MD5哈希" | "md5" => Some("qi_crypto_md5"),
+            "SHA256哈希" | "sha256" => Some("qi_crypto_sha256"),
+            "SHA512哈希" | "sha512" => Some("qi_crypto_sha512"),
+            "Base64编码" | "base64_encode" => Some("qi_crypto_base64_encode"),
+            "Base64解码" | "base64_decode" => Some("qi_crypto_base64_decode"),
+            "HMAC_SHA256" | "hmac_sha256" => Some("qi_crypto_hmac_sha256"),
+
             _ => None,
         };
 
@@ -633,8 +702,13 @@ impl IrBuilder {
             AstNode::程序(program) => {
                 // Save the package name for function aliasing
                 self.current_package_name = program.package_name.clone();
-                
-                // Process all statements in the program (functions, variables, etc.)
+
+                // First, process all import statements
+                for import_stmt in &program.imports {
+                    self.process_import(import_stmt)?;
+                }
+
+                // Then process all statements in the program (functions, variables, etc.)
                 for stmt in &program.statements {
                     self.build_node(stmt)?;
                 }
@@ -689,6 +763,8 @@ impl IrBuilder {
                                     "double"
                                 } else if runtime_func.contains("string_length") {
                                     "i64"  // string_length returns integer, not string
+                                } else if runtime_func.starts_with("qi_crypto_") && runtime_func != "qi_crypto_free_string" {
+                                    "ptr"  // All crypto functions return string (ptr)
                                 } else if runtime_func.contains("read_string") ||
                                           runtime_func.contains("int_to_string") ||
                                           runtime_func.contains("float_to_string") ||
@@ -1737,7 +1813,9 @@ impl IrBuilder {
                 let is_async_function = self.async_function_types.contains_key(&mapped_callee);
 
                 // Check if this is an external function (called but not defined in current module)
+                // Exclude runtime functions, crypto functions (already declared), and printf
                 if !mapped_callee.starts_with("qi_runtime_") &&
+                   !mapped_callee.starts_with("qi_crypto_") &&
                    mapped_callee != "printf" &&
                    !self.defined_functions.contains(&mapped_callee) &&
                    !self.external_functions.contains_key(&mapped_callee as &str) {
@@ -2458,17 +2536,18 @@ impl IrBuilder {
                                      self.variable_types.contains_key(&self.mangle_function_name(&ident.name));
                     
                     if is_module || !is_variable {
-                        // 这是模块前缀调用，如 数学.最大值()
+                        // 这是模块前缀调用，如 加密.MD5哈希()
                         let module_name = &ident.name;
 
-                        // 检查是否为导入的模块
+                        // 检查是否为导入的标准库模块
                         if self.import_aliases.contains_key(module_name) {
-                            // 这是导入的函数，直接使用函数名，不加模块前缀
-                            // 例如：数学.最大值 -> 最大值（直接使用导入的函数名）
-                            let func_name = if method_call.method_name.chars().any(|c| !c.is_ascii()) {
-                                self.mangle_function_name(&method_call.method_name)
-                            } else {
-                                method_call.method_name.clone()
+                            // 验证模块函数是否存在并获取运行时函数名和返回类型
+                            let (runtime_func_name, return_type) = {
+                                let module_function = self.check_module_function_available(
+                                    module_name,
+                                    &method_call.method_name
+                                )?;
+                                (module_function.runtime_name.clone(), module_function.return_type.clone())
                             };
 
                             // 构建参数
@@ -2477,29 +2556,16 @@ impl IrBuilder {
                                 args.push(self.build_node(arg)?);
                             }
 
-                            // 检查返回值类型
-                            let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
-                                ret_type != "void"
-                            } else {
-                                true // 默认假设有返回值
-                            };
+                            // 生成临时变量并记录其类型
+                            let temp = self.generate_temp();
+                            self.variable_types.insert(temp.clone(), return_type);
 
-                            if has_return_value {
-                                let temp = self.generate_temp();
-                                self.add_instruction(IrInstruction::函数调用 {
-                                    dest: Some(temp.clone()),
-                                    callee: func_name,
-                                    arguments: args,
-                                });
-                                return Ok(temp);
-                            } else {
-                                self.add_instruction(IrInstruction::函数调用 {
-                                    dest: None,
-                                    callee: func_name,
-                                    arguments: args,
-                                });
-                                return Ok(String::new());
-                            }
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(temp.clone()),
+                                callee: runtime_func_name,
+                                arguments: args,
+                            });
+                            return Ok(temp);
                         } else {
                             // 这是本地模块，使用模块前缀
                             // 模块前缀调用，如 数学工具.最大值 -> 数学工具_最大值
@@ -3040,6 +3106,62 @@ impl IrBuilder {
         ir.push_str("declare void @qi_runtime_timer_cancel(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_retry(ptr, i32)\n");
         ir.push_str("declare i32 @qi_runtime_catch_error(ptr)\n");
+        ir.push_str("\n");
+
+        // Crypto functions
+        ir.push_str("; Crypto functions\n");
+        ir.push_str("declare ptr @qi_crypto_md5(ptr)\n");
+        ir.push_str("declare ptr @qi_crypto_sha256(ptr)\n");
+        ir.push_str("declare ptr @qi_crypto_sha512(ptr)\n");
+        ir.push_str("declare ptr @qi_crypto_base64_encode(ptr)\n");
+        ir.push_str("declare ptr @qi_crypto_base64_decode(ptr)\n");
+        ir.push_str("declare ptr @qi_crypto_hmac_sha256(ptr, ptr)\n");
+        ir.push_str("declare void @qi_crypto_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // IO functions
+        ir.push_str("; IO functions\n");
+        ir.push_str("declare ptr @qi_io_read_file(ptr)\n");
+        ir.push_str("declare i64 @qi_io_write_file(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_io_append_file(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_io_delete_file(ptr)\n");
+        ir.push_str("declare i64 @qi_io_create_file(ptr)\n");
+        ir.push_str("declare i64 @qi_io_file_exists(ptr)\n");
+        ir.push_str("declare i64 @qi_io_file_size(ptr)\n");
+        ir.push_str("declare i64 @qi_io_create_dir(ptr)\n");
+        ir.push_str("declare i64 @qi_io_delete_dir(ptr)\n");
+        ir.push_str("declare void @qi_io_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Network functions
+        ir.push_str("; Network functions\n");
+        ir.push_str("declare i64 @qi_network_tcp_connect(ptr, i16, i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_read(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_write(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_close(i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_flush(i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_bytes_read(i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_bytes_written(i64)\n");
+        ir.push_str("declare ptr @qi_network_resolve_host(ptr)\n");
+        ir.push_str("declare i64 @qi_network_port_available(i16)\n");
+        ir.push_str("declare ptr @qi_network_get_local_ip()\n");
+        ir.push_str("declare void @qi_network_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // HTTP functions
+        ir.push_str("; HTTP functions\n");
+        ir.push_str("declare i64 @qi_http_init()\n");
+        ir.push_str("declare ptr @qi_http_get(ptr)\n");
+        ir.push_str("declare ptr @qi_http_post(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_http_put(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_http_delete(ptr)\n");
+        ir.push_str("declare i64 @qi_http_request_create(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_http_request_set_header(i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_http_request_set_body(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_http_request_set_timeout(i64, i64)\n");
+        ir.push_str("declare ptr @qi_http_request_execute(i64)\n");
+        ir.push_str("declare i64 @qi_http_get_status(ptr)\n");
+        ir.push_str("declare void @qi_http_free_string(ptr)\n");
         ir.push_str("\n");
 
         ir.push_str("; Print functions\n");
@@ -3645,6 +3767,40 @@ impl IrBuilder {
                             }
                         } else if callee == "qi_runtime_string_concat" {
                             "ptr"
+                        // Crypto functions return ptr (string)
+                        } else if callee.starts_with("qi_crypto_") && callee != "qi_crypto_free_string" {
+                            "ptr"
+                        // IO functions - check return type based on function name
+                        } else if callee.starts_with("qi_io_") {
+                            match callee.as_str() {
+                                "qi_io_read_file" => "ptr",  // 读取文件 returns string
+                                "qi_io_file_size" | "qi_io_write_file" | "qi_io_append_file" |
+                                "qi_io_delete_file" | "qi_io_create_file" | "qi_io_file_exists" |
+                                "qi_io_create_dir" | "qi_io_delete_dir" => "i64",  // These return i64
+                                "qi_io_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Default for unknown IO functions
+                            }
+                        // Network functions - check return type based on function name
+                        } else if callee.starts_with("qi_network_") {
+                            match callee.as_str() {
+                                "qi_network_resolve_host" | "qi_network_get_local_ip" => "ptr",  // Return strings
+                                "qi_network_tcp_connect" | "qi_network_tcp_read" | "qi_network_tcp_write" |
+                                "qi_network_tcp_close" | "qi_network_tcp_flush" | "qi_network_tcp_bytes_read" |
+                                "qi_network_tcp_bytes_written" | "qi_network_port_available" => "i64",  // Return i64
+                                "qi_network_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Default for unknown network functions
+                            }
+                        // HTTP functions - check return type based on function name
+                        } else if callee.starts_with("qi_http_") {
+                            match callee.as_str() {
+                                "qi_http_get" | "qi_http_post" | "qi_http_put" | "qi_http_delete" |
+                                "qi_http_request_execute" => "ptr",  // Return response strings
+                                "qi_http_init" | "qi_http_request_create" | "qi_http_request_set_header" |
+                                "qi_http_request_set_body" | "qi_http_request_set_timeout" |
+                                "qi_http_get_status" => "i64",  // Return i64
+                                "qi_http_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Default for unknown HTTP functions
+                            }
                         // Check hex-encoded Chinese function names
                         } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根
                             "double"

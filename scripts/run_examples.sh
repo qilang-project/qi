@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# run_examples.sh - 运行examples目录下所有Qi文件的脚本
-# Script to run all Qi files in the examples directory
+# run_examples.sh - 运行示例目录下所有Qi文件的脚本
+# Script to run all Qi files in the 示例 directory
 
 set -e  # 遇到错误时立即退出
 
@@ -20,11 +20,11 @@ echo -e "${BLUE}========================================${NC}"
 # 获取脚本所在目录的父目录（项目根目录）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-EXAMPLES_DIR="$PROJECT_ROOT/examples"
+EXAMPLES_DIR="$PROJECT_ROOT/示例"
 
-# 检查examples目录是否存在
+# 检查示例目录是否存在
 if [ ! -d "$EXAMPLES_DIR" ]; then
-    echo -e "${RED}错误: examples目录不存在 | Error: examples directory not found${NC}"
+    echo -e "${RED}错误: 示例目录不存在 | Error: 示例 directory not found${NC}"
     exit 1
 fi
 

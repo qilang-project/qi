@@ -142,6 +142,18 @@ impl QiCompiler {
                 let current_package_name = module.package_name.as_ref();
 
                 for import in &module.imports {
+                    // Check if this is a standard library import
+                    let is_stdlib = import.module_path.get(0).map(|s| s.as_str()) == Some("标准库");
+
+                    if is_stdlib {
+                        // Skip file resolution for standard library imports
+                        // Standard library modules are built-in and handled by ModuleRegistry in codegen
+                        let module_name = import.module_path.last().unwrap_or(&import.module_path[0]);
+                        let alias_name = import.alias.as_ref().unwrap_or(module_name);
+                        import_aliases.insert(alias_name.clone(), module_name.clone());
+                        continue;
+                    }
+
                     // Resolve import path to actual module
                     let import_path = self.resolve_import_path(module_path, &import.module_path)?;
                     let import_path_key = import_path.canonicalize()
@@ -464,6 +476,12 @@ impl QiCompiler {
 
         // Process imports
         for import_stmt in &program.imports {
+            // Skip standard library imports (they are built-in)
+            let is_stdlib = import_stmt.module_path.get(0).map(|s| s.as_str()) == Some("标准库");
+            if is_stdlib {
+                continue;
+            }
+
             let import_path = self.resolve_import_path(file_path, &import_stmt.module_path)?;
 
             // Recursively parse imported module
@@ -743,6 +761,12 @@ impl QiCompiler {
             
             // Process each public import
             for import_path_parts in imports_to_process {
+                // Skip standard library imports (they are built-in)
+                let is_stdlib = import_path_parts.get(0).map(|s| s.as_str()) == Some("标准库");
+                if is_stdlib {
+                    continue;
+                }
+
                 let import_path = self.resolve_import_path(&module_path, &import_path_parts)?;
                 let import_path_key = import_path.canonicalize()
                     .unwrap_or_else(|_| import_path.clone())

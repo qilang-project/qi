@@ -4,14 +4,19 @@
 //! network operations, and standard I/O with comprehensive Chinese language support.
 
 pub mod filesystem;
-pub mod network;
+pub mod http;
+pub mod network_ffi;
+pub mod http_ffi;
 pub mod stdio;
 pub mod interface;
+pub mod file;
+pub mod io_ffi;
 
 // Re-export main components
 pub use filesystem::{FileSystemInterface, FileOperation, FileEncoding};
-pub use network::{HttpClient, TcpManager, TimeoutManager, NetworkInterface, HttpRequest, HttpResponse};
+pub use http::{HttpClient, TcpManager, TimeoutManager, NetworkInterface, HttpRequest, HttpResponse};
 pub use interface::{IoInterface, IoConfig, IoStats, IoOperation, NetworkConfig};
+pub use file::{文件模块, 文件操作};
 
 // Create NetworkManager as TcpManager for compatibility
 pub type NetworkManager = TcpManager;
