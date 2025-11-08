@@ -181,6 +181,26 @@ impl MemoryManager {
         Ok(freed_bytes)
     }
 
+    /// Check if garbage collection should be triggered based on memory usage
+    pub fn should_collect(&self) -> bool {
+        let usage_ratio = self.get_usage_ratio();
+        usage_ratio > self.gc_threshold
+    }
+
+    /// Trigger garbage collection and return bytes freed
+    pub fn collect(&mut self) -> MemoryResult<usize> {
+        self.trigger_gc()
+    }
+
+    /// Get memory usage ratio (0.0 to 1.0)
+    fn get_usage_ratio(&self) -> f64 {
+        if self.max_memory_bytes == 0 {
+            0.0
+        } else {
+            self.get_in_use_bytes() as f64 / self.max_memory_bytes as f64
+        }
+    }
+
     /// Get current memory usage in megabytes
     pub fn get_current_usage_mb(&self) -> f64 {
         let usage = self.usage.lock().unwrap();

@@ -76,6 +76,7 @@ impl KeywordTable {
         keywords.insert("选择".to_string(), TokenKind::选择);
         keywords.insert("情况".to_string(), TokenKind::情况);
         keywords.insert("并发".to_string(), TokenKind::并发);
+        keywords.insert("未来".to_string(), TokenKind::未来);
 
         // Synchronization keywords - 同步关键字
         keywords.insert("等待组".to_string(), TokenKind::等待组);
@@ -94,6 +95,10 @@ impl KeywordTable {
         // Control flow keywords - 控制流关键字
         keywords.insert("跳出".to_string(), TokenKind::跳出);
         keywords.insert("继续".to_string(), TokenKind::继续);
+
+        // Pointer operations - 指针操作
+        keywords.insert("解引用".to_string(), TokenKind::解引用);
+        keywords.insert("取地址".to_string(), TokenKind::取地址关键字);
 
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);

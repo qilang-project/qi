@@ -24,7 +24,6 @@ pub enum AstNode {
     // Statements
     变量声明(VariableDeclaration),
     函数声明(FunctionDeclaration),
-    异步函数声明(AsyncFunctionDeclaration),
     结构体声明(StructDeclaration),
     方法声明(MethodDeclaration),
     枚举声明(EnumDeclaration),
@@ -56,6 +55,8 @@ pub enum AstNode {
     通道发送表达式(ChannelSendExpression),
     通道接收表达式(ChannelReceiveExpression),
     选择表达式(SelectExpression),
+    取地址表达式(AddressOfExpression),
+    解引用表达式(DereferenceExpression),
 }
 
 /// Program node
@@ -90,17 +91,6 @@ pub struct VariableDeclaration {
 /// Function declaration
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
-    pub name: String,
-    pub parameters: Vec<Parameter>,
-    pub return_type: Option<TypeNode>,
-    pub body: Vec<AstNode>,
-    pub visibility: Visibility,
-    pub span: Span,
-}
-
-/// Async function declaration
-#[derive(Debug, Clone)]
-pub struct AsyncFunctionDeclaration {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
@@ -264,6 +254,7 @@ pub enum TypeNode {
     通道类型(ChannelType),
     指针类型(PointerType),
     引用类型(ReferenceType),
+    未来类型(Box<TypeNode>), // Future<T> - 异步操作的返回类型
     自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
 }
 
@@ -514,6 +505,20 @@ pub struct SelectExpression {
 pub struct SelectCase {
     pub kind: SelectCaseKind,
     pub body: Vec<AstNode>,
+    pub span: Span,
+}
+
+/// Address-of expression (&variable)
+#[derive(Debug, Clone)]
+pub struct AddressOfExpression {
+    pub expression: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Dereference expression (*pointer)
+#[derive(Debug, Clone)]
+pub struct DereferenceExpression {
+    pub expression: Box<AstNode>,
     pub span: Span,
 }
 

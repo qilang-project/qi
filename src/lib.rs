@@ -10,6 +10,8 @@
 
 pub mod cli;
 pub mod codegen;
+pub mod error;
+pub mod formatter;
 pub mod lexer;
 pub mod parser;
 pub mod runtime;
@@ -508,7 +510,58 @@ impl QiCompiler {
         let parent_dir = current_file.parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
-        // 1. Try relative path import (current directory first)
+        // Check if this is an explicit relative path (starts with . or ..)
+        let is_explicit_relative = !module_path.is_empty() &&
+            (module_path[0] == "." || module_path[0] == "..");
+
+        // 1. Handle explicit relative paths with . and ..
+        if is_explicit_relative {
+            let mut import_path = parent_dir.to_path_buf();
+
+            // Process each component, handling . and .. specially
+            for (i, component) in module_path.iter().enumerate() {
+                match component.as_str() {
+                    "." => {
+                        // Current directory - do nothing
+                        continue;
+                    }
+                    ".." => {
+                        // Parent directory - pop the last component
+                        import_path.pop();
+                    }
+                    _ => {
+                        // Regular component
+                        // If this is the last component, it's the module name
+                        if i == module_path.len() - 1 {
+                            // Try module_name.qi first
+                            let simple_path = import_path.join(format!("{}.qi", component));
+                            if simple_path.exists() {
+                                return Ok(simple_path);
+                            }
+                            // Try module_name/module_name.qi (package structure)
+                            let package_path = import_path.join(component).join(format!("{}.qi", component));
+                            if package_path.exists() {
+                                return Ok(package_path);
+                            }
+                            // If neither exists, return error
+                            return Err(CompilerError::Io(std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                format!("无法找到相对路径导入的模块: {} (尝试了 {}.qi 和 {}/{}.qi)",
+                                    module_path.join("/"),
+                                    simple_path.display(),
+                                    import_path.join(component).display(),
+                                    component)
+                            )));
+                        } else {
+                            // Intermediate directory component
+                            import_path.push(component);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Try relative path import (current directory first) - for non-explicit paths
         let mut import_path = parent_dir.to_path_buf();
         for component in module_path {
             import_path.push(component);
@@ -518,7 +571,7 @@ impl QiCompiler {
             return Ok(import_path);
         }
 
-        // 2. Try pattern: module_name.qi in current directory
+        // 3. Try pattern: module_name.qi in current directory
         if module_path.len() == 1 {
             let simple_path = parent_dir.join(format!("{}.qi", module_path[0]));
             if simple_path.exists() {
@@ -526,7 +579,7 @@ impl QiCompiler {
             }
         }
 
-        // 3. Try package directory structure: module_name/module_name.qi
+        // 4. Try package directory structure: module_name/module_name.qi
         if module_path.len() == 1 {
             let package_dir_path = parent_dir.join(&module_path[0]);
             let package_entry_path = package_dir_path.join(format!("{}.qi", module_path[0]));
@@ -535,7 +588,7 @@ impl QiCompiler {
             }
         }
 
-        // 4. Try third-party package paths
+        // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
             if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
                 let packages_root = std::path::Path::new(&package_root);
@@ -545,7 +598,7 @@ impl QiCompiler {
                 }
             }
 
-            // 5. Try default third-party package locations
+            // 6. Try default third-party package locations
             let default_package_paths = vec![
                 // Current directory packages
                 std::env::current_dir().unwrap().join("qi_packages"),

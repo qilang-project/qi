@@ -75,7 +75,6 @@ impl TypeChecker {
             AstNode::赋值表达式(assignment) => self.check_assignment(assignment),
             AstNode::变量声明(decl) => self.check_variable_declaration(decl),
             AstNode::函数声明(func) => self.check_function_declaration(func),
-            AstNode::异步函数声明(async_func) => self.check_async_function_declaration(async_func),
             AstNode::结构体实例化表达式(struct_literal) => self.check_struct_literal(struct_literal),
             AstNode::字段访问表达式(field_access) => self.check_field_access(field_access),
             AstNode::数组访问表达式(array_access) => self.check_array_access(array_access),
@@ -100,6 +99,8 @@ impl TypeChecker {
             AstNode::通道发送表达式(send_expr) => self.check_channel_send(send_expr),
             AstNode::通道接收表达式(recv_expr) => self.check_channel_receive(recv_expr),
             AstNode::选择表达式(select_expr) => self.check_select(select_expr),
+            AstNode::取地址表达式(addr_of_expr) => self.check_address_of(addr_of_expr),
+            AstNode::解引用表达式(deref_expr) => self.check_dereference(deref_expr),
         }
     }
 
@@ -978,73 +979,6 @@ impl TypeChecker {
         }
     }
 
-    fn check_async_function_declaration(&mut self, async_func: &crate::parser::ast::AsyncFunctionDeclaration) -> Result<TypeNode, TypeError> {
-        // For now, treat async functions similar to regular functions but with async context
-        // TODO: Add proper async type checking when async types are implemented
-
-        // Create function info for async function
-        let function_info = crate::semantic::symbol_table::FunctionInfo {
-            parameters: async_func.parameters.clone(),
-            return_type: async_func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
-            is_defined: true,
-        };
-
-        // Register async function in current scope
-        let function_symbol = crate::semantic::symbol_table::Symbol {
-            name: async_func.name.clone(),
-            kind: crate::semantic::symbol_table::SymbolKind::函数(function_info),
-            type_node: async_func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
-            scope_level: self.symbol_table.current_scope(),
-            span: async_func.span,
-            is_mutable: false,
-        };
-
-        if let Err(scope_error) = self.symbol_table.define_symbol(function_symbol) {
-            return Err(TypeError::General {
-                message: format!("异步函数定义错误: {}", scope_error),
-                span: async_func.span,
-            });
-        }
-
-        // Enter new scope for async function parameters and body
-        self.symbol_table.enter_scope();
-
-        // Process parameters and add them to function scope
-        for param in &async_func.parameters {
-            let param_type = param.type_annotation.clone()
-                .unwrap_or_else(|| TypeNode::基础类型(BasicType::空));
-
-            let param_symbol = crate::semantic::symbol_table::Symbol {
-                name: param.name.clone(),
-                kind: crate::semantic::symbol_table::SymbolKind::变量,
-                type_node: param_type,
-                scope_level: self.symbol_table.current_scope(),
-                span: param.span,
-                is_mutable: false,
-            };
-
-            if let Err(scope_error) = self.symbol_table.define_symbol(param_symbol) {
-                self.errors.push(TypeError::General {
-                    message: format!("异步函数参数定义错误: {}", scope_error),
-                    span: param.span,
-                });
-            }
-        }
-
-        // Type check async function body statements
-        for stmt in &async_func.body {
-            if let Err(e) = self.check(stmt) {
-                self.errors.push(e);
-            }
-        }
-
-        // Exit async function scope
-        self.symbol_table.exit_scope();
-
-        // Return async function type
-        Ok(async_func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
-    }
-
     fn check_await_expression(&mut self, await_expr: &crate::parser::ast::AwaitExpression) -> Result<TypeNode, TypeError> {
         // Type check the awaited expression
         let awaited_type = self.check(&await_expr.expression)?;
@@ -1118,6 +1052,30 @@ impl TypeChecker {
 
         // Select statements return void
         Ok(TypeNode::基础类型(BasicType::空))
+    }
+
+    fn check_address_of(&mut self, addr_of_expr: &crate::parser::ast::AddressOfExpression) -> Result<TypeNode, TypeError> {
+        // Type check the inner expression
+        let inner_type = self.check(&addr_of_expr.expression)?;
+
+        // Return a pointer type to the inner type
+        Ok(TypeNode::指针类型(crate::parser::ast::PointerType {
+            target_type: Box::new(inner_type),
+        }))
+    }
+
+    fn check_dereference(&mut self, deref_expr: &crate::parser::ast::DereferenceExpression) -> Result<TypeNode, TypeError> {
+        // Type check the pointer expression
+        let ptr_type = self.check(&deref_expr.expression)?;
+
+        // If it's a pointer type, return the target type
+        if let TypeNode::指针类型(ptr) = ptr_type {
+            Ok(*ptr.target_type)
+        } else {
+            // For now, allow dereferencing any type (will be refined later)
+            // This is because variables are internally pointers in LLVM
+            Ok(TypeNode::基础类型(BasicType::整数))
+        }
     }
 }
 

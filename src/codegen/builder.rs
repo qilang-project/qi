@@ -123,13 +123,6 @@ pub enum IrInstruction {
         struct_type: String,  // The struct type name (e.g., "点")
     },
 
-    /// Async function declaration
-    异步函数声明 {
-        name: String,
-        params: Vec<String>,
-        return_type: String,
-    },
-
     /// Await expression
     等待表达式 {
         dest: String,
@@ -191,6 +184,30 @@ pub enum SelectOperationType {
     发送,  // Send
 }
 
+/// Memory allocation target (stack or heap)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocationTarget {
+    /// Stack allocation: small local variables, clear lifetime
+    Stack,
+    /// Heap allocation: large objects, escaping objects, dynamic size
+    Heap,
+}
+
+/// Information about a memory allocation
+#[derive(Debug, Clone)]
+pub struct AllocationInfo {
+    /// LLVM temporary variable name
+    pub ptr: String,
+    /// Allocation size in bytes
+    pub size: usize,
+    /// Type name
+    pub type_name: String,
+    /// Scope depth level
+    pub scope_level: usize,
+    /// Whether this is a heap allocation
+    pub is_heap: bool,
+}
+
 /// IR builder
 pub struct IrBuilder {
     instructions: Vec<IrInstruction>,
@@ -198,6 +215,12 @@ pub struct IrBuilder {
     label_counter: usize,
     /// Track variable types for better code generation
     variable_types: std::collections::HashMap<String, String>,
+    /// Track Future variable inner types (variable_name -> inner_type like "i64", "i1", "double")
+    future_inner_types: std::collections::HashMap<String, String>,
+    /// Track function Future return inner types (function_name -> inner_type)
+    function_future_inner_types: std::collections::HashMap<String, String>,
+    /// Track variables that are semantically boolean (even if stored as i32)
+    boolean_variables: std::collections::HashSet<String>,
     /// Track async function return types
     async_function_types: std::collections::HashMap<String, String>,
     /// Track all function return types (including sync functions)
@@ -228,6 +251,14 @@ pub struct IrBuilder {
     module_registry: ModuleRegistry,
     /// Imported modules in current compilation unit (module_path -> alias or module_name)
     imported_modules: std::collections::HashMap<String, String>,
+    /// Track all memory allocations for lifetime management
+    allocations: Vec<AllocationInfo>,
+    /// Current scope depth level
+    scope_level: usize,
+    /// Current function name being processed (for return type lookup)
+    current_function_name: Option<String>,
+    /// Current function's AST return type (for Future wrapping detection)
+    current_function_ast_return_type: Option<crate::parser::ast::TypeNode>,
 }
 
 impl IrBuilder {
@@ -237,6 +268,9 @@ impl IrBuilder {
             temp_counter: 0,
             label_counter: 0,
             variable_types: std::collections::HashMap::new(),
+            future_inner_types: std::collections::HashMap::new(),
+            function_future_inner_types: std::collections::HashMap::new(),
+            boolean_variables: std::collections::HashSet::new(),
             async_function_types: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
@@ -252,7 +286,50 @@ impl IrBuilder {
             goroutine_wrappers: Vec::new(),
             module_registry: ModuleRegistry::new(),
             imported_modules: std::collections::HashMap::new(),
-        }
+            allocations: Vec::new(),
+            scope_level: 0,
+            current_function_name: None,
+            current_function_ast_return_type: None,
+        }.register_runtime_functions()
+    }
+
+    /// Register runtime function signatures
+    fn register_runtime_functions(mut self) -> Self {
+        // Future type functions - integer
+        self.external_functions.insert("qi_future_ready_i64".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_await_i64".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+
+        // Future type functions - float
+        self.external_functions.insert("qi_future_ready_f64".to_string(), (vec!["double".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_await_f64".to_string(), (vec!["ptr".to_string()], "double".to_string()));
+
+        // Future type functions - boolean
+        self.external_functions.insert("qi_future_ready_bool".to_string(), (vec!["i32".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_await_bool".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+
+        // Future type functions - string
+        self.external_functions.insert("qi_future_ready_string".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_await_string".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+
+        // Future type functions - pointer (for structs)
+        self.external_functions.insert("qi_future_ready_ptr".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_await_ptr".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+
+        // Future type functions - common
+        self.external_functions.insert("qi_future_failed".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_future_is_completed".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_future_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_string_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+
+        // String utility functions
+        self.external_functions.insert("strlen".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+
+        // Memory allocation functions
+        self.external_functions.insert("malloc".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+
+        // Other runtime functions can be added here if needed
+        self
     }
 
     pub fn build(&mut self, ast: &AstNode) -> Result<String, String> {
@@ -377,7 +454,11 @@ impl IrBuilder {
 
     /// Set external function signatures for cross-module calls
     pub fn set_external_functions(&mut self, funcs: std::collections::HashMap<String, (Vec<String>, String)>) {
-        self.external_functions = funcs;
+        // Merge the provided functions with existing ones (don't replace)
+        // This preserves built-in functions like malloc/free that are added in new()
+        for (name, sig) in funcs {
+            self.external_functions.insert(name, sig);
+        }
     }
 
     /// Set defined functions in the current module
@@ -392,7 +473,49 @@ impl IrBuilder {
 
     /// Process an import statement and register the imported module
     fn process_import(&mut self, import_stmt: &crate::parser::ast::ImportStatement) -> Result<(), String> {
-        // Resolve module path from import statement
+        // Check if this is a relative path (starts with . or ..)
+        let is_relative_path = !import_stmt.module_path.is_empty() &&
+            (import_stmt.module_path[0] == "." || import_stmt.module_path[0] == "..");
+
+        // For relative paths, we don't use the ModuleRegistry
+        // They will be resolved by the compiler's resolve_import_path function
+        if is_relative_path {
+            // For relative imports, use the last component as the module name
+            let module_name = import_stmt.module_path.last()
+                .ok_or_else(|| "导入路径为空".to_string())?
+                .clone();
+
+            // Use alias if provided, otherwise use the last path component
+            let import_key = import_stmt.alias.clone().unwrap_or(module_name.clone());
+
+            // For relative imports, register them with a special marker
+            // We'll use the full path joined with / as the "module path"
+            let relative_path_key = import_stmt.module_path.join("/");
+            self.import_aliases.insert(import_key.clone(), relative_path_key.clone());
+
+            return Ok(());
+        }
+
+        // For single-component imports in a package context, treat as intra-package import
+        // e.g., when in "数学" package: "导入 最大值;" means importing from the same package
+        if import_stmt.module_path.len() == 1 && self.current_package_name.is_some() {
+            let submodule_name = &import_stmt.module_path[0];
+
+            // For intra-package imports, we don't need to resolve or register them
+            // The functions from the same package are already available
+            // Just record the alias if provided
+            let import_key = import_stmt.alias.clone().unwrap_or_else(|| submodule_name.clone());
+
+            // For intra-package imports, we use the package name as the module path
+            // This allows functions from different files in the same package to be accessible
+            if let Some(package_name) = &self.current_package_name {
+                self.import_aliases.insert(import_key, package_name.clone());
+            }
+
+            return Ok(());
+        }
+
+        // Resolve module path from import statement (for standard library and global modules)
         let module_path = self.module_registry.resolve_module_path(&import_stmt.module_path)
             .ok_or_else(|| {
                 format!(
@@ -513,6 +636,83 @@ impl IrBuilder {
                 } else {
                     4 // Default fallback
                 }
+            }
+        }
+    }
+
+    /// Determine the appropriate Future creation function based on inner type
+    fn get_future_ready_function(&self, inner_type: &crate::parser::ast::TypeNode) -> &'static str {
+        use crate::parser::ast::{TypeNode, BasicType};
+        match inner_type {
+            TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节) => {
+                "qi_future_ready_i64"
+            }
+            TypeNode::基础类型(BasicType::浮点数) => {
+                "qi_future_ready_f64"
+            }
+            TypeNode::基础类型(BasicType::布尔) => {
+                "qi_future_ready_bool"
+            }
+            TypeNode::基础类型(BasicType::字符串) => {
+                "qi_future_ready_string"
+            }
+            TypeNode::结构体类型(_) | TypeNode::自定义类型(_) | TypeNode::指针类型(_) => {
+                "qi_future_ready_ptr"
+            }
+            _ => {
+                // Default to i64 for unknown types
+                "qi_future_ready_i64"
+            }
+        }
+    }
+
+    /// Determine the appropriate Future await function based on inner type
+    fn get_future_await_function(&self, inner_type: &crate::parser::ast::TypeNode) -> &'static str {
+        use crate::parser::ast::{TypeNode, BasicType};
+        match inner_type {
+            TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节) => {
+                "qi_future_await_i64"
+            }
+            TypeNode::基础类型(BasicType::浮点数) => {
+                "qi_future_await_f64"
+            }
+            TypeNode::基础类型(BasicType::布尔) => {
+                "qi_future_await_bool"
+            }
+            TypeNode::基础类型(BasicType::字符串) => {
+                "qi_future_await_string"
+            }
+            TypeNode::结构体类型(_) | TypeNode::自定义类型(_) | TypeNode::指针类型(_) => {
+                "qi_future_await_ptr"
+            }
+            _ => {
+                // Default to i64 for unknown types
+                "qi_future_await_i64"
+            }
+        }
+    }
+
+    /// Get LLVM type string from TypeNode
+    fn get_llvm_type_from_ast(&self, type_node: &crate::parser::ast::TypeNode) -> String {
+        use crate::parser::ast::{TypeNode, BasicType};
+        match type_node {
+            TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节) => {
+                "i64".to_string()
+            }
+            TypeNode::基础类型(BasicType::浮点数) => {
+                "double".to_string()
+            }
+            TypeNode::基础类型(BasicType::布尔) => {
+                "i1".to_string()
+            }
+            TypeNode::基础类型(BasicType::字符串) => {
+                "ptr".to_string()
+            }
+            TypeNode::结构体类型(_) | TypeNode::自定义类型(_) | TypeNode::指针类型(_) => {
+                "ptr".to_string()
+            }
+            _ => {
+                "i64".to_string()
             }
         }
     }
@@ -736,6 +936,10 @@ impl IrBuilder {
                             };
                             (ty.to_string(), None)
                         }
+                        AstNode::数组字面量表达式(_) => {
+                            // Array literals return pointers to arrays, so use ptr type
+                            ("ptr".to_string(), None)
+                        }
                         AstNode::二元操作表达式(_) => {
                             // Build the initializer first to determine its type
                             let init_value = self.build_node(&**initializer)?;
@@ -802,13 +1006,67 @@ impl IrBuilder {
                             };
                             (ty.to_string(), None)
                         }
-                        AstNode::等待表达式(_) => {
-                            // Build the await expression first to determine its type
+                        AstNode::取地址表达式(_) => {
+                            // Address-of expressions always return pointers
+                            ("ptr".to_string(), None)
+                        }
+                        AstNode::等待表达式(await_expr) => {
+                            // Determine type from Future inner type BEFORE building the await expression
+                            // This is necessary because variable allocation needs to know the type
+                            let (ty, struct_name) = if let AstNode::标识符表达式(ident) = await_expr.expression.as_ref() {
+                                let future_var = &ident.name;
+                                if let Some(inner_type_info) = self.future_inner_types.get(future_var) {
+                                    if inner_type_info.starts_with("struct.") {
+                                        // Extract struct type name
+                                        let struct_name = inner_type_info.strip_prefix("struct.").unwrap();
+                                        eprintln!("[AWAIT-VAR-DECL] Future inner type is struct: {}", struct_name);
+                                        ("ptr".to_string(), Some(struct_name.to_string()))
+                                    } else {
+                                        // Basic type from Future inner type
+                                        eprintln!("[AWAIT-VAR-DECL] Future inner type: {}", inner_type_info);
+                                        (inner_type_info.to_string(), None)
+                                    }
+                                } else {
+                                    eprintln!("[AWAIT-VAR-DECL] No Future inner type found for {}, defaulting to i64", future_var);
+                                    ("i64".to_string(), None)
+                                }
+                            } else if let AstNode::函数调用表达式(call_expr) = await_expr.expression.as_ref() {
+                                // Awaiting a function call - infer from function's Future<T> return type
+                                let function_name = self.get_full_function_name(call_expr);
+                                let mangled = if function_name.chars().any(|c| !c.is_ascii()) {
+                                    self.mangle_function_name(&function_name)
+                                } else {
+                                    function_name.clone()
+                                };
+
+                                if let Some(inner_type_info) = self.function_future_inner_types.get(&mangled) {
+                                    if inner_type_info.starts_with("struct.") {
+                                        let struct_name = inner_type_info.strip_prefix("struct.").unwrap();
+                                        eprintln!("[AWAIT-VAR-DECL] Function {} returns Future<struct {}>, allocating ptr", function_name, struct_name);
+                                        ("ptr".to_string(), Some(struct_name.to_string()))
+                                    } else {
+                                        eprintln!("[AWAIT-VAR-DECL] Function {} returns Future<{}>, using that type", function_name, inner_type_info);
+                                        (inner_type_info.to_string(), None)
+                                    }
+                                } else {
+                                    eprintln!("[AWAIT-VAR-DECL] No Future inner type for function {}, defaulting to i64", function_name);
+                                    ("i64".to_string(), None)
+                                }
+                            } else {
+                                eprintln!("[AWAIT-VAR-DECL] await expression not from identifier or function call, defaulting to i64");
+                                ("i64".to_string(), None)
+                            };
+
+                            // Preserve struct type information if present
+                            if let Some(struct_name) = struct_name {
+                                eprintln!("[AWAIT-VAR-DECL] Preserving struct type {} for variable {}", struct_name, decl.name);
+                                self.variable_struct_types.insert(decl.name.clone(), struct_name);
+                            }
+
+                            // Now build the await expression
                             let init_value = self.build_node(&**initializer)?;
-                            let init_var_name = init_value.trim_start_matches('%');
-                            let ty = self.variable_types.get(init_var_name)
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| "i64".to_string());
+                            eprintln!("[AWAIT-VAR-DECL] Final type for variable {}: {}", &decl.name, ty);
+
                             (ty, Some(init_value))
                         }
                         AstNode::结构体实例化表达式(struct_lit) => {
@@ -843,7 +1101,37 @@ impl IrBuilder {
                     decl.name.clone()
                 };
                 self.variable_types.insert(decl.name.clone(), type_name.to_string());
-                self.variable_types.insert(mangled_name, type_name.to_string());
+                self.variable_types.insert(mangled_name.clone(), type_name.to_string());
+
+                // Track Future inner types for await expressions
+                // and track variables that are semantically boolean
+                if let Some(type_ann) = &decl.type_annotation {
+                    if let crate::parser::ast::TypeNode::未来类型(inner_type) = type_ann {
+                        // For struct types, we need to preserve the struct type name
+                        // so we can distinguish between string pointers and struct pointers
+                        let inner_type_info = match inner_type.as_ref() {
+                            crate::parser::ast::TypeNode::自定义类型(type_name) => {
+                                // Store struct type name instead of just "ptr"
+                                format!("struct.{}", type_name)
+                            }
+                            crate::parser::ast::TypeNode::结构体类型(struct_type) => {
+                                // Extract struct name from StructType
+                                format!("struct.{}", struct_type.name)
+                            }
+                            _ => {
+                                // For basic types, use LLVM type
+                                self.get_llvm_type_from_ast(inner_type)
+                            }
+                        };
+                        eprintln!("[FUTURE-TRACK] Variable {} (mangled: {}) has Future inner type: {}", decl.name, mangled_name, inner_type_info);
+                        self.future_inner_types.insert(decl.name.clone(), inner_type_info.clone());
+                        self.future_inner_types.insert(mangled_name.clone(), inner_type_info);
+                    } else if let crate::parser::ast::TypeNode::基础类型(crate::parser::ast::BasicType::布尔) = type_ann {
+                        // Track boolean variables (even if they end up stored as i32)
+                        self.boolean_variables.insert(decl.name.clone());
+                        self.boolean_variables.insert(mangled_name.clone());
+                    }
+                }
 
                 // Allocate variable
                 self.add_instruction(IrInstruction::分配 {
@@ -943,8 +1231,22 @@ impl IrBuilder {
                 // Record the function's return type for later function calls
                 self.function_return_types.insert(func_name.clone(), return_type.clone());
 
+                // If function returns Future<T>, track the inner type
+                if let Some(ref ret_type_node) = func_decl.return_type {
+                    if let crate::parser::ast::TypeNode::未来类型(inner_type) = ret_type_node {
+                        let inner_llvm_type = self.get_llvm_type_from_ast(inner_type);
+                        self.function_future_inner_types.insert(func_name.clone(), inner_llvm_type);
+                    }
+                }
+
                 // Record this function as defined in current module
                 self.defined_functions.insert(func_name.clone());
+
+                // Set current function name for return statement processing
+                self.current_function_name = Some(func_name.clone());
+
+                // Set AST return type for Future wrapping detection
+                self.current_function_ast_return_type = func_decl.return_type.clone();
 
                 // Add function header label
                 self.add_instruction(IrInstruction::标签 {
@@ -1016,6 +1318,10 @@ impl IrBuilder {
                 // // Function is already properly closed by function body processing
                 self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
 
+                // Clear current function name and return type after function ends
+                self.current_function_name = None;
+                self.current_function_ast_return_type = None;
+
                 // Add module-qualified alias if we have a package name and this is not main
                 if let Some(package_name) = &self.current_package_name {
                     if !is_main {
@@ -1040,106 +1346,6 @@ impl IrBuilder {
 
                 Ok(func_name.to_string())
             }
-            AstNode::异步函数声明(async_func_decl) => {
-                // Handle async function declaration similar to regular functions
-                let func_name: String = match async_func_decl.name.as_str() {
-                    name => {
-                        if name.chars().any(|c| !c.is_ascii()) {
-                            self.mangle_function_name(name)
-                        } else {
-                            name.to_string()
-                        }
-                    }
-                };
-
-                // Mark that we're entering an async context
-                let was_async = self.in_async_context;
-                self.in_async_context = true;
-
-                // Record the async function's return type
-                let return_type_str = if let Some(ref ret_type) = async_func_decl.return_type {
-                    self.get_llvm_type(&Some(ret_type.clone()))
-                } else {
-                    "void".to_string()
-                };
-                self.async_function_types.insert(func_name.clone(), return_type_str);
-
-                // Record this function as defined in current module
-                self.defined_functions.insert(func_name.clone());
-
-                // Build parameter list
-                let params: Vec<String> = async_func_decl.parameters
-                    .iter()
-                    .map(|p| {
-                        let type_str = self.get_llvm_type(&p.type_annotation);
-                        let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
-                            format!("%{}", self.mangle_function_name(&p.name))
-                        } else {
-                            format!("%{}", p.name)
-                        };
-                        format!("{} {}", type_str, param_name)
-                    })
-                    .collect();
-
-                let params_str = if params.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", params.join(", "))
-                };
-
-                // Async functions always return ptr (Future handle)
-                let return_type = "ptr".to_string();
-
-                // Add async function header label
-                self.add_instruction(IrInstruction::标签 {
-                    name: format!("define {} @{}({}) {{", return_type, func_name, params_str),
-                });
-
-                // Add entry block
-                self.add_instruction(IrInstruction::标签 {
-                    name: "entry:".to_string(),
-                });
-
-                // Process async function body
-                for stmt in &async_func_decl.body {
-                    self.build_node(stmt)?;
-                }
-
-                // Async functions should always return a Future handle
-                // For now, we'll return a null Future handle as a placeholder
-                // In a real implementation, we would create a proper Future object
-                self.add_instruction(IrInstruction::返回 {
-                    value: Some("null".to_string()) // Return null Future handle
-                });
-
-                // // Function is already properly closed by function body processing
-                self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
-
-                // Add module-qualified alias if we have a package name
-                if let Some(package_name) = &self.current_package_name {
-                    // Create an alias: @数学_异步函数 = alias ptr (), ptr @异步函数
-                    let alias_name = format!("{}_{}", package_name, &async_func_decl.name);
-                    let alias_mangled = self.mangle_function_name(&alias_name);
-                    
-                    // Build parameter types list (without parameter names)
-                    let param_types: Vec<String> = async_func_decl.parameters
-                        .iter()
-                        .map(|p| self.get_llvm_type(&p.type_annotation))
-                        .collect();
-                    let param_types_str = param_types.join(", ");
-                    
-                    // Generate function signature for alias
-                    self.add_instruction(IrInstruction::标签 {
-                        name: format!("@{} = alias {} ({}), ptr @{}", 
-                            alias_mangled, return_type, param_types_str, func_name)
-                    });
-                }
-
-                // Restore async context flag
-                self.in_async_context = was_async;
-
-                Ok(func_name.to_string())
-            }
             AstNode::返回语句(return_stmt) => {
                 let value = if let Some(expr) = &return_stmt.value {
                     Some(self.build_node(expr)?)
@@ -1147,7 +1353,94 @@ impl IrBuilder {
                     None
                 };
 
-                self.add_instruction(IrInstruction::返回 { value });
+                // Check if current function returns a Future type
+                // If so, wrap the return value with the appropriate qi_future_ready_* function
+                let final_value = if let Some(ref ast_return_type) = self.current_function_ast_return_type {
+                    if let crate::parser::ast::TypeNode::未来类型(inner_type) = ast_return_type {
+                        // Function returns Future<T>, wrap the return value
+                        let ready_func = self.get_future_ready_function(inner_type);
+
+                        if let Some(val) = value {
+                            let future_temp = self.generate_temp();
+
+                            // Determine arguments based on function type
+                            let args = if ready_func == "qi_future_ready_string" {
+                                // String: for now just pass the pointer directly
+                                // TODO: need proper string length handling
+                                vec![val, "0".to_string()]
+                            } else if ready_func == "qi_future_ready_bool" {
+                                // Boolean: need to convert i1 to i32
+                                let bool_i32 = self.generate_temp();
+                                // Generate zext instruction directly - add trailing colon to prevent auto-colon addition
+                                self.add_instruction(IrInstruction::标签 {
+                                    name: format!("{} = zext i1 {} to i32:", bool_i32, val),
+                                });
+                                // Track the type of the converted value
+                                let bool_var = bool_i32.trim_start_matches('%');
+                                self.variable_types.insert(bool_var.to_string(), "i32".to_string());
+                                vec![bool_i32]
+                            } else if ready_func == "qi_future_ready_ptr" {
+                                // Pointer (struct/custom types): determine the actual type of the value
+                                // The value might be a variable or a temporary
+                                let val_var = val.trim_start_matches('%');
+                                let val_type = self.variable_types.get(val_var)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("ptr");
+
+                                // If value type is ptr, pass it directly with type annotation
+                                // Otherwise, need to convert to ptr (shouldn't happen for structs)
+                                if val_type == "ptr" {
+                                    vec![val]
+                                } else {
+                                    // Fallback: assume it's ptr
+                                    vec![val]
+                                }
+                            } else {
+                                // Integer, float: single argument
+                                vec![val]
+                            };
+
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(future_temp.clone()),
+                                callee: ready_func.to_string(),
+                                arguments: args,
+                            });
+                            Some(future_temp)
+                        } else {
+                            // No return value, create a Future with default value
+                            let future_temp = self.generate_temp();
+                            let default_args = if ready_func == "qi_future_ready_string" {
+                                // Empty string: null pointer + 0 length
+                                vec!["null".to_string(), "0".to_string()]
+                            } else if ready_func == "qi_future_ready_ptr" {
+                                // Null pointer
+                                vec!["null".to_string()]
+                            } else if ready_func == "qi_future_ready_f64" {
+                                // Float: 0.0
+                                vec!["0.0".to_string()]
+                            } else if ready_func == "qi_future_ready_bool" {
+                                // Boolean: 0 (false)
+                                vec!["0".to_string()]
+                            } else {
+                                // Integer: 0
+                                vec!["0".to_string()]
+                            };
+
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(future_temp.clone()),
+                                callee: ready_func.to_string(),
+                                arguments: default_args,
+                            });
+                            Some(future_temp)
+                        }
+                    } else {
+                        value
+                    }
+                } else {
+                    value
+                };
+
+                self.add_instruction(IrInstruction::返回 { value: final_value });
                 Ok("ret".to_string())
             }
             AstNode::跳出语句(_) => {
@@ -1686,12 +1979,35 @@ impl IrBuilder {
                                 }
                             }
                             AstNode::标识符表达式(ident) => {
-                                // Look up variable type from our tracking
-                                match self.variable_types.get(&ident.name) {
-                                    Some(vtype) if vtype == "double" => "float",
-                                    Some(vtype) if vtype == "ptr" => "string",
-                                    Some(vtype) if vtype == "i1" => "boolean",
-                                    _ => "integer", // Default to integer
+                                // Check if this is a semantically boolean variable first
+                                let is_bool_var = self.boolean_variables.contains(&ident.name) || {
+                                    let mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                                        format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"))
+                                    } else {
+                                        ident.name.clone()
+                                    };
+                                    self.boolean_variables.contains(&mangled)
+                                };
+
+                                if is_bool_var {
+                                    "boolean"
+                                } else {
+                                    // Look up variable type from our tracking
+                                    let var_type = self.variable_types.get(&ident.name).or_else(|| {
+                                        let mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                                            format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"))
+                                        } else {
+                                            ident.name.clone()
+                                        };
+                                        self.variable_types.get(&mangled)
+                                    });
+
+                                    match var_type {
+                                        Some(vtype) if vtype == "double" => "float",
+                                        Some(vtype) if vtype == "ptr" => "string",
+                                        Some(vtype) if vtype == "i1" => "boolean",
+                                        _ => "integer", // Default to integer
+                                    }
                                 }
                             }
                             AstNode::字符串连接表达式(_) => "string", // String concatenation returns string
@@ -1983,8 +2299,62 @@ impl IrBuilder {
                 }
             }
             AstNode::等待表达式(await_expr) => {
+                // Extract the original variable name if it's an identifier
+                let original_var_name = if let AstNode::标识符表达式(ident) = await_expr.expression.as_ref() {
+                    Some(ident.name.clone())
+                } else {
+                    None
+                };
+
                 // Build the awaited expression first
                 let future_expr = self.build_node(&await_expr.expression)?;
+
+                // Determine if this is a Future<T> type or an async coroutine
+                let future_var = future_expr.trim_start_matches('%');
+                let is_future_type = self.variable_types.get(future_var)
+                    .map(|t| t == "ptr")
+                    .unwrap_or(false);
+
+                // Propagate Future inner type to the temp variable
+                let mut inner_type_propagated = false;
+
+                // If we have the original variable name and it's a Future, propagate its inner type
+                if let Some(orig_name) = &original_var_name {
+                    let inner_type_opt = self.future_inner_types.get(orig_name).cloned().or_else(|| {
+                        let mangled = if orig_name.chars().any(|c| !c.is_ascii()) {
+                            format!("_Z_{}", self.mangle_function_name(orig_name).trim_start_matches("_Z_"))
+                        } else {
+                            orig_name.clone()
+                        };
+                        self.future_inner_types.get(&mangled).cloned()
+                    });
+
+                    if let Some(inner_type) = inner_type_opt {
+                        eprintln!("[AWAIT-EXPR-PROPAGATE] Propagating inner type {} from variable {} to temp {}", inner_type, orig_name, future_var);
+                        self.future_inner_types.insert(future_var.to_string(), inner_type.clone());
+                        inner_type_propagated = true;
+                    }
+                }
+
+                // If awaiting a function call, infer the inner type from the function's return type annotation
+                if !inner_type_propagated && original_var_name.is_none() {
+                    if let AstNode::函数调用表达式(call_expr) = await_expr.expression.as_ref() {
+                        let function_name = self.get_full_function_name(call_expr);
+                        let mangled = if function_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&function_name)
+                        } else {
+                            function_name.clone()
+                        };
+
+                        // Look up the function's Future inner type
+                        if let Some(inner_type) = self.function_future_inner_types.get(&mangled) {
+                            eprintln!("[AWAIT-EXPR-FUNC-CALL] Awaiting function {} -> temp {}, inner_type={}", function_name, future_var, inner_type);
+                            self.future_inner_types.insert(future_var.to_string(), inner_type.clone());
+                        } else {
+                            eprintln!("[AWAIT-EXPR-FUNC-CALL] Awaiting function {} -> temp {}, no inner type found", function_name, future_var);
+                        }
+                    }
+                }
 
                 // Try to infer the type from the expression
                 // If it's a function call, look up the async function's return type
@@ -2013,8 +2383,54 @@ impl IrBuilder {
                     // Just return it directly
                     self.variable_types.insert(future_expr.trim_start_matches('%').to_string(), result_type);
                     Ok(future_expr)
+                } else if is_future_type {
+                    // This is a Future<T> type - determine the correct await return type
+                    let await_temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::等待表达式 {
+                        dest: await_temp.clone(),
+                        future: future_expr.clone(),
+                    });
+
+                    // Look up the Future's inner type using the original variable name
+                    // Try original name first, then mangled name, then temp var name
+                    let inner_type = if let Some(orig_name) = &original_var_name {
+                        self.future_inner_types.get(orig_name)
+                            .or_else(|| {
+                                let mangled = if orig_name.chars().any(|c| !c.is_ascii()) {
+                                    format!("_Z_{}", self.mangle_function_name(orig_name).trim_start_matches("_Z_"))
+                                } else {
+                                    orig_name.clone()
+                                };
+                                self.future_inner_types.get(&mangled)
+                            })
+                            .map(|s| s.as_str())
+                    } else {
+                        self.future_inner_types.get(future_var).map(|s| s.as_str())
+                    }
+                    .unwrap_or("i64");
+                    eprintln!("[AWAIT-EXPR] original_var_name={:?}, future_var={}, inner_type={}", original_var_name, future_var, inner_type);
+
+                    // Map inner type to the final result type (after any conversions)
+                    let return_type = if inner_type.starts_with("struct.") {
+                        "ptr"  // Struct types return ptr
+                    } else {
+                        match inner_type {
+                            "i64" => "i64",      // qi_future_await_i64 returns i64
+                            "double" => "double", // qi_future_await_f64 returns double
+                            "i1" => "i1",        // qi_future_await_bool returns i32, but we convert to i1
+                            "ptr" => "ptr",      // qi_future_await_string/ptr returns ptr
+                            _ => "i64",          // Default
+                        }
+                    };
+                    eprintln!("[AWAIT-EXPR] return_type={}, await_temp={}", return_type, await_temp);
+
+                    // Track the final result type (after any conversions)
+                    let temp_key = await_temp.trim_start_matches('%').to_string();
+                    eprintln!("[AWAIT-EXPR] Inserting variable_types[{}] = {}", temp_key, return_type);
+                    self.variable_types.insert(temp_key, return_type.to_string());
+                    Ok(await_temp)
                 } else {
-                    // Generate await instruction - returns pointer to the result
+                    // This is an async coroutine - qi_runtime_await returns pointer to the result
                     let await_temp = self.generate_temp();
                     self.add_instruction(IrInstruction::等待表达式 {
                         dest: await_temp.clone(),
@@ -2273,12 +2689,54 @@ impl IrBuilder {
                 // Create a temporary for the struct instance
                 let temp = self.generate_temp();
 
+                // Check if we're in a Future-returning function that returns this struct type
+                // If so, we need to heap-allocate the struct instead of stack-allocating it
+                let needs_heap_allocation = if let Some(ref ast_return_type) = self.current_function_ast_return_type {
+                    match ast_return_type {
+                        crate::parser::ast::TypeNode::未来类型(inner_type) => {
+                            // Check if inner type matches this struct
+                            match inner_type.as_ref() {
+                                crate::parser::ast::TypeNode::自定义类型(type_name) => {
+                                    type_name == &struct_literal.struct_name
+                                }
+                                crate::parser::ast::TypeNode::结构体类型(struct_type) => {
+                                    &struct_type.name == &struct_literal.struct_name
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+
                 // Allocate memory for the struct
                 let struct_type = format!("{}.type", struct_literal.struct_name);
-                self.add_instruction(IrInstruction::分配 {
-                    dest: temp.clone(),
-                    type_name: struct_type,
-                });
+                if needs_heap_allocation {
+                    // Heap allocation using malloc
+                    eprintln!("[HEAP-ALLOC] Heap-allocating struct {} in Future-returning function", struct_literal.struct_name);
+                    // Call malloc with the size of the struct
+                    // Get struct size (assuming each field is i64 for now, which is 8 bytes)
+                    let field_count = struct_literal.fields.len();
+                    let struct_size = field_count * 8;  // i64 = 8 bytes
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(temp.clone()),
+                        callee: "malloc".to_string(),
+                        arguments: vec![struct_size.to_string()],
+                    });
+                    // IMPORTANT: Record both pointer type and struct type for this variable
+                    // This is needed for getelementptr to work correctly
+                    let temp_var = temp.trim_start_matches('%');
+                    self.variable_types.insert(temp_var.to_string(), "ptr".to_string());
+                    self.variable_struct_types.insert(temp_var.to_string(), struct_literal.struct_name.clone());
+                } else {
+                    // Stack allocation using alloca (normal case)
+                    self.add_instruction(IrInstruction::分配 {
+                        dest: temp.clone(),
+                        type_name: struct_type.clone(),
+                    });
+                }
 
                 // Initialize each field
                 for field in &struct_literal.fields {
@@ -2527,6 +2985,47 @@ impl IrBuilder {
                 Ok(format!("method_{}", func_name))
             }
             AstNode::方法调用表达式(method_call) => {
+                // Check if this is a static method call (method_name starts with ::)
+                if method_call.method_name.starts_with("::") {
+                    // Static method call: Type::method(args)
+                    // Extract type name and method name
+                    if let AstNode::标识符表达式(type_ident) = &*method_call.object {
+                        let type_name = &type_ident.name;
+                        let method_name = &method_call.method_name[2..]; // Remove :: prefix
+
+                        // Map known static methods to runtime functions
+                        let runtime_func_name = match (type_name.as_str(), method_name) {
+                            ("未来", "就绪") => "qi_future_ready_i64",
+                            ("未来", "失败") => "qi_future_failed",
+                            _ => {
+                                return Err(format!("Unknown static method: {}::{}", type_name, method_name).into());
+                            }
+                        };
+
+                        // Build arguments
+                        let mut args = vec![];
+                        for arg in &method_call.arguments {
+                            args.push(self.build_node(arg)?);
+                        }
+
+                        // Generate the call
+                        let temp = self.generate_temp();
+
+                        // Record the type (Future methods return ptr)
+                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(temp.clone()),
+                            callee: runtime_func_name.to_string(),
+                            arguments: args,
+                        });
+
+                        return Ok(temp);
+                    } else {
+                        return Err("Static method call must have a type name as the object".to_string().into());
+                    }
+                }
+
                 // 检查是否为模块前缀调用（object 是标识符且不是变量）
                 if let AstNode::标识符表达式(ident) = &*method_call.object {
                     // 检查是否为已知变量（排除模块名）
@@ -2539,33 +3038,65 @@ impl IrBuilder {
                         // 这是模块前缀调用，如 加密.MD5哈希()
                         let module_name = &ident.name;
 
-                        // 检查是否为导入的标准库模块
+                        // 检查是否为导入的模块
                         if self.import_aliases.contains_key(module_name) {
-                            // 验证模块函数是否存在并获取运行时函数名和返回类型
-                            let (runtime_func_name, return_type) = {
-                                let module_function = self.check_module_function_available(
-                                    module_name,
-                                    &method_call.method_name
-                                )?;
-                                (module_function.runtime_name.clone(), module_function.return_type.clone())
-                            };
+                            let module_path = self.import_aliases.get(module_name).unwrap();
 
-                            // 构建参数
-                            let mut args = vec![];
-                            for arg in &method_call.arguments {
-                                args.push(self.build_node(arg)?);
+                            // 检查是否为标准库模块（在ModuleRegistry中）
+                            let is_stdlib = self.module_registry.has_module(module_path);
+
+                            if is_stdlib {
+                                // 标准库模块：验证函数是否存在并获取运行时函数名和返回类型
+                                let (runtime_func_name, return_type) = {
+                                    let module_function = self.check_module_function_available(
+                                        module_name,
+                                        &method_call.method_name
+                                    )?;
+                                    (module_function.runtime_name.clone(), module_function.return_type.clone())
+                                };
+
+                                // 构建参数
+                                let mut args = vec![];
+                                for arg in &method_call.arguments {
+                                    args.push(self.build_node(arg)?);
+                                }
+
+                                // 生成临时变量并记录其类型
+                                let temp = self.generate_temp();
+                                self.variable_types.insert(temp.clone(), return_type);
+
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(temp.clone()),
+                                    callee: runtime_func_name,
+                                    arguments: args,
+                                });
+                                return Ok(temp);
+                            } else {
+                                // 用户包：直接使用mangled函数名，跳过验证
+                                let func_name = if method_call.method_name.chars().any(|c| !c.is_ascii()) {
+                                    self.mangle_function_name(&method_call.method_name)
+                                } else {
+                                    method_call.method_name.clone()
+                                };
+
+                                // 构建参数
+                                let mut args = vec![];
+                                for arg in &method_call.arguments {
+                                    args.push(self.build_node(arg)?);
+                                }
+
+                                // 生成临时变量
+                                let temp = self.generate_temp();
+                                // 默认返回类型为i64（链接阶段会验证）
+                                self.variable_types.insert(temp.clone(), "i64".to_string());
+
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(temp.clone()),
+                                    callee: func_name,
+                                    arguments: args,
+                                });
+                                return Ok(temp);
                             }
-
-                            // 生成临时变量并记录其类型
-                            let temp = self.generate_temp();
-                            self.variable_types.insert(temp.clone(), return_type);
-
-                            self.add_instruction(IrInstruction::函数调用 {
-                                dest: Some(temp.clone()),
-                                callee: runtime_func_name,
-                                arguments: args,
-                            });
-                            return Ok(temp);
                         } else {
                             // 这是本地模块，使用模块前缀
                             // 模块前缀调用，如 数学工具.最大值 -> 数学工具_最大值
@@ -2824,6 +3355,46 @@ impl IrBuilder {
                 Ok("select".to_string())
             }
 
+            AstNode::取地址表达式(addr_of_expr) => {
+                // Get address of a variable
+                // The inner expression should be a variable identifier
+                if let AstNode::标识符表达式(ident) = addr_of_expr.expression.as_ref() {
+                    // Mangle the variable name if it contains Chinese characters
+                    let mangled_name = if ident.name.chars().any(|c| !c.is_ascii()) {
+                        self.mangle_function_name(&ident.name)
+                    } else {
+                        ident.name.clone()
+                    };
+
+                    // Return the pointer to the variable (the alloca'd address)
+                    let var_name = format!("%{}", mangled_name);
+                    // The variable itself is already a pointer (alloca returns ptr)
+                    // So we just return it directly
+                    Ok(var_name)
+                } else {
+                    Err("取地址操作只能用于变量标识符".to_string())
+                }
+            }
+
+            AstNode::解引用表达式(deref_expr) => {
+                // Dereference a pointer
+                let ptr_value = self.build_node(&deref_expr.expression)?;
+
+                // Generate a temporary to hold the loaded value
+                let result_temp = self.generate_temp();
+
+                // Load the value from the pointer
+                // Note: We need to determine the type of the pointed-to value
+                // For now, we'll assume i64 (can be extended later for typed pointers)
+                self.add_instruction(IrInstruction::加载 {
+                    dest: result_temp.clone(),
+                    source: ptr_value,
+                    load_type: Some("i64".to_string()),
+                });
+
+                Ok(result_temp)
+            }
+
             _ => {
                 #[allow(unreachable_patterns)]
                 Err(format!("Unsupported AST node: {:?}", node))
@@ -2973,6 +3544,11 @@ impl IrBuilder {
                 // Array types (e.g., 数组<整数>) are represented as pointers to array data
                 "ptr".to_string()
             }
+            Some(crate::parser::ast::TypeNode::未来类型(_inner_type)) => {
+                // Future types are represented as pointers to Future runtime structs
+                // The Future<T> is a heap-allocated structure managed by the runtime
+                "ptr".to_string()
+            }
             _ => "i64".to_string(), // Default to i64
         }
     }
@@ -3035,6 +3611,45 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_runtime_create_task(ptr, i64)\n");
         ir.push_str("declare ptr @qi_runtime_await(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_spawn_task(ptr)\n");
+        ir.push_str("\n");
+
+        // Future type functions
+        ir.push_str("; Future type functions - integer\n");
+        ir.push_str("declare ptr @qi_future_ready_i64(i64)\n");
+        ir.push_str("declare i64 @qi_future_await_i64(ptr)\n");
+        ir.push_str("\n");
+        ir.push_str("; Future type functions - float\n");
+        ir.push_str("declare ptr @qi_future_ready_f64(double)\n");
+        ir.push_str("declare double @qi_future_await_f64(ptr)\n");
+        ir.push_str("\n");
+        ir.push_str("; Future type functions - boolean\n");
+        ir.push_str("declare ptr @qi_future_ready_bool(i32)\n");
+        ir.push_str("declare i32 @qi_future_await_bool(ptr)\n");
+        ir.push_str("\n");
+        ir.push_str("; Future type functions - string\n");
+        ir.push_str("declare ptr @qi_future_ready_string(ptr, i64)\n");
+        ir.push_str("declare ptr @qi_future_await_string(ptr)\n");
+        ir.push_str("\n");
+        ir.push_str("; Future type functions - pointer (for structs)\n");
+        ir.push_str("declare ptr @qi_future_ready_ptr(ptr)\n");
+        ir.push_str("declare ptr @qi_future_await_ptr(ptr)\n");
+        ir.push_str("\n");
+        ir.push_str("; Future type functions - common\n");
+        ir.push_str("declare ptr @qi_future_failed(ptr, i64)\n");
+        ir.push_str("declare i32 @qi_future_is_completed(ptr)\n");
+        ir.push_str("declare void @qi_future_free(ptr)\n");
+        ir.push_str("declare void @qi_string_free(ptr)\n");
+        ir.push_str("\n");
+
+        // String utility functions
+        ir.push_str("; String utility functions\n");
+        ir.push_str("declare i64 @strlen(ptr)\n");
+        ir.push_str("\n");
+
+        // Memory allocation functions
+        ir.push_str("; Memory allocation functions\n");
+        ir.push_str("declare ptr @malloc(i64)\n");
+        ir.push_str("declare void @free(ptr)\n");
         ir.push_str("\n");
 
         // Concurrency functions - Channel operations
@@ -3171,8 +3786,8 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_println_int(i64)\n");
         ir.push_str("declare i32 @qi_runtime_print_float(double)\n");
         ir.push_str("declare i32 @qi_runtime_println_float(double)\n");
-        ir.push_str("declare i32 @qi_runtime_print_bool(i1)\n");
-        ir.push_str("declare i32 @qi_runtime_println_bool(i1)\n");
+        ir.push_str("declare i32 @qi_runtime_print_bool(i32)\n");
+        ir.push_str("declare i32 @qi_runtime_println_bool(i32)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_int(ptr, i64)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_float(ptr, double)\n");
         ir.push_str("declare i32 @qi_runtime_println_str_str(ptr, ptr)\n");
@@ -3181,6 +3796,8 @@ impl IrBuilder {
         ir.push_str("; Memory management\n");
         ir.push_str("declare ptr @qi_runtime_alloc(i64)\n");
         ir.push_str("declare i32 @qi_runtime_dealloc(ptr, i64)\n");
+        ir.push_str("declare i64 @qi_runtime_gc_should_collect()\n");
+        ir.push_str("declare void @qi_runtime_gc_collect()\n");
         ir.push_str("\n");
         
         ir.push_str("; String operations\n");
@@ -3243,7 +3860,16 @@ impl IrBuilder {
             "e5_88_9b_e5_bb_ba_e7_ad_89_e5_be_85_e7_bb_84", "e6_8b_89_e5_a0_80_e7_ad_89_e5_be_85", "e7_ad_89_e5_be_85", "e5_ae_8c_e6_88_90",
             "e5_88_9b_e5_bb_ba_e4_ba_92_e6_96_a5_e9_94_81", "e5_8a_a0_e9_94_81", "e8_a3_a3_e9_94_81", "e5_b0_9d_e8_af_95_e5_8a_a0_e9_94_81",
             "e8_b7_a5_e5_8f_96_e9_97_b4_e9_97_b4", "e8_ae_bd_e7_ba_ae_e8_b6_85_e6_97_b6", "e6_8f_a5_e6_9f_a5_e8_b6_85_e6_97_b6",
-            "e5_88_9b_e5_bb_ba_e5_b0_a8_e6_97_b6_e5_99_a8", "e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c"
+            "e5_88_9b_e5_bb_ba_e5_b0_a8_e6_97_b6_e5_99_a8", "e9_87_8d_e8_af_95_e6_93_8d_e4_bd_9c",
+            // Future type functions
+            "qi_future_ready_i64", "qi_future_await_i64",
+            "qi_future_ready_f64", "qi_future_await_f64",
+            "qi_future_ready_bool", "qi_future_await_bool",
+            "qi_future_ready_string", "qi_future_await_string",
+            "qi_future_ready_ptr", "qi_future_await_ptr",
+            "qi_future_failed", "qi_future_is_completed", "qi_future_free", "qi_string_free",
+            // Memory allocation
+            "malloc", "free", "strlen"
         ]);
 
         if !self.external_functions.is_empty() {
@@ -3310,8 +3936,21 @@ impl IrBuilder {
             match instruction {
                 IrInstruction::分配 { dest, type_name } => {
                     let mangled_type = self.mangle_type_name(type_name);
-                    // Add explicit type annotation for the destination and alignment
-                    ir.push_str(&format!("{} = alloca {}, align {}\n", dest, mangled_type, self.get_type_alignment(type_name)));
+
+                    // Smart allocation: use heap for large types, stack for small types
+                    if self.is_small_type(type_name) {
+                        // Small type: use stack allocation (original behavior)
+                        ir.push_str(&format!("  {} = alloca {}, align {}\n", dest, mangled_type, self.get_type_alignment(type_name)));
+                    } else {
+                        // Large or complex type: could use heap allocation
+                        // For now, keep stack allocation for compatibility, but this is where
+                        // we could switch to heap for structs, arrays, etc.
+                        ir.push_str(&format!("  {} = alloca {}, align {}\n", dest, mangled_type, self.get_type_alignment(type_name)));
+
+                        // Future enhancement: detect large structs and use heap
+                        // let type_size = self.estimate_type_size(type_name);
+                        // if type_size > 1024 { /* use heap */ }
+                    }
                 }
                 IrInstruction::存储 { target, value, value_type } => {
                     // Determine the type based on the value_type if provided, otherwise infer
@@ -3539,13 +4178,19 @@ impl IrBuilder {
                                     }
                                 } else {
                                     // Fallback: determine type based on specific function signatures
-                                    if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" {
+                                    if callee == "qi_future_ready_bool" {
+                                        "i32"
+                                    } else if callee == "qi_future_ready_f64" {
+                                        "double"
+                                    } else if callee == "qi_future_ready_ptr" || callee == "qi_future_await_ptr" {
+                                        "ptr"
+                                    } else if callee == "qi_runtime_print_int" || callee == "qi_runtime_println_int" {
                                         "i64"
                                     } else if callee == "qi_runtime_print_float" || callee == "qi_runtime_println_float" ||
                                               callee == "qi_runtime_float_to_string" {
                                         "double"
                                     } else if callee == "qi_runtime_print_bool" || callee == "qi_runtime_println_bool" {
-                                        "i1"
+                                        "i32"
                                     } else if callee.contains("concat") || callee.contains("read_string") || callee.contains("file") {
                                         "ptr"
                                     } else if callee == "qi_runtime_waitgroup_add" {
@@ -3639,8 +4284,16 @@ impl IrBuilder {
                                         typed_args.push(format!("i1 {}", arg));
                                     }
                                 } else if current_arg_type != final_expected_type {
+                                    // Only do conversions if we're confident about the current type
+                                    // If current_arg_type was defaulted to i64 (not found in variable_types),
+                                    // trust the expected type instead
+                                    let was_defaulted = !self.variable_types.contains_key(arg_var_name);
                                     let conv_temp = format!("%conv{}_{}", arg_var_name, i);
-                                    if current_arg_type == "i64" && final_expected_type == "double" {
+
+                                    if was_defaulted && current_arg_type == "i64" {
+                                        // Type was defaulted, trust expected type directly
+                                        typed_args.push(format!("{} {}", final_expected_type, arg));
+                                    } else if current_arg_type == "i64" && final_expected_type == "double" {
                                         // Convert i64 to double
                                         ir.push_str(&format!("{} = sitofp i64 {} to double\n", conv_temp, arg));
                                         typed_args.push(format!("double {}", conv_temp));
@@ -3652,6 +4305,10 @@ impl IrBuilder {
                                         // Convert bool to i64
                                         ir.push_str(&format!("{} = zext i1 {} to i64\n", conv_temp, arg));
                                         typed_args.push(format!("i64 {}", conv_temp));
+                                    } else if current_arg_type == "i1" && final_expected_type == "i32" {
+                                        // Convert bool to i32 (for qi_runtime_println_bool and similar functions)
+                                        ir.push_str(&format!("{} = zext i1 {} to i32\n", conv_temp, arg));
+                                        typed_args.push(format!("i32 {}", conv_temp));
                                     } else {
                                         // No conversion needed or unsupported conversion
                                         typed_args.push(format!("{} {}", final_expected_type, arg));
@@ -3723,7 +4380,21 @@ impl IrBuilder {
                         };
 
                         // Determine return type based on function name
-                        let ret_type = if callee.starts_with("qi_runtime_") {
+                        let ret_type = if callee.starts_with("qi_future_") {
+                            // Future type functions - check external_functions first
+                            if let Some((_, ret_ty)) = self.external_functions.get(&callee as &str) {
+                                ret_ty.as_str()
+                            } else {
+                                // Fallback for future functions
+                                match callee.as_str() {
+                                    "qi_future_ready_i64" | "qi_future_failed" => "ptr",
+                                    "qi_future_await_i64" => "i64",
+                                    "qi_future_is_completed" => "i32",
+                                    "qi_future_free" => "void",
+                                    _ => "ptr"
+                                }
+                            }
+                        } else if callee.starts_with("qi_runtime_") {
                             // Create functions return ptr - MUST BE FIRST
                             if callee == "qi_runtime_create_channel" || callee == "qi_runtime_waitgroup_create" ||
                                callee == "qi_runtime_mutex_create" || callee == "qi_runtime_rwlock_create" ||
@@ -3814,6 +4485,8 @@ impl IrBuilder {
                                 "ptr"
                             } else if let Some(ret_type) = self.function_return_types.get(&self.mangle_function_name(&callee) as &str) {
                                 ret_type  // Use stored return type from function signature
+                            } else if let Some((_param_types, ret_type)) = self.external_functions.get(callee) {
+                                ret_type.as_str()  // Use return type from external function signature
                             } else {
                                 "i64" // Default to i64
                             }
@@ -3884,6 +4557,11 @@ impl IrBuilder {
                         ir.push_str("}\n");
                         // Reset current function return type at function end
                         current_function_ret_ty = None;
+                    } else if name.contains(" = ") {
+                        // This is an instruction (like zext, add, etc.), not a label
+                        // Output as-is without adding colon, but trim trailing colon if present
+                        let clean_name = name.trim_end_matches(':');
+                        ir.push_str(&format!("{}\n", clean_name));
                     } else if name.ends_with(':') {
                         ir.push_str(&format!("{}\n", name));
                     } else if name.starts_with('@') {
@@ -3908,8 +4586,33 @@ impl IrBuilder {
                     }
                 }
                 IrInstruction::数组分配 { dest, size } => {
-                    // Simplified array allocation
-                    ir.push_str(&format!("{} = alloca [{} x i64]\n", dest, size));
+                    // Smart array allocation: small arrays on stack, large arrays on heap
+                    let array_size: usize = size.parse().unwrap_or(10);
+                    const SMALL_ARRAY_THRESHOLD: usize = 64; // Arrays <= 64 elements use stack
+
+                    if array_size <= SMALL_ARRAY_THRESHOLD {
+                        // Small array: stack allocation
+                        ir.push_str(&format!("  {} = alloca [{} x i64], align 8\n", dest, size));
+                    } else {
+                        // Large array: heap allocation with GC check
+                        let bytes = array_size * 8; // i64 = 8 bytes
+                        let (alloc_ir, ptr) = self.generate_allocation_with_gc_check(bytes, "i64", true);
+                        ir.push_str(&alloc_ir);
+
+                        // Record heap allocation for cleanup
+                        self.record_allocation(AllocationInfo {
+                            ptr: ptr.clone(),
+                            size: bytes,
+                            type_name: format!("[{} x i64]", size),
+                            scope_level: self.scope_level,
+                            is_heap: true,
+                        });
+
+                        // Alias the result
+                        if ptr != *dest {
+                            ir.push_str(&format!("  {} = bitcast ptr {} to [{} x i64]*\n", dest, ptr, size));
+                        }
+                    }
                 }
                 IrInstruction::数组存储 { array, index, value } => {
                     // Simplified array store - generate unique temp names using a hash of array and index
@@ -3937,13 +4640,56 @@ impl IrBuilder {
                 IrInstruction::字符串常量 { .. } => {
                     // String constants are handled separately at the beginning
                 }
-                IrInstruction::异步函数声明 { name, params, return_type } => {
-                    // Async function declarations are already handled in the label processing
-                    // This is just a placeholder for completeness
-                }
                 IrInstruction::等待表达式 { dest, future } => {
-                    // Generate await call - this blocks until the future completes
-                    ir.push_str(&format!("{} = call ptr @qi_runtime_await(ptr {})\n", dest, future));
+                    // Check if we're awaiting a Future<T> type (ptr) or an async coroutine
+                    // For Future<T>, call the appropriate qi_future_await_* based on inner type
+                    // For async coroutines, call qi_runtime_await which returns a pointer
+
+                    // Try to determine the type from the future variable
+                    let future_var = future.trim_start_matches('%');
+                    let is_future_type = self.variable_types.get(future_var)
+                        .map(|t| t == "ptr")
+                        .unwrap_or(false);
+
+                    if is_future_type {
+                        // This is a Future<T> type - determine the inner type and call appropriate await
+                        let inner_type = self.future_inner_types.get(future_var)
+                            .map(|s| s.as_str())
+                            .unwrap_or("i64"); // Default to i64 if not tracked
+
+                        let (await_func, call_return_type, final_type) = if inner_type.starts_with("struct.") {
+                            // Struct type - use qi_future_await_ptr
+                            ("qi_future_await_ptr", "ptr", "ptr")
+                        } else {
+                            match inner_type {
+                                "i64" => ("qi_future_await_i64", "i64", "i64"),
+                                "double" => ("qi_future_await_f64", "double", "double"),
+                                "i1" => ("qi_future_await_bool", "i32", "i1"),  // bool await returns i32, convert to i1
+                                "ptr" => ("qi_future_await_string", "ptr", "ptr"),  // string pointer
+                                _ => ("qi_future_await_i64", "i64", "i64"),  // fallback
+                            }
+                        };
+
+                        // Call the await function
+                        if call_return_type == final_type {
+                            // Direct call - no conversion needed
+                            ir.push_str(&format!("{} = call {} @{}(ptr {})\n", dest, call_return_type, await_func, future));
+                        } else {
+                            // Need type conversion (bool case: i32 -> i1)
+                            let temp_result = self.generate_temp();
+                            ir.push_str(&format!("{} = call {} @{}(ptr {})\n", temp_result, call_return_type, await_func, future));
+                            // Convert i32 to i1 by checking if != 0
+                            ir.push_str(&format!("{} = icmp ne {} {}, 0\n", dest, call_return_type, temp_result));
+                        }
+
+                        // Record the final type of the dest variable for later use
+                        let dest_var = dest.trim_start_matches('%');
+                        self.variable_types.insert(dest_var.to_string(), final_type.to_string());
+                        eprintln!("[AWAIT-EXPR] Recorded type for {}: {}", dest_var, final_type);
+                    } else {
+                        // This is an async coroutine - call qi_runtime_await
+                        ir.push_str(&format!("{} = call ptr @qi_runtime_await(ptr {})\n", dest, future));
+                    }
                 }
                 IrInstruction::创建异步任务 { dest, function, arguments } => {
                     // Create async task - pass function pointer and argument count
@@ -4144,6 +4890,169 @@ impl IrBuilder {
             AstNode::块语句(block) => self.contains_return(&block.statements),
             _ => false,
         }
+    }
+
+    // ===== Memory Management Methods =====
+
+    /// Determine whether to allocate on stack or heap based on the AST node
+    fn determine_allocation_target(&self, node: &AstNode) -> AllocationTarget {
+        match node {
+            // Small basic types -> Stack
+            AstNode::变量声明(var) => {
+                if let Some(ref type_ann) = var.type_annotation {
+                    if self.is_small_type_node(type_ann) {
+                        return AllocationTarget::Stack;
+                    }
+                }
+                AllocationTarget::Stack
+            }
+
+            // Arrays, strings, structs -> Heap (by default, can be refined)
+            AstNode::数组字面量表达式(_) => AllocationTarget::Heap,
+            AstNode::字符串连接表达式(_) => AllocationTarget::Heap,
+            AstNode::结构体实例化表达式(_) => AllocationTarget::Heap,
+
+            // Default to stack for other cases
+            _ => AllocationTarget::Stack,
+        }
+    }
+
+    /// Check if a TypeNode is considered "small" and suitable for stack allocation
+    fn is_small_type_node(&self, type_node: &crate::parser::ast::TypeNode) -> bool {
+        use crate::parser::ast::{TypeNode, BasicType};
+
+        match type_node {
+            TypeNode::基础类型(basic_type) => matches!(
+                basic_type,
+                BasicType::整数 | BasicType::长整数 | BasicType::浮点数 | BasicType::布尔
+            ),
+            _ => false,
+        }
+    }
+
+    /// Check if a type string is considered "small" and suitable for stack allocation
+    fn is_small_type(&self, type_name: &str) -> bool {
+        matches!(type_name, "整数" | "浮点数" | "布尔" | "i64" | "f64" | "i32" | "f32" | "i8" | "i1")
+    }
+
+    /// Get size in bytes for a given type
+    fn get_type_size(&self, type_name: &str) -> usize {
+        match type_name {
+            "i64" | "整数" | "f64" | "浮点数" => 8,
+            "i32" | "f32" => 4,
+            "i8" | "布尔" | "i1" => 1,
+            _ => 8, // Default size
+        }
+    }
+
+    /// Record a memory allocation for lifetime tracking
+    fn record_allocation(&mut self, info: AllocationInfo) {
+        self.allocations.push(info);
+    }
+
+    /// Generate heap allocation IR code
+    fn generate_heap_allocation(&mut self, size: usize, type_name: &str) -> String {
+        let dest = self.generate_temp();
+        let mut ir = String::new();
+
+        // Call qi_runtime_alloc to get raw pointer
+        ir.push_str(&format!("  {} = call ptr @qi_runtime_alloc(i64 {})\n", dest, size));
+
+        // Optionally bitcast to specific type if needed
+        if type_name != "ptr" && type_name != "i8" {
+            let typed_ptr = self.generate_temp();
+            ir.push_str(&format!("  {} = bitcast ptr {} to {}*\n", typed_ptr, dest, type_name));
+            ir
+        } else {
+            ir
+        }
+    }
+
+    /// Generate heap allocation with GC check for large allocations
+    /// Returns tuple of (IR code, result pointer variable name)
+    fn generate_allocation_with_gc_check(&mut self, size: usize, type_name: &str, check_gc: bool) -> (String, String) {
+        let mut ir = String::new();
+
+        // For large allocations (> 1MB), check if GC should run first
+        if check_gc && size > 1024 * 1024 {
+            let should_gc = self.generate_temp();
+            let need_gc = self.generate_temp();
+            let do_gc_label = self.generate_label();
+            let skip_gc_label = self.generate_label();
+
+            // Check if GC should collect
+            ir.push_str(&format!("  {} = call i64 @qi_runtime_gc_should_collect()\n", should_gc));
+            ir.push_str(&format!("  {} = icmp ne i64 {}, 0\n", need_gc, should_gc));
+            ir.push_str(&format!("  br i1 {}, label %{}, label %{}\n", need_gc, do_gc_label, skip_gc_label));
+
+            // GC block
+            ir.push_str(&format!("\n{}:\n", do_gc_label));
+            ir.push_str("  call void @qi_runtime_gc_collect()\n");
+            ir.push_str(&format!("  br label %{}\n", skip_gc_label));
+
+            // Continue with allocation
+            ir.push_str(&format!("\n{}:\n", skip_gc_label));
+        }
+
+        // Perform allocation
+        let alloc_ptr = self.generate_temp();
+        ir.push_str(&format!("  {} = call ptr @qi_runtime_alloc(i64 {})\n", alloc_ptr, size));
+
+        // Bitcast if needed
+        let result_ptr = if type_name != "ptr" && type_name != "i8" {
+            let typed_ptr = self.generate_temp();
+            ir.push_str(&format!("  {} = bitcast ptr {} to {}*\n", typed_ptr, alloc_ptr, type_name));
+            typed_ptr
+        } else {
+            alloc_ptr
+        };
+
+        (ir, result_ptr)
+    }
+
+    /// Generate stack allocation IR code
+    fn generate_stack_allocation(&mut self, type_name: &str) -> String {
+        // This generates standard LLVM alloca instruction
+        format!("alloca {}, align 8", type_name)
+    }
+
+    /// Generate cleanup code for exiting a scope
+    fn generate_scope_cleanup(&mut self, scope_level: usize) -> String {
+        let mut ir = String::new();
+
+        // Find all heap allocations for this scope
+        let allocations_to_free: Vec<_> = self.allocations
+            .iter()
+            .filter(|a| a.scope_level == scope_level && a.is_heap)
+            .cloned()
+            .collect();
+
+        // Generate deallocation calls
+        for alloc in &allocations_to_free {
+            ir.push_str(&format!(
+                "  call i32 @qi_runtime_dealloc(ptr {}, i64 {})\n",
+                alloc.ptr, alloc.size
+            ));
+        }
+
+        // Remove allocations for this scope
+        self.allocations.retain(|a| a.scope_level != scope_level);
+
+        ir
+    }
+
+    /// Enter a new scope (increment scope level)
+    fn enter_scope(&mut self) {
+        self.scope_level += 1;
+    }
+
+    /// Exit current scope (decrement scope level and cleanup)
+    fn exit_scope(&mut self) -> String {
+        let cleanup_ir = self.generate_scope_cleanup(self.scope_level);
+        if self.scope_level > 0 {
+            self.scope_level -= 1;
+        }
+        cleanup_ir
     }
 }
 

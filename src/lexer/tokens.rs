@@ -42,6 +42,7 @@ pub enum TokenKind {
     乘,        // *
     除,        // /
     取余,      // %
+    取地址,    // &
     等于,      // ==
     不等于,    // !=
     大于,      // >
@@ -57,6 +58,7 @@ pub enum TokenKind {
     左方括号,  // [
     右方括号,  // ]
     冒号,      // :
+    双冒号,    // ::
     箭头,      // ->
     点,        // .
 
@@ -90,6 +92,7 @@ pub enum TokenKind {
     选择,      // select
     情况,      // case (for select statements)
     并发,      // concurrent/parallel
+    未来,      // future (async type)
 
     // Synchronization keywords - 同步关键字
     等待组,    // waitgroup
@@ -124,6 +127,8 @@ pub enum TokenKind {
     长度,               // length
     打印,               // print
     自定义类型,         // custom type declaration keyword
+    解引用,             // dereference
+    取地址关键字,       // address-of keyword
 
     // Type keywords
     类型关键词(crate::parser::ast::BasicType),

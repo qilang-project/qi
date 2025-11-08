@@ -111,13 +111,21 @@ impl Lexer {
             '}' => Ok(Some(self.make_single_char_token(TokenKind::右大括号, start_pos, start_line, start_column))),
             ';' => Ok(Some(self.make_single_char_token(TokenKind::分号, start_pos, start_line, start_column))),
             ',' => Ok(Some(self.make_single_char_token(TokenKind::逗号, start_pos, start_line, start_column))),
-            ':' => Ok(Some(self.make_single_char_token(TokenKind::冒号, start_pos, start_line, start_column))),
+            ':' => {
+                // Check for :: (double colon)
+                if self.peek_char() == Some(':') {
+                    Ok(Some(self.make_two_char_token(TokenKind::双冒号, start_pos, start_line, start_column)))
+                } else {
+                    Ok(Some(self.make_single_char_token(TokenKind::冒号, start_pos, start_line, start_column)))
+                }
+            }
             '.' => Ok(Some(self.make_single_char_token(TokenKind::点, start_pos, start_line, start_column))),
 
             // Operators and comments
             '+' => Ok(Some(self.make_single_char_token(TokenKind::加, start_pos, start_line, start_column))),
             '*' => Ok(Some(self.make_single_char_token(TokenKind::乘, start_pos, start_line, start_column))),
             '%' => Ok(Some(self.make_single_char_token(TokenKind::取余, start_pos, start_line, start_column))),
+            '&' => Ok(Some(self.make_single_char_token(TokenKind::取地址, start_pos, start_line, start_column))),
             '/' => {
                 if self.peek_char() == Some('/') {
                     // Check if it's a doc comment (///)

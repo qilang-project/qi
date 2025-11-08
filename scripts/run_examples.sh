@@ -69,7 +69,7 @@ while IFS= read -r qi_file; do
     echo "----------------------------------------"
 
     # 切换到项目根目录并运行（默认启用详细输出）
-    if cd "$PROJECT_ROOT" && cargo run -- -v run "$relative_path"; then
+    if cd "$PROJECT_ROOT" && cargo run --bin qi -- -v run "$relative_path"; then
         echo -e "${GREEN}✓ 成功 | Success: $relative_path${NC}"
         success_count=$((success_count + 1))
     else

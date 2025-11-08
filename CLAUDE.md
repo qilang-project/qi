@@ -91,9 +91,46 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 ### Language Features Support
 - **Chinese Keywords**: 100% Chinese identifiers and syntax
 - **Type System**: Basic types (整数, 浮点数, 字符串, 布尔)
-- **Functions**: Regular and async functions with Chinese names
+- **Functions**: Regular functions with Chinese names
+- **Async/Future**: Asynchronous programming using `未来<T>` (Future) type
 - **Control Flow**: 如果/否则, 当, 对于 loops
 - **Structs/Enums**: Chinese field names and variant names
+
+### Async Programming with Future Types
+Qi uses the `未来<T>` (Future) type for asynchronous operations:
+
+```qi
+// Function returning Future<整数>
+函数 异步计算(值: 整数) : 未来<整数> {
+    返回 值 * 2;  // Automatically wrapped as Future
+}
+
+函数 入口() {
+    // Store Future in a variable
+    变量 结果未来: 未来<整数> = 异步计算(21);
+
+    // Await the Future to get the value
+    变量 结果: 整数 = 等待 结果未来;
+    打印行(结果);  // Prints: 42
+
+    // Or await function call directly
+    变量 结果2: 整数 = 等待 异步计算(30);
+    打印行(结果2);  // Prints: 60
+}
+```
+
+**Supported Future Types:**
+- `未来<整数>` (Future<i64>) - Integer futures
+- `未来<浮点数>` (Future<double>) - Floating point futures
+- `未来<布尔>` (Future<bool>) - Boolean futures
+- `未来<字符串>` (Future<String>) - String futures
+
+**Key Syntax:**
+- **Function Declaration**: `函数 名称(...) : 未来<T>` - Returns a Future
+- **Await Expression**: `等待 表达式` - Awaits a Future value
+- **Static Method**: `未来::就绪(值)` - Creates a ready Future
+
+**Note**: Qi uses explicit `未来<T>` type annotations instead of `async/await` keywords. Functions returning `未来<T>` automatically wrap return values in Futures.
 
 ## Important Implementation Details
 

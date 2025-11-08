@@ -261,7 +261,7 @@ mod tests {
     fn test_network_init() {
         qi_network_init();
         unsafe {
-            assert!(全局网络接口.is_some());
+            assert!(全局网络接口.get().is_some());
         }
     }
 

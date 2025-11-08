@@ -51,6 +51,7 @@ pub enum SymbolKind {
 /// Module registry for tracking all modules in a compilation
 pub struct ModuleRegistry {
     modules: HashMap<String, Module>,  // Key: normalized file path
+    modules_by_name: HashMap<String, String>,  // Module name -> file path
     modules_by_package: HashMap<String, Vec<String>>,  // Package name -> file paths
     current_module: Option<String>,
 }
@@ -59,6 +60,7 @@ impl ModuleRegistry {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
+            modules_by_name: HashMap::new(),
             modules_by_package: HashMap::new(),
             current_module: None,
         }
@@ -71,7 +73,10 @@ impl ModuleRegistry {
             .unwrap_or_else(|_| module.path.clone())
             .to_string_lossy()
             .to_string();
-        
+
+        // Track by module name for lookup
+        self.modules_by_name.insert(module.name.clone(), path_key.clone());
+
         // Track by package name for lookup
         if let Some(package_name) = &module.package_name {
             self.modules_by_package
@@ -79,13 +84,18 @@ impl ModuleRegistry {
                 .or_insert_with(Vec::new)
                 .push(path_key.clone());
         }
-        
+
         self.modules.insert(path_key.clone(), module);
         self.current_module = Some(path_key);
     }
 
-    /// Get a module by file path
+    /// Get a module by name or file path
     pub fn get_module(&self, name: &str) -> Option<&Module> {
+        // Try to find by module name first
+        if let Some(path) = self.modules_by_name.get(name) {
+            return self.modules.get(path);
+        }
+        // Fall back to direct path lookup
         self.modules.get(name)
     }
     
@@ -131,8 +141,14 @@ impl ModuleRegistry {
         }
 
         // Private symbols are only visible within the same module
-        if let Some(current) = &self.current_module {
-            Ok(current == module_name)
+        if let Some(current_path) = &self.current_module {
+            // Get the path of the module we're checking
+            let target_path = if let Some(path) = self.modules_by_name.get(module_name) {
+                path
+            } else {
+                module_name  // Fall back to treating it as a path
+            };
+            Ok(current_path == target_path)
         } else {
             Ok(false)
         }
@@ -159,26 +175,6 @@ impl ModuleRegistry {
                         exports.insert(func.name.clone(), Symbol {
                             name: func.name.clone(),
                             visibility: func.visibility,
-                            kind: SymbolKind::Function,
-                            function_signature: signature,
-                        });
-                    }
-                }
-                AstNode::异步函数声明(async_func) => {
-                    if async_func.visibility == Visibility::公开 {
-                        // Extract async function signature
-                        let signature = Some(FunctionSignature {
-                            parameters: async_func.parameters.iter().map(|p| {
-                                let type_str = Self::type_node_to_llvm_type(&p.type_annotation);
-                                (p.name.clone(), type_str)
-                            }).collect(),
-                            return_type: "ptr".to_string(), // Async functions always return ptr (Future)
-                            is_async: true,
-                        });
-
-                        exports.insert(async_func.name.clone(), Symbol {
-                            name: async_func.name.clone(),
-                            visibility: async_func.visibility,
                             kind: SymbolKind::Function,
                             function_signature: signature,
                         });

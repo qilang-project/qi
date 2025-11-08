@@ -220,10 +220,10 @@ pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
     0
 }
 
-/// Print a boolean value
+/// Print a boolean value (accepts i32: 0 = false, non-zero = true)
 #[no_mangle]
-pub extern "C" fn qi_runtime_print_bool(value: bool) -> c_int {
-    let text = if value { "真" } else { "假" };
+pub extern "C" fn qi_runtime_print_bool(value: i32) -> c_int {
+    let text = if value != 0 { "真" } else { "假" };
     print!("{}", text);
     // Force flush to ensure output appears immediately
     std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
@@ -238,10 +238,10 @@ pub extern "C" fn qi_runtime_print_bool(value: bool) -> c_int {
     0
 }
 
-/// Print a boolean value with newline
+/// Print a boolean value with newline (accepts i32: 0 = false, non-zero = true)
 #[no_mangle]
-pub extern "C" fn qi_runtime_println_bool(value: bool) -> c_int {
-    let text = if value { "真" } else { "假" };
+pub extern "C" fn qi_runtime_println_bool(value: i32) -> c_int {
+    let text = if value != 0 { "真" } else { "假" };
     println!("{}", text);
 
     unsafe {
@@ -309,6 +309,38 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
             let layout = std::alloc::Layout::from_size_align(size, 8).unwrap();
             std::alloc::dealloc(ptr, layout);
             0
+        }
+    }
+}
+
+/// Check if garbage collection should be triggered
+/// Returns 1 if GC should run, 0 otherwise
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_should_collect() -> i64 {
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(runtime) = runtime_mutex.lock() {
+                if runtime.memory_manager.should_collect() {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+/// Trigger garbage collection
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_collect() {
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                if let Err(e) = runtime.memory_manager.collect() {
+                    eprintln!("GC失败: {}", e);
+                } else {
+                    runtime.update_memory_metrics();
+                }
+            }
         }
     }
 }

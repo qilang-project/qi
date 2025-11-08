@@ -38,6 +38,7 @@ pub mod pool;
 pub mod queue;
 pub mod state;
 pub mod ffi;
+pub mod future;
 
 // Re-export core types
 pub use executor::{Executor, ExecutorHandle};
@@ -46,6 +47,7 @@ pub use task::{TaskId, TaskHandle, TaskStatus, TaskPriority};
 pub use pool::{WorkerPool, PoolConfig};
 pub use queue::{TaskQueue, QueueHandle};
 pub use state::{AsyncState, StateManager};
+pub use future::Future;
 
 use std::sync::Arc;
 use std::time::Duration;

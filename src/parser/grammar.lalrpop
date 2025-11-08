@@ -62,6 +62,14 @@ ImportStatement: ImportStatement = {
 };
 
 ModulePath: Vec<String> = {
+    // Relative paths: ./module, ../module, ../../module.submodule
+    // Can use either . or / as separator after initial . or ..
+    <first:RelativePathStart> <rest:(PathSep <PathComponent>)*> => {
+        let mut path = vec![first];
+        path.extend(rest);
+        path
+    },
+    // Traditional dot-separated paths: 标准库.io
     <first:Identifier> <rest:("." <Identifier>)*> => {
         let mut path = vec![first];
         path.extend(rest);
@@ -69,10 +77,25 @@ ModulePath: Vec<String> = {
     }
 };
 
+RelativePathStart: String = {
+    "." => ".".to_string(),
+    ".." => "..".to_string(),
+};
+
+PathSep: () = {
+    "." => (),
+    "/" => (),
+};
+
+PathComponent: String = {
+    "." => ".".to_string(),
+    ".." => "..".to_string(),
+    <id:Identifier> => id,
+};
+
 Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
-    AsyncFunctionDeclaration,
     TypeDeclaration,
     ReturnStatement,
     BreakStatement,
@@ -404,43 +427,6 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
-        name,
-        parameters: params,
-        return_type: None,
-        body,
-        visibility: vis,
-        span: Default::default(),
-    }),
-};
-
-// Async function declarations
-AsyncFunctionDeclaration: AstNode = {
-    // Async function without receiver
-    <vis:Visibility> "异步" "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
-        name,
-        parameters: vec![],
-        return_type: Some(return_type),
-        body,
-        visibility: vis,
-        span: Default::default(),
-    }),
-    <vis:Visibility> "异步" "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
-        name,
-        parameters: vec![],
-        return_type: None,
-        body,
-        visibility: vis,
-        span: Default::default(),
-    }),
-    <vis:Visibility> "异步" "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
-        name,
-        parameters: params,
-        return_type: Some(return_type),
-        body,
-        visibility: vis,
-        span: Default::default(),
-    }),
-    <vis:Visibility> "异步" "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::异步函数声明(AsyncFunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
@@ -847,6 +833,43 @@ Precedence7: AstNode = {
 
 // Level 8: Postfix operators (field access, array subscript, function call)
 Precedence8: AstNode = {
+    // Special handling for Future static methods since "未来" is a reserved keyword
+    "未来" "::" <method:Identifier> "(" <args:ExprList> ")" => {
+        // Future static method call: 未来::就绪(42)
+        // Create a fake identifier for "未来" and treat as method call
+        let type_ident = AstNode::标识符表达式(IdentifierExpression {
+            name: "未来".to_string(),
+            span: Default::default(),
+        });
+        AstNode::方法调用表达式(MethodCallExpression {
+            object: Box::new(type_ident),
+            method_name: format!("::{}", method),
+            arguments: args,
+            span: Default::default(),
+        })
+    },
+    "未来" "::" <method:Identifier> "(" ")" => {
+        // Future static method call with no args
+        let type_ident = AstNode::标识符表达式(IdentifierExpression {
+            name: "未来".to_string(),
+            span: Default::default(),
+        });
+        AstNode::方法调用表达式(MethodCallExpression {
+            object: Box::new(type_ident),
+            method_name: format!("::{}", method),
+            arguments: vec![],
+            span: Default::default(),
+        })
+    },
+    <base:Precedence8> "::" <method:Identifier> => {
+        // Static method call: Type::method parsed as a field access for now
+        // The codegen layer will convert this to the appropriate static method call
+        AstNode::字段访问表达式(FieldAccessExpression {
+            object: Box::new(base),
+            field: format!("::{}",  method),  // Mark as static method with :: prefix
+            span: Default::default(),
+        })
+    },
     <base:Precedence8> "." <field:Identifier> => {
         AstNode::字段访问表达式(FieldAccessExpression {
             object: Box::new(base),
@@ -963,6 +986,27 @@ Precedence8: AstNode = {
             _ => callee,
         }
     },
+    UnaryPrefix,
+};
+
+// Unary prefix operators: 取地址 (address-of) and 解引用 (dereference)
+UnaryPrefix: AstNode = {
+    "取地址" <expr:UnaryPrefix> => AstNode::取地址表达式(AddressOfExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
+    "&" <expr:UnaryPrefix> => AstNode::取地址表达式(AddressOfExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
+    "解引用" <expr:UnaryPrefix> => AstNode::解引用表达式(DereferenceExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
+    "*" <expr:UnaryPrefix> => AstNode::解引用表达式(DereferenceExpression {
+        expression: Box::new(expr),
+        span: Default::default(),
+    }),
     Primary,
 };
 
@@ -1156,6 +1200,9 @@ Type: TypeNode = {
         element_type: Box::new(element_type),
     }),
 
+    // 未来类型 (Future type for async operations)
+    "未来" "<" <inner_type:Type> ">" => TypeNode::未来类型(Box::new(inner_type)),
+
     // 指针和引用类型
     "指针" "<" <target_type:Type> ">" => TypeNode::指针类型(PointerType {
         target_type: Box::new(target_type),
@@ -1216,7 +1263,7 @@ Identifier: String = {
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
-           id == "通道" || id == "选择" || id == "情况" ||
+           id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
@@ -1239,7 +1286,7 @@ ReceiverIdentifier: String = {
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
-           id == "通道" || id == "选择" || id == "情况" ||
+           id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
