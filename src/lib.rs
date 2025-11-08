@@ -311,6 +311,8 @@ impl QiCompiler {
                 "-lntdll",        // NT native API
                 "-luserenv",      // User environment functions (including GetUserProfileDirectoryW)
                 "-lws2_32",       // Windows Sockets API
+                "-lshell32",      // Shell functions (SHGetKnownFolderPath)
+                "-lole32",        // COM functions (CoTaskMemFree)
             ]);
         } else {
             // On Unix-like systems, use pthread and math library
@@ -323,9 +325,15 @@ impl QiCompiler {
             .map_err(CompilerError::Io)?;
 
         if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let cmd_str = command.get_args()
+                .map(|arg| format!("\"{}\"", arg.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join(" ");
             return Err(CompilerError::Codegen(
-                format!("链接失败: {}", error)
+                format!("链接失败: {}\nCommand: clang {}\nStdout: {}\nStderr: {}",
+                    stderr, cmd_str, stdout, stderr)
             ));
         }
 
