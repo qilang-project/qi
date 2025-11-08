@@ -313,11 +313,12 @@ impl QiCompiler {
                 "-lws2_32",       // Windows Sockets API
             ]);
         } else {
-            // On Unix-like systems, use pthread
+            // On Unix-like systems, use pthread and math library
             command.arg("-lpthread");
+            command.arg("-lm");  // Link math library (required for pow, sin, cos, etc.)
         }
 
-        
+
         let output = command.output()
             .map_err(CompilerError::Io)?;
 
@@ -326,6 +327,19 @@ impl QiCompiler {
             return Err(CompilerError::Codegen(
                 format!("链接失败: {}", error)
             ));
+        }
+
+        // On Unix-like systems, ensure the executable has execute permissions
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(executable_path)
+                .map_err(CompilerError::Io)?;
+            let mut permissions = metadata.permissions();
+            // Set executable permission (0o755 = rwxr-xr-x)
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(executable_path, permissions)
+                .map_err(CompilerError::Io)?;
         }
 
         Ok(())
