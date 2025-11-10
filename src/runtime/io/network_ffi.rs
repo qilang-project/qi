@@ -2,6 +2,8 @@
 //!
 //! 为 Qi 语言提供 C 接口的网络操作函数（TCP、UDP 等）
 
+#![allow(non_snake_case)]
+
 use super::http::{TcpConnectionConfig, TcpConnection, NetworkInterface};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -249,6 +251,316 @@ pub extern "C" fn qi_network_free_string(s: *mut c_char) {
         unsafe {
             let _ = CString::from_raw(s);
         }
+    }
+}
+
+// ============================================================================
+// TCP 服务器功能
+// ============================================================================
+
+use std::net::TcpListener;
+use std::sync::Arc;
+
+// TCP 服务器监听器池
+static TCP服务器池: OnceLock<Mutex<HashMap<i64, Arc<TcpListener>>>> = OnceLock::new();
+
+fn 获取服务器池() -> &'static Mutex<HashMap<i64, Arc<TcpListener>>> {
+    TCP服务器池.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 创建 TCP 服务器监听指定端口
+/// 返回服务器句柄（>0 成功，<0 失败）
+#[no_mangle]
+pub extern "C" fn qi_network_tcp_listen(host: *const c_char, port: u16, backlog: i32) -> i64 {
+    if host.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 主机 = CStr::from_ptr(host).to_string_lossy().to_string();
+        let 地址 = format!("{}:{}", 主机, port);
+
+        match TcpListener::bind(&地址) {
+            Ok(listener) => {
+                let mut 句柄计数 = 获取句柄计数器().lock().unwrap();
+                *句柄计数 += 1;
+                let 句柄 = *句柄计数;
+
+                let mut 服务器池 = 获取服务器池().lock().unwrap();
+                服务器池.insert(句柄, Arc::new(listener));
+
+                句柄
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+/// 接受 TCP 客户端连接（阻塞）
+/// 返回客户端连接句柄（>0 成功，<0 失败）
+#[no_mangle]
+pub extern "C" fn qi_network_tcp_accept(server_handle: i64) -> i64 {
+    let 服务器池 = 获取服务器池().lock().unwrap();
+
+    if let Some(listener) = 服务器池.get(&server_handle) {
+        match listener.accept() {
+            Ok((stream, _addr)) => {
+                // 将接受的连接转换为 TcpConnection
+                match TcpConnection::from_stream(stream) {
+                    Ok(连接) => {
+                        let mut 句柄计数 = 获取句柄计数器().lock().unwrap();
+                        *句柄计数 += 1;
+                        let 句柄 = *句柄计数;
+
+                        let mut 连接池 = 获取连接池().lock().unwrap();
+                        连接池.insert(句柄, 连接);
+
+                        句柄
+                    }
+                    Err(_) => -1,
+                }
+            }
+            Err(_) => -1,
+        }
+    } else {
+        -1
+    }
+}
+
+/// 关闭 TCP 服务器
+/// 返回 1 成功，0 失败
+#[no_mangle]
+pub extern "C" fn qi_network_tcp_server_close(server_handle: i64) -> i64 {
+    let mut 服务器池 = 获取服务器池().lock().unwrap();
+    if 服务器池.remove(&server_handle).is_some() {
+        1
+    } else {
+        0
+    }
+}
+
+// ============================================================================
+// UDP 功能
+// ============================================================================
+
+use std::net::UdpSocket;
+
+// UDP Socket 池
+static UDP套接字池: OnceLock<Mutex<HashMap<i64, UdpSocket>>> = OnceLock::new();
+
+#[allow(non_snake_case)]
+fn 获取UDP池() -> &'static Mutex<HashMap<i64, UdpSocket>> {
+    UDP套接字池.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 创建 UDP Socket 并绑定到指定地址和端口
+/// 返回 Socket 句柄（>0 成功，<0 失败）
+#[no_mangle]
+pub extern "C" fn qi_network_udp_bind(host: *const c_char, port: u16) -> i64 {
+    if host.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 主机 = CStr::from_ptr(host).to_string_lossy().to_string();
+        let 地址 = format!("{}:{}", 主机, port);
+
+        match UdpSocket::bind(&地址) {
+            Ok(socket) => {
+                let mut 句柄计数 = 获取句柄计数器().lock().unwrap();
+                *句柄计数 += 1;
+                let 句柄 = *句柄计数;
+
+                let mut UDP池 = 获取UDP池().lock().unwrap();
+                UDP池.insert(句柄, socket);
+
+                句柄
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+/// UDP 发送字符串到指定地址（简化版本）
+/// 返回发送的字节数（<0 表示错误）
+#[no_mangle]
+pub extern "C" fn qi_network_udp_send_string(
+    handle: i64,
+    message: *const c_char,
+    host: *const c_char,
+    port: u16,
+) -> i64 {
+    if message.is_null() || host.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 消息 = CStr::from_ptr(message).to_string_lossy();
+        let 目标主机 = CStr::from_ptr(host).to_string_lossy().to_string();
+        let 目标地址 = format!("{}:{}", 目标主机, port);
+
+        let mut UDP池 = 获取UDP池().lock().unwrap();
+        if let Some(socket) = UDP池.get_mut(&handle) {
+            match socket.send_to(消息.as_bytes(), &目标地址) {
+                Ok(字节数) => 字节数 as i64,
+                Err(_) => -1,
+            }
+        } else {
+            -1
+        }
+    }
+}
+
+/// UDP 发送数据到指定地址
+/// 返回发送的字节数（<0 表示错误）
+#[no_mangle]
+pub extern "C" fn qi_network_udp_send_to(
+    handle: i64,
+    data: *const u8,
+    data_size: i64,
+    host: *const c_char,
+    port: u16,
+) -> i64 {
+    if data.is_null() || data_size <= 0 || host.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 目标主机 = CStr::from_ptr(host).to_string_lossy().to_string();
+        let 目标地址 = format!("{}:{}", 目标主机, port);
+
+        let mut UDP池 = 获取UDP池().lock().unwrap();
+        if let Some(socket) = UDP池.get_mut(&handle) {
+            let 数据 = std::slice::from_raw_parts(data, data_size as usize);
+            match socket.send_to(数据, &目标地址) {
+                Ok(字节数) => 字节数 as i64,
+                Err(_) => -1,
+            }
+        } else {
+            -1
+        }
+    }
+}
+
+/// UDP 接收数据（阻塞）
+/// 返回接收的字节数（<0 表示错误）
+/// sender_host 和 sender_port 用于返回发送方地址（可选）
+#[no_mangle]
+pub extern "C" fn qi_network_udp_recv_from(
+    handle: i64,
+    buffer: *mut u8,
+    buffer_size: i64,
+    sender_host: *mut *mut c_char,
+    sender_port: *mut u16,
+) -> i64 {
+    if buffer.is_null() || buffer_size <= 0 {
+        return -1;
+    }
+
+    let mut UDP池 = 获取UDP池().lock().unwrap();
+    if let Some(socket) = UDP池.get_mut(&handle) {
+        let 缓冲区 = unsafe { std::slice::from_raw_parts_mut(buffer, buffer_size as usize) };
+
+        match socket.recv_from(缓冲区) {
+            Ok((字节数, 地址)) => {
+                // 如果提供了发送方信息指针，填充它们
+                if !sender_host.is_null() {
+                    let ip字符串 = 地址.ip().to_string();
+                    unsafe {
+                        *sender_host = CString::new(ip字符串).unwrap().into_raw();
+                    }
+                }
+                if !sender_port.is_null() {
+                    unsafe {
+                        *sender_port = 地址.port();
+                    }
+                }
+                字节数 as i64
+            }
+            Err(_) => -1,
+        }
+    } else {
+        -1
+    }
+}
+
+/// UDP 接收数据并返回为字符串（简化版本）
+/// 返回接收到的数据字符串，失败返回空字符串
+#[no_mangle]
+pub extern "C" fn qi_network_udp_recv_string(handle: i64, buffer_size: i64) -> *mut c_char {
+    if buffer_size <= 0 {
+        return CString::new("").unwrap().into_raw();
+    }
+
+    let mut 缓冲区 = vec![0u8; buffer_size as usize];
+    let mut UDP池 = 获取UDP池().lock().unwrap();
+
+    if let Some(socket) = UDP池.get_mut(&handle) {
+        match socket.recv_from(&mut 缓冲区) {
+            Ok((size, _sender_addr)) => {
+                if size > 0 {
+                    if let Ok(字符串) = String::from_utf8(缓冲区[..size].to_vec()) {
+                        if let Ok(c_str) = CString::new(字符串) {
+                            return c_str.into_raw();
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    CString::new("").unwrap().into_raw()
+}
+
+/// 关闭 UDP Socket
+/// 返回 1 成功，0 失败
+#[no_mangle]
+pub extern "C" fn qi_network_udp_close(handle: i64) -> i64 {
+    let mut UDP池 = 获取UDP池().lock().unwrap();
+    if UDP池.remove(&handle).is_some() {
+        1
+    } else {
+        0
+    }
+}
+
+/// 设置 UDP Socket 超时时间（毫秒）
+/// 返回 1 成功，0 失败
+#[no_mangle]
+pub extern "C" fn qi_network_udp_set_timeout(handle: i64, timeout_ms: i64) -> i64 {
+    let mut UDP池 = 获取UDP池().lock().unwrap();
+    if let Some(socket) = UDP池.get_mut(&handle) {
+        let 超时 = if timeout_ms > 0 {
+            Some(Duration::from_millis(timeout_ms as u64))
+        } else {
+            None
+        };
+
+        match socket.set_read_timeout(超时) {
+            Ok(_) => match socket.set_write_timeout(超时) {
+                Ok(_) => 1,
+                Err(_) => 0,
+            },
+            Err(_) => 0,
+        }
+    } else {
+        0
+    }
+}
+
+/// 设置 UDP 广播模式
+/// 返回 1 成功，0 失败
+#[no_mangle]
+pub extern "C" fn qi_network_udp_set_broadcast(handle: i64, enable: i32) -> i64 {
+    let mut UDP池 = 获取UDP池().lock().unwrap();
+    if let Some(socket) = UDP池.get_mut(&handle) {
+        match socket.set_broadcast(enable != 0) {
+            Ok(_) => 1,
+            Err(_) => 0,
+        }
+    } else {
+        0
     }
 }
 

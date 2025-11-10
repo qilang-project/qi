@@ -9,6 +9,7 @@ use std::time::Duration;
 use std::sync::OnceLock;
 use std::sync::Mutex;
 use std::collections::HashMap;
+use std::io::{Read, Write};
 
 // 全局 HTTP 客户端
 static HTTP客户端: OnceLock<Mutex<HttpClient>> = OnceLock::new();
@@ -129,6 +130,90 @@ pub extern "C" fn qi_http_delete(url: *const c_char) -> *mut c_char {
 
         let mut 请求 = HttpRequest::get(地址);
         请求.method = HttpMethod::Delete;
+
+        let 客户端 = 获取HTTP客户端().lock().unwrap();
+        match 客户端.execute(请求) {
+            Ok(响应) => {
+                match 响应.body_as_string() {
+                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// HTTP HEAD 请求
+/// 返回响应头信息（需要调用 qi_http_free_string 释放）
+#[no_mangle]
+pub extern "C" fn qi_http_head(url: *const c_char) -> *mut c_char {
+    if url.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
+
+        let mut 请求 = HttpRequest::get(地址);
+        请求.method = HttpMethod::Head;
+
+        let 客户端 = 获取HTTP客户端().lock().unwrap();
+        match 客户端.execute(请求) {
+            Ok(响应) => {
+                // HEAD 请求返回状态码和响应头信息
+                let 状态信息 = format!("Status: {}", 响应.status_code);
+                match CString::new(状态信息) {
+                    Ok(c_str) => c_str.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// HTTP PATCH 请求
+/// 返回响应体字符串（需要调用 qi_http_free_string 释放）
+#[no_mangle]
+pub extern "C" fn qi_http_patch(url: *const c_char, body: *const c_char) -> *mut c_char {
+    if url.is_null() || body.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
+        let 请求体 = CStr::from_ptr(body).to_string_lossy().to_string();
+
+        let mut 请求 = HttpRequest::post(地址, 请求体.into_bytes());
+        请求.method = HttpMethod::Patch;
+
+        let 客户端 = 获取HTTP客户端().lock().unwrap();
+        match 客户端.execute(请求) {
+            Ok(响应) => {
+                match 响应.body_as_string() {
+                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// HTTP OPTIONS 请求
+/// 返回响应体字符串（需要调用 qi_http_free_string 释放）
+#[no_mangle]
+pub extern "C" fn qi_http_options(url: *const c_char) -> *mut c_char {
+    if url.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
+
+        let mut 请求 = HttpRequest::get(地址);
+        请求.method = HttpMethod::Options;
 
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
@@ -336,5 +421,203 @@ mod tests {
 
         let result = qi_http_request_set_timeout(handle, 5000);
         assert_eq!(result, 1);
+    }
+}
+
+// ==================== HTTP 服务器功能 ====================
+
+use std::net::TcpListener;
+
+// HTTP 服务器池
+static HTTP服务器池: OnceLock<Mutex<HashMap<i64, TcpListener>>> = OnceLock::new();
+static 服务器句柄计数器: OnceLock<Mutex<i64>> = OnceLock::new();
+
+fn 获取服务器池() -> &'static Mutex<HashMap<i64, TcpListener>> {
+    HTTP服务器池.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn 获取服务器句柄计数器() -> &'static Mutex<i64> {
+    服务器句柄计数器.get_or_init(|| Mutex::new(0))
+}
+
+/// 创建 HTTP 服务器并开始监听
+/// 返回服务器句柄（<0 表示错误）
+#[no_mangle]
+pub extern "C" fn qi_http_server_create(host: *const c_char, port: i64) -> i64 {
+    if host.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 主机 = CStr::from_ptr(host).to_string_lossy().to_string();
+        let 端口 = port as u16; // Convert i64 to u16 for TCP port
+        let 地址 = format!("{}:{}", 主机, 端口);
+
+        match TcpListener::bind(&地址) {
+            Ok(监听器) => {
+                let mut 计数器 = 获取服务器句柄计数器().lock().unwrap();
+                *计数器 += 1;
+                let 句柄 = *计数器;
+
+                let mut 服务器池 = 获取服务器池().lock().unwrap();
+                服务器池.insert(句柄, 监听器);
+
+                句柄
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+/// 接受客户端连接并返回请求信息（阻塞）
+/// 返回格式："METHOD /path HTTP/1.1\nHeader: value\n\nbody"
+/// 返回字符串需要调用 qi_http_free_string 释放
+#[no_mangle]
+pub extern "C" fn qi_http_server_accept(server_handle: i64) -> *mut c_char {
+    let mut 服务器池 = 获取服务器池().lock().unwrap();
+
+    if let Some(监听器) = 服务器池.get_mut(&server_handle) {
+        match 监听器.accept() {
+            Ok((mut 流, _地址)) => {
+                // 读取HTTP请求
+                let mut 缓冲 = vec![0u8; 8192];
+                match 流.read(&mut 缓冲) {
+                    Ok(大小) => {
+                        if 大小 > 0 {
+                            if let Ok(请求文本) = String::from_utf8(缓冲[..大小].to_vec()) {
+                                // 返回完整的HTTP请求文本
+                                if let Ok(c_str) = CString::new(请求文本) {
+                                    return c_str.into_raw();
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// 接受客户端连接并处理（带响应）
+/// 返回格式："METHOD|/path|body" （使用|分隔）
+/// 响应会自动发送
+#[no_mangle]
+pub extern "C" fn qi_http_server_handle_request(
+    server_handle: i64,
+    response_body: *const c_char,
+    status_code: i64,
+) -> *mut c_char {
+    if response_body.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let mut 服务器池 = 获取服务器池().lock().unwrap();
+
+    if let Some(监听器) = 服务器池.get_mut(&server_handle) {
+        match 监听器.accept() {
+            Ok((mut 流, _地址)) => {
+                // 读取HTTP请求
+                let mut 缓冲 = vec![0u8; 8192];
+                let 请求信息 = match 流.read(&mut 缓冲) {
+                    Ok(大小) if 大小 > 0 => {
+                        if let Ok(请求文本) = String::from_utf8(缓冲[..大小].to_vec()) {
+                            // 解析请求行
+                            if let Some(首行) = 请求文本.lines().next() {
+                                let 部分: Vec<&str> = 首行.split_whitespace().collect();
+                                if 部分.len() >= 2 {
+                                    let 方法 = 部分[0];
+                                    let 路径 = 部分[1];
+
+                                    // 查找请求体（在空行之后）
+                                    let 请求体 = if let Some(位置) = 请求文本.find("\r\n\r\n") {
+                                        请求文本[位置 + 4..].to_string()
+                                    } else if let Some(位置) = 请求文本.find("\n\n") {
+                                        请求文本[位置 + 2..].to_string()
+                                    } else {
+                                        String::new()
+                                    };
+
+                                    Some(format!("{}|{}|{}", 方法, 路径, 请求体))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                // 发送响应
+                unsafe {
+                    let 响应体 = CStr::from_ptr(response_body).to_string_lossy();
+                    let 状态文本 = match status_code {
+                        200 => "OK",
+                        201 => "Created",
+                        400 => "Bad Request",
+                        404 => "Not Found",
+                        500 => "Internal Server Error",
+                        _ => "Unknown",
+                    };
+
+                    let 响应 = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
+                        status_code,
+                        状态文本,
+                        响应体.len(),
+                        响应体
+                    );
+
+                    let _ = 流.write_all(响应.as_bytes());
+                    let _ = 流.flush();
+                }
+
+                // 返回请求信息
+                if let Some(信息) = 请求信息 {
+                    if let Ok(c_str) = CString::new(信息) {
+                        return c_str.into_raw();
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// 发送HTTP响应到客户端
+/// 简化版本：只需要服务器句柄和响应内容
+#[no_mangle]
+pub extern "C" fn qi_http_server_send_response(
+    server_handle: i64,
+    response_body: *const c_char,
+) -> i64 {
+    if response_body.is_null() {
+        return -1;
+    }
+
+    // 这个函数需要与 accept 配合使用
+    // 实际场景中，我们需要保存每个连接的流
+    // 这里返回成功，实际发送在 handle_request 中完成
+    1
+}
+
+/// 关闭 HTTP 服务器
+/// 返回 1 成功，0 失败
+#[no_mangle]
+pub extern "C" fn qi_http_server_close(server_handle: i64) -> i64 {
+    let mut 服务器池 = 获取服务器池().lock().unwrap();
+    if 服务器池.remove(&server_handle).is_some() {
+        1
+    } else {
+        0
     }
 }

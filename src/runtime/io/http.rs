@@ -357,6 +357,31 @@ impl TcpConnection {
             message: format!("获取远程地址失败: {}", e),
         })
     }
+
+    /// Create TcpConnection from existing TcpStream (用于服务器接受的连接)
+    pub fn from_stream(stream: TcpStream) -> IoResult<Self> {
+        let peer_addr = stream.peer_addr().map_err(|e| IoError::NetworkOperationFailed {
+            endpoint: "unknown".to_string(),
+            message: format!("获取对端地址失败: {}", e),
+        })?;
+
+        let config = TcpConnectionConfig {
+            host: peer_addr.ip().to_string(),
+            port: peer_addr.port(),
+            timeout: Duration::from_secs(30),
+            keep_alive: true,
+            bind_address: None,
+            buffer_size: 8192,
+        };
+
+        Ok(Self {
+            stream,
+            config,
+            established_at: Instant::now(),
+            bytes_read: 0,
+            bytes_written: 0,
+        })
+    }
 }
 
 /// HTTP client

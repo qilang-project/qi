@@ -105,6 +105,9 @@ impl ModuleRegistry {
 
         // Register HTTP module (HTTP模块)
         self.register_http_module();
+
+        // Register vector module (向量模块)
+        self.register_vector_module();
     }
 
     /// Register the crypto module
@@ -301,6 +304,71 @@ impl ModuleRegistry {
             "字符串",  // 返回本机 IP
         ));
 
+        // TCP Server functions
+        network_module.add_function(ModuleFunction::new(
+            "TCP监听",
+            "qi_network_tcp_listen",
+            vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()], // 主机, 端口, 队列大小
+            "整数",  // 返回服务器句柄
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "TCP接受连接",
+            "qi_network_tcp_accept",
+            vec!["整数".to_string()], // 服务器句柄
+            "整数",  // 返回客户端句柄
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "TCP服务器关闭",
+            "qi_network_tcp_server_close",
+            vec!["整数".to_string()], // 服务器句柄
+            "整数",  // 返回成功/失败
+        ));
+
+        // UDP functions
+        network_module.add_function(ModuleFunction::new(
+            "UDP绑定",
+            "qi_network_udp_bind",
+            vec!["字符串".to_string(), "整数".to_string()], // 主机, 端口
+            "整数",  // 返回 UDP 套接字句柄
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "UDP发送到",
+            "qi_network_udp_send_string",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()], // 句柄, 消息, 目标主机, 目标端口
+            "整数",  // 返回发送字节数
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "UDP接收",
+            "qi_network_udp_recv_string",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄, 缓冲区大小
+            "字符串",  // 返回接收到的数据
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "UDP关闭",
+            "qi_network_udp_close",
+            vec!["整数".to_string()], // 句柄
+            "整数",  // 返回成功/失败
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "UDP设置超时",
+            "qi_network_udp_set_timeout",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时毫秒
+            "整数",  // 返回成功/失败
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "UDP设置广播",
+            "qi_network_udp_set_broadcast",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄, 启用(1)/禁用(0)
+            "整数",  // 返回成功/失败
+        ));
+
         // Register module with both Chinese and path formats
         self.modules.insert("网络".to_string(), network_module.clone());
         self.modules.insert("标准库.网络".to_string(), network_module);
@@ -335,6 +403,27 @@ impl ModuleRegistry {
         http_module.add_function(ModuleFunction::new(
             "删除",
             "qi_http_delete",
+            vec!["字符串".to_string()], // URL
+            "字符串",  // 返回响应体
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "请求头",
+            "qi_http_head",
+            vec!["字符串".to_string()], // URL
+            "字符串",  // 返回状态信息
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "修补",
+            "qi_http_patch",
+            vec!["字符串".to_string(), "字符串".to_string()], // URL, 请求体
+            "字符串",  // 返回响应体
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "选项",
+            "qi_http_options",
             vec!["字符串".to_string()], // URL
             "字符串",  // 返回响应体
         ));
@@ -382,9 +471,96 @@ impl ModuleRegistry {
             "整数",  // 返回状态码
         ));
 
-        // Register module with both Chinese and path formats (use lowercase 'http' for compatibility)
-        self.modules.insert("http".to_string(), http_module.clone());
-        self.modules.insert("标准库.http".to_string(), http_module);
+        // HTTP 服务器功能
+        http_module.add_function(ModuleFunction::new(
+            "创建服务器",
+            "qi_http_server_create",
+            vec!["字符串".to_string(), "整数".to_string()], // 主机, 端口
+            "整数",  // 返回服务器句柄
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "处理请求",
+            "qi_http_server_handle_request",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器句柄, 响应体, 状态码
+            "字符串",  // 返回请求信息 "方法|路径|请求体"
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "接受连接",
+            "qi_http_server_accept",
+            vec!["整数".to_string()], // 服务器句柄
+            "字符串",  // 返回完整HTTP请求
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "关闭服务器",
+            "qi_http_server_close",
+            vec!["整数".to_string()], // 服务器句柄
+            "整数",  // 返回成功/失败
+        ));
+
+        // Register module with both Chinese and path formats
+        self.modules.insert("HTTP".to_string(), http_module.clone());
+        self.modules.insert("标准库.HTTP".to_string(), http_module);
+    }
+
+    /// Register the vector module
+    fn register_vector_module(&mut self) {
+        let mut vector_module = Module::new("向量");
+
+        // 向量点积 - 需要返回浮点数类型的中间结果
+        // 注意：由于FFI限制，实际使用时需要传入结果指针
+        vector_module.add_function(ModuleFunction::new(
+            "点积",
+            "qi_vector_dot",
+            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            "浮点数",
+        ));
+
+        // 向量加法
+        vector_module.add_function(ModuleFunction::new(
+            "加",
+            "qi_vector_add",
+            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            "数组",
+        ));
+
+        // 向量长度(模)
+        vector_module.add_function(ModuleFunction::new(
+            "长度",
+            "qi_vector_magnitude",
+            vec!["数组".to_string(), "整数".to_string()],
+            "浮点数",
+        ));
+
+        // 向量归一化
+        vector_module.add_function(ModuleFunction::new(
+            "归一化",
+            "qi_vector_normalize",
+            vec!["数组".to_string(), "整数".to_string()],
+            "数组",
+        ));
+
+        // 余弦相似度
+        vector_module.add_function(ModuleFunction::new(
+            "余弦相似度",
+            "qi_vector_cosine_similarity",
+            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            "浮点数",
+        ));
+
+        // 向量数乘
+        vector_module.add_function(ModuleFunction::new(
+            "数乘",
+            "qi_vector_scale",
+            vec!["数组".to_string(), "整数".to_string(), "浮点数".to_string()],
+            "数组",
+        ));
+
+        // Register module with both Chinese and path formats
+        self.modules.insert("向量".to_string(), vector_module.clone());
+        self.modules.insert("标准库.向量".to_string(), vector_module);
     }
 
     /// Get a module by path

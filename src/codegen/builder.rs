@@ -99,6 +99,7 @@ pub enum IrInstruction {
     数组分配 {
         dest: String,
         size: String,
+        element_type: String,  // "i64", "double", etc.
     },
 
     /// Array store
@@ -106,6 +107,7 @@ pub enum IrInstruction {
         array: String,
         index: String,
         value: String,
+        element_type: String,  // "i64", "double", etc.
     },
 
     /// String concatenation
@@ -239,6 +241,8 @@ pub struct IrBuilder {
     struct_field_names: std::collections::HashMap<String, Vec<String>>,
     /// Track variable struct types (variable_name -> struct_type_name)
     variable_struct_types: std::collections::HashMap<String, String>,
+    /// Track array element types (variable_name -> element_type like "i64", "double")
+    array_element_types: std::collections::HashMap<String, String>,
     /// Track import aliases (alias -> actual_module_name)
     import_aliases: std::collections::HashMap<String, String>,
     /// Track current module/package name
@@ -280,6 +284,7 @@ impl IrBuilder {
             struct_definitions: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
             variable_struct_types: std::collections::HashMap::new(),
+            array_element_types: std::collections::HashMap::new(),
             import_aliases: std::collections::HashMap::new(),
             current_package_name: None,
             loop_stack: Vec::new(),
@@ -706,6 +711,11 @@ impl IrBuilder {
                 "i1".to_string()
             }
             TypeNode::基础类型(BasicType::字符串) => {
+                "ptr".to_string()
+            }
+            TypeNode::数组类型(array_type) => {
+                // Arrays are represented as pointers in LLVM IR
+                // The element type information is tracked separately
                 "ptr".to_string()
             }
             TypeNode::结构体类型(_) | TypeNode::自定义类型(_) | TypeNode::指针类型(_) => {
@@ -1147,6 +1157,14 @@ impl IrBuilder {
                     } else {
                         self.build_node(initializer)?
                     };
+
+                    // If the initializer is an array, propagate element type info
+                    let value_name = value.trim_start_matches('%');
+                    if let Some(elem_type) = self.array_element_types.get(value_name).cloned() {
+                        self.array_element_types.insert(decl.name.clone(), elem_type.clone());
+                        self.array_element_types.insert(mangled_name.clone(), elem_type);
+                    }
+
                     self.add_instruction(IrInstruction::存储 {
                         target: var_name.clone(),
                         value,
@@ -1949,12 +1967,20 @@ impl IrBuilder {
                         // Array element assignment: arr[index] = value
                         let array = self.build_node(&array_access.array)?;
                         let index = self.build_node(&array_access.index)?;
-                        
+
+                        // Determine element type from value
+                        let element_type = if value.contains('.') {
+                            "double"
+                        } else {
+                            "i64" // Default to i64
+                        };
+
                         // Generate instruction to store to array element
                         self.add_instruction(IrInstruction::数组存储 {
                             array: array.clone(),
                             index,
                             value,
+                            element_type: element_type.to_string(),
                         });
                         Ok(array)
                     }
@@ -2012,6 +2038,37 @@ impl IrBuilder {
                             }
                             AstNode::字符串连接表达式(_) => "string", // String concatenation returns string
                             AstNode::二元操作表达式(_) => "integer", // Binary ops default to integer for now
+                            AstNode::函数调用表达式(func_call) => {
+                                // Check if this function returns a string
+                                let func_name = self.get_full_function_name(func_call);
+                                if let Some(runtime_func) = self.map_to_runtime_function(&func_name) {
+                                    // Check if it's a runtime function that returns a string
+                                    if runtime_func.contains("int_to_string") || runtime_func.contains("float_to_string") ||
+                                       (runtime_func.contains("string") && !runtime_func.contains("to_int") && !runtime_func.contains("to_float") && !runtime_func.contains("length")) {
+                                        "string"
+                                    } else if runtime_func.contains("sqrt") || runtime_func.contains("sin") ||
+                                              runtime_func.contains("cos") || runtime_func.contains("tan") ||
+                                              runtime_func.contains("floor") || runtime_func.contains("ceil") ||
+                                              runtime_func.contains("round") || runtime_func.contains("abs_float") {
+                                        "float"
+                                    } else {
+                                        "integer"
+                                    }
+                                } else {
+                                    // User-defined function - check return type
+                                    let mangled_func = self.mangle_function_name(&func_name);
+                                    if let Some(ret_type) = self.function_return_types.get(&mangled_func) {
+                                        match ret_type.as_str() {
+                                            "ptr" => "string",
+                                            "double" => "float",
+                                            "i1" => "boolean",
+                                            _ => "integer"
+                                        }
+                                    } else {
+                                        "integer" // Default
+                                    }
+                                }
+                            }
                             _ => "integer", // Default to integer
                         };
 
@@ -2530,34 +2587,81 @@ impl IrBuilder {
                 // Build index expression
                 let index_var = self.build_node(&array_access.index)?;
 
-                // Generate getelementptr instruction
-                let temp = self.generate_temp();
+                // Determine element type from array variable
+                // Try to get the array name from the array expression
+                let elem_type = if let AstNode::标识符表达式(ident) = &*array_access.array {
+                    // Get element type from array variable
+                    self.array_element_types.get(&ident.name)
+                        .or_else(|| {
+                            // Try mangled name
+                            let mangled = format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"));
+                            self.array_element_types.get(&mangled)
+                        })
+                        .cloned()
+                        .unwrap_or_else(|| "i64".to_string())
+                } else {
+                    "i64".to_string() // Default for complex expressions
+                };
+
+                // Generate getelementptr instruction to get element pointer
+                let ptr_temp = self.generate_temp();
                 self.add_instruction(IrInstruction::数组访问 {
-                    dest: temp.clone(),
+                    dest: ptr_temp.clone(),
                     array: array_var,
                     index: index_var,
                 });
-                Ok(temp)
+
+                // Load the value from the pointer with correct type
+                let value_temp = self.generate_temp();
+                self.add_instruction(IrInstruction::加载 {
+                    dest: value_temp.clone(),
+                    source: ptr_temp,
+                    load_type: Some(elem_type),
+                });
+
+                Ok(value_temp)
             }
             AstNode::数组字面量表达式(array_literal) => {
-                // For now, create a simple array literal
-                // In a real implementation, this would allocate memory and store elements
+                // Determine element type from first element
+                let element_type = if !array_literal.elements.is_empty() {
+                    match &array_literal.elements[0] {
+                        AstNode::字面量表达式(lit_expr) => {
+                            use crate::parser::ast::LiteralValue;
+                            match &lit_expr.value {
+                                LiteralValue::浮点数(_) => "double",
+                                LiteralValue::整数(_) => "i64",
+                                LiteralValue::布尔(_) => "i1",
+                                _ => "i64",
+                            }
+                        }
+                        _ => "i64", // Default to i64 for complex expressions
+                    }
+                } else {
+                    "i64" // Empty array defaults to i64
+                };
+
                 let temp = self.generate_temp();
+
+                // Record the array element type
+                let temp_name = temp.trim_start_matches('%');
+                self.array_element_types.insert(temp_name.to_string(), element_type.to_string());
 
                 // Create array allocation
                 let size = array_literal.elements.len();
                 self.add_instruction(IrInstruction::数组分配 {
                     dest: temp.clone(),
                     size: size.to_string(),
+                    element_type: element_type.to_string(),
                 });
 
-                // Store each element (simplified)
+                // Store each element
                 for (i, element) in array_literal.elements.iter().enumerate() {
                     let element_var = self.build_node(element)?;
                     self.add_instruction(IrInstruction::数组存储 {
                         array: temp.clone(),
                         index: i.to_string(),
                         value: element_var,
+                        element_type: element_type.to_string(),
                     });
                 }
 
@@ -3750,6 +3854,7 @@ impl IrBuilder {
 
         // Network functions
         ir.push_str("; Network functions\n");
+        // TCP Client functions
         ir.push_str("declare i64 @qi_network_tcp_connect(ptr, i16, i64)\n");
         ir.push_str("declare i64 @qi_network_tcp_read(i64, ptr, i64)\n");
         ir.push_str("declare i64 @qi_network_tcp_write(i64, ptr, i64)\n");
@@ -3757,6 +3862,23 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_network_tcp_flush(i64)\n");
         ir.push_str("declare i64 @qi_network_tcp_bytes_read(i64)\n");
         ir.push_str("declare i64 @qi_network_tcp_bytes_written(i64)\n");
+
+        // TCP Server functions
+        ir.push_str("declare i64 @qi_network_tcp_listen(ptr, i16, i32)\n");
+        ir.push_str("declare i64 @qi_network_tcp_accept(i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_server_close(i64)\n");
+
+        // UDP functions
+        ir.push_str("declare i64 @qi_network_udp_bind(ptr, i16)\n");
+        ir.push_str("declare i64 @qi_network_udp_send_string(i64, ptr, ptr, i16)\n");
+        ir.push_str("declare i64 @qi_network_udp_send_to(i64, ptr, i64, ptr, i16)\n");
+        ir.push_str("declare ptr @qi_network_udp_recv_string(i64, i64)\n");
+        ir.push_str("declare i64 @qi_network_udp_recv_from(i64, ptr, i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_network_udp_close(i64)\n");
+        ir.push_str("declare i64 @qi_network_udp_set_timeout(i64, i64)\n");
+        ir.push_str("declare i64 @qi_network_udp_set_broadcast(i64, i32)\n");
+
+        // Network utility functions
         ir.push_str("declare ptr @qi_network_resolve_host(ptr)\n");
         ir.push_str("declare i64 @qi_network_port_available(i16)\n");
         ir.push_str("declare ptr @qi_network_get_local_ip()\n");
@@ -3770,6 +3892,9 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_http_post(ptr, ptr)\n");
         ir.push_str("declare ptr @qi_http_put(ptr, ptr)\n");
         ir.push_str("declare ptr @qi_http_delete(ptr)\n");
+        ir.push_str("declare ptr @qi_http_head(ptr)\n");
+        ir.push_str("declare ptr @qi_http_patch(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_http_options(ptr)\n");
         ir.push_str("declare i64 @qi_http_request_create(ptr, ptr)\n");
         ir.push_str("declare i64 @qi_http_request_set_header(i64, ptr, ptr)\n");
         ir.push_str("declare i64 @qi_http_request_set_body(i64, ptr)\n");
@@ -3777,6 +3902,12 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_http_request_execute(i64)\n");
         ir.push_str("declare i64 @qi_http_get_status(ptr)\n");
         ir.push_str("declare void @qi_http_free_string(ptr)\n");
+
+        // HTTP Server functions
+        ir.push_str("declare i64 @qi_http_server_create(ptr, i64)\n");
+        ir.push_str("declare ptr @qi_http_server_handle_request(i64, ptr, i64)\n");
+        ir.push_str("declare ptr @qi_http_server_accept(i64)\n");
+        ir.push_str("declare i64 @qi_http_server_close(i64)\n");
         ir.push_str("\n");
 
         ir.push_str("; Print functions\n");
@@ -4215,6 +4346,15 @@ impl IrBuilder {
                                     } else if callee == "qi_runtime_create_channel" {
                                         // create_channel(i64) -> ptr
                                         "i64"
+                                    } else if callee == "qi_http_server_create" {
+                                        // qi_http_server_create(ptr, i64) - host as string, port as integer
+                                        if i == 0 { "ptr" } else { "i64" }
+                                    } else if callee == "qi_http_server_handle_request" {
+                                        // qi_http_server_handle_request(i64, ptr, i64) - handle, body, status_code
+                                        if i == 0 { "i64" } else if i == 1 { "ptr" } else { "i64" }
+                                    } else if callee == "qi_http_server_accept" || callee == "qi_http_server_close" {
+                                        // Both take i64 server handle
+                                        "i64"
                                     } else {
                                         current_arg_type // Use the variable's actual type
                                     }
@@ -4454,10 +4594,13 @@ impl IrBuilder {
                         // Network functions - check return type based on function name
                         } else if callee.starts_with("qi_network_") {
                             match callee.as_str() {
-                                "qi_network_resolve_host" | "qi_network_get_local_ip" => "ptr",  // Return strings
+                                "qi_network_resolve_host" | "qi_network_get_local_ip" | "qi_network_udp_recv_string" => "ptr",  // Return strings
                                 "qi_network_tcp_connect" | "qi_network_tcp_read" | "qi_network_tcp_write" |
                                 "qi_network_tcp_close" | "qi_network_tcp_flush" | "qi_network_tcp_bytes_read" |
-                                "qi_network_tcp_bytes_written" | "qi_network_port_available" => "i64",  // Return i64
+                                "qi_network_tcp_bytes_written" | "qi_network_port_available" |
+                                "qi_network_tcp_listen" | "qi_network_tcp_accept" | "qi_network_tcp_server_close" |
+                                "qi_network_udp_bind" | "qi_network_udp_send_string" | "qi_network_udp_send_to" | "qi_network_udp_recv_from" |
+                                "qi_network_udp_close" | "qi_network_udp_set_timeout" | "qi_network_udp_set_broadcast" => "i64",  // Return i64
                                 "qi_network_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown network functions
                             }
@@ -4465,10 +4608,11 @@ impl IrBuilder {
                         } else if callee.starts_with("qi_http_") {
                             match callee.as_str() {
                                 "qi_http_get" | "qi_http_post" | "qi_http_put" | "qi_http_delete" |
-                                "qi_http_request_execute" => "ptr",  // Return response strings
+                                "qi_http_head" | "qi_http_patch" | "qi_http_options" |
+                                "qi_http_request_execute" | "qi_http_server_handle_request" | "qi_http_server_accept" => "ptr",  // Return response strings
                                 "qi_http_init" | "qi_http_request_create" | "qi_http_request_set_header" |
                                 "qi_http_request_set_body" | "qi_http_request_set_timeout" |
-                                "qi_http_get_status" => "i64",  // Return i64
+                                "qi_http_get_status" | "qi_http_server_create" | "qi_http_server_close" => "i64",  // Return i64
                                 "qi_http_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown HTTP functions
                             }
@@ -4585,40 +4729,50 @@ impl IrBuilder {
                         ir.push_str(&format!("{} = getelementptr [10 x i64], [10 x i64]* {}, i64 0, i64 {}\n", dest, array, index));
                     }
                 }
-                IrInstruction::数组分配 { dest, size } => {
+                IrInstruction::数组分配 { dest, size, element_type } => {
                     // Smart array allocation: small arrays on stack, large arrays on heap
                     let array_size: usize = size.parse().unwrap_or(10);
                     const SMALL_ARRAY_THRESHOLD: usize = 64; // Arrays <= 64 elements use stack
 
+                    // Calculate element size based on type
+                    let elem_size = match element_type.as_str() {
+                        "double" => 8,
+                        "i64" => 8,
+                        "i32" => 4,
+                        "i16" => 2,
+                        "i8" | "i1" => 1,
+                        _ => 8, // Default to 8 bytes
+                    };
+
                     if array_size <= SMALL_ARRAY_THRESHOLD {
                         // Small array: stack allocation
-                        ir.push_str(&format!("  {} = alloca [{} x i64], align 8\n", dest, size));
+                        ir.push_str(&format!("  {} = alloca [{} x {}], align 8\n", dest, size, element_type));
                     } else {
                         // Large array: heap allocation with GC check
-                        let bytes = array_size * 8; // i64 = 8 bytes
-                        let (alloc_ir, ptr) = self.generate_allocation_with_gc_check(bytes, "i64", true);
+                        let bytes = array_size * elem_size;
+                        let (alloc_ir, ptr) = self.generate_allocation_with_gc_check(bytes, element_type, true);
                         ir.push_str(&alloc_ir);
 
                         // Record heap allocation for cleanup
                         self.record_allocation(AllocationInfo {
                             ptr: ptr.clone(),
                             size: bytes,
-                            type_name: format!("[{} x i64]", size),
+                            type_name: format!("[{} x {}]", size, element_type),
                             scope_level: self.scope_level,
                             is_heap: true,
                         });
 
                         // Alias the result
                         if ptr != *dest {
-                            ir.push_str(&format!("  {} = bitcast ptr {} to [{} x i64]*\n", dest, ptr, size));
+                            ir.push_str(&format!("  {} = bitcast ptr {} to [{} x {}]*\n", dest, ptr, size, element_type));
                         }
                     }
                 }
-                IrInstruction::数组存储 { array, index, value } => {
-                    // Simplified array store - generate unique temp names using a hash of array and index
+                IrInstruction::数组存储 { array, index, value, element_type } => {
+                    // Generate unique temp name for address
                     let hash = format!("{}{}", array.replace("%", "").replace("t", ""), index.replace("%", ""));
-                    ir.push_str(&format!("%addr_tmp{} = getelementptr [10 x i64], [10 x i64]* {}, i64 0, i64 {}\n", hash, array, index));
-                    ir.push_str(&format!("store i64 {}, i64* %addr_tmp{}\n", value, hash));
+                    ir.push_str(&format!("  %addr_tmp{} = getelementptr [10 x {}], ptr {}, i64 0, i64 {}\n", hash, element_type, array, index));
+                    ir.push_str(&format!("  store {} {}, ptr %addr_tmp{}\n", element_type, value, hash));
                 }
                 IrInstruction::字符串连接 { dest, left, right } => {
                     // Simplified string concatenation using external function

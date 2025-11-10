@@ -11,6 +11,9 @@ pub mod conversion;
 pub mod debug;
 pub mod crypto;
 pub mod crypto_ffi;
+pub mod vector;
+pub mod vector_ffi;
+pub mod llm;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};
@@ -19,6 +22,8 @@ pub use system::{SystemModule, SystemInfo};
 pub use conversion::{ConversionModule, TypeConversion};
 pub use debug::{DebugModule, DebugInfo};
 pub use crypto::{加密模块, 加密操作, 编码格式};
+pub use vector::{向量, 向量模块};
+pub use llm::{大模型模块, 嵌入器, 知识库, 提示模板, 检索增强生成, 智能代理};
 // StandardLibrary is defined below, no need to re-export
 
 /// Standard library result type
@@ -288,6 +293,10 @@ pub struct StandardLibrary {
     pub debug_module: DebugModule,
     /// 加密模块
     pub 加密模块: 加密模块,
+    /// 向量模块
+    pub 向量模块: 向量模块,
+    /// 大模型模块
+    pub 大模型: 大模型模块,
     /// Function registry
     pub registry: StdlibRegistry,
 }
@@ -302,6 +311,8 @@ impl StandardLibrary {
             conversion_module: ConversionModule::new(),
             debug_module: DebugModule::new(),
             加密模块: 加密模块::创建(),
+            向量模块: 向量模块::创建(),
+            大模型: 大模型模块::创建(),
             registry: StdlibRegistry::new(),
         })
     }
