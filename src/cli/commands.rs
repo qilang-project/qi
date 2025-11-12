@@ -418,11 +418,31 @@ impl Cli {
         if config.verbose {
             eprintln!("DEBUG: Linking with clang");
         }
-        let output = Command::new("clang")
+        let mut link_command = Command::new("clang");
+        link_command
             .arg(&temp_executable.with_extension("o"))
             .arg(&compiler_lib_path)
             .arg("-o")
-            .arg(&temp_executable)
+            .arg(&temp_executable);
+
+        // Add macOS frameworks required by reqwest
+        #[cfg(target_os = "macos")]
+        {
+            link_command
+                .arg("-framework")
+                .arg("Security")
+                .arg("-framework")
+                .arg("CoreFoundation")
+                .arg("-framework")
+                .arg("SystemConfiguration");
+        }
+
+        if config.verbose {
+            eprintln!("DEBUG: Link command: {:?}", link_command);
+        }
+
+        let 命令字符串 = format!("{:?}", link_command);
+        let output = link_command
             .output()
             .map_err(|e| CliError::Io(e))?;
 
@@ -432,6 +452,7 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
+            eprintln!("链接命令: {}", 命令字符串);
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
                 format!("链接失败: {}", error)
             )));
@@ -606,11 +627,31 @@ impl Cli {
         if config.verbose {
             eprintln!("DEBUG: Linking with clang");
         }
-        let output = Command::new("clang")
+        let mut link_command = Command::new("clang");
+        link_command
             .arg(&temp_executable.with_extension("o"))
             .arg(&compiler_lib_path)
             .arg("-o")
-            .arg(&temp_executable)
+            .arg(&temp_executable);
+
+        // Add macOS frameworks required by reqwest
+        #[cfg(target_os = "macos")]
+        {
+            link_command
+                .arg("-framework")
+                .arg("Security")
+                .arg("-framework")
+                .arg("CoreFoundation")
+                .arg("-framework")
+                .arg("SystemConfiguration");
+        }
+
+        if config.verbose {
+            eprintln!("DEBUG: Link command: {:?}", link_command);
+        }
+
+        let 命令字符串 = format!("{:?}", link_command);
+        let output = link_command
             .output()
             .map_err(|e| CliError::Io(e))?;
 
@@ -620,6 +661,7 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
+            eprintln!("链接命令: {}", 命令字符串);
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
                 format!("链接失败: {}", error)
             )));
@@ -1169,16 +1211,33 @@ impl Cli {
         // Link with Qi runtime to create executable
         let runtime_lib_path = self.get_runtime_library_path()?;
 
-        let output = Command::new("clang")
+        let mut link_command = Command::new("clang");
+        link_command
             .arg(&temp_executable.with_extension("o"))
             .arg(&runtime_lib_path)
             .arg("-o")
-            .arg(&temp_executable)
+            .arg(&temp_executable);
+
+        // Add macOS frameworks required by reqwest
+        #[cfg(target_os = "macos")]
+        {
+            link_command
+                .arg("-framework")
+                .arg("Security")
+                .arg("-framework")
+                .arg("CoreFoundation")
+                .arg("-framework")
+                .arg("SystemConfiguration");
+        }
+
+        let 命令字符串 = format!("{:?}", link_command);
+        let output = link_command
             .output()
             .map_err(|e| CliError::Io(e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
+            eprintln!("链接命令: {}", 命令字符串);
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
                 format!("链接失败: {}", error)
             )));

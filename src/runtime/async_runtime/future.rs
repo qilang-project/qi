@@ -28,13 +28,17 @@ pub enum FutureValue {
     None,                   // 无值
 }
 
+// SAFETY: FutureValue is Send-safe when used with String/Integer/Float/Boolean variants.
+// The Pointer variant requires careful usage - only send across threads if the pointed data is thread-safe.
+unsafe impl Send for FutureValue {}
+
 /// Future structure - heap allocated
 /// 未来结构 - 堆分配
 #[repr(C)]
 pub struct Future {
-    state: Arc<Mutex<FutureState>>,
-    value: Arc<Mutex<Option<FutureValue>>>,
-    error: Arc<Mutex<Option<String>>>,
+    pub state: Arc<Mutex<FutureState>>,
+    pub value: Arc<Mutex<Option<FutureValue>>>,
+    pub error: Arc<Mutex<Option<String>>>,
 }
 
 impl Future {

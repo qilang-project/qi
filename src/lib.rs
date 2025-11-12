@@ -318,6 +318,18 @@ impl QiCompiler {
             // On Unix-like systems, use pthread and math library
             command.arg("-lpthread");
             command.arg("-lm");  // Link math library (required for pow, sin, cos, etc.)
+
+            // On macOS, add frameworks required by reqwest
+            #[cfg(target_os = "macos")]
+            {
+                command
+                    .arg("-framework")
+                    .arg("Security")
+                    .arg("-framework")
+                    .arg("CoreFoundation")
+                    .arg("-framework")
+                    .arg("SystemConfiguration");
+            }
         }
 
 

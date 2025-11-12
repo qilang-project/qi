@@ -3202,46 +3202,97 @@ impl IrBuilder {
                                 return Ok(temp);
                             }
                         } else {
-                            // 这是本地模块，使用模块前缀
-                            // 模块前缀调用，如 数学工具.最大值 -> 数学工具_最大值
-                            let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
-                            let qualified_function_name = format!("{}_{}", actual_module, method_call.method_name);
+                            // 检查是否为直接使用的标准库模块（无需导入）
+                            let is_stdlib = self.module_registry.has_module(module_name);
 
-                            // 构造函数调用
-                            let func_name = if qualified_function_name.chars().any(|c| !c.is_ascii()) {
-                                self.mangle_function_name(&qualified_function_name)
-                            } else {
-                                qualified_function_name
-                            };
+                            if is_stdlib {
+                                // 标准库模块：直接从模块注册表查找函数
+                                let module_function = self.module_registry.get_function(module_name, &method_call.method_name)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "模块 '{}' 中不存在函数 '{}'",
+                                            module_name,
+                                            method_call.method_name
+                                        )
+                                    })?;
 
-                            // 构建参数
-                            let mut args = vec![];
-                            for arg in &method_call.arguments {
-                                args.push(self.build_node(arg)?);
-                            }
+                                let runtime_func_name = module_function.runtime_name.clone();
+                                let return_type_str = module_function.return_type.clone();
 
-                            // 检查返回值类型
-                            let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
-                                ret_type != "void"
-                            } else {
-                                true // 默认假设有返回值
-                            };
+                                // Convert type string to LLVM type
+                                // TODO(PLAN:2025-11-10): 需要统一类型字符串到LLVM类型的转换逻辑
+                                let return_type = if return_type_str.starts_with("未来<") {
+                                    "ptr".to_string() // Future types are pointers
+                                } else if return_type_str == "整数" {
+                                    "i64".to_string()
+                                } else if return_type_str == "浮点数" {
+                                    "double".to_string()
+                                } else if return_type_str == "字符串" {
+                                    "ptr".to_string()
+                                } else if return_type_str == "布尔" {
+                                    "i1".to_string()
+                                } else {
+                                    return_type_str // Use as-is for LLVM types like ptr, i64, etc.
+                                };
 
-                            if has_return_value {
+                                // 构建参数
+                                let mut args = vec![];
+                                for arg in &method_call.arguments {
+                                    args.push(self.build_node(arg)?);
+                                }
+
+                                // 生成临时变量并记录其类型
                                 let temp = self.generate_temp();
+                                self.variable_types.insert(temp.clone(), return_type);
+
                                 self.add_instruction(IrInstruction::函数调用 {
                                     dest: Some(temp.clone()),
-                                    callee: func_name,
+                                    callee: runtime_func_name,
                                     arguments: args,
                                 });
                                 return Ok(temp);
                             } else {
-                                self.add_instruction(IrInstruction::函数调用 {
-                                    dest: None,
-                                    callee: func_name,
-                                    arguments: args,
-                                });
-                                return Ok(String::new());
+                                // 这是本地模块，使用模块前缀
+                                // 模块前缀调用，如 数学工具.最大值 -> 数学工具_最大值
+                                let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
+                                let qualified_function_name = format!("{}_{}", actual_module, method_call.method_name);
+
+                                // 构造函数调用
+                                let func_name = if qualified_function_name.chars().any(|c| !c.is_ascii()) {
+                                    self.mangle_function_name(&qualified_function_name)
+                                } else {
+                                    qualified_function_name
+                                };
+
+                                // 构建参数
+                                let mut args = vec![];
+                                for arg in &method_call.arguments {
+                                    args.push(self.build_node(arg)?);
+                                }
+
+                                // 检查返回值类型
+                                let has_return_value = if let Some(ret_type) = self.function_return_types.get(&func_name) {
+                                    ret_type != "void"
+                                } else {
+                                    true // 默认假设有返回值
+                                };
+
+                                if has_return_value {
+                                    let temp = self.generate_temp();
+                                    self.add_instruction(IrInstruction::函数调用 {
+                                        dest: Some(temp.clone()),
+                                        callee: func_name,
+                                        arguments: args,
+                                    });
+                                    return Ok(temp);
+                                } else {
+                                    self.add_instruction(IrInstruction::函数调用 {
+                                        dest: None,
+                                        callee: func_name,
+                                        arguments: args,
+                                    });
+                                    return Ok(String::new());
+                                }
                             }
                         }
                     }
@@ -3908,6 +3959,72 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_http_server_handle_request(i64, ptr, i64)\n");
         ir.push_str("declare ptr @qi_http_server_accept(i64)\n");
         ir.push_str("declare i64 @qi_http_server_close(i64)\n");
+        ir.push_str("\n");
+
+        // LLM functions
+        ir.push_str("; LLM (Large Language Model) functions\n");
+        ir.push_str("declare i64 @qi_llm_create_session(ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_llm_chat(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_llm_set_config(i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_llm_clear_history(i64)\n");
+        ir.push_str("declare i64 @qi_llm_get_history_count(i64)\n");
+        ir.push_str("declare i64 @qi_llm_close_session(i64)\n");
+        ir.push_str("declare void @qi_llm_free_string(ptr)\n");
+        ir.push_str("declare ptr @qi_llm_chat_async(i64, ptr)\n");
+        ir.push_str("\n");
+
+        // OS functions
+        ir.push_str("; OS (Operating System) functions\n");
+        ir.push_str("declare ptr @qi_os_getenv(ptr)\n");
+        ir.push_str("declare i64 @qi_os_setenv(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_os_unsetenv(ptr)\n");
+        ir.push_str("declare ptr @qi_os_environ()\n");
+        ir.push_str("declare ptr @qi_os_getcwd()\n");
+        ir.push_str("declare i64 @qi_os_chdir(ptr)\n");
+        ir.push_str("declare ptr @qi_os_homedir()\n");
+        ir.push_str("declare ptr @qi_os_tempdir()\n");
+        ir.push_str("declare ptr @qi_os_type()\n");
+        ir.push_str("declare ptr @qi_os_arch()\n");
+        ir.push_str("declare ptr @qi_os_family()\n");
+        ir.push_str("declare ptr @qi_os_hostname()\n");
+        ir.push_str("declare ptr @qi_os_username()\n");
+        ir.push_str("declare i64 @qi_os_cpu_count()\n");
+        ir.push_str("declare i64 @qi_os_getpid()\n");
+        ir.push_str("declare void @qi_os_exit(i32)\n");
+        ir.push_str("declare i64 @qi_os_load_env(ptr)\n");
+        ir.push_str("declare ptr @qi_os_list_dir(ptr)\n");
+        ir.push_str("declare i64 @qi_os_is_dir(ptr)\n");
+        ir.push_str("declare i64 @qi_os_is_file(ptr)\n");
+        ir.push_str("declare void @qi_os_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        ir.push_str("; CLI argument parsing functions\n");
+        ir.push_str("declare i64 @qi_cli_create_app(ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_version(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_author(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_about(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_create_arg(ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_short(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_long(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_help(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_required(i64, i64)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_default(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_flag(i64)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_multiple(i64)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_env(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_app_add_arg(i64, i64)\n");
+        ir.push_str("declare i64 @qi_cli_create_subcommand(ptr)\n");
+        ir.push_str("declare i64 @qi_cli_app_add_subcommand(i64, i64)\n");
+        ir.push_str("declare i64 @qi_cli_parse(i64)\n");
+        ir.push_str("declare ptr @qi_cli_get_value(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_get_flag(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_has_value(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_has_subcommand(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_get_subcommand(i64, ptr)\n");
+        ir.push_str("declare void @qi_cli_free_string(ptr)\n");
+        ir.push_str("declare i64 @qi_cli_free_app(i64)\n");
+        ir.push_str("declare i64 @qi_cli_free_arg(i64)\n");
+        ir.push_str("declare i64 @qi_cli_free_matches(i64)\n");
         ir.push_str("\n");
 
         ir.push_str("; Print functions\n");
@@ -4615,6 +4732,30 @@ impl IrBuilder {
                                 "qi_http_get_status" | "qi_http_server_create" | "qi_http_server_close" => "i64",  // Return i64
                                 "qi_http_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown HTTP functions
+                            }
+                        } else if callee.starts_with("qi_llm_") {
+                            match callee.as_str() {
+                                "qi_llm_chat" | "qi_llm_chat_async" => "ptr",  // Return LLM response string / Future<String>
+                                "qi_llm_create_session" | "qi_llm_set_config" | "qi_llm_clear_history" |
+                                "qi_llm_get_history_count" | "qi_llm_close_session" => "i64",  // Return i64
+                                "qi_llm_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Default for unknown LLM functions
+                            }
+                        } else if callee.starts_with("qi_os_") {
+                            match callee.as_str() {
+                                "qi_os_getenv" | "qi_os_environ" | "qi_os_getcwd" | "qi_os_homedir" | "qi_os_tempdir" |
+                                "qi_os_type" | "qi_os_arch" | "qi_os_family" | "qi_os_hostname" | "qi_os_username" |
+                                "qi_os_list_dir" => "ptr",  // Return strings
+                                "qi_os_setenv" | "qi_os_unsetenv" | "qi_os_chdir" | "qi_os_cpu_count" | "qi_os_getpid" |
+                                "qi_os_load_env" | "qi_os_is_dir" | "qi_os_is_file" => "i64",  // Return i64
+                                "qi_os_exit" | "qi_os_free_string" => "void",  // No return value
+                                _ => "i64"  // Default for unknown OS functions
+                            }
+                        } else if callee.starts_with("qi_cli_") {
+                            match callee.as_str() {
+                                "qi_cli_get_value" => "ptr",  // Return string
+                                "qi_cli_free_string" => "void",  // No return value
+                                _ => "i64"  // Most CLI functions return i64
                             }
                         // Check hex-encoded Chinese function names
                         } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根

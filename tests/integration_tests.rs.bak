@@ -292,13 +292,12 @@ fn test_lalrpop_cli_directly() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("a = alloca"));
+            assert!(ir_content.contains("a = alloca"));
         }
         Err(e) => {
             println!("LALRPOP compilation failed: {}", e);
@@ -332,13 +331,12 @@ fn test_binary_expressions() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("x = alloca"));
+            assert!(ir_content.contains("x = alloca"));
         }
         Err(e) => {
             println!("Binary expression compilation failed: {}", e);
@@ -372,10 +370,9 @@ fn test_function_declarations() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
             // Function declarations might generate different IR patterns
@@ -412,10 +409,9 @@ fn test_if_statements() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
         }
@@ -451,10 +447,9 @@ fn test_if_else_statements() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
         }
@@ -490,10 +485,9 @@ fn test_while_statements() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
         }
@@ -514,7 +508,7 @@ fn test_for_statements() {
     let source_file = temp_dir.path().join("test_for.qi");
 
     // Write test source code with for statement
-    let source_code = "函数 入口() {\n    对于 item 在 [1, 2, 3] {\n        变量 x: 整数 = item;\n    }\n    返回;\n}";
+    let source_code = "对于 item 在 [1, 2, 3] {\n    变量 x = item;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
     println!("Testing for statements with content: {}", source_code);
@@ -529,10 +523,9 @@ fn test_for_statements() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
         }
@@ -553,7 +546,7 @@ fn test_simple_function_calls() {
     let source_file = temp_dir.path().join("test_function_call.qi");
 
     // Write test source code with function call
-    let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 入口() {\n    变量 result: 整数 = test();\n    返回;\n}";
+    let source_code = "函数 test() {\n    返回 42;\n}\n变量 result = test();";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
     println!("Testing simple function calls with content: {}", source_code);
@@ -568,13 +561,12 @@ fn test_simple_function_calls() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("@test()"));
+            assert!(ir_content.contains("@test()"));
         }
         Err(e) => {
             println!("Simple function call compilation failed: {}", e);
@@ -593,7 +585,7 @@ fn test_multiple_function_calls() {
     let source_file = temp_dir.path().join("test_multiple_function_calls.qi");
 
     // Write test source code with multiple function calls
-    let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 hello() : 整数 {\n    返回 10;\n}\n函数 入口() {\n    变量 a: 整数 = test();\n    变量 b: 整数 = hello();\n    返回;\n}";
+    let source_code = "函数 test() {\n    返回 42;\n}\n函数 hello() {\n    返回 10;\n}\n变量 a = test();\n变量 b = hello();";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
     println!("Testing multiple function calls with content: {}", source_code);
@@ -608,14 +600,13 @@ fn test_multiple_function_calls() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("@test()"));
-            // assert!(ir_content.contains("@hello()"));
+            assert!(ir_content.contains("@test()"));
+            assert!(ir_content.contains("@hello()"));
         }
         Err(e) => {
             println!("Multiple function call compilation failed: {}", e);
@@ -634,7 +625,7 @@ fn test_function_calls_expressions() {
     let source_file = temp_dir.path().join("test_function_call_expressions.qi");
 
     // Write test source code with function calls in expressions
-    let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 hello() : 整数 {\n    返回 10;\n}\n函数 入口() {\n    变量 c: 整数 = test() + hello();\n    返回;\n}";
+    let source_code = "函数 test() {\n    返回 42;\n}\n函数 hello() {\n    返回 10;\n}\n变量 c = test() + hello();";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
     println!("Testing function calls in expressions with content: {}", source_code);
@@ -649,14 +640,13 @@ fn test_function_calls_expressions() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("@test()"));
-            // assert!(ir_content.contains("@hello()"));
+            assert!(ir_content.contains("@test()"));
+            assert!(ir_content.contains("@hello()"));
         }
         Err(e) => {
             println!("Function call expression compilation failed: {}", e);
@@ -690,13 +680,12 @@ fn test_boolean_expressions_in_if() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("icmp sgt")); // Should contain integer comparison
+            assert!(ir_content.contains("icmp sgt")); // Should contain integer comparison
         }
         Err(e) => {
             println!("Boolean if statement compilation failed: {}", e);
@@ -730,18 +719,17 @@ fn test_all_comparison_operators() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("icmp slt")); // less than
-            // assert!(ir_content.contains("icmp sgt")); // greater than
-            // assert!(ir_content.contains("icmp eq")); // equal
-            // assert!(ir_content.contains("icmp ne")); // not equal
-            // assert!(ir_content.contains("icmp sge")); // greater or equal
-            // assert!(ir_content.contains("icmp sle")); // less or equal
+            assert!(ir_content.contains("icmp slt")); // less than
+            assert!(ir_content.contains("icmp sgt")); // greater than
+            assert!(ir_content.contains("icmp eq")); // equal
+            assert!(ir_content.contains("icmp ne")); // not equal
+            assert!(ir_content.contains("icmp sge")); // greater or equal
+            assert!(ir_content.contains("icmp sle")); // less or equal
         }
         Err(e) => {
             println!("All comparison operators compilation failed: {}", e);
@@ -775,13 +763,12 @@ fn test_boolean_expressions_in_while() {
             println!("Generated file: {:?}", compilation_result.executable_path);
 
             // Check generated IR content
-            // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
-            // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
-            // println!("Generated IR:\n{}", ir_content);
+            let ir_content = fs::read_to_string(&compilation_result.executable_path)
+                .expect("Failed to read generated IR file");
+            println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
-            // assert!(ir_content.contains("icmp slt")); // Should contain less than comparison
+            assert!(ir_content.contains("icmp slt")); // Should contain less than comparison
         }
         Err(e) => {
             println!("Boolean while statement compilation failed: {}", e);

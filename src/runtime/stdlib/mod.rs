@@ -14,6 +14,9 @@ pub mod crypto_ffi;
 pub mod vector;
 pub mod vector_ffi;
 pub mod llm;
+pub mod llm_ffi;
+pub mod os_ffi;
+pub mod cli_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};

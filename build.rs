@@ -28,6 +28,14 @@ fn main() {
         .opt_level(2)
         .compile("qi_async_syscalls");
 
+    // Link macOS system frameworks required by reqwest
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=framework=Security");
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        println!("cargo:rustc-link-lib=framework=SystemConfiguration");
+    }
+
     eprintln!("✓ C async syscalls library compiled successfully");
     eprintln!("✓ Concurrency functions implemented in Rust");
 }
