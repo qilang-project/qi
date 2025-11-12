@@ -93,6 +93,15 @@ impl QiCompiler {
         let start_time = std::time::Instant::now();
         let warnings: Vec<String> = Vec::new();
 
+        // Resolve relative path to absolute path
+        let source_file = if source_file.is_relative() {
+            std::env::current_dir()
+                .map_err(CompilerError::Io)?
+                .join(&source_file)
+        } else {
+            source_file
+        };
+
         // Multi-file compilation with import resolution
         let result = self.compile_project(source_file)?;
 
@@ -203,12 +212,15 @@ impl QiCompiler {
 
             // Generate LLVM IR for this module
             let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
-            
+
             // Set external functions for this module
             codegen.set_external_functions(external_functions);
 
             // Set import aliases for namespace resolution
             codegen.set_import_aliases(import_aliases);
+
+            // Set verbose mode
+            codegen.set_verbose(self.config.verbose);
 
             let ir_content = codegen.generate(&ast)
                 .map_err(|e| CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e)))?;
@@ -379,7 +391,7 @@ impl QiCompiler {
             .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
 
         // Search strategies in order of preference:
-        let search_paths = vec![
+        let mut search_paths = vec![
             // 1. Same directory as compiler executable (for deployed releases)
             compiler_dir.join(lib_name),
 
@@ -405,10 +417,19 @@ impl QiCompiler {
                 .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
         ];
 
+        // 7. System-wide installation paths
+        if cfg!(windows) {
+            search_paths.push(PathBuf::from(r"C:\Program Files\Qi\lib").join(lib_name));
+        } else {
+            search_paths.push(PathBuf::from("/usr/local/lib/qi").join(lib_name));
+        }
+
         // Try each path in order
         for path in &search_paths {
             if path.exists() {
-                eprintln!("Found runtime library at: {:?}", path);
+                if self.config.verbose {
+                    eprintln!("Found runtime library at: {:?}", path);
+                }
                 return Ok(path.clone());
             }
         }

@@ -51,6 +51,11 @@ impl CodeGenerator {
         self.ir_builder.set_import_aliases(import_aliases);
     }
 
+    /// Set verbose mode for debug output
+    pub fn set_verbose(&mut self, verbose: bool) {
+        self.ir_builder.set_verbose(verbose);
+    }
+
     /// Generate LLVM IR from AST
     pub fn generate(&mut self, ast: &crate::parser::ast::AstNode) -> Result<String, CodegenError> {
         let ir = self.ir_builder.build(ast)

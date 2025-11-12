@@ -3384,18 +3384,14 @@ impl IrBuilder {
                         let mut arg_temps = Vec::new();
                         for arg in &call_expr.arguments {
                             let arg_result = self.build_node(arg)?;
-                            if self.verbose {
-                                eprintln!("[DEBUG] Goroutine argument built: {:?} -> {}", arg, arg_result);
-                            }
+                            eprintln!("[DEBUG] Goroutine argument built: {:?} -> {}", arg, arg_result);
                             arg_temps.push(arg_result);
                         }
 
                         // Resolve argument types NOW while we have access to variable_types
                         // Look up the target function's parameter types
                         let typed_args: Vec<String> = if let Some(param_types) = self.function_param_types.get(&mangled_name) {
-                            if self.verbose {
-                                eprintln!("[DEBUG] Found param types for {}: {:?}", mangled_name, param_types);
-                            }
+                            eprintln!("[DEBUG] Found param types for {}: {:?}", mangled_name, param_types);
                             arg_temps.iter().zip(param_types.iter()).map(|(arg, expected_type)| {
                                 let arg_type = if arg.starts_with('%') {
                                     let var_name = arg.trim_start_matches('%');
@@ -3403,9 +3399,7 @@ impl IrBuilder {
                                         .or_else(|| self.variable_types.get(&format!("param_{}", var_name)))
                                         .map(|s| s.as_str())
                                         .unwrap_or(expected_type.as_str());
-                                    if self.verbose {
-                                        eprintln!("[DEBUG] Resolving arg {} (var {}): resolved as {}", arg, var_name, resolved_type);
-                                    }
+                                    eprintln!("[DEBUG] Resolving arg {} (var {}): resolved as {}", arg, var_name, resolved_type);
                                     resolved_type
                                 } else if arg.starts_with('@') {
                                     "ptr"
@@ -3415,23 +3409,17 @@ impl IrBuilder {
                                     expected_type.as_str()
                                 };
                                 let typed = format!("{}:{}", arg_type, arg);
-                                if self.verbose {
-                                    eprintln!("[DEBUG] Typed arg: {}", typed);
-                                }
+                                eprintln!("[DEBUG] Typed arg: {}", typed);
                                 typed
                             }).collect()
                         } else {
-                            if self.verbose {
-                                eprintln!("[DEBUG] No param types found for {}, using raw args", mangled_name);
-                            }
+                            eprintln!("[DEBUG] No param types found for {}, using raw args", mangled_name);
                             // No type info available, pass through as-is
                             arg_temps
                         };
 
                         // Generate goroutine spawn call
-                        if self.verbose {
-                            eprintln!("[DEBUG] Spawning goroutine {} with {} arguments: {:?}", mangled_name, typed_args.len(), typed_args);
-                        }
+                        eprintln!("[DEBUG] Spawning goroutine {} with {} arguments: {:?}", mangled_name, typed_args.len(), typed_args);
                         self.add_instruction(IrInstruction::协程启动 {
                             function: mangled_name,
                             arguments: typed_args,
@@ -4851,16 +4839,12 @@ impl IrBuilder {
                         if ty == "void" {
                             ir.push_str("ret void\n");
                         } else {
-                            if self.verbose {
-                                eprintln!("[DEBUG] Generating return: ret {} {}", ty, val);
-                            }
+                            eprintln!("[DEBUG] Generating return: ret {} {}", ty, val);
                             ir.push_str(&format!("ret {} {}\n", ty, val));
                         }
                     } else {
                         // Default to i64 if not within a function context
-                        if self.verbose {
-                            eprintln!("[DEBUG] Generating return (default): ret i64 {}", val);
-                        }
+                        eprintln!("[DEBUG] Generating return (default): ret i64 {}", val);
                         ir.push_str(&format!("ret i64 {}\n", val));
                     }
                 }
