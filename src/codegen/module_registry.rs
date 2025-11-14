@@ -108,6 +108,16 @@ impl ModuleRegistry {
 
         // Register vector module (向量模块)
         self.register_vector_module();
+
+        // Register data structure modules (数据结构模块)
+        self.register_list_module();
+        self.register_hashmap_module();
+
+        // Register datetime module (日期时间模块)
+        self.register_datetime_module();
+
+        // Register JSON module (JSON模块)
+        self.register_json_module();
     }
 
     /// Register the crypto module
@@ -990,6 +1000,571 @@ impl ModuleRegistry {
         self.modules.insert("命令行".to_string(), cli_module.clone());
         self.modules.insert("标准库.命令行".to_string(), cli_module.clone());
         self.modules.insert("CLI".to_string(), cli_module);
+
+        // ===== 图形化模块 (GUI Module) =====
+        self.register_gui_module();
+    }
+
+    /// 注册图形化窗口模块
+    fn register_gui_module(&mut self) {
+        let mut gui_module = Module::new("图形化");
+
+        // 创建窗口
+        gui_module.add_function(ModuleFunction::new(
+            "创建窗口",
+            "qi_gui_create_window",
+            vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+
+        // 销毁窗口
+        gui_module.add_function(ModuleFunction::new(
+            "销毁窗口",
+            "qi_gui_destroy_window",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 设置标题
+        gui_module.add_function(ModuleFunction::new(
+            "设置标题",
+            "qi_gui_set_title",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "void",
+        ));
+
+        // 获取标题
+        gui_module.add_function(ModuleFunction::new(
+            "获取标题",
+            "qi_gui_get_title",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+
+        // 显示窗口
+        gui_module.add_function(ModuleFunction::new(
+            "显示窗口",
+            "qi_gui_show_window",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 隐藏窗口
+        gui_module.add_function(ModuleFunction::new(
+            "隐藏窗口",
+            "qi_gui_hide_window",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 是否可见
+        gui_module.add_function(ModuleFunction::new(
+            "是否可见",
+            "qi_gui_is_visible",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 启用事件打印
+        gui_module.add_function(ModuleFunction::new(
+            "启用事件打印",
+            "qi_gui_enable_event_printing",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 获取窗口位置X
+        gui_module.add_function(ModuleFunction::new(
+            "获取位置X",
+            "qi_gui_get_position_x",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 获取窗口位置Y
+        gui_module.add_function(ModuleFunction::new(
+            "获取位置Y",
+            "qi_gui_get_position_y",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 设置窗口位置
+        gui_module.add_function(ModuleFunction::new(
+            "设置位置",
+            "qi_gui_set_position",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 获取窗口宽度
+        gui_module.add_function(ModuleFunction::new(
+            "获取宽度",
+            "qi_gui_get_width",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 获取窗口高度
+        gui_module.add_function(ModuleFunction::new(
+            "获取高度",
+            "qi_gui_get_height",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 设置窗口大小
+        gui_module.add_function(ModuleFunction::new(
+            "设置大小",
+            "qi_gui_set_size",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 运行事件循环
+        gui_module.add_function(ModuleFunction::new(
+            "运行",
+            "qi_gui_run",
+            vec![],
+            "void",
+        ));
+
+        // 获取版本
+        gui_module.add_function(ModuleFunction::new(
+            "版本",
+            "qi_gui_version",
+            vec![],
+            "字符串",
+        ));
+
+        // 释放字符串
+        gui_module.add_function(ModuleFunction::new(
+            "释放字符串",
+            "qi_gui_free_string",
+            vec!["字符串".to_string()],
+            "void",
+        ));
+
+        // 音频功能
+        // 加载音频文件
+        gui_module.add_function(ModuleFunction::new(
+            "加载音频",
+            "qi_gui_audio_load",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+
+        // 播放音频
+        gui_module.add_function(ModuleFunction::new(
+            "播放音频",
+            "qi_gui_audio_play",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 暂停音频
+        gui_module.add_function(ModuleFunction::new(
+            "暂停音频",
+            "qi_gui_audio_pause",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 停止音频
+        gui_module.add_function(ModuleFunction::new(
+            "停止音频",
+            "qi_gui_audio_stop",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 设置音量
+        gui_module.add_function(ModuleFunction::new(
+            "设置音量",
+            "qi_gui_audio_set_volume",
+            vec!["整数".to_string(), "浮点数".to_string()],
+            "void",
+        ));
+
+        // 音频是否正在播放
+        gui_module.add_function(ModuleFunction::new(
+            "音频是否播放",
+            "qi_gui_audio_is_playing",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 音频是否播放完成
+        gui_module.add_function(ModuleFunction::new(
+            "音频是否完成",
+            "qi_gui_audio_is_finished",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 释放音频播放器
+        gui_module.add_function(ModuleFunction::new(
+            "释放音频",
+            "qi_gui_audio_free",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // Register module with various names
+        self.modules.insert("图形化".to_string(), gui_module.clone());
+        self.modules.insert("标准库.图形化".to_string(), gui_module.clone());
+        self.modules.insert("GUI".to_string(), gui_module);
+    }
+
+    /// 注册列表模块
+    fn register_list_module(&mut self) {
+        let mut list_module = Module::new("列表");
+
+        // 整数列表
+        list_module.add_function(ModuleFunction::new("创建整数列表", "qi_list_int_create", vec![], "整数"));
+        list_module.add_function(ModuleFunction::new("添加整数", "qi_list_int_push", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("获取整数", "qi_list_int_get", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("设置整数", "qi_list_int_set", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("整数列表大小", "qi_list_int_size", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("弹出整数", "qi_list_int_pop", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("清空整数列表", "qi_list_int_clear", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("删除整数元素", "qi_list_int_remove", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("插入整数", "qi_list_int_insert", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("包含整数", "qi_list_int_contains", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("查找整数索引", "qi_list_int_index_of", vec!["整数".to_string(), "整数".to_string()], "整数"));
+
+        // 浮点数列表
+        list_module.add_function(ModuleFunction::new("创建浮点列表", "qi_list_float_create", vec![], "整数"));
+        list_module.add_function(ModuleFunction::new("添加浮点数", "qi_list_float_push", vec!["整数".to_string(), "浮点数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("获取浮点数", "qi_list_float_get", vec!["整数".to_string(), "整数".to_string()], "浮点数"));
+        list_module.add_function(ModuleFunction::new("浮点列表大小", "qi_list_float_size", vec!["整数".to_string()], "整数"));
+
+        // 字符串列表
+        list_module.add_function(ModuleFunction::new("创建字符串列表", "qi_list_string_create", vec![], "整数"));
+        list_module.add_function(ModuleFunction::new("添加字符串", "qi_list_string_push", vec!["整数".to_string(), "字符串".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("获取字符串", "qi_list_string_get", vec!["整数".to_string(), "整数".to_string()], "字符串"));
+        list_module.add_function(ModuleFunction::new("字符串列表大小", "qi_list_string_size", vec!["整数".to_string()], "整数"));
+
+        // 通用操作
+        list_module.add_function(ModuleFunction::new("删除列表", "qi_list_free", vec!["整数".to_string()], "整数"));
+
+        self.modules.insert("列表".to_string(), list_module.clone());
+        self.modules.insert("标准库.列表".to_string(), list_module);
+    }
+
+    /// 注册哈希表模块
+    fn register_hashmap_module(&mut self) {
+        let mut map_module = Module::new("哈希表");
+
+        // 整数哈希表
+        map_module.add_function(ModuleFunction::new("创建整数表", "qi_hashmap_int_create", vec![], "整数"));
+        map_module.add_function(ModuleFunction::new("设置整数", "qi_hashmap_int_set", vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("获取整数", "qi_hashmap_int_get", vec!["整数".to_string(), "字符串".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("包含键", "qi_hashmap_int_contains", vec!["整数".to_string(), "字符串".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("删除键", "qi_hashmap_int_remove", vec!["整数".to_string(), "字符串".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("表大小", "qi_hashmap_int_size", vec!["整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("清空表", "qi_hashmap_int_clear", vec!["整数".to_string()], "整数"));
+
+        // 浮点数哈希表
+        map_module.add_function(ModuleFunction::new("创建浮点表", "qi_hashmap_float_create", vec![], "整数"));
+        map_module.add_function(ModuleFunction::new("设置浮点数", "qi_hashmap_float_set", vec!["整数".to_string(), "字符串".to_string(), "浮点数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("获取浮点数", "qi_hashmap_float_get", vec!["整数".to_string(), "字符串".to_string()], "浮点数"));
+        map_module.add_function(ModuleFunction::new("浮点表大小", "qi_hashmap_float_size", vec!["整数".to_string()], "整数"));
+
+        // 字符串哈希表
+        map_module.add_function(ModuleFunction::new("创建字符串表", "qi_hashmap_string_create", vec![], "整数"));
+        map_module.add_function(ModuleFunction::new("设置字符串", "qi_hashmap_string_set", vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new("获取字符串", "qi_hashmap_string_get", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
+        map_module.add_function(ModuleFunction::new("字符串表大小", "qi_hashmap_string_size", vec!["整数".to_string()], "整数"));
+
+        // 通用操作
+        map_module.add_function(ModuleFunction::new("释放表", "qi_hashmap_free", vec!["整数".to_string()], "整数"));
+
+        self.modules.insert("哈希表".to_string(), map_module.clone());
+        self.modules.insert("标准库.哈希表".to_string(), map_module);
+    }
+
+    /// 注册JSON模块
+    fn register_json_module(&mut self) {
+        let mut json_module = Module::new("JSON");
+
+        // JSON编码
+        json_module.add_function(ModuleFunction::new(
+            "编码",
+            "qi_json_encode",
+            vec!["字符串".to_string()], // 接受任意对象的字符串表示
+            "字符串",  // 返回JSON字符串
+        ));
+
+        // JSON解码
+        json_module.add_function(ModuleFunction::new(
+            "解码",
+            "qi_json_decode",
+            vec!["字符串".to_string()], // JSON字符串
+            "整数",  // 返回JSON对象句柄
+        ));
+
+        // JSON对象操作
+        json_module.add_function(ModuleFunction::new(
+            "创建对象",
+            "qi_json_create_object",
+            vec![],
+            "整数",  // 返回JSON对象句柄
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "创建数组",
+            "qi_json_create_array",
+            vec![],
+            "整数",  // 返回JSON数组句柄
+        ));
+
+        // 对象字段设置
+        json_module.add_function(ModuleFunction::new(
+            "设置字符串",
+            "qi_json_set_string",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 对象句柄, 键, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "设置整数",
+            "qi_json_set_int",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "设置浮点数",
+            "qi_json_set_float",
+            vec!["整数".to_string(), "字符串".to_string(), "浮点数".to_string()], // 对象句柄, 键, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "设置布尔",
+            "qi_json_set_bool",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 值(0/1)
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "设置对象",
+            "qi_json_set_object",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 子对象句柄
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "设置数组",
+            "qi_json_set_array",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 数组句柄
+            "整数",  // 返回状态
+        ));
+
+        // 对象字段获取
+        json_module.add_function(ModuleFunction::new(
+            "获取字符串",
+            "qi_json_get_string",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "字符串",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "获取整数",
+            "qi_json_get_int",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "整数",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "获取浮点数",
+            "qi_json_get_float",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "浮点数",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "获取布尔",
+            "qi_json_get_bool",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "整数",  // 返回值(0/1)
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "获取对象",
+            "qi_json_get_object",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "整数",  // 返回子对象句柄
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "获取数组",
+            "qi_json_get_array",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "整数",  // 返回数组句柄
+        ));
+
+        // 数组操作
+        json_module.add_function(ModuleFunction::new(
+            "数组添加字符串",
+            "qi_json_array_push_string",
+            vec!["整数".to_string(), "字符串".to_string()], // 数组句柄, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组添加整数",
+            "qi_json_array_push_int",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组添加浮点数",
+            "qi_json_array_push_float",
+            vec!["整数".to_string(), "浮点数".to_string()], // 数组句柄, 值
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组添加布尔",
+            "qi_json_array_push_bool",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 值(0/1)
+            "整数",  // 返回状态
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组添加对象",
+            "qi_json_array_push_object",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 对象句柄
+            "整数",  // 返回状态
+        ));
+
+        // 数组访问
+        json_module.add_function(ModuleFunction::new(
+            "数组获取字符串",
+            "qi_json_array_get_string",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
+            "字符串",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组获取整数",
+            "qi_json_array_get_int",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
+            "整数",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组获取浮点数",
+            "qi_json_array_get_float",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
+            "浮点数",  // 返回值
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组获取布尔",
+            "qi_json_array_get_bool",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
+            "整数",  // 返回值(0/1)
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "数组获取对象",
+            "qi_json_array_get_object",
+            vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
+            "整数",  // 返回对象句柄
+        ));
+
+        // 工具函数
+        json_module.add_function(ModuleFunction::new(
+            "数组长度",
+            "qi_json_array_length",
+            vec!["整数".to_string()], // 数组句柄
+            "整数",  // 返回长度
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "是否包含键",
+            "qi_json_has_key",
+            vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
+            "整数",  // 返回1或0
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "转字符串",
+            "qi_json_to_string",
+            vec!["整数".to_string()], // 对象或数组句柄
+            "字符串",  // 返回JSON字符串
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "格式化",
+            "qi_json_to_string_pretty",
+            vec!["整数".to_string()], // 对象或数组句柄
+            "字符串",  // 返回格式化的JSON字符串
+        ));
+
+        // 内存管理
+        json_module.add_function(ModuleFunction::new(
+            "删除",
+            "qi_json_free",
+            vec!["整数".to_string()], // JSON对象或数组句柄
+            "整数",  // 返回状态
+        ));
+
+        // Register module with both Chinese and path formats
+        self.modules.insert("JSON".to_string(), json_module.clone());
+        self.modules.insert("标准库.JSON".to_string(), json_module);
+    }
+
+    /// 注册日期时间模块
+    fn register_datetime_module(&mut self) {
+        let mut dt_module = Module::new("日期");
+
+        // 当前时间
+        dt_module.add_function(ModuleFunction::new("现在", "qi_datetime_now", vec![], "整数"));
+        dt_module.add_function(ModuleFunction::new("现在毫秒", "qi_datetime_now_millis", vec![], "整数"));
+        dt_module.add_function(ModuleFunction::new("本地时间", "qi_datetime_now_local", vec![], "整数"));
+
+        // 格式化
+        dt_module.add_function(ModuleFunction::new("格式化", "qi_datetime_format", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
+        dt_module.add_function(ModuleFunction::new("格式化本地", "qi_datetime_format_local", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
+
+        // 解析
+        dt_module.add_function(ModuleFunction::new("解析", "qi_datetime_parse", vec!["字符串".to_string(), "字符串".to_string()], "整数"));
+
+        // 日期组件
+        dt_module.add_function(ModuleFunction::new("年", "qi_datetime_year", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("月", "qi_datetime_month", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("日", "qi_datetime_day", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("时", "qi_datetime_hour", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("分", "qi_datetime_minute", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("秒", "qi_datetime_second", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("星期几", "qi_datetime_weekday", vec!["整数".to_string()], "整数"));
+
+        // 日期计算
+        dt_module.add_function(ModuleFunction::new("加秒", "qi_datetime_add_seconds", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("加分钟", "qi_datetime_add_minutes", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("加小时", "qi_datetime_add_hours", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("加天", "qi_datetime_add_days", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("相差天数", "qi_datetime_diff_days", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("相差小时", "qi_datetime_diff_hours", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("相差分钟", "qi_datetime_diff_minutes", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("相差秒数", "qi_datetime_diff_seconds", vec!["整数".to_string(), "整数".to_string()], "整数"));
+
+        // 日期创建
+        dt_module.add_function(ModuleFunction::new("从年月日", "qi_datetime_from_ymd", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("从年月日时分秒", "qi_datetime_from_ymdhms", vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
+
+        // 工具函数
+        dt_module.add_function(ModuleFunction::new("是闰年", "qi_datetime_is_leap_year", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new("月天数", "qi_datetime_days_in_month", vec!["整数".to_string(), "整数".to_string()], "整数"));
+
+        self.modules.insert("日期".to_string(), dt_module.clone());
+        self.modules.insert("标准库.日期".to_string(), dt_module.clone());
+        self.modules.insert("时间".to_string(), dt_module);
     }
 
     /// Get a module by path
@@ -1113,5 +1688,42 @@ mod tests {
         assert!(functions.contains(&&"Base64编码".to_string()));
         assert!(functions.contains(&&"Base64解码".to_string()));
         assert!(functions.contains(&&"HMAC_SHA256".to_string()));
+    }
+
+    #[test]
+    fn test_json_module() {
+        let registry = ModuleRegistry::new();
+
+        // Test JSON module exists
+        assert!(registry.has_module("JSON"));
+        assert!(registry.has_module("标准库.JSON"));
+
+        // Test JSON object functions
+        assert!(registry.has_function("JSON", "创建对象"));
+        assert!(registry.has_function("JSON", "创建数组"));
+        assert!(registry.has_function("JSON", "设置字符串"));
+        assert!(registry.has_function("JSON", "获取字符串"));
+
+        // Test JSON array functions
+        assert!(registry.has_function("JSON", "数组添加字符串"));
+        assert!(registry.has_function("JSON", "数组获取字符串"));
+        assert!(registry.has_function("JSON", "数组长度"));
+
+        // Test utility functions
+        assert!(registry.has_function("JSON", "转字符串"));
+        assert!(registry.has_function("JSON", "格式化"));
+        assert!(registry.has_function("JSON", "是否包含键"));
+        assert!(registry.has_function("JSON", "删除"));
+
+        // Test function details
+        let create_obj = registry.get_function("JSON", "创建对象").unwrap();
+        assert_eq!(create_obj.runtime_name, "qi_json_create_object");
+        assert_eq!(create_obj.param_types.len(), 0);
+        assert_eq!(create_obj.return_type, "整数");
+
+        let set_string = registry.get_function("JSON", "设置字符串").unwrap();
+        assert_eq!(set_string.runtime_name, "qi_json_set_string");
+        assert_eq!(set_string.param_types.len(), 3);
+        assert_eq!(set_string.return_type, "整数");
     }
 }

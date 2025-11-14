@@ -17,6 +17,11 @@ pub mod llm;
 pub mod llm_ffi;
 pub mod os_ffi;
 pub mod cli_ffi;
+pub mod gui_ffi;
+pub mod list;
+pub mod hashmap;
+pub mod datetime;
+pub mod json_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};

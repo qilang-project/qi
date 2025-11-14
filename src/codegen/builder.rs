@@ -2081,6 +2081,27 @@ impl IrBuilder {
                                     }
                                 }
                             }
+                            AstNode::方法调用表达式(method_call) => {
+                                // Module function call - check module registry for return type
+                                if let AstNode::标识符表达式(ident) = &*method_call.object {
+                                    let module_name = &ident.name;
+                                    let actual_module = self.import_aliases.get(module_name).unwrap_or(module_name);
+
+                                    if let Some(module_function) = self.module_registry.get_function(actual_module, &method_call.method_name) {
+                                        let return_type_str = &module_function.return_type;
+                                        match return_type_str.as_str() {
+                                            "字符串" | "ptr" => "string",
+                                            "浮点数" | "double" => "float",
+                                            "布尔" | "i1" => "boolean",
+                                            _ => "integer"
+                                        }
+                                    } else {
+                                        "integer" // Default
+                                    }
+                                } else {
+                                    "integer" // Default
+                                }
+                            }
                             _ => "integer", // Default to integer
                         };
 
@@ -2273,6 +2294,14 @@ impl IrBuilder {
                     } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
                         // User-defined function - check its declared return type
                         ret_type != "void"
+                    } else if let Some(module_qualifier) = &call_expr.module_qualifier {
+                        // Check if this is a module function
+                        if let Ok(module_func) = self.check_module_function_available(module_qualifier, &call_expr.callee) {
+                            module_func.return_type != "void"
+                        } else {
+                            // Unknown function - assume it has a return value
+                            true
+                        }
                     } else {
                         // Unknown function - assume it has a return value
                         true
@@ -3171,12 +3200,29 @@ impl IrBuilder {
 
                             if is_stdlib {
                                 // 标准库模块：验证函数是否存在并获取运行时函数名和返回类型
-                                let (runtime_func_name, return_type) = {
+                                let (runtime_func_name, return_type_str) = {
                                     let module_function = self.check_module_function_available(
                                         module_name,
                                         &method_call.method_name
                                     )?;
                                     (module_function.runtime_name.clone(), module_function.return_type.clone())
+                                };
+
+                                // Convert Chinese type to LLVM type
+                                let return_type = if return_type_str.starts_with("未来<") {
+                                    "ptr".to_string()
+                                } else if return_type_str == "整数" || return_type_str == "i64" {
+                                    "i64".to_string()
+                                } else if return_type_str == "浮点数" || return_type_str == "double" || return_type_str == "f64" {
+                                    "double".to_string()
+                                } else if return_type_str == "字符串" || return_type_str == "ptr" || return_type_str.contains("字符串") {
+                                    "ptr".to_string()
+                                } else if return_type_str == "布尔" || return_type_str == "i1" || return_type_str == "bool" {
+                                    "i1".to_string()
+                                } else if return_type_str == "i64" || return_type_str == "i32" || return_type_str == "i8" {
+                                    return_type_str.clone()
+                                } else {
+                                    "ptr".to_string() // Default to ptr for unknown types
                                 };
 
                                 // 构建参数
@@ -3187,7 +3233,9 @@ impl IrBuilder {
 
                                 // 生成临时变量并记录其类型
                                 let temp = self.generate_temp();
-                                self.variable_types.insert(temp.clone(), return_type);
+                                // Store type without the % prefix for lookups
+                                let temp_name = temp.trim_start_matches('%').to_string();
+                                self.variable_types.insert(temp_name, return_type);
 
                                 self.add_instruction(IrInstruction::函数调用 {
                                     dest: Some(temp.clone()),
@@ -3243,16 +3291,20 @@ impl IrBuilder {
                                 // TODO(PLAN:2025-11-10): 需要统一类型字符串到LLVM类型的转换逻辑
                                 let return_type = if return_type_str.starts_with("未来<") {
                                     "ptr".to_string() // Future types are pointers
-                                } else if return_type_str == "整数" {
+                                } else if return_type_str == "整数" || return_type_str == "i64" {
                                     "i64".to_string()
-                                } else if return_type_str == "浮点数" {
+                                } else if return_type_str == "浮点数" || return_type_str == "double" || return_type_str == "f64" {
                                     "double".to_string()
-                                } else if return_type_str == "字符串" {
+                                } else if return_type_str == "字符串" || return_type_str == "ptr" || return_type_str.contains("字符串") {
                                     "ptr".to_string()
-                                } else if return_type_str == "布尔" {
+                                } else if return_type_str == "布尔" || return_type_str == "i1" || return_type_str == "bool" {
                                     "i1".to_string()
+                                } else if return_type_str == "i64" || return_type_str == "i32" || return_type_str == "i8" {
+                                    return_type_str // Already LLVM types
                                 } else {
-                                    return_type_str // Use as-is for LLVM types like ptr, i64, etc.
+                                    // Fallback: try to convert unknown Chinese types to ptr
+                                    eprintln!("Warning: Unknown return type '{}', defaulting to ptr", return_type_str);
+                                    "ptr".to_string()
                                 };
 
                                 // 构建参数
@@ -3263,7 +3315,9 @@ impl IrBuilder {
 
                                 // 生成临时变量并记录其类型
                                 let temp = self.generate_temp();
-                                self.variable_types.insert(temp.clone(), return_type);
+                                // Store type without the % prefix for lookups
+                                let temp_name = temp.trim_start_matches('%').to_string();
+                                self.variable_types.insert(temp_name, return_type);
 
                                 self.add_instruction(IrInstruction::函数调用 {
                                     dest: Some(temp.clone()),
@@ -4059,6 +4113,109 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_cli_free_matches(i64)\n");
         ir.push_str("\n");
 
+        // GUI functions
+        ir.push_str("; GUI functions\n");
+        ir.push_str("declare i64 @qi_gui_create_window(ptr, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_destroy_window(i64)\n");
+        ir.push_str("declare void @qi_gui_set_title(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_gui_get_title(i64)\n");
+        ir.push_str("declare void @qi_gui_show_window(i64)\n");
+        ir.push_str("declare void @qi_gui_hide_window(i64)\n");
+        ir.push_str("declare i64 @qi_gui_is_visible(i64)\n");
+        ir.push_str("declare void @qi_gui_enable_event_printing(i64)\n");
+        ir.push_str("declare i64 @qi_gui_get_position_x(i64)\n");
+        ir.push_str("declare i64 @qi_gui_get_position_y(i64)\n");
+        ir.push_str("declare void @qi_gui_set_position(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_gui_get_width(i64)\n");
+        ir.push_str("declare i64 @qi_gui_get_height(i64)\n");
+        ir.push_str("declare void @qi_gui_set_size(i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_run()\n");
+        ir.push_str("declare ptr @qi_gui_version()\n");
+        ir.push_str("declare void @qi_gui_free_string(ptr)\n");
+
+        // GUI Audio functions
+        ir.push_str("; GUI Audio functions\n");
+        ir.push_str("declare i64 @qi_gui_audio_load(ptr)\n");
+        ir.push_str("declare void @qi_gui_audio_play(i64)\n");
+        ir.push_str("declare void @qi_gui_audio_pause(i64)\n");
+        ir.push_str("declare void @qi_gui_audio_stop(i64)\n");
+        ir.push_str("declare void @qi_gui_audio_set_volume(i64, double)\n");
+        ir.push_str("declare i64 @qi_gui_audio_is_playing(i64)\n");
+        ir.push_str("declare i64 @qi_gui_audio_is_finished(i64)\n");
+        ir.push_str("declare void @qi_gui_audio_free(i64)\n");
+        ir.push_str("\n");
+
+        // Data structure functions (List, HashMap, DateTime)
+        ir.push_str("; List functions\n");
+        ir.push_str("declare i64 @qi_list_int_create()\n");
+        ir.push_str("declare i64 @qi_list_int_push(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_get(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_set(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_size(i64)\n");
+        ir.push_str("declare i64 @qi_list_int_pop(i64)\n");
+        ir.push_str("declare i64 @qi_list_int_clear(i64)\n");
+        ir.push_str("declare i64 @qi_list_int_remove(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_insert(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_contains(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_int_index_of(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_float_create()\n");
+        ir.push_str("declare i64 @qi_list_float_push(i64, double)\n");
+        ir.push_str("declare double @qi_list_float_get(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_float_size(i64)\n");
+        ir.push_str("declare i64 @qi_list_string_create()\n");
+        ir.push_str("declare i64 @qi_list_string_push(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_list_string_get(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_string_size(i64)\n");
+        ir.push_str("declare i64 @qi_list_free(i64)\n");
+        ir.push_str("\n");
+
+        ir.push_str("; HashMap functions\n");
+        ir.push_str("declare i64 @qi_hashmap_int_create()\n");
+        ir.push_str("declare i64 @qi_hashmap_int_set(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_hashmap_int_get(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_hashmap_int_contains(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_hashmap_int_remove(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_hashmap_int_size(i64)\n");
+        ir.push_str("declare i64 @qi_hashmap_int_clear(i64)\n");
+        ir.push_str("declare i64 @qi_hashmap_float_create()\n");
+        ir.push_str("declare i64 @qi_hashmap_float_set(i64, ptr, double)\n");
+        ir.push_str("declare double @qi_hashmap_float_get(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_hashmap_float_size(i64)\n");
+        ir.push_str("declare i64 @qi_hashmap_string_create()\n");
+        ir.push_str("declare i64 @qi_hashmap_string_set(i64, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_hashmap_string_get(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_hashmap_string_size(i64)\n");
+        ir.push_str("declare i64 @qi_hashmap_free(i64)\n");
+        ir.push_str("\n");
+
+        ir.push_str("; DateTime functions\n");
+        ir.push_str("declare i64 @qi_datetime_now()\n");
+        ir.push_str("declare i64 @qi_datetime_now_millis()\n");
+        ir.push_str("declare i64 @qi_datetime_now_local()\n");
+        ir.push_str("declare ptr @qi_datetime_format(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_datetime_format_local(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_datetime_parse(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_datetime_year(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_month(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_day(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_hour(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_minute(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_second(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_weekday(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_add_seconds(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_add_minutes(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_add_hours(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_add_days(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_diff_days(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_diff_hours(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_diff_minutes(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_diff_seconds(i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_from_ymd(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_from_ymdhms(i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_datetime_is_leap_year(i64)\n");
+        ir.push_str("declare i64 @qi_datetime_days_in_month(i64, i64)\n");
+        ir.push_str("\n");
+
         ir.push_str("; Print functions\n");
         ir.push_str("declare i32 @qi_runtime_print(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_println(ptr)\n");
@@ -4788,6 +4945,27 @@ impl IrBuilder {
                                 "qi_cli_get_value" => "ptr",  // Return string
                                 "qi_cli_free_string" => "void",  // No return value
                                 _ => "i64"  // Most CLI functions return i64
+                            }
+                        // DateTime functions - check return type based on function name
+                        } else if callee.starts_with("qi_datetime_") {
+                            match callee.as_str() {
+                                "qi_datetime_format" | "qi_datetime_format_local" => "ptr",  // Return formatted string
+                                "qi_datetime_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Most datetime functions return i64 (timestamps or components)
+                            }
+                        // List functions - check return type based on function name
+                        } else if callee.starts_with("qi_list_") {
+                            match callee.as_str() {
+                                "qi_list_string_get" => "ptr",  // Return string
+                                "qi_list_free" => "void",  // Cleanup function
+                                _ => "i64"  // Most list functions return i64
+                            }
+                        // HashMap functions - check return type based on function name
+                        } else if callee.starts_with("qi_hashmap_") {
+                            match callee.as_str() {
+                                "qi_hashmap_string_get" => "ptr",  // Return string
+                                "qi_hashmap_free" => "void",  // Cleanup function
+                                _ => "i64"  // Most hashmap functions return i64
                             }
                         // Check hex-encoded Chinese function names
                         } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根

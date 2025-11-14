@@ -11,7 +11,6 @@
 pub mod cli;
 pub mod codegen;
 pub mod error;
-pub mod formatter;
 pub mod lexer;
 pub mod parser;
 pub mod runtime;
@@ -331,7 +330,7 @@ impl QiCompiler {
             command.arg("-lpthread");
             command.arg("-lm");  // Link math library (required for pow, sin, cos, etc.)
 
-            // On macOS, add frameworks required by reqwest
+            // On macOS, add frameworks required by reqwest and GUI
             #[cfg(target_os = "macos")]
             {
                 command
@@ -340,7 +339,19 @@ impl QiCompiler {
                     .arg("-framework")
                     .arg("CoreFoundation")
                     .arg("-framework")
-                    .arg("SystemConfiguration");
+                    .arg("SystemConfiguration")
+                    .arg("-framework")
+                    .arg("Cocoa")
+                    .arg("-framework")
+                    .arg("QuartzCore")
+                    .arg("-framework")
+                    .arg("Carbon")
+                    .arg("-framework")
+                    .arg("CoreGraphics")
+                    .arg("-framework")
+                    .arg("CoreVideo")
+                    .arg("-framework")
+                    .arg("AppKit");
             }
         }
 

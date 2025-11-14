@@ -358,6 +358,7 @@ impl Cli {
         llvm_ir_path: &std::path::Path,
         config: &crate::config::CompilerConfig,
     ) -> Result<std::path::PathBuf, CliError> {
+        eprintln!("DEBUG: create_macos_executable called for: {:?}", llvm_ir_path);
         use std::process::Command;
 
         // Generate executable path in current directory
@@ -425,7 +426,7 @@ impl Cli {
             .arg("-o")
             .arg(&temp_executable);
 
-        // Add macOS frameworks required by reqwest
+        // Add macOS frameworks required by reqwest and GUI
         #[cfg(target_os = "macos")]
         {
             link_command
@@ -434,12 +435,22 @@ impl Cli {
                 .arg("-framework")
                 .arg("CoreFoundation")
                 .arg("-framework")
-                .arg("SystemConfiguration");
+                .arg("SystemConfiguration")
+                .arg("-framework")
+                .arg("Cocoa")
+                .arg("-framework")
+                .arg("QuartzCore")
+                .arg("-framework")
+                .arg("Carbon")
+                .arg("-framework")
+                .arg("CoreGraphics")
+                .arg("-framework")
+                .arg("CoreVideo")
+                .arg("-framework")
+                .arg("AppKit");
         }
 
-        if config.verbose {
-            eprintln!("DEBUG: Link command: {:?}", link_command);
-        }
+        eprintln!("DEBUG: Link command: {:?}", link_command);
 
         let 命令字符串 = format!("{:?}", link_command);
         let output = link_command
@@ -634,7 +645,7 @@ impl Cli {
             .arg("-o")
             .arg(&temp_executable);
 
-        // Add macOS frameworks required by reqwest
+        // Add macOS frameworks required by reqwest and GUI
         #[cfg(target_os = "macos")]
         {
             link_command
@@ -643,12 +654,22 @@ impl Cli {
                 .arg("-framework")
                 .arg("CoreFoundation")
                 .arg("-framework")
-                .arg("SystemConfiguration");
+                .arg("SystemConfiguration")
+                .arg("-framework")
+                .arg("Cocoa")
+                .arg("-framework")
+                .arg("QuartzCore")
+                .arg("-framework")
+                .arg("Carbon")
+                .arg("-framework")
+                .arg("CoreGraphics")
+                .arg("-framework")
+                .arg("CoreVideo")
+                .arg("-framework")
+                .arg("AppKit");
         }
 
-        if config.verbose {
-            eprintln!("DEBUG: Link command: {:?}", link_command);
-        }
+        eprintln!("DEBUG: Link command: {:?}", link_command);
 
         let 命令字符串 = format!("{:?}", link_command);
         let output = link_command
@@ -1218,7 +1239,7 @@ impl Cli {
             .arg("-o")
             .arg(&temp_executable);
 
-        // Add macOS frameworks required by reqwest
+        // Add macOS frameworks required by reqwest and GUI
         #[cfg(target_os = "macos")]
         {
             link_command
@@ -1227,7 +1248,19 @@ impl Cli {
                 .arg("-framework")
                 .arg("CoreFoundation")
                 .arg("-framework")
-                .arg("SystemConfiguration");
+                .arg("SystemConfiguration")
+                .arg("-framework")
+                .arg("Cocoa")
+                .arg("-framework")
+                .arg("QuartzCore")
+                .arg("-framework")
+                .arg("Carbon")
+                .arg("-framework")
+                .arg("CoreGraphics")
+                .arg("-framework")
+                .arg("CoreVideo")
+                .arg("-framework")
+                .arg("AppKit");
         }
 
         let 命令字符串 = format!("{:?}", link_command);

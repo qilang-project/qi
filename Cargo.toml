@@ -9,19 +9,9 @@ repository = "https://github.com/qi-lang/qi-compiler"
 homepage = "https://qi-lang.org"
 rust-version = "1.75"
 
-[workspace]
-members = [
-    ".",
-]
-resolver = "2"
-
 [[bin]]
 name = "qi"
 path = "src/main.rs"
-
-[[bin]]
-name = "qifmt"
-path = "src/bin/qifmt.rs"
 
 [lib]
 name = "qi_compiler"
@@ -116,13 +106,3 @@ default = []
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
 llvm = ["inkwell"]
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
-
-[profile.bench]
-opt-level = 3
-debug = true
