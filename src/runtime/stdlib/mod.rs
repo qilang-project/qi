@@ -15,6 +15,8 @@ pub mod vector;
 pub mod vector_ffi;
 pub mod llm;
 pub mod llm_ffi;
+pub mod mcp;
+pub mod mcp_ffi;
 pub mod os_ffi;
 pub mod cli_ffi;
 pub mod gui_ffi;
@@ -22,6 +24,15 @@ pub mod list;
 pub mod hashmap;
 pub mod datetime;
 pub mod json_ffi;
+pub mod regex_ffi;
+pub mod path_ffi;
+pub mod random_ffi;
+pub mod env_ffi;
+pub mod process_ffi;
+pub mod config_ffi;
+pub mod compress_ffi;
+pub mod test_ffi;
+pub mod database_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};
@@ -32,6 +43,7 @@ pub use debug::{DebugModule, DebugInfo};
 pub use crypto::{加密模块, 加密操作, 编码格式};
 pub use vector::{向量, 向量模块};
 pub use llm::{大模型模块, 嵌入器, 知识库, 提示模板, 检索增强生成, 智能代理};
+pub use mcp::{MCP服务器模块, MCP服务器, MCP工具, MCP资源, MCP提示, 资源类型, 资源内容, 工具参数, 工具回调函数};
 // StandardLibrary is defined below, no need to re-export
 
 /// Standard library result type
@@ -305,6 +317,9 @@ pub struct StandardLibrary {
     pub 向量模块: 向量模块,
     /// 大模型模块
     pub 大模型: 大模型模块,
+    /// MCP服务器模块
+    #[allow(non_snake_case)]
+    pub MCP服务器: MCP服务器模块,
     /// Function registry
     pub registry: StdlibRegistry,
 }
@@ -321,6 +336,7 @@ impl StandardLibrary {
             加密模块: 加密模块::创建(),
             向量模块: 向量模块::创建(),
             大模型: 大模型模块::创建(),
+            MCP服务器: MCP服务器模块::创建(),
             registry: StdlibRegistry::new(),
         })
     }

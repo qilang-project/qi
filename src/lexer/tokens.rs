@@ -43,6 +43,15 @@ pub enum TokenKind {
     除,        // /
     取余,      // %
     取地址,    // &
+    感叹号,    // ! (logical not)
+
+    // Compound assignment operators
+    加等,      // +=
+    减等,      // -=
+    乘等,      // *=
+    除等,      // /=
+    取余等,    // %=
+
     等于,      // ==
     不等于,    // !=
     大于,      // >

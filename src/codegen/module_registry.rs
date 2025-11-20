@@ -118,6 +118,20 @@ impl ModuleRegistry {
 
         // Register JSON module (JSON模块)
         self.register_json_module();
+
+        // Register MCP Server module (MCP服务器模块)
+        self.register_mcp_module();
+
+        // Register new standard library modules
+        self.register_regex_module();
+        self.register_path_module();
+        self.register_random_module();
+        self.register_env_module();
+        self.register_process_module();
+        self.register_config_module();
+        self.register_compress_module();
+        self.register_test_module();
+        self.register_database_module();
     }
 
     /// Register the crypto module
@@ -179,7 +193,7 @@ impl ModuleRegistry {
 
     /// Register the IO module
     fn register_io_module(&mut self) {
-        let mut io_module = Module::new("io");
+        let mut io_module = Module::new("输入输出");
 
         // Note: 打印 and 打印行 are built-in functions and NOT part of the io module
         // They are always available without import
@@ -249,8 +263,8 @@ impl ModuleRegistry {
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("io".to_string(), io_module.clone());
-        self.modules.insert("标准库.io".to_string(), io_module);
+        self.modules.insert("输入输出".to_string(), io_module.clone());
+        self.modules.insert("标准库.输入输出".to_string(), io_module);
     }
 
     /// Register the network module
@@ -1519,6 +1533,172 @@ impl ModuleRegistry {
         self.modules.insert("标准库.JSON".to_string(), json_module);
     }
 
+    /// 注册MCP服务器模块
+    fn register_mcp_module(&mut self) {
+        let mut mcp_module = Module::new("MCP服务器");
+
+        // 服务器管理
+        mcp_module.add_function(ModuleFunction::new(
+            "创建服务器",
+            "qi_mcp_create_server",
+            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()], // 名称, 版本, 描述
+            "整数",  // 返回服务器ID
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "启动服务器",
+            "qi_mcp_start_server",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "停止服务器",
+            "qi_mcp_stop_server",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "是否运行中",
+            "qi_mcp_is_running",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回1或0 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "销毁服务器",
+            "qi_mcp_destroy_server",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "获取服务器信息",
+            "qi_mcp_get_server_info",
+            vec!["整数".to_string()], // 服务器ID
+            "ptr",  // 返回JSON字符串 (FFI返回*mut c_char)
+        ));
+
+        // 工具管理
+        mcp_module.add_function(ModuleFunction::new(
+            "注册工具",
+            "qi_mcp_register_tool",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 描述
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "执行工具",
+            "qi_mcp_call_tool",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 参数JSON
+            "ptr",  // 返回结果JSON (FFI返回*mut c_char)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "列出工具",
+            "qi_mcp_list_tools",
+            vec!["整数".to_string()], // 服务器ID
+            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+        ));
+
+        // 资源管理
+        mcp_module.add_function(ModuleFunction::new(
+            "注册资源",
+            "qi_mcp_register_resource",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器ID, URI, 名称, 描述, 类型
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "列出资源",
+            "qi_mcp_list_resources",
+            vec!["整数".to_string()], // 服务器ID
+            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+        ));
+
+        // 提示管理
+        mcp_module.add_function(ModuleFunction::new(
+            "注册提示",
+            "qi_mcp_register_prompt",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 名称, 描述, 模板
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "获取提示",
+            "qi_mcp_get_prompt",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 提示名, 参数JSON
+            "ptr",  // 返回填充后的文本 (FFI返回*mut c_char)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "列出提示",
+            "qi_mcp_list_prompts",
+            vec!["整数".to_string()], // 服务器ID
+            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+        ));
+
+        // 添加工具参数
+        mcp_module.add_function(ModuleFunction::new(
+            "添加工具参数",
+            "qi_mcp_add_tool_parameter",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()],
+            // 服务器ID, 工具名, 参数名, 参数类型, 参数描述, 是否必需
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        // 设置工具回调
+        mcp_module.add_function(ModuleFunction::new(
+            "设置工具回调",
+            "qi_mcp_set_tool_callback",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 回调ID
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        // 资源内容管理
+        mcp_module.add_function(ModuleFunction::new(
+            "设置资源文本内容",
+            "qi_mcp_set_resource_text_content",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, URI, 内容
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "设置资源JSON内容",
+            "qi_mcp_set_resource_json_content",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, URI, JSON内容
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "读取资源文本",
+            "qi_mcp_read_resource_text",
+            vec!["整数".to_string(), "字符串".to_string()], // 服务器ID, URI
+            "ptr",  // 返回文本内容 (FFI返回*mut c_char)
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "读取资源JSON",
+            "qi_mcp_read_resource_json",
+            vec!["整数".to_string(), "字符串".to_string()], // 服务器ID, URI
+            "ptr",  // 返回JSON内容 (FFI返回*mut c_char)
+        ));
+
+        // 内存管理
+        mcp_module.add_function(ModuleFunction::new(
+            "释放字符串",
+            "qi_mcp_free_string",
+            vec!["字符串".to_string()], // 字符串指针
+            "void",
+        ));
+
+        // Register module with various names
+        self.modules.insert("MCP服务器".to_string(), mcp_module.clone());
+        self.modules.insert("标准库.MCP服务器".to_string(), mcp_module.clone());
+        self.modules.insert("MCP".to_string(), mcp_module);
+    }
+
     /// 注册日期时间模块
     fn register_datetime_module(&mut self) {
         let mut dt_module = Module::new("日期");
@@ -1612,6 +1792,435 @@ impl ModuleRegistry {
     /// Get all registered module paths
     pub fn module_paths(&self) -> Vec<&String> {
         self.modules.keys().collect()
+    }
+
+    /// 注册正则表达式模块
+    fn register_regex_module(&mut self) {
+        let mut regex_module = Module::new("正则");
+
+        regex_module.add_function(ModuleFunction::new(
+            "匹配",
+            "qi_regex_is_match",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        regex_module.add_function(ModuleFunction::new(
+            "查找",
+            "qi_regex_find",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        regex_module.add_function(ModuleFunction::new(
+            "查找全部",
+            "qi_regex_find_all",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        regex_module.add_function(ModuleFunction::new(
+            "替换全部",
+            "qi_regex_replace_all",
+            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        regex_module.add_function(ModuleFunction::new(
+            "分割",
+            "qi_regex_split",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        self.modules.insert("正则".to_string(), regex_module.clone());
+        self.modules.insert("标准库.正则".to_string(), regex_module);
+    }
+
+    /// 注册路径处理模块
+    fn register_path_module(&mut self) {
+        let mut path_module = Module::new("路径");
+
+        path_module.add_function(ModuleFunction::new(
+            "连接",
+            "qi_path_join",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "文件名",
+            "qi_path_filename",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "父目录",
+            "qi_path_parent",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "扩展名",
+            "qi_path_extension",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "绝对路径",
+            "qi_path_absolute",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "存在",
+            "qi_path_exists",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "是目录",
+            "qi_path_is_dir",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        path_module.add_function(ModuleFunction::new(
+            "是文件",
+            "qi_path_is_file",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        self.modules.insert("路径".to_string(), path_module.clone());
+        self.modules.insert("标准库.路径".to_string(), path_module);
+    }
+
+    /// 注册随机数模块
+    fn register_random_module(&mut self) {
+        let mut random_module = Module::new("随机");
+
+        random_module.add_function(ModuleFunction::new(
+            "整数",
+            "qi_random_int",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+
+        random_module.add_function(ModuleFunction::new(
+            "浮点数",
+            "qi_random_float",
+            vec!["浮点数".to_string(), "浮点数".to_string()],
+            "double",
+        ));
+
+        random_module.add_function(ModuleFunction::new(
+            "布尔",
+            "qi_random_bool",
+            vec![],
+            "i32",
+        ));
+
+        random_module.add_function(ModuleFunction::new(
+            "字符串",
+            "qi_random_string",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+
+        random_module.add_function(ModuleFunction::new(
+            "UUID",
+            "qi_random_uuid",
+            vec![],
+            "ptr",
+        ));
+
+        self.modules.insert("随机".to_string(), random_module.clone());
+        self.modules.insert("标准库.随机".to_string(), random_module);
+    }
+
+    /// 注册环境变量模块
+    fn register_env_module(&mut self) {
+        let mut env_module = Module::new("环境");
+
+        env_module.add_function(ModuleFunction::new(
+            "获取",
+            "qi_env_get",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "设置",
+            "qi_env_set",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "删除",
+            "qi_env_remove",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "当前目录",
+            "qi_env_current_dir",
+            vec![],
+            "ptr",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "改变目录",
+            "qi_env_set_current_dir",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "主目录",
+            "qi_env_home_dir",
+            vec![],
+            "ptr",
+        ));
+
+        env_module.add_function(ModuleFunction::new(
+            "全部",
+            "qi_env_all",
+            vec![],
+            "ptr",
+        ));
+
+        self.modules.insert("环境".to_string(), env_module.clone());
+        self.modules.insert("标准库.环境".to_string(), env_module);
+    }
+
+    /// 注册进程管理模块
+    fn register_process_module(&mut self) {
+        let mut process_module = Module::new("进程");
+
+        process_module.add_function(ModuleFunction::new(
+            "执行",
+            "qi_process_execute",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        process_module.add_function(ModuleFunction::new(
+            "当前ID",
+            "qi_process_current_pid",
+            vec![],
+            "i64",
+        ));
+
+        process_module.add_function(ModuleFunction::new(
+            "退出",
+            "qi_process_exit",
+            vec!["i32".to_string()],
+            "void",
+        ));
+
+        self.modules.insert("进程".to_string(), process_module.clone());
+        self.modules.insert("标准库.进程".to_string(), process_module);
+    }
+
+    /// 注册配置文件模块
+    fn register_config_module(&mut self) {
+        let mut config_module = Module::new("配置");
+
+        config_module.add_function(ModuleFunction::new(
+            "读取TOML",
+            "qi_config_read_toml",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        config_module.add_function(ModuleFunction::new(
+            "写入TOML",
+            "qi_config_write_toml",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        config_module.add_function(ModuleFunction::new(
+            "读取INI",
+            "qi_config_read_ini",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        config_module.add_function(ModuleFunction::new(
+            "写入INI",
+            "qi_config_write_ini",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        self.modules.insert("配置".to_string(), config_module.clone());
+        self.modules.insert("标准库.配置".to_string(), config_module);
+    }
+
+    /// 注册压缩解压模块
+    fn register_compress_module(&mut self) {
+        let mut compress_module = Module::new("压缩");
+
+        compress_module.add_function(ModuleFunction::new(
+            "压缩文件",
+            "qi_compress_gzip_file",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        compress_module.add_function(ModuleFunction::new(
+            "解压文件",
+            "qi_compress_gunzip_file",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        compress_module.add_function(ModuleFunction::new(
+            "压缩字符串",
+            "qi_compress_gzip_string",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        compress_module.add_function(ModuleFunction::new(
+            "解压字符串",
+            "qi_compress_gunzip_string",
+            vec!["字符串".to_string()],
+            "ptr",
+        ));
+
+        self.modules.insert("压缩".to_string(), compress_module.clone());
+        self.modules.insert("标准库.压缩".to_string(), compress_module);
+    }
+
+    /// 注册测试框架模块
+    fn register_test_module(&mut self) {
+        let mut test_module = Module::new("测试");
+
+        test_module.add_function(ModuleFunction::new(
+            "断言相等_整数",
+            "qi_test_assert_eq_int",
+            vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "断言相等_浮点",
+            "qi_test_assert_eq_float",
+            vec!["浮点数".to_string(), "浮点数".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "断言相等_字符串",
+            "qi_test_assert_eq_string",
+            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "断言真",
+            "qi_test_assert_true",
+            vec!["i32".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "断言假",
+            "qi_test_assert_false",
+            vec!["i32".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "断言不等_整数",
+            "qi_test_assert_ne_int",
+            vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()],
+            "i32",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "测试通过",
+            "qi_test_pass",
+            vec!["字符串".to_string()],
+            "void",
+        ));
+
+        test_module.add_function(ModuleFunction::new(
+            "测试失败",
+            "qi_test_fail",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "void",
+        ));
+
+        self.modules.insert("测试".to_string(), test_module.clone());
+        self.modules.insert("标准库.测试".to_string(), test_module);
+    }
+
+    /// 注册数据库模块
+    fn register_database_module(&mut self) {
+        let mut db_module = Module::new("数据库");
+
+        db_module.add_function(ModuleFunction::new(
+            "连接",
+            "qi_db_connect",
+            vec!["字符串".to_string()],
+            "i64",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "执行",
+            "qi_db_execute",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "查询",
+            "qi_db_query",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "关闭",
+            "qi_db_close",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "开始事务",
+            "qi_db_begin_transaction",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "提交",
+            "qi_db_commit",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "回滚",
+            "qi_db_rollback",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        self.modules.insert("数据库".to_string(), db_module.clone());
+        self.modules.insert("标准库.数据库".to_string(), db_module);
     }
 }
 

@@ -70,6 +70,8 @@ impl TypeChecker {
             AstNode::字面量表达式(literal) => self.check_literal(literal),
             AstNode::标识符表达式(identifier) => self.check_identifier(identifier),
             AstNode::二元操作表达式(binary) => self.check_binary(binary),
+            AstNode::一元操作表达式(unary) => self.check_unary(unary),
+            AstNode::类型转换表达式(cast) => self.check_type_cast(cast),
             AstNode::函数调用表达式(call) => self.check_function_call(call),
             AstNode::等待表达式(await_expr) => self.check_await_expression(await_expr),
             AstNode::赋值表达式(assignment) => self.check_assignment(assignment),
@@ -207,6 +209,65 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    fn check_unary(&mut self, unary: &crate::parser::ast::UnaryExpression) -> Result<TypeNode, TypeError> {
+        let operand_type = self.check(&unary.operand)?;
+
+        match unary.operator {
+            crate::parser::ast::UnaryOperator::负 | crate::parser::ast::UnaryOperator::正 => {
+                // Negation and positive: operand must be numeric
+                match operand_type {
+                    TypeNode::基础类型(BasicType::整数) | TypeNode::基础类型(BasicType::浮点数) => {
+                        Ok(operand_type)
+                    }
+                    _ => Err(TypeError::InvalidOperation {
+                        operation: "一元运算符".to_string(),
+                        type_name: format!("{:?}", operand_type),
+                        span: unary.span,
+                    })
+                }
+            }
+            crate::parser::ast::UnaryOperator::非 => {
+                // Logical not: operand should be boolean (or convertible to boolean)
+                // For now, accept any type and convert to boolean (0 = false, non-zero = true)
+                Ok(TypeNode::基础类型(BasicType::布尔))
+            }
+        }
+    }
+
+    fn check_type_cast(&mut self, cast: &crate::parser::ast::TypeCastExpression) -> Result<TypeNode, TypeError> {
+        // Check the expression being cast
+        let source_type = self.check(&cast.expression)?;
+
+        // Validate that the conversion is allowed
+        let can_cast = match (&source_type, &cast.target_type) {
+            // Numeric to numeric conversions are always allowed
+            (TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节 | BasicType::浮点数),
+             TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节 | BasicType::浮点数)) => true,
+
+            // Boolean to integer and vice versa
+            (TypeNode::基础类型(BasicType::布尔),
+             TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节)) => true,
+            (TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节),
+             TypeNode::基础类型(BasicType::布尔)) => true,
+
+            // Same type (no-op cast, but allowed)
+            (s, t) if s == t => true,
+
+            // All other conversions are not allowed
+            _ => false,
+        };
+
+        if !can_cast {
+            return Err(TypeError::InvalidOperation {
+                operation: format!("类型转换: {:?} 作为 {:?}", source_type, cast.target_type),
+                type_name: format!("{:?} -> {:?}", source_type, cast.target_type),
+                span: cast.span,
+            });
+        }
+
+        Ok(cast.target_type.clone())
     }
 
     /// Check if two types are compatible (for assignment/initialization)

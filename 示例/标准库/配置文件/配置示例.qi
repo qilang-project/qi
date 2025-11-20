@@ -1,0 +1,28 @@
+// 配置文件模块示例
+导入 标准库.配置;
+
+函数 入口() {
+    打印行("=== 配置文件示例 ===");
+
+    // 写入 TOML 配置
+    变量 toml数据: 字符串 = "{\"name\": \"Qi语言\", \"version\": \"0.1.0\", \"enabled\": true}";
+    变量 写入结果: 整数 = 配置.写入TOML("/tmp/config.toml", toml数据);
+    打印("写入 TOML 结果: ");
+    打印行(写入结果);
+
+    // 读取 TOML 配置
+    变量 toml内容: 字符串 = 配置.读取TOML("/tmp/config.toml");
+    打印("读取 TOML 内容 (JSON): ");
+    打印行(toml内容);
+
+    // 写入 INI 配置
+    变量 ini数据: 字符串 = "{\"database\": {\"host\": \"localhost\", \"port\": \"5432\"}, \"app\": {\"debug\": \"true\"}}";
+    变量 写入ini结果: 整数 = 配置.写入INI("/tmp/config.ini", ini数据);
+    打印("写入 INI 结果: ");
+    打印行(写入ini结果);
+
+    // 读取 INI 配置
+    变量 ini内容: 字符串 = 配置.读取INI("/tmp/config.ini");
+    打印("读取 INI 内容 (JSON): ");
+    打印行(ini内容);
+}

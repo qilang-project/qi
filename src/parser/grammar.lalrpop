@@ -632,6 +632,94 @@ Expr: AstNode = {
 // Level 1: Assignment (lowest precedence, right-associative)
 // Only Precedence8 (postfix) expressions can be assigned to (identifiers, field access, array subscript)
 Precedence1: AstNode = {
+    // Compound assignment operators (desugar to binary operation + assignment)
+    <left:Precedence8> "+=" <right:Precedence1> => {
+        match &left {
+            AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left.clone()),
+                    value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                        left: Box::new(left),
+                        operator: BinaryOperator::加,
+                        right: Box::new(right),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target")
+        }
+    },
+    <left:Precedence8> "-=" <right:Precedence1> => {
+        match &left {
+            AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left.clone()),
+                    value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                        left: Box::new(left),
+                        operator: BinaryOperator::减,
+                        right: Box::new(right),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target")
+        }
+    },
+    <left:Precedence8> "*=" <right:Precedence1> => {
+        match &left {
+            AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left.clone()),
+                    value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                        left: Box::new(left),
+                        operator: BinaryOperator::乘,
+                        right: Box::new(right),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target")
+        }
+    },
+    <left:Precedence8> "/=" <right:Precedence1> => {
+        match &left {
+            AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left.clone()),
+                    value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                        left: Box::new(left),
+                        operator: BinaryOperator::除,
+                        right: Box::new(right),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target")
+        }
+    },
+    <left:Precedence8> "%=" <right:Precedence1> => {
+        match &left {
+            AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
+                AstNode::赋值表达式(AssignmentExpression {
+                    target: Box::new(left.clone()),
+                    value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                        left: Box::new(left),
+                        operator: BinaryOperator::取余,
+                        right: Box::new(right),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })
+            },
+            _ => panic!("Invalid assignment target")
+        }
+    },
+
+    // Regular assignment
     <left:Precedence8> "=" <right:Precedence1> => {
         // Validate that left is a valid LValue
         match &left {
@@ -697,7 +785,19 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Precedence5> "等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::等于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Precedence5> "!=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::不等于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence5> "不等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::不等于,
         right: Box::new(right),
@@ -709,7 +809,19 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Precedence5> "大于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::大于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Precedence5> ">=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::大于等于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence5> "大于等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于等于,
         right: Box::new(right),
@@ -721,7 +833,19 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Precedence5> "小于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::小于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Precedence5> "<=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::小于等于,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence5> "小于等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于等于,
         right: Box::new(right),
@@ -730,9 +854,19 @@ Precedence4: AstNode = {
     Precedence5,
 };
 
-// Level 5: Addition and subtraction
+// Level 5: Type conversion (作为)
 Precedence5: AstNode = {
-    <left:Precedence5> "+" <right:Precedence6> => {
+    <expr:Precedence5_5> "作为" <target_type:Type> => AstNode::类型转换表达式(TypeCastExpression {
+        expression: Box::new(expr),
+        target_type,
+        span: Default::default(),
+    }),
+    Precedence5_5,
+};
+
+// Level 5.5: Addition and subtraction
+Precedence5_5: AstNode = {
+    <left:Precedence5_5> "+" <right:Precedence6> => {
         // Check if both operands are strings - if so, create StringConcatExpression
         let is_string_concat = match (&left, &right) {
             (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
@@ -759,7 +893,40 @@ Precedence5: AstNode = {
             })
         }
     },
-    <left:Precedence5> "-" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+    <left:Precedence5_5> "加" <right:Precedence6> => {
+        // Check if both operands are strings - if so, create StringConcatExpression
+        let is_string_concat = match (&left, &right) {
+            (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
+                matches!(&lit_left.value, LiteralValue::字符串(_)) &&
+                matches!(&lit_right.value, LiteralValue::字符串(_))
+            },
+            (AstNode::字面量表达式(lit), _) => matches!(&lit.value, LiteralValue::字符串(_)),
+            (_, AstNode::字面量表达式(lit)) => matches!(&lit.value, LiteralValue::字符串(_)),
+            _ => false,
+        };
+
+        if is_string_concat {
+            AstNode::字符串连接表达式(StringConcatExpression {
+                left: Box::new(left),
+                right: Box::new(right),
+                span: Default::default(),
+            })
+        } else {
+            AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(left),
+                operator: BinaryOperator::加,
+                right: Box::new(right),
+                span: Default::default(),
+            })
+        }
+    },
+    <left:Precedence5_5> "-" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::减,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence5_5> "减" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,
         right: Box::new(right),
@@ -776,13 +943,31 @@ Precedence6: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Precedence6> "乘" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::乘,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Precedence6> "/" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::除,
         right: Box::new(right),
         span: Default::default(),
     }),
+    <left:Precedence6> "除" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::除,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     <left:Precedence6> "%" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::取余,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence6> "取余" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
         right: Box::new(right),
@@ -815,19 +1000,26 @@ Precedence7: AstNode = {
         channel: Box::new(channel),
         span: Default::default(),
     }),
-    "-" <expr:Precedence7> => {
-        match expr {
-            AstNode::字面量表达式(lit) => AstNode::字面量表达式(LiteralExpression {
-                value: match lit.value {
-                    crate::parser::ast::LiteralValue::整数(n) => crate::parser::ast::LiteralValue::整数(-n),
-                    crate::parser::ast::LiteralValue::浮点数(f) => crate::parser::ast::LiteralValue::浮点数(-f),
-                    other => other,
-                },
-                span: Default::default(),
-            }),
-            other => other,
-        }
-    },
+    "-" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+        operator: UnaryOperator::负,
+        operand: Box::new(expr),
+        span: Default::default(),
+    }),
+    "+" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+        operator: UnaryOperator::正,
+        operand: Box::new(expr),
+        span: Default::default(),
+    }),
+    "!" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+        operator: UnaryOperator::非,
+        operand: Box::new(expr),
+        span: Default::default(),
+    }),
+    "非" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+        operator: UnaryOperator::非,
+        operand: Box::new(expr),
+        span: Default::default(),
+    }),
     Precedence8,
 };
 
@@ -874,6 +1066,13 @@ Precedence8: AstNode = {
         AstNode::字段访问表达式(FieldAccessExpression {
             object: Box::new(base),
             field,
+            span: Default::default(),
+        })
+    },
+    <base:Precedence8> "." "长度" => {
+        AstNode::字段访问表达式(FieldAccessExpression {
+            object: Box::new(base),
+            field: "长度".to_string(),
             span: Default::default(),
         })
     },
@@ -1232,7 +1431,9 @@ TypeName: String = {
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
            id == "公开" || id == "私有" || id == "模块" || id == "自己" ||
-           id == "枚举" || id == "实现" || id == "特性" {
+           id == "枚举" || id == "实现" || id == "特性" ||
+           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
+           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
             panic!("Keyword used as type name: {}", id);
         }
         id.to_string()
@@ -1267,7 +1468,9 @@ Identifier: String = {
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
-           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" {
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
+           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
+           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
             panic!("Keyword used as identifier: {}", id);
         }
         id.to_string()
@@ -1290,7 +1493,9 @@ ReceiverIdentifier: String = {
            id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
-           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" {
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
+           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
+           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
             panic!("Keyword used as receiver identifier: {}", id);
         }
         id.to_string()

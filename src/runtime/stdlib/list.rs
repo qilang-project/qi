@@ -428,6 +428,6 @@ mod tests {
         assert_eq!(qi_list_int_contains(list_id, 20), 1);
         assert_eq!(qi_list_int_contains(list_id, 99), 0);
 
-        assert_eq!(qi_list_int_free(list_id), 1);
+        assert_eq!(qi_list_free(list_id), 1);
     }
 }

@@ -331,9 +331,16 @@ impl QiCompiler {
             command.arg("-lm");  // Link math library (required for pow, sin, cos, etc.)
 
             // On macOS, add frameworks required by reqwest and GUI
+            // Force rebuild 2025-11-15
             #[cfg(target_os = "macos")]
             {
                 command
+                    .arg("-framework")
+                    .arg("AudioUnit")
+                    .arg("-framework")
+                    .arg("AudioToolbox")
+                    .arg("-framework")
+                    .arg("CoreAudio")
                     .arg("-framework")
                     .arg("Security")
                     .arg("-framework")

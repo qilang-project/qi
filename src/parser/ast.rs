@@ -41,6 +41,8 @@ pub enum AstNode {
     字面量表达式(LiteralExpression),
     标识符表达式(IdentifierExpression),
     二元操作表达式(BinaryExpression),
+    一元操作表达式(UnaryExpression),
+    类型转换表达式(TypeCastExpression),
     函数调用表达式(FunctionCallExpression),
     等待表达式(AwaitExpression),
     协程启动表达式(GoroutineSpawnExpression),
@@ -212,6 +214,30 @@ pub enum BinaryOperator {
     加, 减, 乘, 除, 取余,
     等于, 不等于, 大于, 小于, 大于等于, 小于等于,
     与, 或,
+}
+
+/// Unary expression
+#[derive(Debug, Clone)]
+pub struct UnaryExpression {
+    pub operator: UnaryOperator,
+    pub operand: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Unary operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
+    非,  // ! or 非 - logical not
+    负,  // - - negation
+    正,  // + - positive (unary plus)
+}
+
+/// Type cast expression (e.g., x 作为 整数)
+#[derive(Debug, Clone)]
+pub struct TypeCastExpression {
+    pub expression: Box<AstNode>,
+    pub target_type: TypeNode,
+    pub span: Span,
 }
 
 /// Function call expression

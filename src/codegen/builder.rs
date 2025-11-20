@@ -117,6 +117,22 @@ pub enum IrInstruction {
         right: String,
     },
 
+    /// XOR operation (for logical not)
+    异或 {
+        dest: String,
+        left: String,
+        right: String,
+    },
+
+    /// Type conversion/casting
+    类型转换 {
+        dest: String,
+        value: String,
+        from_type: String,
+        to_type: String,
+        cast_type: String, // sitofp, fptosi, trunc, sext, zext, etc.
+    },
+
     /// Field access (getelementptr for struct fields)
     字段访问 {
         dest: String,
@@ -243,6 +259,8 @@ pub struct IrBuilder {
     variable_struct_types: std::collections::HashMap<String, String>,
     /// Track array element types (variable_name -> element_type like "i64", "double")
     array_element_types: std::collections::HashMap<String, String>,
+    /// Track array sizes (variable_name -> size)
+    array_sizes: std::collections::HashMap<String, usize>,
     /// Track import aliases (alias -> actual_module_name)
     import_aliases: std::collections::HashMap<String, String>,
     /// Track current module/package name
@@ -287,6 +305,7 @@ impl IrBuilder {
             struct_field_names: std::collections::HashMap::new(),
             variable_struct_types: std::collections::HashMap::new(),
             array_element_types: std::collections::HashMap::new(),
+            array_sizes: std::collections::HashMap::new(),
             import_aliases: std::collections::HashMap::new(),
             current_package_name: None,
             loop_stack: Vec::new(),
@@ -958,7 +977,17 @@ impl IrBuilder {
                         }
                         AstNode::数组字面量表达式(_) => {
                             // Array literals return pointers to arrays, so use ptr type
-                            ("ptr".to_string(), None)
+                            let init_value = self.build_node(&**initializer)?;
+                            // Propagate the array size info from temp to variable
+                            let init_var_name = init_value.trim_start_matches('%');
+                            if let Some(array_size) = self.array_sizes.get(init_var_name) {
+                                self.array_sizes.insert(decl.name.clone(), *array_size);
+                            }
+                            // Also propagate array element type
+                            if let Some(element_type) = self.array_element_types.get(init_var_name) {
+                                self.array_element_types.insert(decl.name.clone(), element_type.clone());
+                            }
+                            ("ptr".to_string(), Some(init_value))
                         }
                         AstNode::二元操作表达式(_) => {
                             // Build the initializer first to determine its type
@@ -1175,10 +1204,16 @@ impl IrBuilder {
                         self.array_element_types.insert(mangled_name.clone(), elem_type);
                     }
 
+                    // Determine the actual type of the value being stored
+                    let value_var_name = value.trim_start_matches('%');
+                    let actual_value_type = self.variable_types.get(value_var_name)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| type_name.to_string());
+
                     self.add_instruction(IrInstruction::存储 {
                         target: var_name.clone(),
                         value,
-                        value_type: Some(type_name.to_string()),
+                        value_type: Some(actual_value_type),
                     });
                 }
 
@@ -1205,18 +1240,25 @@ impl IrBuilder {
                 self.variable_struct_types.clear();
 
                 // Build parameter list with mangled names for Chinese identifiers
-                let params: Vec<String> = func_decl.parameters
-                    .iter()
-                    .map(|p| {
-                        let type_str = self.get_llvm_type(&p.type_annotation);
-                        let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
-                            format!("%{}", self.mangle_function_name(&p.name))
-                        } else {
-                            format!("%{}", p.name)
-                        };
-                        format!("{} {}", type_str, param_name)
-                    })
-                    .collect();
+                // For array parameters, add hidden length parameters
+                let mut params: Vec<String> = Vec::new();
+                for p in &func_decl.parameters {
+                    let type_str = self.get_llvm_type(&p.type_annotation);
+                    let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
+                        format!("%{}", self.mangle_function_name(&p.name))
+                    } else {
+                        format!("%{}", p.name)
+                    };
+                    params.push(format!("{} {}", type_str, param_name));
+
+                    // If this is an array parameter, add a hidden length parameter
+                    if let Some(ref type_ann) = p.type_annotation {
+                        if matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
+                            let length_param_name = format!("{}_length", param_name);
+                            params.push(format!("i64 {}", length_param_name));
+                        }
+                    }
+                }
 
                 // Mark parameters as direct values (not pointers) in variable_types
                 for param in &func_decl.parameters {
@@ -1229,6 +1271,17 @@ impl IrBuilder {
                     // Store with a special prefix to indicate this is a parameter (direct value)
                     self.variable_types.insert(format!("param_{}", param_name), type_str.clone());
                     self.variable_types.insert(param_name.clone(), type_str.clone());
+
+                    // If this is an array parameter, mark it as having a dynamic length from the hidden parameter
+                    if let Some(ref type_ann) = param.type_annotation {
+                        if matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
+                            // Store a special marker that this array's length comes from a parameter
+                            // We'll use this marker when accessing .长度
+                            let length_param_name = format!("{}_length", param_name);
+                            self.variable_types.insert(length_param_name.clone(), "i64".to_string());
+                        }
+                    }
+
                     if self.verbose {
                         eprintln!("[DEBUG] Function {} parameter: {} -> type {}", func_name, param_name, type_str);
                     }
@@ -1935,6 +1988,140 @@ impl IrBuilder {
                 });
                 Ok(temp)
             }
+            AstNode::一元操作表达式(unary_expr) => {
+                let operand = self.build_node(&unary_expr.operand)?;
+
+                // Check if operand is float type
+                let is_float = operand.contains('.') || self.is_float_operand(&operand);
+                let operand_type = if is_float { "double" } else { "i64" };
+
+                match unary_expr.operator {
+                    crate::parser::ast::UnaryOperator::负 => {
+                        // Negation: 0 - operand
+                        let temp = self.generate_temp();
+                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), operand_type.to_string());
+
+                        let zero = if is_float { "0.0" } else { "0" };
+                        self.add_instruction(IrInstruction::二元操作 {
+                            dest: temp.clone(),
+                            left: zero.to_string(),
+                            operator: BinaryOperator::减,
+                            right: operand,
+                            operand_type: operand_type.to_string(),
+                        });
+                        Ok(temp)
+                    }
+                    crate::parser::ast::UnaryOperator::正 => {
+                        // Unary plus: just return operand as-is
+                        Ok(operand)
+                    }
+                    crate::parser::ast::UnaryOperator::非 => {
+                        // Logical not
+                        let temp = self.generate_temp();
+                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), "i1".to_string());
+
+                        // Convert operand to boolean if needed and XOR with 1
+                        self.add_instruction(IrInstruction::二元操作 {
+                            dest: temp.clone(),
+                            left: operand,
+                            operator: BinaryOperator::不等于,
+                            right: "0".to_string(),
+                            operand_type: "i64".to_string(),
+                        });
+
+                        // XOR with true to get negation
+                        let final_temp = self.generate_temp();
+                        self.variable_types.insert(final_temp.trim_start_matches('%').to_string(), "i1".to_string());
+                        self.add_instruction(IrInstruction::异或 {
+                            dest: final_temp.clone(),
+                            left: temp,
+                            right: "1".to_string(),
+                        });
+                        Ok(final_temp)
+                    }
+                }
+            }
+            AstNode::类型转换表达式(cast_expr) => {
+                let value = self.build_node(&cast_expr.expression)?;
+                // Infer source type from value
+                let source_type = if value.contains('.') || self.is_float_operand(&value) {
+                    "double".to_string()
+                } else if value.trim_start_matches('%').starts_with("str_") ||
+                          value.starts_with("@str_") || value.starts_with("@.str") {
+                    "ptr".to_string()
+                } else {
+                    // Default to i64 for variables - check in variable_types
+                    self.variable_types.get(value.trim_start_matches('%')).cloned().unwrap_or_else(|| "i64".to_string())
+                };
+                let target_type = self.get_llvm_type(&Some(cast_expr.target_type.clone()));
+
+                // Generate appropriate LLVM cast instruction based on source and target types
+                let temp = self.generate_temp();
+                self.variable_types.insert(temp.trim_start_matches('%').to_string(), target_type.clone());
+
+                match (source_type.as_str(), target_type.as_str()) {
+                    // Integer to float
+                    ("i64", "double") | ("i32", "double") | ("i16", "double") | ("i8", "double") => {
+                        self.add_instruction(IrInstruction::类型转换 {
+                            dest: temp.clone(),
+                            value,
+                            from_type: source_type,
+                            to_type: target_type,
+                            cast_type: "sitofp".to_string(), // signed int to float
+                        });
+                    }
+                    // Float to integer
+                    ("double", "i64") | ("double", "i32") | ("double", "i16") | ("double", "i8") => {
+                        self.add_instruction(IrInstruction::类型转换 {
+                            dest: temp.clone(),
+                            value,
+                            from_type: source_type,
+                            to_type: target_type,
+                            cast_type: "fptosi".to_string(), // float to signed int
+                        });
+                    }
+                    // Integer to integer (different sizes)
+                    ("i64", "i32") | ("i64", "i16") | ("i64", "i8") |
+                    ("i32", "i16") | ("i32", "i8") | ("i16", "i8") => {
+                        self.add_instruction(IrInstruction::类型转换 {
+                            dest: temp.clone(),
+                            value,
+                            from_type: source_type,
+                            to_type: target_type,
+                            cast_type: "trunc".to_string(), // truncate to smaller int
+                        });
+                    }
+                    ("i8", "i16") | ("i8", "i32") | ("i8", "i64") |
+                    ("i16", "i32") | ("i16", "i64") | ("i32", "i64") => {
+                        self.add_instruction(IrInstruction::类型转换 {
+                            dest: temp.clone(),
+                            value,
+                            from_type: source_type,
+                            to_type: target_type,
+                            cast_type: "sext".to_string(), // sign extend to larger int
+                        });
+                    }
+                    // Boolean conversions
+                    ("i1", "i64") | ("i1", "i32") | ("i1", "i16") | ("i1", "i8") => {
+                        self.add_instruction(IrInstruction::类型转换 {
+                            dest: temp.clone(),
+                            value,
+                            from_type: source_type,
+                            to_type: target_type,
+                            cast_type: "zext".to_string(), // zero extend
+                        });
+                    }
+                    // Same type - no conversion needed
+                    (s, t) if s == t => {
+                        return Ok(value); // No conversion needed
+                    }
+                    _ => {
+                        return Err(format!("不支持的类型转换: {} -> {}", source_type, target_type));
+                    }
+                }
+
+                Ok(temp)
+            }
             AstNode::赋值表达式(assign_expr) => {
                 let value = self.build_node(&assign_expr.value)?;
 
@@ -2122,10 +2309,56 @@ impl IrBuilder {
                 };
                 
                 // Evaluate arguments
+                // For array arguments, also pass their lengths as hidden parameters
                 let mut arg_temps = Vec::new();
                 for arg in &call_expr.arguments {
                     let temp = self.build_node(arg)?;
-                    arg_temps.push(temp);
+                    arg_temps.push(temp.clone());
+
+                    // Check if this argument is an array - if so, add its length as a hidden parameter
+                    let arg_is_array = match arg {
+                        AstNode::标识符表达式(ident) => {
+                            // Check if this identifier is a known array
+                            self.array_sizes.contains_key(&ident.name) || {
+                                // Check if it's an array parameter
+                                let length_param_name = format!("{}_length", ident.name);
+                                self.variable_types.contains_key(&length_param_name)
+                            }
+                        }
+                        AstNode::数组字面量表达式(_) => true,
+                        _ => false,
+                    };
+
+                    if arg_is_array {
+                        // Get the array length
+                        let length_value = match arg {
+                            AstNode::标识符表达式(ident) => {
+                                // First check if it's a literal array with known size
+                                if let Some(size) = self.array_sizes.get(&ident.name) {
+                                    size.to_string()
+                                } else {
+                                    // It's an array parameter - pass through its length parameter
+                                    let mangled_name = if ident.name.chars().any(|c| !c.is_ascii()) {
+                                        self.mangle_function_name(&ident.name)
+                                    } else {
+                                        ident.name.clone()
+                                    };
+                                    format!("%{}_length", mangled_name)
+                                }
+                            }
+                            AstNode::数组字面量表达式(_) => {
+                                // The temp variable should have size info
+                                let temp_name = temp.trim_start_matches('%');
+                                if let Some(size) = self.array_sizes.get(temp_name) {
+                                    size.to_string()
+                                } else {
+                                    "0".to_string() // Fallback
+                                }
+                            }
+                            _ => "0".to_string(),
+                        };
+                        arg_temps.push(length_value);
+                    }
                 }
 
                 // Determine the callee name (mutable to allow printf override)
@@ -2691,12 +2924,13 @@ impl IrBuilder {
 
                 let temp = self.generate_temp();
 
-                // Record the array element type
+                // Record the array element type and size
                 let temp_name = temp.trim_start_matches('%');
                 self.array_element_types.insert(temp_name.to_string(), element_type.to_string());
+                let size = array_literal.elements.len();
+                self.array_sizes.insert(temp_name.to_string(), size);
 
                 // Create array allocation
-                let size = array_literal.elements.len();
                 self.add_instruction(IrInstruction::数组分配 {
                     dest: temp.clone(),
                     size: size.to_string(),
@@ -2927,11 +3161,20 @@ impl IrBuilder {
                         let module_name = &ident.name;
 
                         // Check if this is a known import alias or module
+                        // Need to check variable_types with both original and mangled names
+                        let mangled_module_name = if module_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(module_name)
+                        } else {
+                            module_name.to_string()
+                        };
+                        let is_known_variable = self.variable_types.contains_key(module_name) ||
+                                               self.variable_types.contains_key(&mangled_module_name);
+
                         if let Some(actual_module) = self.import_aliases.get(module_name).or_else(|| {
                             // If no alias, check if it's a direct module name
                             // Always treat identifier.field as module access if we have an alias
                             // Otherwise, only treat as module access if it's not a known variable
-                            if self.import_aliases.contains_key(module_name) || !self.variable_types.contains_key(module_name) {
+                            if self.import_aliases.contains_key(module_name) || !is_known_variable {
                                 Some(module_name)
                             } else {
                                 None
@@ -2951,33 +3194,64 @@ impl IrBuilder {
                             // Build the function call
                             self.build_node(&func_call)
                         } else {
-                            // This is struct field access
-                            let object_var = self.build_node(&field_access.object)?;
+                            // Check if this is array.长度 access
+                            let object_var_name = module_name;
+                            if field_access.field == "长度" {
+                                // First check if this is a known array literal with size
+                                if self.array_sizes.contains_key(object_var_name) {
+                                    // This is array.长度 - return the size as a constant
+                                    let size = self.array_sizes.get(object_var_name).unwrap();
+                                    return Ok(size.to_string());
+                                }
 
-                            // Get the struct type from variable_struct_types
-                            let object_var_name = object_var.trim_start_matches('%');
-                            let struct_type = self.variable_struct_types.get(object_var_name)
-                                .cloned()
-                                .unwrap_or_else(|| "unknown".to_string());
+                                // Check if this is an array parameter (has a hidden length parameter)
+                                // Need to check with both original and mangled names
+                                let mangled_var_name = if object_var_name.chars().any(|c| !c.is_ascii()) {
+                                    self.mangle_function_name(object_var_name)
+                                } else {
+                                    object_var_name.to_string()
+                                };
 
-                            // Generate field access instruction
-                            let temp = self.generate_temp();
-                            self.add_instruction(IrInstruction::字段访问 {
-                                dest: temp.clone(),
-                                object: object_var,
-                                field: field_access.field.clone(),
-                                struct_type,
-                            });
+                                let length_param_name = format!("{}_length", mangled_var_name);
+                                if self.variable_types.contains_key(&length_param_name) {
+                                    // This is an array parameter - return the length parameter directly
+                                    // The parameter name is already mangled in the function signature
+                                    return Ok(format!("%{}", length_param_name));
+                                }
 
-                            // Load the field value
-                            let load_temp = self.generate_temp();
-                            self.add_instruction(IrInstruction::加载 {
-                                dest: load_temp.clone(),
-                                source: temp,
-                                load_type: None,
-                            });
+                                // Array length not found
+                                return Err(format!("Cannot access .长度 on '{}': array size not tracked", object_var_name));
+                            }
 
-                            Ok(load_temp)
+                            {
+                                // This is struct field access
+                                let object_var = self.build_node(&field_access.object)?;
+
+                                // Get the struct type from variable_struct_types
+                                let object_var_name = object_var.trim_start_matches('%');
+                                let struct_type = self.variable_struct_types.get(object_var_name)
+                                    .cloned()
+                                    .unwrap_or_else(|| "unknown".to_string());
+
+                                // Generate field access instruction
+                                let temp = self.generate_temp();
+                                self.add_instruction(IrInstruction::字段访问 {
+                                    dest: temp.clone(),
+                                    object: object_var,
+                                    field: field_access.field.clone(),
+                                    struct_type,
+                                });
+
+                                // Load the field value
+                                let load_temp = self.generate_temp();
+                                self.add_instruction(IrInstruction::加载 {
+                                    dest: load_temp.clone(),
+                                    source: temp,
+                                    load_type: None,
+                                });
+
+                                Ok(load_temp)
+                            }
                         }
                     }
                     _ => {
@@ -4113,6 +4387,126 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_cli_free_matches(i64)\n");
         ir.push_str("\n");
 
+        // MCP Server functions
+        ir.push_str("; MCP Server functions\n");
+        ir.push_str("declare i64 @qi_mcp_create_server(ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_start_server(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_stop_server(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_is_running(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_destroy_server(i64)\n");
+        ir.push_str("declare ptr @qi_mcp_get_server_info(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_register_tool(i64, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_add_tool_parameter(i64, ptr, ptr, ptr, ptr, i32)\n");
+        ir.push_str("declare i32 @qi_mcp_set_tool_callback(i64, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_mcp_list_tools(i64)\n");
+        ir.push_str("declare ptr @qi_mcp_call_tool(i64, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_register_resource(i64, ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_set_resource_text_content(i64, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_set_resource_json_content(i64, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_mcp_read_resource_text(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_mcp_read_resource_json(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_mcp_list_resources(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_register_prompt(i64, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_mcp_list_prompts(i64)\n");
+        ir.push_str("declare ptr @qi_mcp_get_prompt(i64, ptr)\n");
+        ir.push_str("declare void @qi_mcp_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Regex functions
+        ir.push_str("; Regex functions\n");
+        ir.push_str("declare i32 @qi_regex_is_match(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_regex_find(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_regex_find_all(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_regex_replace_all(ptr, ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_regex_split(ptr, ptr)\n");
+        ir.push_str("declare void @qi_regex_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Path functions
+        ir.push_str("; Path functions\n");
+        ir.push_str("declare ptr @qi_path_join(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_path_filename(ptr)\n");
+        ir.push_str("declare ptr @qi_path_parent(ptr)\n");
+        ir.push_str("declare ptr @qi_path_extension(ptr)\n");
+        ir.push_str("declare ptr @qi_path_absolute(ptr)\n");
+        ir.push_str("declare i32 @qi_path_exists(ptr)\n");
+        ir.push_str("declare i32 @qi_path_is_dir(ptr)\n");
+        ir.push_str("declare i32 @qi_path_is_file(ptr)\n");
+        ir.push_str("declare void @qi_path_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Random functions
+        ir.push_str("; Random functions\n");
+        ir.push_str("declare i64 @qi_random_int(i64, i64)\n");
+        ir.push_str("declare double @qi_random_float(double, double)\n");
+        ir.push_str("declare i32 @qi_random_bool()\n");
+        ir.push_str("declare ptr @qi_random_string(i64)\n");
+        ir.push_str("declare ptr @qi_random_uuid()\n");
+        ir.push_str("declare void @qi_random_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Environment functions
+        ir.push_str("; Environment functions\n");
+        ir.push_str("declare ptr @qi_env_get(ptr)\n");
+        ir.push_str("declare i32 @qi_env_set(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_env_remove(ptr)\n");
+        ir.push_str("declare ptr @qi_env_current_dir()\n");
+        ir.push_str("declare i32 @qi_env_set_current_dir(ptr)\n");
+        ir.push_str("declare ptr @qi_env_home_dir()\n");
+        ir.push_str("declare ptr @qi_env_all()\n");
+        ir.push_str("declare void @qi_env_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Process functions
+        ir.push_str("; Process functions\n");
+        ir.push_str("declare ptr @qi_process_execute(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_process_current_pid()\n");
+        ir.push_str("declare void @qi_process_exit(i32)\n");
+        ir.push_str("declare void @qi_process_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Config functions
+        ir.push_str("; Config functions\n");
+        ir.push_str("declare ptr @qi_config_read_toml(ptr)\n");
+        ir.push_str("declare i32 @qi_config_write_toml(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_config_read_ini(ptr)\n");
+        ir.push_str("declare i32 @qi_config_write_ini(ptr, ptr)\n");
+        ir.push_str("declare void @qi_config_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Compress functions
+        ir.push_str("; Compress functions\n");
+        ir.push_str("declare i32 @qi_compress_gzip_file(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_compress_gunzip_file(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_compress_gzip_string(ptr)\n");
+        ir.push_str("declare ptr @qi_compress_gunzip_string(ptr)\n");
+        ir.push_str("declare void @qi_compress_free_string(ptr)\n");
+        ir.push_str("\n");
+
+        // Test functions
+        ir.push_str("; Test functions\n");
+        ir.push_str("declare i32 @qi_test_assert_eq_int(i64, i64, ptr)\n");
+        ir.push_str("declare i32 @qi_test_assert_eq_float(double, double, ptr)\n");
+        ir.push_str("declare i32 @qi_test_assert_eq_string(ptr, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_test_assert_true(i32, ptr)\n");
+        ir.push_str("declare i32 @qi_test_assert_false(i32, ptr)\n");
+        ir.push_str("declare i32 @qi_test_assert_ne_int(i64, i64, ptr)\n");
+        ir.push_str("declare void @qi_test_pass(ptr)\n");
+        ir.push_str("declare void @qi_test_fail(ptr)\n");
+        ir.push_str("\n");
+
+        // Database functions
+        ir.push_str("; Database functions\n");
+        ir.push_str("declare i64 @qi_db_connect(ptr)\n");
+        ir.push_str("declare i64 @qi_db_execute(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_db_query(i64, ptr)\n");
+        ir.push_str("declare i32 @qi_db_close(i64)\n");
+        ir.push_str("declare i32 @qi_db_begin_transaction(i64)\n");
+        ir.push_str("declare i32 @qi_db_commit(i64)\n");
+        ir.push_str("declare i32 @qi_db_rollback(i64)\n");
+        ir.push_str("declare void @qi_db_free_string(ptr)\n");
+        ir.push_str("\n");
+
         // GUI functions
         ir.push_str("; GUI functions\n");
         ir.push_str("declare i64 @qi_gui_create_window(ptr, i64, i64)\n");
@@ -4412,7 +4806,35 @@ impl IrBuilder {
                         // Default to i64 for unknown values
                         "i64".to_string()
                     };
-                    ir.push_str(&format!("store {} {}, ptr {}\n", inferred_type, value, target));
+
+                    // Determine target type by looking up the target variable
+                    let target_var_name = target.trim_start_matches('%').trim_start_matches('_');
+                    let target_type = self.variable_types.get(target_var_name)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "i64".to_string());
+
+                    // If types don't match, insert conversion (i32 -> i64)
+                    let value_to_store = if inferred_type == "i32" && target_type == "i64" {
+                        let ext_temp = self.generate_temp();
+                        ir.push_str(&format!("{} = sext i32 {} to i64\n", ext_temp, value));
+                        ext_temp
+                    } else if inferred_type == "i64" && target_type == "i32" {
+                        let ext_temp = self.generate_temp();
+                        ir.push_str(&format!("{} = trunc i64 {} to i32\n", ext_temp, value));
+                        ext_temp
+                    } else {
+                        value.to_string()
+                    };
+
+                    let final_type = if inferred_type == "i32" && target_type == "i64" {
+                        "i64".to_string()
+                    } else if inferred_type == "i64" && target_type == "i32" {
+                        "i32".to_string()
+                    } else {
+                        inferred_type.clone()
+                    };
+
+                    ir.push_str(&format!("store {} {}, ptr {}\n", final_type, value_to_store, target));
                 }
                 IrInstruction::整数常量 { dest, value } => {
                     ir.push_str(&format!("{} = add i64 0, {}\n", dest, value));
@@ -4953,6 +5375,15 @@ impl IrBuilder {
                                 "qi_datetime_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Most datetime functions return i64 (timestamps or components)
                             }
+                        // MCP functions - check return type based on function name
+                        } else if callee.starts_with("qi_mcp_") {
+                            match callee.as_str() {
+                                "qi_mcp_get_server_info" | "qi_mcp_list_tools" | "qi_mcp_list_resources" | "qi_mcp_list_prompts" |
+                                "qi_mcp_call_tool" | "qi_mcp_get_prompt" | "qi_mcp_read_resource_text" | "qi_mcp_read_resource_json" => "ptr",  // Return string
+                                "qi_mcp_create_server" => "i64",  // Return server ID
+                                "qi_mcp_free_string" => "void",  // Cleanup function
+                                _ => "i32"  // Most MCP functions return i32 status
+                            }
                         // List functions - check return type based on function name
                         } else if callee.starts_with("qi_list_") {
                             match callee.as_str() {
@@ -5003,6 +5434,9 @@ impl IrBuilder {
                             match dest {
                                 Some(dest_var) => {
                                     ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, final_callee, args_str));
+                                    // Store the return type for this temporary variable
+                                    let var_name = dest_var.trim_start_matches('%');
+                                    self.variable_types.insert(var_name.to_string(), ret_type.to_string());
                                 }
                                 None => {
                                     ir.push_str(&format!("call void @{}({})\n", final_callee, args_str));
@@ -5132,6 +5566,15 @@ impl IrBuilder {
                 IrInstruction::字符串连接 { dest, left, right } => {
                     // Simplified string concatenation using external function
                     ir.push_str(&format!("{} = call ptr @qi_runtime_string_concat(ptr {}, ptr {})\n", dest, left, right));
+                }
+                IrInstruction::异或 { dest, left, right } => {
+                    // XOR operation for logical not
+                    ir.push_str(&format!("  {} = xor i1 {}, {}\n", dest, left, right));
+                }
+                IrInstruction::类型转换 { dest, value, from_type, to_type, cast_type } => {
+                    // Type conversion using appropriate LLVM cast instruction
+                    ir.push_str(&format!("  {} = {} {} {} to {}\n",
+                        dest, cast_type, from_type, value, to_type));
                 }
                 IrInstruction::字段访问 { dest, object, field, struct_type } => {
                     // Get field index from struct field names

@@ -122,9 +122,30 @@ impl Lexer {
             '.' => Ok(Some(self.make_single_char_token(TokenKind::点, start_pos, start_line, start_column))),
 
             // Operators and comments
-            '+' => Ok(Some(self.make_single_char_token(TokenKind::加, start_pos, start_line, start_column))),
-            '*' => Ok(Some(self.make_single_char_token(TokenKind::乘, start_pos, start_line, start_column))),
-            '%' => Ok(Some(self.make_single_char_token(TokenKind::取余, start_pos, start_line, start_column))),
+            '+' => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(TokenKind::加等, start_pos, start_line, start_column)))
+                } else {
+                    Ok(Some(self.make_single_char_token(TokenKind::加, start_pos, start_line, start_column)))
+                }
+            }
+            '*' => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(TokenKind::乘等, start_pos, start_line, start_column)))
+                } else {
+                    Ok(Some(self.make_single_char_token(TokenKind::乘, start_pos, start_line, start_column)))
+                }
+            }
+            '%' => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(TokenKind::取余等, start_pos, start_line, start_column)))
+                } else {
+                    Ok(Some(self.make_single_char_token(TokenKind::取余, start_pos, start_line, start_column)))
+                }
+            }
             '&' => Ok(Some(self.make_single_char_token(TokenKind::取地址, start_pos, start_line, start_column))),
             '/' => {
                 if self.peek_char() == Some('/') {
@@ -149,6 +170,9 @@ impl Lexer {
                         self.skip_block_comment();
                         return Ok(None);
                     }
+                } else if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(TokenKind::除等, start_pos, start_line, start_column)))
                 } else {
                     Ok(Some(self.make_single_char_token(TokenKind::除, start_pos, start_line, start_column)))
                 }
@@ -167,6 +191,9 @@ impl Lexer {
                 if self.peek_char() == Some('>') {
                     self.advance();
                     Ok(Some(self.make_two_char_token(TokenKind::箭头, start_pos, start_line, start_column)))
+                } else if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(TokenKind::减等, start_pos, start_line, start_column)))
                 } else {
                     Ok(Some(self.make_single_char_token(TokenKind::减, start_pos, start_line, start_column)))
                 }
@@ -176,8 +203,8 @@ impl Lexer {
                     self.advance();
                     Ok(Some(self.make_two_char_token(TokenKind::不等于, start_pos, start_line, start_column)))
                 } else {
-                    self.report_invalid_character_error(c, start_pos, start_line, start_column, "可能想要使用 '!=' 表示不等于，或者检查是否有多余的字符");
-                    Err(LexicalError::InvalidCharacter(c, start_line, start_column))
+                    // Standalone '!' for logical not
+                    Ok(Some(self.make_single_char_token(TokenKind::感叹号, start_pos, start_line, start_column)))
                 }
             }
             '<' => {

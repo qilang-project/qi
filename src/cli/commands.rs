@@ -422,14 +422,18 @@ impl Cli {
         let mut link_command = Command::new("clang");
         link_command
             .arg(&temp_executable.with_extension("o"))
-            .arg(&compiler_lib_path)
-            .arg("-o")
-            .arg(&temp_executable);
+            .arg(&compiler_lib_path);
 
         // Add macOS frameworks required by reqwest and GUI
         #[cfg(target_os = "macos")]
         {
             link_command
+                .arg("-framework")
+                .arg("AudioUnit")
+                .arg("-framework")
+                .arg("AudioToolbox")
+                .arg("-framework")
+                .arg("CoreAudio")
                 .arg("-framework")
                 .arg("Security")
                 .arg("-framework")
@@ -449,6 +453,10 @@ impl Cli {
                 .arg("-framework")
                 .arg("AppKit");
         }
+
+        link_command
+            .arg("-o")
+            .arg(&temp_executable);
 
         eprintln!("DEBUG: Link command: {:?}", link_command);
 
@@ -641,14 +649,18 @@ impl Cli {
         let mut link_command = Command::new("clang");
         link_command
             .arg(&temp_executable.with_extension("o"))
-            .arg(&compiler_lib_path)
-            .arg("-o")
-            .arg(&temp_executable);
+            .arg(&compiler_lib_path);
 
         // Add macOS frameworks required by reqwest and GUI
         #[cfg(target_os = "macos")]
         {
             link_command
+                .arg("-framework")
+                .arg("AudioUnit")
+                .arg("-framework")
+                .arg("AudioToolbox")
+                .arg("-framework")
+                .arg("CoreAudio")
                 .arg("-framework")
                 .arg("Security")
                 .arg("-framework")
@@ -668,6 +680,10 @@ impl Cli {
                 .arg("-framework")
                 .arg("AppKit");
         }
+
+        link_command
+            .arg("-o")
+            .arg(&temp_executable);
 
         eprintln!("DEBUG: Link command: {:?}", link_command);
 
@@ -1243,6 +1259,12 @@ impl Cli {
         #[cfg(target_os = "macos")]
         {
             link_command
+                .arg("-framework")
+                .arg("AudioUnit")
+                .arg("-framework")
+                .arg("AudioToolbox")
+                .arg("-framework")
+                .arg("CoreAudio")
                 .arg("-framework")
                 .arg("Security")
                 .arg("-framework")

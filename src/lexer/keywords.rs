@@ -38,6 +38,19 @@ impl KeywordTable {
         keywords.insert("与".to_string(), TokenKind::与);
         keywords.insert("或".to_string(), TokenKind::或);
         keywords.insert("参数".to_string(), TokenKind::参数);
+
+        // 中文运算符
+        keywords.insert("等于".to_string(), TokenKind::等于);
+        keywords.insert("不等于".to_string(), TokenKind::不等于);
+        keywords.insert("大于".to_string(), TokenKind::大于);
+        keywords.insert("小于".to_string(), TokenKind::小于);
+        keywords.insert("大于等于".to_string(), TokenKind::大于等于);
+        keywords.insert("小于等于".to_string(), TokenKind::小于等于);
+        keywords.insert("取余".to_string(), TokenKind::取余);
+        keywords.insert("加".to_string(), TokenKind::加);
+        keywords.insert("减".to_string(), TokenKind::减);
+        keywords.insert("乘".to_string(), TokenKind::乘);
+        keywords.insert("除".to_string(), TokenKind::除);
         keywords.insert("包".to_string(), TokenKind::包);
         keywords.insert("模块".to_string(), TokenKind::模块);
         keywords.insert("公开".to_string(), TokenKind::公开);
