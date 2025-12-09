@@ -382,6 +382,17 @@ impl TcpConnection {
             bytes_written: 0,
         })
     }
+
+    /// Consume the TcpConnection and return the underlying TcpStream
+    /// This transfers ownership of the stream out of the connection
+    pub fn into_stream(self) -> TcpStream {
+        self.stream
+    }
+
+    /// Try to clone the underlying TcpStream
+    pub fn try_clone_stream(&self) -> std::io::Result<TcpStream> {
+        self.stream.try_clone()
+    }
 }
 
 /// HTTP client

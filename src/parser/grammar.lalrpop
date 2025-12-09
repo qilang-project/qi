@@ -1,4 +1,5 @@
 use crate::parser::ast::*;
+use crate::parser::unescape_string;
 
 grammar;
 
@@ -96,13 +97,19 @@ PathComponent: String = {
 Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
+    InlineFunctionDeclaration,
     TypeDeclaration,
+    UnionDeclaration,
+    TraitDeclaration,
+    ImplementationBlock,
     ReturnStatement,
     BreakStatement,
     ContinueStatement,
     IfStatement,
     WhileStatement,
     ForStatement,
+    TryStatement,
+    ThrowStatement,
     <e:Expr> ";" => AstNode::表达式语句(ExpressionStatement {
         expression: Box::new(e),
         span: Default::default(),
@@ -309,6 +316,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -317,6 +325,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -325,6 +334,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -333,6 +343,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     // 中文标点符号版本
@@ -342,6 +353,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -350,6 +362,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -358,6 +371,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -366,6 +380,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     // 混合标点符号版本：英文括号 + 中文大括号
@@ -375,6 +390,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -383,6 +399,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -391,6 +408,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
@@ -399,6 +417,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     // 混合标点符号版本：中文括号 + 英文大括号
@@ -408,6 +427,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -416,6 +436,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -424,6 +445,7 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
     <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -432,6 +454,7 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
+        is_inline: false,
         span: Default::default(),
     }),
 };
@@ -535,6 +558,134 @@ ForStatement: AstNode = {
     }),
 };
 
+// ===== 新增语言特性语法规则 | New Language Features Grammar Rules =====
+
+// 内联函数声明
+InlineFunctionDeclaration: AstNode = {
+    <vis:Visibility> "内联" "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        is_inline: true,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "内联" "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: vis,
+        is_inline: true,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: vis,
+        is_inline: true,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+        name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: vis,
+        is_inline: true,
+        span: Default::default(),
+    }),
+};
+
+// 联合体声明
+UnionDeclaration: AstNode = {
+    <vis:Visibility> "联合体" <name:Identifier> "{" <variants:UnionVariantList> "}" => AstNode::联合体声明(UnionDeclaration {
+        name,
+        variants,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "联合体" <name:Identifier> "{" "}" => AstNode::联合体声明(UnionDeclaration {
+        name,
+        variants: vec![],
+        visibility: vis,
+        span: Default::default(),
+    }),
+};
+
+UnionVariantList: Vec<UnionVariant> = {
+    <variants:SemiSeparated<UnionVariant>> => variants,
+};
+
+UnionVariant: UnionVariant = {
+    <type_annotation:Type> <name:Identifier> => UnionVariant {
+        name,
+        type_annotation,
+        span: Default::default(),
+    },
+};
+
+// 尝试/捕获/最终 语句
+TryStatement: AstNode = {
+    "尝试" <try_body:Block> <catch_clauses:CatchClause+> => AstNode::尝试语句(TryStatement {
+        try_body,
+        catch_clauses,
+        finally_body: None,
+        span: Default::default(),
+    }),
+    "尝试" <try_body:Block> <catch_clauses:CatchClause+> "最终" <finally_body:Block> => AstNode::尝试语句(TryStatement {
+        try_body,
+        catch_clauses,
+        finally_body: Some(finally_body),
+        span: Default::default(),
+    }),
+    "尝试" <try_body:Block> "最终" <finally_body:Block> => AstNode::尝试语句(TryStatement {
+        try_body,
+        catch_clauses: vec![],
+        finally_body: Some(finally_body),
+        span: Default::default(),
+    }),
+};
+
+CatchClause: CatchClause = {
+    // 捕获 错误变量 : 错误类型 { ... }
+    "捕获" <error_var:Identifier> ":" <error_type:Type> <body:Block> => CatchClause {
+        error_var: Some(error_var),
+        error_type: Some(error_type),
+        body,
+        span: Default::default(),
+    },
+    // 捕获 错误变量 { ... }
+    "捕获" <error_var:Identifier> <body:Block> => CatchClause {
+        error_var: Some(error_var),
+        error_type: None,
+        body,
+        span: Default::default(),
+    },
+    // 捕获 { ... }
+    "捕获" <body:Block> => CatchClause {
+        error_var: None,
+        error_type: None,
+        body,
+        span: Default::default(),
+    },
+};
+
+// 抛出语句
+ThrowStatement: AstNode = {
+    "抛出" <expression:Expr> ";" => AstNode::抛出语句(ThrowStatement {
+        expression: Box::new(expression),
+        span: Default::default(),
+    }),
+    "抛出" <expression:Expr> "；" => AstNode::抛出语句(ThrowStatement {
+        expression: Box::new(expression),
+        span: Default::default(),
+    }),
+};
+
 
 
 TypeDeclaration: AstNode = {
@@ -552,6 +703,144 @@ TypeDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
+};
+
+// 特性声明: 特性 名称 { 方法签名... }
+TraitDeclaration: AstNode = {
+    <vis:Visibility> "特性" <name:Identifier> "{" <methods:TraitMethodList> "}" => AstNode::特性声明(TraitDeclaration {
+        name,
+        methods,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "特性" <name:Identifier> "{" "}" => AstNode::特性声明(TraitDeclaration {
+        name,
+        methods: vec![],
+        visibility: vis,
+        span: Default::default(),
+    }),
+};
+
+TraitMethodList: Vec<TraitMethod> = {
+    <methods:TraitMethod+> => methods,
+};
+
+// 特性方法签名: 函数 名称(参数) : 返回类型;
+TraitMethod: TraitMethod = {
+    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> ";" => TraitMethod {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        has_default_impl: false,
+        default_body: None,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> ";" => TraitMethod {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        has_default_impl: false,
+        default_body: None,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" ")" ";" => TraitMethod {
+        name,
+        parameters: vec![],
+        return_type: None,
+        has_default_impl: false,
+        default_body: None,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ";" => TraitMethod {
+        name,
+        parameters: params,
+        return_type: None,
+        has_default_impl: false,
+        default_body: None,
+        span: Default::default(),
+    },
+};
+
+// 实现块: 实现 特性 对于 类型 { 方法... } 或 实现 类型 { 方法... }
+ImplementationBlock: AstNode = {
+    // 实现特性: 实现 特性名 对于 类型名 { ... }
+    "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" <methods:ImplMethodList> "}" => AstNode::实现块(ImplementationBlock {
+        trait_name: Some(trait_name),
+        target_type,
+        methods,
+        span: Default::default(),
+    }),
+    "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" "}" => AstNode::实现块(ImplementationBlock {
+        trait_name: Some(trait_name),
+        target_type,
+        methods: vec![],
+        span: Default::default(),
+    }),
+    // 直接实现: 实现 类型名 { ... }
+    "实现" <target_type:Identifier> "{" <methods:ImplMethodList> "}" => AstNode::实现块(ImplementationBlock {
+        trait_name: None,
+        target_type,
+        methods,
+        span: Default::default(),
+    }),
+    "实现" <target_type:Identifier> "{" "}" => AstNode::实现块(ImplementationBlock {
+        trait_name: None,
+        target_type,
+        methods: vec![],
+        span: Default::default(),
+    }),
+};
+
+ImplMethodList: Vec<MethodDeclaration> = {
+    <methods:ImplMethod+> => methods,
+};
+
+// 实现块中的方法
+ImplMethod: MethodDeclaration = {
+    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => MethodDeclaration {
+        receiver_name: "自己".to_string(),
+        receiver_type: String::new(),  // Will be filled from context
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        visibility: Visibility::公开,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => MethodDeclaration {
+        receiver_name: "自己".to_string(),
+        receiver_type: String::new(),
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        visibility: Visibility::公开,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => MethodDeclaration {
+        receiver_name: "自己".to_string(),
+        receiver_type: String::new(),
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: vec![],
+        return_type: None,
+        body,
+        visibility: Visibility::公开,
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => MethodDeclaration {
+        receiver_name: "自己".to_string(),
+        receiver_type: String::new(),
+        is_receiver_mutable: false,
+        method_name: name,
+        parameters: params,
+        return_type: None,
+        body,
+        visibility: Visibility::公开,
+        span: Default::default(),
+    },
 };
 
 StructFieldList: Vec<StructField> = {
@@ -1212,7 +1501,8 @@ UnaryPrefix: AstNode = {
 // Primary expressions (literals, identifiers, parenthesized expressions)
 // Note: Struct literals are parsed in Atom within parentheses to avoid ambiguity
 // with blocks in control flow statements. To use struct literals as expressions,
-// wrap them in parentheses: (Point { x: 1, y: 2 })
+// Struct literals require parentheses to avoid ambiguity with blocks
+// Syntax: (结构体名 { 字段: 值 }) or （结构体名 { 字段: 值 }）
 Primary: AstNode = {
     <name:Identifier> => AstNode::标识符表达式(IdentifierExpression {
         name,
@@ -1222,7 +1512,7 @@ Primary: AstNode = {
 };
 
 // Atomic expressions - the lowest level
-// Struct literals are only allowed here (in parentheses) to avoid ambiguity
+// Struct literals can use: 新建 结构体名 { 字段: 值 } or parentheses for backwards compatibility
 Atom: AstNode = {
     BooleanLiteral,
     IntegerLiteral,
@@ -1230,10 +1520,24 @@ Atom: AstNode = {
     StringLiteral,
     CharLiteral,
     ArrayLiteral,
-    // Parenthesized expressions, including struct literals
+    ClosureExpression,
+    MatchExpression,
+    AsyncBlockExpression,
+    // Parenthesized expressions
     "(" <Expr> ")",
     "（" <Expr> "）",
-    // Struct literals (must be in safe context or parenthes)
+    // Struct literals with 新建 keyword (preferred syntax)
+    "新建" <name:Identifier> "{" <fields:StructFieldValueList> "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields,
+        span: Default::default(),
+    }),
+    "新建" <name:Identifier> "{" "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        fields: vec![],
+        span: Default::default(),
+    }),
+    // Struct literals with parentheses (backwards compatible syntax)
     "(" <name:Identifier> "{" <fields:StructFieldValueList> "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         fields,
@@ -1256,7 +1560,150 @@ Atom: AstNode = {
     }),
 };
 
+// 闭包表达式: 闭包 (参数列表) : 返回类型 { 函数体 }
+ClosureExpression: AstNode = {
+    "闭包" "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+    "闭包" "(" <params:ParameterList> ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: params,
+        return_type: None,
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+    "闭包" "(" ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+    "闭包" "(" ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: None,
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+    // 简化语法: |参数| 表达式
+    "|" <params:ParameterList> "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: params,
+        return_type: None,
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+    "|" "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: None,
+        body,
+        captures: vec![],
+        span: Default::default(),
+    }),
+};
 
+// 匹配表达式: 匹配 值 { 分支... }
+MatchExpression: AstNode = {
+    "匹配" <value:Expr> "{" <arms:MatchArmList> "}" => AstNode::匹配表达式(MatchExpression {
+        value: Box::new(value),
+        arms,
+        span: Default::default(),
+    }),
+};
+
+MatchArmList: Vec<MatchArm> = {
+    <arms:MatchArm+> => arms,
+};
+
+MatchArm: MatchArm = {
+    // 模式 => { 语句块 }
+    <pattern:MatchPattern> "=>" <body:Block> => MatchArm {
+        pattern,
+        guard: None,
+        body,
+        span: Default::default(),
+    },
+    // 模式 如果 守卫条件 => { 语句块 }
+    <pattern:MatchPattern> "如果" <guard:Expr> "=>" <body:Block> => MatchArm {
+        pattern,
+        guard: Some(Box::new(guard)),
+        body,
+        span: Default::default(),
+    },
+    // 模式 => 表达式;
+    <pattern:MatchPattern> "=>" <expr:Expr> ";" => MatchArm {
+        pattern,
+        guard: None,
+        body: vec![AstNode::表达式语句(ExpressionStatement {
+            expression: Box::new(expr),
+            span: Default::default(),
+        })],
+        span: Default::default(),
+    },
+    // 模式 => 表达式；
+    <pattern:MatchPattern> "=>" <expr:Expr> "；" => MatchArm {
+        pattern,
+        guard: None,
+        body: vec![AstNode::表达式语句(ExpressionStatement {
+            expression: Box::new(expr),
+            span: Default::default(),
+        })],
+        span: Default::default(),
+    },
+    // 模式 => 表达式,
+    <pattern:MatchPattern> "=>" <expr:Expr> "," => MatchArm {
+        pattern,
+        guard: None,
+        body: vec![AstNode::表达式语句(ExpressionStatement {
+            expression: Box::new(expr),
+            span: Default::default(),
+        })],
+        span: Default::default(),
+    },
+};
+
+MatchPattern: MatchPattern = {
+    // 简单模式（通配符、字面量、变量绑定）
+    MatchPatternAtom,
+    // 或模式: 模式1 | 模式2
+    <first:MatchPatternAtom> "|" <rest:MatchPatternOrList> => {
+        let mut patterns = vec![first];
+        patterns.extend(rest);
+        MatchPattern::或模式(patterns)
+    },
+};
+
+MatchPatternAtom: MatchPattern = {
+    "_" => MatchPattern::通配符,
+    <n:r"[0-9]+"> => MatchPattern::字面量(LiteralValue::整数(n.parse().unwrap())),
+    <n:r"[0-9]+\.[0-9]+"> => MatchPattern::字面量(LiteralValue::浮点数(n.parse().unwrap())),
+    <s:r#""[^"]*""#> => MatchPattern::字面量(LiteralValue::字符串(s[1..s.len()-1].to_string())),
+    "真" => MatchPattern::字面量(LiteralValue::布尔(true)),
+    "假" => MatchPattern::字面量(LiteralValue::布尔(false)),
+    <name:Identifier> => MatchPattern::变量绑定(name),
+};
+
+MatchPatternOrList: Vec<MatchPattern> = {
+    <first:MatchPatternAtom> => vec![first],
+    <first:MatchPatternAtom> "|" <rest:MatchPatternOrList> => {
+        let mut patterns = vec![first];
+        patterns.extend(rest);
+        patterns
+    },
+};
+
+// 异步块表达式: 异步 { ... }
+AsyncBlockExpression: AstNode = {
+    "异步" <body:Block> => AstNode::异步块表达式(AsyncBlockExpression {
+        body,
+        span: Default::default(),
+    }),
+};
 
 BooleanLiteral: AstNode = {
     "真" => AstNode::字面量表达式(LiteralExpression {
@@ -1284,8 +1731,8 @@ FloatLiteral: AstNode = {
 };
 
 StringLiteral: AstNode = {
-    <s:r#""[^"]*""#> => AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::字符串(s[1..s.len()-1].to_string()),
+    <s:r#""([^"\\]|\\.)*""#> => AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::字符串(unescape_string(&s[1..s.len()-1])),
         span: Default::default(),
     }),
 };
@@ -1402,6 +1849,17 @@ Type: TypeNode = {
     // 未来类型 (Future type for async operations)
     "未来" "<" <inner_type:Type> ">" => TypeNode::未来类型(Box::new(inner_type)),
 
+    // 结果类型 (Result type for error handling)
+    "结果" "<" <ok_type:Type> "," <err_type:Type> ">" => TypeNode::结果类型(ResultType {
+        ok_type: Box::new(ok_type),
+        err_type: Box::new(err_type),
+    }),
+
+    // 选项类型 (Option type for nullable values)
+    "选项" "<" <inner_type:Type> ">" => TypeNode::选项类型(OptionType {
+        inner_type: Box::new(inner_type),
+    }),
+
     // 指针和引用类型
     "指针" "<" <target_type:Type> ">" => TypeNode::指针类型(PointerType {
         target_type: Box::new(target_type),
@@ -1465,7 +1923,7 @@ Identifier: String = {
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
-           id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
+           id == "长度" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
@@ -1490,7 +1948,7 @@ ReceiverIdentifier: String = {
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
-           id == "长度" || id == "包含" || id == "输入" || id == "包" || id == "导入" ||
+           id == "长度" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "方法" || id == "枚举" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||

@@ -550,8 +550,20 @@ impl ParserErrorRecovery {
             // Timeout and error handling keywords
             TokenKind::尝试 => "尝试".to_string(),
             TokenKind::捕获 => "捕获".to_string(),
+            TokenKind::抛出 => "抛出".to_string(),
+            TokenKind::最终 => "最终".to_string(),
             TokenKind::重试 => "重试".to_string(),
             TokenKind::超时 => "超时".to_string(),
+
+            // New language feature keywords
+            TokenKind::闭包 => "闭包".to_string(),
+            TokenKind::匹配 => "匹配".to_string(),
+            TokenKind::内联 => "内联".to_string(),
+            TokenKind::联合体 => "联合体".to_string(),
+            TokenKind::异步 => "异步".to_string(),
+
+            // Struct instantiation
+            TokenKind::新建 => "新建".to_string(),
         }
     }
 

@@ -103,6 +103,15 @@ impl TypeChecker {
             AstNode::选择表达式(select_expr) => self.check_select(select_expr),
             AstNode::取地址表达式(addr_of_expr) => self.check_address_of(addr_of_expr),
             AstNode::解引用表达式(deref_expr) => self.check_dereference(deref_expr),
+            AstNode::特性声明(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::实现块(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            // New language features - type checking placeholder
+            AstNode::联合体声明(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::尝试语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::抛出语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::异步块表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::闭包表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::匹配表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
         }
     }
 
@@ -352,7 +361,16 @@ impl TypeChecker {
             AstNode::标识符表达式(ident) => {
                 // Simple variable assignment
                 match self.symbol_table.lookup_symbol(&ident.name) {
-                    Some(symbol) => Ok(symbol.type_node.clone()),
+                    Some(symbol) => {
+                        // Check if the variable is mutable (not a constant)
+                        if !symbol.is_mutable {
+                            return Err(TypeError::General {
+                                message: format!("常量 '{}' 不能重新赋值", ident.name),
+                                span: assignment.span,
+                            });
+                        }
+                        Ok(symbol.type_node.clone())
+                    },
                     None => Err(TypeError::UndefinedVariable {
                         name: ident.name.clone(),
                         span: assignment.span,

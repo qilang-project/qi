@@ -5,6 +5,7 @@
 //! and type conversions with comprehensive Chinese language support.
 
 pub mod string;
+pub mod string_ffi;
 pub mod math;
 pub mod system;
 pub mod conversion;
@@ -300,6 +301,7 @@ impl Default for StdlibRegistry {
 
 /// Standard library container
 #[derive(Debug)]
+#[allow(non_snake_case)]
 pub struct StandardLibrary {
     /// String module
     pub string_module: StringModule,
@@ -318,7 +320,6 @@ pub struct StandardLibrary {
     /// 大模型模块
     pub 大模型: 大模型模块,
     /// MCP服务器模块
-    #[allow(non_snake_case)]
     pub MCP服务器: MCP服务器模块,
     /// Function registry
     pub registry: StdlibRegistry,

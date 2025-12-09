@@ -27,6 +27,9 @@ pub enum AstNode {
     结构体声明(StructDeclaration),
     方法声明(MethodDeclaration),
     枚举声明(EnumDeclaration),
+    特性声明(TraitDeclaration),
+    实现块(ImplementationBlock),
+    联合体声明(UnionDeclaration),
     如果语句(IfStatement),
     循环语句(LoopStatement),
     当语句(WhileStatement),
@@ -36,6 +39,8 @@ pub enum AstNode {
     继续语句(ContinueStatement),
     表达式语句(ExpressionStatement),
     块语句(BlockStatement),
+    尝试语句(TryStatement),
+    抛出语句(ThrowStatement),
 
     // Expressions
     字面量表达式(LiteralExpression),
@@ -46,6 +51,7 @@ pub enum AstNode {
     函数调用表达式(FunctionCallExpression),
     等待表达式(AwaitExpression),
     协程启动表达式(GoroutineSpawnExpression),
+    异步块表达式(AsyncBlockExpression),
     赋值表达式(AssignmentExpression),
     数组访问表达式(ArrayAccessExpression),
     数组字面量表达式(ArrayLiteralExpression),
@@ -59,6 +65,8 @@ pub enum AstNode {
     选择表达式(SelectExpression),
     取地址表达式(AddressOfExpression),
     解引用表达式(DereferenceExpression),
+    闭包表达式(ClosureExpression),
+    匹配表达式(MatchExpression),
 }
 
 /// Program node
@@ -98,6 +106,7 @@ pub struct FunctionDeclaration {
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
     pub visibility: Visibility,
+    pub is_inline: bool,  // 是否为内联函数
     pub span: Span,
 }
 
@@ -281,6 +290,10 @@ pub enum TypeNode {
     指针类型(PointerType),
     引用类型(ReferenceType),
     未来类型(Box<TypeNode>), // Future<T> - 异步操作的返回类型
+    结果类型(ResultType),     // Result<T, E> - 结果类型
+    选项类型(OptionType),     // Option<T> - 选项类型
+    泛型类型(GenericType),    // Generic<T1, T2, ...> - 泛型类型
+    联合体类型(UnionType),    // Union type
     自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
 }
 
@@ -397,6 +410,35 @@ pub struct EnumDeclaration {
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<i64>, // Optional explicit value
+    pub span: Span,
+}
+
+/// Trait declaration (特性声明)
+#[derive(Debug, Clone)]
+pub struct TraitDeclaration {
+    pub name: String,
+    pub methods: Vec<TraitMethod>,
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+/// Trait method signature (特性方法签名)
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeNode>,
+    pub has_default_impl: bool,       // 是否有默认实现
+    pub default_body: Option<Vec<AstNode>>, // 默认实现体
+    pub span: Span,
+}
+
+/// Implementation block (实现块)
+#[derive(Debug, Clone)]
+pub struct ImplementationBlock {
+    pub trait_name: Option<String>,   // 如果是 "实现 特性 对于 类型"，则有值
+    pub target_type: String,          // 被实现的类型名
+    pub methods: Vec<MethodDeclaration>,
     pub span: Span,
 }
 
@@ -557,4 +599,144 @@ pub enum SelectCaseKind {
     通道发送 { channel: Box<AstNode>, value: Box<AstNode> },
     /// Default case: 默认:
     默认,
+}
+
+// ===== 新增语言特性的 AST 节点 | New Language Features AST Nodes =====
+
+/// Try statement (尝试语句) - try/catch/finally
+#[derive(Debug, Clone)]
+pub struct TryStatement {
+    pub try_body: Vec<AstNode>,
+    pub catch_clauses: Vec<CatchClause>,
+    pub finally_body: Option<Vec<AstNode>>,
+    pub span: Span,
+}
+
+/// Catch clause (捕获子句)
+#[derive(Debug, Clone)]
+pub struct CatchClause {
+    pub error_var: Option<String>,      // 错误变量名
+    pub error_type: Option<TypeNode>,   // 错误类型
+    pub body: Vec<AstNode>,
+    pub span: Span,
+}
+
+/// Throw statement (抛出语句)
+#[derive(Debug, Clone)]
+pub struct ThrowStatement {
+    pub expression: Box<AstNode>,
+    pub span: Span,
+}
+
+/// Closure expression (闭包表达式)
+#[derive(Debug, Clone)]
+pub struct ClosureExpression {
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeNode>,
+    pub body: Vec<AstNode>,
+    pub captures: Vec<String>,  // 捕获的外部变量
+    pub span: Span,
+}
+
+/// Match expression (匹配表达式)
+#[derive(Debug, Clone)]
+pub struct MatchExpression {
+    pub value: Box<AstNode>,
+    pub arms: Vec<MatchArm>,
+    pub span: Span,
+}
+
+/// Match arm (匹配分支)
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub guard: Option<Box<AstNode>>,  // 可选的守卫条件
+    pub body: Vec<AstNode>,
+    pub span: Span,
+}
+
+/// Match pattern (匹配模式)
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    /// Literal pattern: 1, "hello", true
+    字面量(LiteralValue),
+    /// Variable binding: x
+    变量绑定(String),
+    /// Wildcard pattern: _
+    通配符,
+    /// Struct pattern: Point { x, y }
+    结构体模式 { struct_name: String, fields: Vec<(String, MatchPattern)> },
+    /// Enum variant pattern: Some(x), None
+    枚举变体模式 { enum_name: Option<String>, variant_name: String, bindings: Vec<MatchPattern> },
+    /// Tuple pattern: (x, y)
+    元组模式(Vec<MatchPattern>),
+    /// Array pattern: [a, b, c]
+    数组模式(Vec<MatchPattern>),
+    /// Range pattern: 1..10
+    范围模式 { start: Option<Box<AstNode>>, end: Option<Box<AstNode>>, inclusive: bool },
+    /// Or pattern: A | B
+    或模式(Vec<MatchPattern>),
+}
+
+/// Union declaration (联合体声明)
+#[derive(Debug, Clone)]
+pub struct UnionDeclaration {
+    pub name: String,
+    pub variants: Vec<UnionVariant>,
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+/// Union variant (联合体变体)
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnionVariant {
+    pub name: String,
+    pub type_annotation: TypeNode,
+    pub span: Span,
+}
+
+/// Async block expression (异步块表达式)
+#[derive(Debug, Clone)]
+pub struct AsyncBlockExpression {
+    pub body: Vec<AstNode>,
+    pub span: Span,
+}
+
+// ===== 泛型支持 | Generic Support =====
+
+/// Generic parameter (泛型参数)
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericParameter {
+    pub name: String,
+    pub bounds: Vec<String>,  // 类型约束 (特性名)
+    pub default: Option<TypeNode>,
+}
+
+/// Generic type (泛型类型)
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericType {
+    pub base_type: String,
+    pub type_arguments: Vec<TypeNode>,
+}
+
+// ===== 结果类型和选项类型 | Result and Option Types =====
+
+/// Result type: 结果<成功类型, 错误类型>
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResultType {
+    pub ok_type: Box<TypeNode>,
+    pub err_type: Box<TypeNode>,
+}
+
+/// Option type: 选项<类型>
+#[derive(Debug, Clone, PartialEq)]
+pub struct OptionType {
+    pub inner_type: Box<TypeNode>,
+}
+
+/// Union type (联合体类型)
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnionType {
+    pub name: String,
+    pub variants: Vec<UnionVariant>,
 }

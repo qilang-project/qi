@@ -101,9 +101,18 @@ impl KeywordTable {
         // Timeout and error handling keywords - 超时和错误处理关键字
         keywords.insert("尝试".to_string(), TokenKind::尝试);
         keywords.insert("捕获".to_string(), TokenKind::捕获);
+        keywords.insert("抛出".to_string(), TokenKind::抛出);
+        keywords.insert("最终".to_string(), TokenKind::最终);
         keywords.insert("重试".to_string(), TokenKind::重试);
         keywords.insert("超时".to_string(), TokenKind::超时);
         keywords.insert("否则".to_string(), TokenKind::否则);
+
+        // Additional keywords for new features
+        keywords.insert("闭包".to_string(), TokenKind::闭包);
+        keywords.insert("匹配".to_string(), TokenKind::匹配);
+        keywords.insert("内联".to_string(), TokenKind::内联);
+        keywords.insert("联合体".to_string(), TokenKind::联合体);
+        keywords.insert("异步".to_string(), TokenKind::异步);
 
         // Control flow keywords - 控制流关键字
         keywords.insert("跳出".to_string(), TokenKind::跳出);
@@ -112,6 +121,9 @@ impl KeywordTable {
         // Pointer operations - 指针操作
         keywords.insert("解引用".to_string(), TokenKind::解引用);
         keywords.insert("取地址".to_string(), TokenKind::取地址关键字);
+
+        // Struct instantiation - 结构体实例化
+        keywords.insert("新建".to_string(), TokenKind::新建);
 
         // Minimal English keywords for debugging/testing only
         keywords.insert("let".to_string(), TokenKind::变量);

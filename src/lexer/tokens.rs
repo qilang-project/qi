@@ -113,8 +113,17 @@ pub enum TokenKind {
     // Timeout and error handling keywords - 超时和错误处理关键字
     尝试,      // try
     捕获,      // catch
+    抛出,      // throw
+    最终,      // finally
     重试,      // retry
     超时,      // timeout
+
+    // Additional keywords for new features
+    闭包,      // closure/lambda
+    匹配,      // match
+    内联,      // inline
+    联合体,    // union
+    异步,      // async (for async blocks)
 
     // Boolean literal constants
     真,                 // true
@@ -138,6 +147,7 @@ pub enum TokenKind {
     自定义类型,         // custom type declaration keyword
     解引用,             // dereference
     取地址关键字,       // address-of keyword
+    新建,               // new (struct instantiation)
 
     // Type keywords
     类型关键词(crate::parser::ast::BasicType),

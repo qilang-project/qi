@@ -39,6 +39,23 @@ fn 获取句柄计数器() -> &'static Mutex<i64> {
     连接句柄计数器.get_or_init(|| Mutex::new(0))
 }
 
+/// 从TCP连接池中取出连接并返回TcpStream（用于WebSocket升级）
+/// 这将从池中移除连接，调用者获得TcpStream的所有权
+pub(crate) fn 取出TCP流(handle: i64) -> Option<std::net::TcpStream> {
+    let mut 连接池 = 获取连接池().lock().unwrap();
+    连接池.remove(&handle).map(|conn| conn.into_stream())
+}
+
+/// 克隆TCP连接的流（保留原连接在池中）
+pub(crate) fn 克隆TCP流(handle: i64) -> Option<std::net::TcpStream> {
+    let 连接池 = 获取连接池().lock().unwrap();
+    if let Some(conn) = 连接池.get(&handle) {
+        conn.try_clone_stream().ok()
+    } else {
+        None
+    }
+}
+
 /// 初始化网络模块
 #[no_mangle]
 pub extern "C" fn qi_network_init() {
@@ -119,6 +136,68 @@ pub extern "C" fn qi_network_tcp_write(handle: i64, data: *const u8, data_size: 
         }
     } else {
         -1
+    }
+}
+
+/// 从 TCP 连接读取数据并返回为字符串（高级版本）
+/// 返回接收到的数据字符串，失败返回空字符串
+#[no_mangle]
+pub extern "C" fn qi_network_tcp_read_string(handle: i64, buffer_size: i64) -> *mut c_char {
+    if buffer_size <= 0 {
+        return CString::new("").unwrap().into_raw();
+    }
+
+    let mut 缓冲区 = vec![0u8; buffer_size as usize];
+    let mut 连接池 = 获取连接池().lock().unwrap();
+
+    if let Some(连接) = 连接池.get_mut(&handle) {
+        match 连接.read(&mut 缓冲区) {
+            Ok(size) => {
+                if size > 0 {
+                    if let Ok(字符串) = String::from_utf8(缓冲区[..size].to_vec()) {
+                        if let Ok(c_str) = CString::new(字符串) {
+                            return c_str.into_raw();
+                        }
+                    }
+                    // 如果不是有效的 UTF-8，尝试 lossy 转换
+                    let 字符串 = String::from_utf8_lossy(&缓冲区[..size]).to_string();
+                    if let Ok(c_str) = CString::new(字符串) {
+                        return c_str.into_raw();
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    CString::new("").unwrap().into_raw()
+}
+
+/// 向 TCP 连接写入字符串数据（高级版本）
+/// 返回写入的字节数（<0 表示错误）
+#[no_mangle]
+pub extern "C" fn qi_network_tcp_write_string(handle: i64, data: *const c_char) -> i64 {
+    if data.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 数据字符串 = CStr::from_ptr(data).to_string_lossy();
+        let 数据字节 = 数据字符串.as_bytes();
+
+        let mut 连接池 = 获取连接池().lock().unwrap();
+        if let Some(连接) = 连接池.get_mut(&handle) {
+            match 连接.write(数据字节) {
+                Ok(字节数) => {
+                    // 写入后刷新确保数据发送
+                    let _ = 连接.flush();
+                    字节数 as i64
+                }
+                Err(_) => -1,
+            }
+        } else {
+            -1
+        }
     }
 }
 

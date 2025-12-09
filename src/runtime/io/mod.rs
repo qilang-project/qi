@@ -7,6 +7,7 @@ pub mod filesystem;
 pub mod http;
 pub mod network_ffi;
 pub mod http_ffi;
+pub mod websocket_ffi;
 pub mod stdio;
 pub mod interface;
 pub mod file;
