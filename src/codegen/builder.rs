@@ -13,6 +13,14 @@ pub enum IrInstruction {
         type_name: String,
     },
 
+    /// Global variable declaration
+    全局变量声明 {
+        name: String,
+        type_name: String,
+        initializer: Option<String>,
+        is_constant: bool,
+    },
+
     /// Store a value
     存储 {
         target: String,
@@ -254,6 +262,8 @@ pub struct IrBuilder {
     in_async_context: bool,
     /// Track defined functions in current module
     defined_functions: std::collections::HashSet<String>,
+    /// Track global variables (both original and mangled names)
+    global_variables: std::collections::HashSet<String>,
     /// Track external function signatures (name -> (params, return_type))
     external_functions: std::collections::HashMap<String, (Vec<String>, String)>,
     /// Track struct definitions (name -> field_types)
@@ -308,6 +318,7 @@ impl IrBuilder {
             function_param_types: std::collections::HashMap::new(),
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
+            global_variables: std::collections::HashSet::new(),
             external_functions: std::collections::HashMap::new(),
             struct_definitions: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
@@ -1216,42 +1227,84 @@ impl IrBuilder {
                     }
                 }
 
-                // Allocate variable
-                self.add_instruction(IrInstruction::分配 {
-                    dest: var_name.clone(),
-                    type_name: type_name.to_string(),
-                });
+                // CHECK FOR GLOBAL SCOPE
+                if self.current_function_name.is_none() {
+                    // Global variable declaration
+                    let global_name = format!("@{}", mangled_name);
 
-                // Initialize if there's an initializer
-                if let Some(initializer) = &decl.initializer {
-                    // Use pre-evaluated value if available, otherwise evaluate now
-                    let value = if let Some(pre_eval) = pre_evaluated_init {
-                        pre_eval
+                    // For global variables, we need the initializer value directly if it's a literal
+                    let init_val = if let Some(initializer) = &decl.initializer {
+                        match &**initializer {
+                            AstNode::字面量表达式(literal) => {
+                                match &literal.value {
+                                    crate::parser::ast::LiteralValue::整数(i) => Some(i.to_string()),
+                                    crate::parser::ast::LiteralValue::浮点数(f) => Some(format!("{:?}", f)), // Use Debug for full precision
+                                    crate::parser::ast::LiteralValue::布尔(b) => Some(if *b { "1".to_string() } else { "0".to_string() }),
+                                    crate::parser::ast::LiteralValue::字符串(_) => {
+                                        // String literals are complex globals, for now handle via build_node which creates a constant string
+                                        let val = self.build_node(initializer)?;
+                                        Some(val)
+                                    },
+                                    _ => None,
+                                }
+                            }
+                            _ => None // Complex initializers not supported for globals yet
+                        }
                     } else {
-                        self.build_node(initializer)?
+                        // Default zero initialization
+                        Some("0".to_string())
                     };
 
-                    // If the initializer is an array, propagate element type info
-                    let value_name = value.trim_start_matches('%');
-                    if let Some(elem_type) = self.array_element_types.get(value_name).cloned() {
-                        self.array_element_types.insert(decl.name.clone(), elem_type.clone());
-                        self.array_element_types.insert(mangled_name.clone(), elem_type);
+                    self.add_instruction(IrInstruction::全局变量声明 {
+                        name: global_name.clone(),
+                        type_name: type_name.to_string(),
+                        initializer: init_val,
+                        is_constant: !decl.is_mutable,
+                    });
+                    
+                    // Track global variables
+                    self.global_variables.insert(decl.name.clone());
+                    self.global_variables.insert(mangled_name.clone());
+
+                    Ok(global_name)
+                } else {
+                    // Local variable declaration
+                    self.add_instruction(IrInstruction::分配 {
+                        dest: var_name.clone(),
+                        type_name: type_name.to_string(),
+                    });
+
+                    // Initialize if there's an initializer
+                    if let Some(initializer) = &decl.initializer {
+                        // Use pre-evaluated value if available, otherwise evaluate now
+                        let value = if let Some(pre_eval) = pre_evaluated_init {
+                            pre_eval
+                        } else {
+                            self.build_node(initializer)?
+                        };
+
+                        // If the initializer is an array, propagate element type info
+                        let value_name = value.trim_start_matches('%');
+                        if let Some(elem_type) = self.array_element_types.get(value_name).cloned() {
+                            self.array_element_types.insert(decl.name.clone(), elem_type.clone());
+                            self.array_element_types.insert(mangled_name.clone(), elem_type);
+                        }
+
+                        // Determine the actual type of the value being stored
+                        let value_var_name = value.trim_start_matches('%');
+                        let actual_value_type = self.variable_types.get(value_var_name)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| type_name.to_string());
+
+                        self.add_instruction(IrInstruction::存储 {
+                            target: var_name.clone(),
+                            value,
+                            value_type: Some(actual_value_type),
+                        });
                     }
 
-                    // Determine the actual type of the value being stored
-                    let value_var_name = value.trim_start_matches('%');
-                    let actual_value_type = self.variable_types.get(value_var_name)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| type_name.to_string());
-
-                    self.add_instruction(IrInstruction::存储 {
-                        target: var_name.clone(),
-                        value,
-                        value_type: Some(actual_value_type),
-                    });
+                    Ok(var_name)
                 }
-
-                Ok(var_name)
             }
             AstNode::函数声明(func_decl) => {
                 // Handle special cases and apply name mangling for Chinese function names
@@ -1395,17 +1448,20 @@ impl IrBuilder {
                     self.build_node(stmt)?;
                 }
 
-                // Detect whether an explicit return was emitted in this function
-                let mut has_explicit_return = false;
-                for instr in &self.instructions[start_len..] {
-                    if let IrInstruction::返回 { .. } = instr {
-                        has_explicit_return = true;
-                        break;
-                    }
-                }
+                // Check if the last instruction is a terminator
+                let last_is_terminator = if let Some(last) = self.instructions.last() {
+                    matches!(last, 
+                        IrInstruction::返回 { .. } | 
+                        IrInstruction::跳转 { .. } | 
+                        IrInstruction::条件跳转 { .. } | 
+                        IrInstruction::不可达
+                    )
+                } else {
+                    false
+                };
 
                 // Add implicit return if needed
-                if !has_explicit_return {
+                if !last_is_terminator {
                     if is_main {
                         // Call runtime shutdown before returning from main
                         let shutdown_result = self.generate_temp();
@@ -2228,11 +2284,19 @@ impl IrBuilder {
                             return Err(format!("常量 '{}' 不能重新赋值", ident.name));
                         }
 
-                        // Simple variable assignment: x = value
-                        let target_name = if ident.name.chars().any(|c| !c.is_ascii()) {
-                            format!("%{}", self.mangle_function_name(&ident.name))
+                        let bare_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&ident.name)
                         } else {
-                            format!("%{}", ident.name)
+                            ident.name.clone()
+                        };
+
+                        let is_global = self.global_variables.contains(&ident.name) ||
+                                        self.global_variables.contains(&bare_mangled);
+
+                        let target_name = if is_global {
+                            format!("@{}", bare_mangled)
+                        } else {
+                            format!("%{}", bare_mangled)
                         };
 
                         self.add_instruction(IrInstruction::存储 {
@@ -2941,11 +3005,6 @@ impl IrBuilder {
             }
             AstNode::标识符表达式(ident) => {
                 let temp = self.generate_temp();
-                let var_name = if ident.name.chars().any(|c| !c.is_ascii()) {
-                    format!("%{}", self.mangle_function_name(&ident.name))
-                } else {
-                    format!("%{}", ident.name)
-                };
                 
                 // Also compute the bare mangled name without %
                 let bare_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
@@ -2954,11 +3013,21 @@ impl IrBuilder {
                     ident.name.clone()
                 };
 
+                // Check if it's a global variable
+                let is_global = self.global_variables.contains(&ident.name) ||
+                                self.global_variables.contains(&bare_mangled);
+
+                // Determine the correct LLVM reference name for the variable
+                let llvm_var_ref_name = if is_global {
+                    format!("@{}", bare_mangled)
+                } else {
+                    format!("%{}", bare_mangled) // Local or parameter
+                };
+                
                 // Get the variable type and record it for the loaded value
                 // Try multiple keys: original name, var_name without %, mangled name, mangled with _Z_ prefix
                 let var_type = self.variable_types.get(&ident.name)
-                    .or_else(|| self.variable_types.get(var_name.trim_start_matches('%')))
-                    .or_else(|| self.variable_types.get(&bare_mangled))
+                    .or_else(|| self.variable_types.get(bare_mangled.as_str()))
                     .or_else(|| {
                         let with_prefix = format!("_Z_{}", bare_mangled.trim_start_matches("_Z_"));
                         self.variable_types.get(&with_prefix)
@@ -2996,21 +3065,19 @@ impl IrBuilder {
 
                 if is_param {
                     // This is a parameter - use it directly without load
-                    // Return the parameter name instead of generating a temp
+                    // Return the parameter name itself
                     if self.verbose {
-                        eprintln!("[DEBUG] Using parameter directly: {}", var_name);
+                        eprintln!("[DEBUG] Using parameter directly: {}", llvm_var_ref_name);
                     }
-                    Ok(var_name)
-                } else {
-                    // This is a regular variable or unknown identifier - load it
-                    // Even if var_type is None, we'll try to load it
-                    // (it might be an error, but let LLVM catch it)
+                    Ok(llvm_var_ref_name)
+                } else { // Local or Global
+                    // Load the value
                     if self.verbose {
-                        eprintln!("[DEBUG] Loading variable: {}", var_name);
+                        eprintln!("[DEBUG] Loading variable from source: {}", llvm_var_ref_name);
                     }
                     self.add_instruction(IrInstruction::加载 {
                         dest: temp.clone(),
-                        source: var_name,
+                        source: llvm_var_ref_name,
                         load_type: var_type,
                     });
                     Ok(temp)
@@ -5427,6 +5494,15 @@ impl IrBuilder {
         // Process all instructions in order
         for instruction in all_instructions {
             match instruction {
+                IrInstruction::全局变量声明 { name, type_name, initializer, is_constant } => {
+                    let linkage = if *is_constant { "constant" } else { "global" };
+                    let align = self.get_type_alignment(type_name);
+                    let init_val = initializer.as_deref().unwrap_or_else(|| zero_for_ty(type_name));
+                    
+                    // For global variables, the name already includes @ prefix
+                    ir.push_str(&format!("{} = {} {} {}, align {}\n", 
+                        name, linkage, type_name, init_val, align));
+                }
                 IrInstruction::分配 { dest, type_name } => {
                     let mangled_type = self.mangle_type_name(type_name);
 

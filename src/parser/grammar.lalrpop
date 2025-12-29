@@ -1,5 +1,4 @@
 use crate::parser::ast::*;
-use crate::parser::unescape_string;
 
 grammar;
 
@@ -1682,7 +1681,7 @@ MatchPatternAtom: MatchPattern = {
     "_" => MatchPattern::通配符,
     <n:r"[0-9]+"> => MatchPattern::字面量(LiteralValue::整数(n.parse().unwrap())),
     <n:r"[0-9]+\.[0-9]+"> => MatchPattern::字面量(LiteralValue::浮点数(n.parse().unwrap())),
-    <s:r#""[^"]*""#> => MatchPattern::字面量(LiteralValue::字符串(s[1..s.len()-1].to_string())),
+    <s:r#""([^"\\]|\\.)*""#> => MatchPattern::字面量(LiteralValue::字符串(unescape_string(&s[1..s.len()-1]))),
     "真" => MatchPattern::字面量(LiteralValue::布尔(true)),
     "假" => MatchPattern::字面量(LiteralValue::布尔(false)),
     <name:Identifier> => MatchPattern::变量绑定(name),
@@ -1882,8 +1881,8 @@ Type: TypeNode = {
 
 // 用于类型名称的标识符，避免与其他Identifier冲突
 TypeName: String = {
-    <id:r"[a-zA-Z_][\u4e00-\u9fffa-zA-Z0-9_]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
+    <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
         // Simplified check - use individual checks to avoid long match patterns
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
@@ -1912,23 +1911,27 @@ BasicTypeKeyword: TypeNode = {
 };
 
 Identifier: String = {
-    <id:r"[a-zA-Z_][\u4e00-\u9fffa-zA-Z0-9_]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
+    <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
         // Check if it's a forbidden keyword using individual checks
         // Note: 自身, 自己, 自我 are allowed as they are used for method receivers
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
-           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
+           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "长度" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
-           id == "方法" || id == "枚举" ||
+           id == "方法" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
-           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
+           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
+           id == "列表" || id == "字典" || id == "集合" || id == "数组" ||
+           id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
+           id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
+           id == "指针" || id == "引用" || id == "可变引用" {
             panic!("Keyword used as identifier: {}", id);
         }
         id.to_string()
@@ -1937,23 +1940,27 @@ Identifier: String = {
 
 // 方法接收者标识符 - 允许使用 "自身"、"自己" 等关键字
 ReceiverIdentifier: String = {
-    <id:r"[a-zA-Z_][\u4e00-\u9fffa-zA-Z0-9_]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][\u4e00-\u9fffa-zA-Z0-9_]*"> => {
+    <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
         // Allow 自身, 自己, 自我 as receiver names
         // Still forbid other keywords
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
-           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" ||
+           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
            id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "长度" || id == "输入" || id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
-           id == "方法" || id == "枚举" ||
+           id == "方法" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
-           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
+           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
+           id == "列表" || id == "字典" || id == "集合" || id == "数组" ||
+           id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
+           id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
+           id == "指针" || id == "引用" || id == "可变引用" {
             panic!("Keyword used as receiver identifier: {}", id);
         }
         id.to_string()

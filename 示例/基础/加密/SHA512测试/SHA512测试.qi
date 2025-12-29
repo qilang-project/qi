@@ -2,6 +2,6 @@
 
 函数 入口() {
     打印行("=== SHA512 测试 ===");
-    变量 结果 = SHA512哈希("Qi Language");
-    打印(结果);
+    变量 Result = SHA512哈希("Qi Language");
+    打印(Result);
 }

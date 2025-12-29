@@ -115,6 +115,7 @@ impl QiCompiler {
     }
 
     /// Compile a project with multiple files and import resolution
+    /// This is the core logic for multi-file compilation
     fn compile_project(&self, entry_file: PathBuf) -> Result<CompilationResult, CompilerError> {
         let mut module_registry = crate::semantic::module::ModuleRegistry::new();
         let mut compiled_modules = std::collections::HashMap::new();
@@ -130,8 +131,8 @@ impl QiCompiler {
         // 1.5. Process public imports (re-exports)
         self.process_public_imports(&mut module_registry, &compiled_modules)?;
 
-    let mut object_files: Vec<PathBuf> = Vec::new();
-    let mut ir_files: Vec<PathBuf> = Vec::new();
+        let mut object_files: Vec<PathBuf> = Vec::new();
+        let mut ir_files: Vec<PathBuf> = Vec::new();
 
         // 2. Compile each module independently
         for (module_path, ast) in &compiled_modules {
@@ -251,6 +252,40 @@ impl QiCompiler {
             warnings,
         })
     }
+
+    /// Generate LLVM IR for a single source file without compiling to executable
+    pub fn generate_ir_for_file(&self, source_file: PathBuf) -> Result<String, CompilerError> {
+        // Resolve relative path to absolute path
+        let source_file = if source_file.is_relative() {
+            std::env::current_dir()
+                .map_err(CompilerError::Io)?
+                .join(&source_file)
+        } else {
+            source_file
+        };
+
+        // Read and parse the file
+        let source_code = std::fs::read_to_string(&source_file)
+            .map_err(CompilerError::Io)?;
+
+        let mut lexer = crate::lexer::Lexer::new(source_code);
+        let tokens = lexer.tokenize()
+            .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
+
+        let parser = crate::parser::Parser::new();
+        let program = parser.parse(tokens)
+            .map_err(|e| CompilerError::Parse(format!("解析错误 {}: {}", source_file.display(), e)))?;
+
+        let ast = crate::parser::ast::AstNode::程序(program.clone());
+
+        // Instantiate codegen
+        let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
+        codegen.set_verbose(self.config.verbose);
+
+        // Generate and return IR content
+        codegen.generate(&ast).map_err(|e| CompilerError::Codegen(e.to_string()))
+    }
+
 
     /// Mangle function name (same logic as codegen::builder)
     fn mangle_function_name(&self, name: &str) -> String {

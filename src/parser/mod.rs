@@ -91,6 +91,7 @@ impl Parser {
                 }
 
                 if in_char {
+                    // Read next UTF-8 char
                     let ch = s[i..].chars().next().unwrap();
                     let len = ch.len_utf8();
                     out.push(ch);
@@ -179,4 +180,29 @@ impl Default for Parser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Helper function to unescape string literals
+pub fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    '\\' => out.push('\\'),
+                    '"' => out.push('"'),
+                    '\'' => out.push('\''),
+                    '0' => out.push('\0'),
+                    _ => out.push(next),
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

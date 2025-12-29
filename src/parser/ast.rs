@@ -740,3 +740,28 @@ pub struct UnionType {
     pub name: String,
     pub variants: Vec<UnionVariant>,
 }
+
+/// Helper function to unescape string literals
+pub fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    '\\' => out.push('\\'),
+                    '"' => out.push('"'),
+                    '\'' => out.push('\''),
+                    '0' => out.push('\0'),
+                    _ => out.push(next),
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
