@@ -118,7 +118,7 @@ fn test_public_struct() {
     let source = r#"
 包 测试包;
 
-公开 结构体 用户 {
+公开 类型 用户 {
     公开 整数 ID;
     字符串 姓名;
 }

@@ -1363,6 +1363,87 @@ impl ModuleRegistry {
             "void",
         ));
 
+        // 渲染功能
+        // 创建渲染器
+        gui_module.add_function(ModuleFunction::new(
+            "创建渲染器",
+            "qi_gui_renderer_create",
+            vec!["整数".to_string()],
+            "整数", // 返回渲染器ID
+        ));
+
+        // 清除画面 (RGB)
+        gui_module.add_function(ModuleFunction::new(
+            "清除画面",
+            "qi_gui_renderer_clear",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制像素
+        gui_module.add_function(ModuleFunction::new(
+            "绘制像素",
+            "qi_gui_renderer_draw_pixel",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制矩形
+        gui_module.add_function(ModuleFunction::new(
+            "绘制矩形",
+            "qi_gui_renderer_draw_rect",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制直线
+        gui_module.add_function(ModuleFunction::new(
+            "绘制直线",
+            "qi_gui_renderer_draw_line",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制圆形
+        gui_module.add_function(ModuleFunction::new(
+            "绘制圆形",
+            "qi_gui_renderer_draw_circle",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制图像
+        gui_module.add_function(ModuleFunction::new(
+            "绘制图像",
+            "qi_gui_renderer_draw_image",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数", // 返回状态
+        ));
+
+        // 绘制文本
+        gui_module.add_function(ModuleFunction::new(
+            "绘制文本",
+            "qi_gui_renderer_draw_text",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 绘制缩放文本
+        gui_module.add_function(ModuleFunction::new(
+            "绘制缩放文本",
+            "qi_gui_renderer_draw_text_scaled",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "void",
+        ));
+
+        // 释放渲染器
+        gui_module.add_function(ModuleFunction::new(
+            "释放渲染器",
+            "qi_gui_renderer_free",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
         // Register module with various names
         self.modules.insert("图形化".to_string(), gui_module.clone());
         self.modules.insert("标准库.图形化".to_string(), gui_module.clone());
@@ -1924,7 +2005,10 @@ impl ModuleRegistry {
         dt_module.add_function(ModuleFunction::new("睡眠微秒", "qi_datetime_sleep_micros", vec!["整数".to_string()], "空"));
 
         self.modules.insert("时间".to_string(), dt_module.clone());
-        self.modules.insert("标准库.时间".to_string(), dt_module);
+        self.modules.insert("标准库.时间".to_string(), dt_module.clone());
+        // 添加日期别名
+        self.modules.insert("日期".to_string(), dt_module.clone());
+        self.modules.insert("标准库.日期".to_string(), dt_module);
     }
 
     /// Get a module by path
@@ -2104,7 +2188,7 @@ impl ModuleRegistry {
         let mut regex_module = Module::new("正则");
 
         regex_module.add_function(ModuleFunction::new(
-            "匹配",
+            "是否匹配",
             "qi_regex_is_match",
             vec!["字符串".to_string(), "字符串".to_string()],
             "i32",
@@ -2125,14 +2209,14 @@ impl ModuleRegistry {
         ));
 
         regex_module.add_function(ModuleFunction::new(
-            "替换全部",
+            "全部替换",
             "qi_regex_replace_all",
             vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
             "ptr",
         ));
 
         regex_module.add_function(ModuleFunction::new(
-            "分割",
+            "切割",
             "qi_regex_split",
             vec!["字符串".to_string(), "字符串".to_string()],
             "ptr",
@@ -2211,28 +2295,28 @@ impl ModuleRegistry {
         let mut random_module = Module::new("随机");
 
         random_module.add_function(ModuleFunction::new(
-            "整数",
+            "生成整数",
             "qi_random_int",
             vec!["整数".to_string(), "整数".to_string()],
             "i64",
         ));
 
         random_module.add_function(ModuleFunction::new(
-            "浮点数",
+            "生成浮点",
             "qi_random_float",
             vec!["浮点数".to_string(), "浮点数".to_string()],
             "double",
         ));
 
         random_module.add_function(ModuleFunction::new(
-            "布尔",
+            "生成布尔",
             "qi_random_bool",
             vec![],
             "i32",
         ));
 
         random_module.add_function(ModuleFunction::new(
-            "字符串",
+            "生成字符串",
             "qi_random_string",
             vec!["整数".to_string()],
             "ptr",

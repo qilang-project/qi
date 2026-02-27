@@ -387,7 +387,8 @@ pub extern "C" fn qi_string_split(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
+    use crate::runtime::async_runtime::future::qi_string_free;
 
     #[test]
     fn test_string_find() {

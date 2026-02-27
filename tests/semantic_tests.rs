@@ -168,6 +168,7 @@ fn test_function_declaration_in_analyzer() {
         body: vec![],
         visibility: Default::default(),
         span: Default::default(),
+        is_inline: false,
     };
 
     let mut analyzer = SemanticAnalyzer::new();

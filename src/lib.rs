@@ -222,6 +222,11 @@ impl QiCompiler {
             // Set verbose mode
             codegen.set_verbose(self.config.verbose);
 
+            // Set whether this is the entry module (only entry file generates @main)
+            let is_entry = module_path.canonicalize().unwrap_or_else(|_| module_path.clone())
+                == entry_file.canonicalize().unwrap_or_else(|_| entry_file.clone());
+            codegen.set_is_entry_module(is_entry);
+
             let ir_content = codegen.generate(&ast)
                 .map_err(|e| CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e)))?;
 
@@ -308,9 +313,11 @@ impl QiCompiler {
     /// Compile LLVM IR to object file
     fn compile_ir_to_object(&self, ir_path: &PathBuf) -> Result<PathBuf, CompilerError> {
         let obj_path = ir_path.with_extension("o");
-        
+
         let output = std::process::Command::new("clang")
             .arg("-c")
+            .arg("-x")
+            .arg("ir")
             .arg(ir_path)
             .arg("-o")
             .arg(&obj_path)
@@ -707,7 +714,7 @@ impl QiCompiler {
             }
 
             // 6. Try default third-party package locations
-            let default_package_paths = vec![
+            let mut default_package_paths = vec![
                 // Current directory packages
                 std::env::current_dir().unwrap().join("qi_packages"),
                 // Home directory packages
@@ -715,6 +722,19 @@ impl QiCompiler {
                 // System-wide packages
                 std::path::Path::new("/usr/local/lib/qi/packages").to_path_buf(),
             ];
+
+            // Also search ancestor directories of the source file for qi_packages
+            // This allows third-party packages in a project root to be found from any subdirectory
+            let mut ancestor = parent_dir.to_path_buf();
+            loop {
+                let candidate = ancestor.join("qi_packages");
+                if candidate.is_dir() {
+                    default_package_paths.push(candidate);
+                }
+                if !ancestor.pop() {
+                    break;
+                }
+            }
 
             for packages_root in default_package_paths {
                 let package_path = packages_root.join(&module_path[0]).join(format!("{}.qi", module_path[0]));

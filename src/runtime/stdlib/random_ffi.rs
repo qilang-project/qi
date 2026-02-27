@@ -80,6 +80,7 @@ pub extern "C" fn qi_random_free_string(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn test_random_int() {

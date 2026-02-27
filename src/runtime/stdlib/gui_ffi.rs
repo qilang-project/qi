@@ -42,6 +42,18 @@ extern "C" {
     fn qi_gui_audio_is_playing_impl(audio_id: u64) -> i32;
     fn qi_gui_audio_is_finished_impl(audio_id: u64) -> i32;
     fn qi_gui_audio_free_impl(audio_id: u64);
+
+    // Renderer functions
+    fn qi_gui_renderer_create_impl(window_id: u64) -> u64;
+    fn qi_gui_renderer_clear_impl(renderer_id: u64, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_pixel_impl(renderer_id: u64, x: u32, y: u32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_rect_impl(renderer_id: u64, x: u32, y: u32, width: u32, height: u32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_line_impl(renderer_id: u64, x0: i32, y0: i32, x1: i32, y1: i32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_circle_impl(renderer_id: u64, cx: i32, cy: i32, radius: u32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_image_impl(renderer_id: u64, file_path: *const c_char, x: u32, y: u32) -> i32;
+    fn qi_gui_renderer_draw_text_impl(renderer_id: u64, text: *const c_char, x: i32, y: i32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_text_scaled_impl(renderer_id: u64, text: *const c_char, x: i32, y: i32, scale: u32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_free_impl(renderer_id: u64);
 }
 
 #[no_mangle]
@@ -515,6 +527,190 @@ pub extern "C" fn qi_gui_audio_free(audio_id: i64) {
     #[cfg(not(has_gui))]
     {
         let _ = audio_id;
+    }
+}
+
+// Renderer wrapper functions
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_create(window_id: i64) -> i64 {
+    #[cfg(has_gui)]
+    {
+        if window_id <= 0 {
+            return 0;
+        }
+        unsafe {
+            qi_gui_renderer_create_impl(window_id as u64) as i64
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = window_id;
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_clear(renderer_id: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_clear_impl(renderer_id as u64, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_pixel(renderer_id: i64, x: i64, y: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_pixel_impl(renderer_id as u64, x as u32, y as u32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, x, y, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_rect(renderer_id: i64, x: i64, y: i64, width: i64, height: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_rect_impl(renderer_id as u64, x as u32, y as u32, width as u32, height as u32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, x, y, width, height, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_line(renderer_id: i64, x0: i64, y0: i64, x1: i64, y1: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_line_impl(renderer_id as u64, x0 as i32, y0 as i32, x1 as i32, y1 as i32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, x0, y0, x1, y1, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_circle(renderer_id: i64, cx: i64, cy: i64, radius: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_circle_impl(renderer_id as u64, cx as i32, cy as i32, radius as u32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, cx, cy, radius, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_image(renderer_id: i64, file_path: *const c_char, x: i64, y: i64) -> i64 {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 || file_path.is_null() {
+            return -1;
+        }
+        unsafe {
+            qi_gui_renderer_draw_image_impl(renderer_id as u64, file_path, x as u32, y as u32) as i64
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, file_path, x, y);
+        -1
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_text(renderer_id: i64, text: *const c_char, x: i64, y: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 || text.is_null() {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_text_impl(renderer_id as u64, text, x as i32, y as i32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, text, x, y, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_draw_text_scaled(renderer_id: i64, text: *const c_char, x: i64, y: i64, scale: i64, r: i64, g: i64, b: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 || text.is_null() {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_draw_text_scaled_impl(renderer_id as u64, text, x as i32, y as i32, scale as u32, r as u8, g as u8, b as u8);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (renderer_id, text, x, y, scale, r, g, b);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_free(renderer_id: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_free_impl(renderer_id as u64);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = renderer_id;
     }
 }
 

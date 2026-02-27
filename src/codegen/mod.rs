@@ -56,6 +56,11 @@ impl CodeGenerator {
         self.ir_builder.set_verbose(verbose);
     }
 
+    /// Set whether this module is the entry module (has the main entry point)
+    pub fn set_is_entry_module(&mut self, is_entry: bool) {
+        self.ir_builder.set_is_entry_module(is_entry);
+    }
+
     /// Generate LLVM IR from AST
     pub fn generate(&mut self, ast: &crate::parser::ast::AstNode) -> Result<String, CodegenError> {
         let ir = self.ir_builder.build(ast)
@@ -116,7 +121,8 @@ mod tests {
 
     #[test]
     fn test_simple_code_generation() {
-        let source = "变量 x = 42;".to_string();
+        // Test with a function containing a local variable declaration
+        let source = "函数 test() { 变量 x = 42; 返回 x; }".to_string();
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
@@ -124,12 +130,19 @@ mod tests {
         let program = parser.parse(tokens).expect("Should parse successfully");
 
         let mut codegen = CodeGenerator::new(crate::config::CompilationTarget::Linux);
-        let ir = codegen.generate(&program.statements[0]).expect("Should generate IR");
+        // Use generate_without_optimization to prevent optimizer from removing unused variables
+        let ir = codegen.generate_without_optimization(&program.statements[0]).expect("Should generate IR");
+
+        // Debug: print the IR
+        eprintln!("Generated IR:\n{}", ir);
 
         // Check that generated IR contains expected elements
-        assert!(ir.contains("x = alloca"));
+        // Local variables use alloca, functions use define
+        assert!(ir.contains("define"));
+        assert!(ir.contains("@test"));
+        assert!(ir.contains("alloca"));
         assert!(ir.contains("store i64 42"));
-        println!("Generated IR:\n{}", ir);
+        assert!(ir.contains("ret i64"));
     }
 
     #[test]

@@ -340,6 +340,8 @@ pub extern "C" fn qi_future_free(future: *mut Future) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
+    use std::os::raw::c_char;
 
     #[test]
     fn test_future_ready_i64() {

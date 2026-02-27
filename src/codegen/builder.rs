@@ -300,6 +300,8 @@ pub struct IrBuilder {
     current_function_ast_return_type: Option<crate::parser::ast::TypeNode>,
     /// Verbose debug output
     verbose: bool,
+    /// Whether this module is the entry module (contains the main entry point)
+    is_entry_module: bool,
 }
 
 impl IrBuilder {
@@ -337,12 +339,17 @@ impl IrBuilder {
             current_function_name: None,
             current_function_ast_return_type: None,
             verbose: false,
+            is_entry_module: true,
         }.register_runtime_functions()
     }
 
     /// Set verbose mode
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    pub fn set_is_entry_module(&mut self, is_entry: bool) {
+        self.is_entry_module = is_entry;
     }
 
     /// Register runtime function signatures
@@ -429,7 +436,7 @@ impl IrBuilder {
             AstNode::函数声明(func_decl) => {
                 // Mangle function name
                 let func_name: String = match func_decl.name.as_str() {
-                    "入口" => "main".to_string(),
+                    "入口" => if self.is_entry_module { "main".to_string() } else { self.mangle_function_name("入口") },
                     name => {
                         if name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(name)
@@ -446,7 +453,7 @@ impl IrBuilder {
                     .collect();
 
                 // Determine return type
-                let return_type = if func_decl.name == "入口" || func_name == "main" {
+                let return_type = if (func_decl.name == "入口" || func_name == "main") && self.is_entry_module {
                     "i32".to_string()
                 } else if let Some(_) = func_decl.return_type {
                     self.get_return_type(&func_decl.return_type)
@@ -1292,9 +1299,18 @@ impl IrBuilder {
 
                         // Determine the actual type of the value being stored
                         let value_var_name = value.trim_start_matches('%');
-                        let actual_value_type = self.variable_types.get(value_var_name)
+                        let inferred_value_type = self.variable_types.get(value_var_name)
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| type_name.to_string());
+                        // If the variable has a type annotation (type_name != ""), and the annotation
+                        // says "ptr" but the inferred type says something else (e.g. "i64"), prefer
+                        // the annotation type. This handles cases where stdlib functions are
+                        // incorrectly inferred as returning i64 instead of ptr (string).
+                        let actual_value_type = if type_name == "ptr" && inferred_value_type != "ptr" && inferred_value_type != "double" {
+                            "ptr".to_string()
+                        } else {
+                            inferred_value_type
+                        };
 
                         self.add_instruction(IrInstruction::存储 {
                             target: var_name.clone(),
@@ -1309,7 +1325,7 @@ impl IrBuilder {
             AstNode::函数声明(func_decl) => {
                 // Handle special cases and apply name mangling for Chinese function names
                 let func_name: String = match func_decl.name.as_str() {
-                    "入口" => "main".to_string(), // Special case for main function
+                    "入口" => if self.is_entry_module { "main".to_string() } else { self.mangle_function_name("入口") }, // Special case for main function
                     name => {
                         if name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(name)
@@ -1319,7 +1335,7 @@ impl IrBuilder {
                     }
                 };
 
-                let is_main = func_decl.name == "入口" || func_name == "main";
+                let is_main = (func_decl.name == "入口" || func_name == "main") && self.is_entry_module;
 
                 // Clear variable types for this new function scope
                 // (but keep function_param_types, function_return_types, etc.)
@@ -2538,9 +2554,16 @@ impl IrBuilder {
                         AstNode::标识符表达式(ident) => {
                             // Check if this identifier is a known array
                             self.array_sizes.contains_key(&ident.name) || {
-                                // Check if it's an array parameter
+                                // Check if it's an array parameter (try both original and mangled names)
                                 let length_param_name = format!("{}_length", ident.name);
-                                self.variable_types.contains_key(&length_param_name)
+                                let mangled_name = if ident.name.chars().any(|c| !c.is_ascii()) {
+                                    self.mangle_function_name(&ident.name)
+                                } else {
+                                    ident.name.clone()
+                                };
+                                let mangled_length_param_name = format!("{}_length", mangled_name);
+                                self.variable_types.contains_key(&length_param_name) ||
+                                self.variable_types.contains_key(&mangled_length_param_name)
                             }
                         }
                         AstNode::数组字面量表达式(_) => true,
@@ -2816,11 +2839,20 @@ impl IrBuilder {
                             } else if mapped_callee == "qi_runtime_set_timeout" || mapped_callee == "qi_runtime_timer_expired" ||
                                       mapped_callee == "qi_runtime_timer_stop" {
                                 "i64"  // Timer status functions return i64
+                            } else if mapped_callee == "qi_runtime_waitgroup_create" ||
+                                      mapped_callee == "qi_runtime_mutex_create" ||
+                                      mapped_callee == "qi_runtime_rwlock_create" ||
+                                      mapped_callee == "qi_runtime_condvar_create" ||
+                                      mapped_callee == "qi_runtime_once_create" ||
+                                      mapped_callee == "qi_runtime_timer_create" {
+                                "ptr"  // Synchronization primitive create functions return pointers
                             } else {
                                 "i32"  // Most runtime functions return i32 status codes
                             }
                         } else if mapped_callee == "qi_runtime_string_concat" {
                             "ptr"
+                        } else if mapped_callee.starts_with("qi_crypto_") && mapped_callee != "qi_crypto_free_string" {
+                            "ptr"  // All crypto functions return string (ptr)
                         } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
                             ret_type
                         } else {
@@ -3636,8 +3668,13 @@ impl IrBuilder {
                     self.variable_types.insert(format!("param_{}", mangled_param_name), param_type.clone());
                 }
 
+                // Set current function name so local variable declarations inside
+                // the method body are treated as local (not global) variables
+                self.current_function_name = Some(func_name.clone());
+                self.current_function_ast_return_type = method_decl.return_type.clone();
+
                 // Process method body
-                for (i, stmt) in method_decl.body.iter().enumerate() {
+                for (_i, stmt) in method_decl.body.iter().enumerate() {
                     self.build_node(stmt)?;
                 }
 
@@ -3662,6 +3699,10 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 {
                     name: "}".to_string(),
                 });
+
+                // Clear current function context
+                self.current_function_name = None;
+                self.current_function_ast_return_type = None;
 
                 Ok(format!("method_{}", func_name))
             }
@@ -4889,6 +4930,44 @@ impl IrBuilder {
         ir.push_str("declare void @qi_io_free_string(ptr)\n");
         ir.push_str("\n");
 
+        // JSON functions
+        ir.push_str("; JSON functions\n");
+        ir.push_str("declare ptr @qi_json_encode(i64)\n");
+        ir.push_str("declare i64 @qi_json_decode(ptr)\n");
+        ir.push_str("declare i64 @qi_json_create_object()\n");
+        ir.push_str("declare i64 @qi_json_create_array()\n");
+        ir.push_str("declare i64 @qi_json_set_string(i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_json_set_int(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_json_set_float(i64, ptr, double)\n");
+        ir.push_str("declare i64 @qi_json_set_bool(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_json_set_object(i64, ptr, i64)\n");
+        ir.push_str("declare i64 @qi_json_set_array(i64, ptr, i64)\n");
+        ir.push_str("declare ptr @qi_json_get_string(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_get_int(i64, ptr)\n");
+        ir.push_str("declare double @qi_json_get_float(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_get_bool(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_get_object(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_get_array(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_array_push_string(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_array_push_int(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_push_float(i64, double)\n");
+        ir.push_str("declare i64 @qi_json_array_push_bool(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_push_object(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_push_array(i64, i64)\n");
+        ir.push_str("declare ptr @qi_json_array_get_string(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_get_int(i64, i64)\n");
+        ir.push_str("declare double @qi_json_array_get_float(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_get_bool(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_get_object(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_get_array(i64, i64)\n");
+        ir.push_str("declare i64 @qi_json_array_length(i64)\n");
+        ir.push_str("declare i64 @qi_json_has_key(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_json_free(i64)\n");
+        ir.push_str("declare ptr @qi_json_to_string(i64)\n");
+        ir.push_str("declare ptr @qi_json_to_string_pretty(i64)\n");
+        ir.push_str("declare void @qi_json_free_string(ptr)\n");
+        ir.push_str("\n");
+
         // Network functions
         ir.push_str("; Network functions\n");
         // TCP Client functions
@@ -5183,6 +5262,20 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_gui_audio_is_playing(i64)\n");
         ir.push_str("declare i64 @qi_gui_audio_is_finished(i64)\n");
         ir.push_str("declare void @qi_gui_audio_free(i64)\n");
+        ir.push_str("\n");
+
+        // GUI Renderer functions
+        ir.push_str("; GUI Renderer functions\n");
+        ir.push_str("declare i64 @qi_gui_renderer_create(i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_clear(i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_pixel(i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_rect(i64, i64, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_line(i64, i64, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_circle(i64, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_gui_renderer_draw_image(i64, ptr, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_text(i64, ptr, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_draw_text_scaled(i64, ptr, i64, i64, i64, i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_free(i64)\n");
         ir.push_str("\n");
 
         // Data structure functions (List, HashMap, DateTime)
@@ -6069,10 +6162,23 @@ impl IrBuilder {
                             } else if callee == "qi_runtime_set_timeout" || callee == "qi_runtime_timer_expired" ||
                                       callee == "qi_runtime_timer_stop" || callee == "qi_runtime_get_time_ms" {
                                 "i64"
+                            // Synchronization create functions return ptr
+                            } else if callee == "qi_runtime_waitgroup_create" ||
+                                      callee == "qi_runtime_mutex_create" ||
+                                      callee == "qi_runtime_rwlock_create" ||
+                                      callee == "qi_runtime_condvar_create" ||
+                                      callee == "qi_runtime_once_create" ||
+                                      callee == "qi_runtime_timer_create" {
+                                "ptr"
                             // All other synchronization functions return i32 (status)
-                            } else if callee.contains("waitgroup") || callee.contains("mutex") || callee.contains("timer") ||
+                            } else if callee.contains("waitgroup") || callee.contains("mutex") ||
                                       callee.contains("rwlock") || callee.contains("condvar") || callee.contains("once") ||
-                                      callee.contains("channel") || callee == "qi_runtime_check_timeout" {
+                                      callee == "qi_runtime_check_timeout" {
+                                "i32"
+                            // Channel functions - create returns ptr, others return i32 or i64
+                            } else if callee == "qi_runtime_create_channel" {
+                                "ptr"
+                            } else if callee.contains("channel") {
                                 "i32"
                             // Integer math functions return i64
                             } else if callee.contains("math_abs_int") || callee.contains("float_to_int") ||
@@ -6095,6 +6201,24 @@ impl IrBuilder {
                                 "qi_io_create_dir" | "qi_io_delete_dir" => "i64",  // These return i64
                                 "qi_io_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown IO functions
+                            }
+                        // JSON functions - check return type based on function name
+                        } else if callee.starts_with("qi_json_") {
+                            match callee.as_str() {
+                                "qi_json_encode" | "qi_json_get_string" | "qi_json_array_get_string" |
+                                "qi_json_to_string" | "qi_json_to_string_pretty" => "ptr",  // Return strings
+                                "qi_json_decode" | "qi_json_create_object" | "qi_json_create_array" |
+                                "qi_json_get_object" | "qi_json_get_array" |
+                                "qi_json_array_get_object" | "qi_json_array_get_array" |
+                                "qi_json_array_length" | "qi_json_has_key" | "qi_json_free" => "i64",  // Return handles/counts
+                                "qi_json_get_float" | "qi_json_array_get_float" => "double",  // Return floats
+                                "qi_json_set_string" | "qi_json_set_int" | "qi_json_set_float" |
+                                "qi_json_set_bool" | "qi_json_set_object" | "qi_json_set_array" |
+                                "qi_json_array_push_string" | "qi_json_array_push_int" | "qi_json_array_push_float" |
+                                "qi_json_array_push_bool" | "qi_json_array_push_object" | "qi_json_array_push_array" |
+                                "qi_json_array_get_bool" | "qi_json_get_bool" => "i64",  // Return 0/1 as i64
+                                "qi_json_free_string" => "void",  // Cleanup function
+                                _ => "i64"  // Default for unknown JSON functions
                             }
                         // Network functions - check return type based on function name
                         } else if callee.starts_with("qi_network_") {
@@ -6185,8 +6309,7 @@ impl IrBuilder {
                         } else if callee.starts_with("qi_hashmap_") {
                             match callee.as_str() {
                                 "qi_hashmap_string_get" => "ptr",  // Return string
-                                "qi_hashmap_free" => "void",  // Cleanup function
-                                _ => "i64"  // Most hashmap functions return i64
+                                _ => "i64"  // Most hashmap functions return i64 (including qi_hashmap_free)
                             }
                         // Check hex-encoded Chinese function names
                         } else if callee == "e6_b1_82_e5_b9_b3_e6_96_b9_e6_a0_b9" { // 求平方根
@@ -6203,6 +6326,18 @@ impl IrBuilder {
                                 ret_type  // Use stored return type from function signature
                             } else if let Some((_param_types, ret_type)) = self.external_functions.get(callee) {
                                 ret_type.as_str()  // Use return type from external function signature
+                            // If we already know the type from the build_node phase (e.g. module registry lookups),
+                            // trust that rather than defaulting to i64
+                            } else if let Some(dest_var) = dest.as_deref() {
+                                let var_name = dest_var.trim_start_matches('%');
+                                match self.variable_types.get(var_name).map(|s| s.as_str()) {
+                                    Some("ptr") => "ptr",
+                                    Some("double") => "double",
+                                    Some("i1") => "i1",
+                                    Some("i32") => "i32",
+                                    Some("i64") | None => "i64",
+                                    Some(other) => other,
+                                }
                             } else {
                                 "i64" // Default to i64
                             }
