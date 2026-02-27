@@ -1,6 +1,6 @@
 包 主程序;
 
-导入 标准库.http;
+导入 标准库.HTTP;
 
 函数 入口() {
     打印行("=== HTTP 模块测试 ===");
@@ -8,7 +8,7 @@
     // 1. 测试 GET 请求（获取）
     打印行("");
     打印行("1. GET 请求：");
-    变量 响应1: 字符串 = http.获取("https://example.com");
+    变量 响应1: 字符串 = HTTP.获取("https://example.com");
     打印("GET 响应: ");
     打印行(响应1);
 
@@ -16,27 +16,27 @@
     打印行("");
     打印行("2. POST 请求：");
     变量 请求体: 字符串 = "name=Qi语言&version=1.0";
-    变量 响应2: 字符串 = http.发送("https://api.example.com/data", 请求体);
+    变量 响应2: 字符串 = HTTP.发送("https://api.example.com/data", 请求体);
     打印("POST 响应: ");
     打印行(响应2);
 
     // 3. 测试获取状态码
     打印行("");
     打印行("3. 获取 HTTP 状态码：");
-    变量 状态码: 整数 = http.获取状态码("https://example.com");
+    变量 状态码: 整数 = HTTP.获取状态码("https://example.com");
     打印("状态码: ");
     打印行(状态码);
 
     // 4. 测试高级请求构建器
     打印行("");
     打印行("4. 使用请求构建器：");
-    变量 请求句柄: 整数 = http.创建请求("POST", "https://api.example.com/users");
-    http.设置请求头(请求句柄, "Content-Type", "application/json");
-    http.设置请求头(请求句柄, "Authorization", "Bearer token123");
-    http.设置请求体(请求句柄, "user=test");
-    http.设置超时(请求句柄, 5000);
+    变量 请求句柄: 整数 = HTTP.创建请求("POST", "https://api.example.com/users");
+    HTTP.设置请求头(请求句柄, "Content-Type", "application/json");
+    HTTP.设置请求头(请求句柄, "Authorization", "Bearer token123");
+    HTTP.设置请求体(请求句柄, "user=test");
+    HTTP.设置超时(请求句柄, 5000);
 
-    变量 响应3: 字符串 = http.执行请求(请求句柄);
+    变量 响应3: 字符串 = HTTP.执行请求(请求句柄);
     打印("构建器响应: ");
     打印行(响应3);
 
