@@ -227,6 +227,12 @@ impl Lexer {
             // Character literals
             '\'' => self.scan_char_literal(start_pos, start_line, start_column).map(Some),
 
+            // Format string literals (f"...")
+            'f' if self.peek_char() == Some('"') => {
+                self.advance(); // Skip 'f'
+                self.scan_format_string_literal(start_pos, start_line, start_column).map(Some)
+            }
+
             // String literals
             '"' => self.scan_string_literal(start_pos, start_line, start_column).map(Some),
 
@@ -322,6 +328,60 @@ impl Lexer {
 
         Ok(Token {
             kind: TokenKind::字符串字面量,
+            text: self.source[start_pos..end_pos].to_string(),
+            span: tokens::Span::new(start_pos, end_pos),
+            line: start_line,
+            column: start_column,
+        })
+    }
+
+    /// Scan a format string literal (f"..." with interpolation)
+    fn scan_format_string_literal(&mut self, start_pos: usize, start_line: usize, start_column: usize) -> Result<Token, LexicalError> {
+        // start_pos is at 'f', we need to skip 'f' and '"'
+        self.advance(); // Skip opening quote (f was already skipped in next_token)
+
+        while !self.is_at_end() && self.current_char() != Some('"') {
+            if self.current_char() == Some('\\') {
+                self.advance(); // Skip escape character
+            } else if self.current_char() == Some('{') {
+                // Skip over interpolation expression - we just need to find balanced braces
+                self.advance(); // Skip '{'
+                let mut brace_depth = 1;
+                while !self.is_at_end() && brace_depth > 0 {
+                    match self.current_char() {
+                        Some('{') => {
+                            brace_depth += 1;
+                        }
+                        Some('}') => {
+                            brace_depth -= 1;
+                        }
+                        Some('\\') => {
+                            self.advance(); // Skip escape in string
+                        }
+                        Some('"') => {
+                            // Unescaped quote inside interpolation - error
+                            break;
+                        }
+                        _ => {}
+                    }
+                    if brace_depth > 0 {
+                        self.advance();
+                    }
+                }
+            }
+            self.advance();
+        }
+
+        if self.is_at_end() {
+            self.report_unterminated_string_error(start_pos, start_line, start_column, "格式字符串缺少右引号 \"，请在字符串末尾添加右引号");
+            return Err(LexicalError::UnterminatedString(start_line, start_column));
+        }
+
+        self.advance(); // Skip closing quote
+        let end_pos = self.position;
+
+        Ok(Token {
+            kind: TokenKind::格式字符串字面量,
             text: self.source[start_pos..end_pos].to_string(),
             span: tokens::Span::new(start_pos, end_pos),
             line: start_line,

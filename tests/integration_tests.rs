@@ -139,6 +139,44 @@ fn test_basic_compilation_pipeline() {
 }
 
 #[test]
+fn test_future_struct_compilation_pipeline() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let source_file = temp_dir.path().join("future_struct.qi");
+
+    let source_code = r#"
+类型 点 {
+    整数 x;
+    整数 y;
+}
+
+函数 创建点(x值: 整数, y值: 整数) : 未来<点> {
+    变量 新点: 点 = (点 { x: x值, y: y值 });
+    返回 新点;
+}
+
+函数 入口() {
+    变量 点未来: 未来<点> = 创建点(3, 4);
+    变量 点1: 点 = 等待 点未来;
+    打印行(点1.x);
+    打印行(点1.y);
+}
+    "#;
+    fs::write(&source_file, source_code).expect("Failed to write source file");
+
+    let compiler = qi_compiler::QiCompiler::new();
+    let result = compiler.generate_ir_for_file(source_file.clone());
+
+    assert!(result.is_ok(), "Future<结构体> IR generation should succeed: {:?}", result.err());
+
+    let ir = result.unwrap();
+    assert!(ir.contains("call ptr @qi_runtime_alloc(i64"));
+    assert!(ir.contains("call i64 @qi_runtime_gc_add_root(ptr"));
+}
+
+#[test]
 fn test_control_flow_chinese_keywords() {
     let source = "如果 否则 当 对于 与 或".to_string();
     let mut lexer = Lexer::new(source);
@@ -862,6 +900,44 @@ fn test_compilation_error_chinese_display() {
 
     // Clean up
     let _ = std::fs::remove_file("test_temp.qi");
+}
+
+#[test]
+fn test_default_and_variadic_parameter_compilation() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let source_file = temp_dir.path().join("default_variadic.qi");
+
+    let source = r#"
+函数 问候(名字: 字符串 = "朋友") : 字符串 {
+    返回 "你好，" + 名字;
+}
+
+函数 求和(数字们...: 整数) : 整数 {
+    变量 总和: 整数 = 0;
+    对于 数字 在 数字们 {
+        总和 = 总和 + 数字;
+    }
+    返回 总和;
+}
+
+函数 入口() {
+    打印行(问候());
+    打印行(问候("李四"));
+    打印行(求和(1, 2, 3));
+}
+"#;
+
+    fs::write(&source_file, source).expect("Failed to write source file");
+
+    let compiler = qi_compiler::QiCompiler::new();
+    let result = compiler.compile(source_file);
+
+    assert!(result.is_ok(), "default/variadic program should compile: {:?}", result.err());
+    let compilation_result = result.unwrap();
+    assert!(compilation_result.executable_path.exists());
 }
 
 #[test]

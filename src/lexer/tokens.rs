@@ -30,6 +30,7 @@ pub enum TokenKind {
     字符串,    // string
     布尔,      // boolean
     类型,    // type
+    结构体,    // struct
     枚举,      // enum
     数组,      // array
     方法,      // method
@@ -132,6 +133,7 @@ pub enum TokenKind {
     // Identifiers and literals
     标识符,              // Variable/function names (stored in text field)
     字符串字面量,        // String literals (stored in text field)
+    格式字符串字面量,    // Format string literals f"..." with interpolation
     整数字面量(i64),     // Integer literals
     浮点数字面量,   // Float literals (stored in text field)
     布尔字面量(bool),    // Boolean literals

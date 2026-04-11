@@ -6,7 +6,7 @@
 //!
 //! # Features
 //!
-//! - **Memory Management**: Hybrid ownership + reference counting system
+//! - **Memory Management**: Stack/heap hybrid allocation with tracing GC support
 //! - **I/O Operations**: Synchronous file and network operations with Chinese keyword support
 //! - **Standard Library**: Built-in functions for strings, math, and system operations
 //! - **Error Handling**: Comprehensive Chinese error message system

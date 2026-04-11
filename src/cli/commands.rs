@@ -295,26 +295,15 @@ impl Cli {
                 eprintln!("警告: {}", warning);
             }
 
-            // For compile command, we need to create executable binary
-            let final_executable = match config.target_platform {
-                crate::config::CompilationTarget::MacOS => {
-                    // For macOS: compile LLVM IR to executable
-                    self.create_macos_executable(&result.executable_path, &config).await?
-                }
-                crate::config::CompilationTarget::Linux => {
-                    // For Linux: the result should already be executable
-                    result.executable_path
-                }
-                crate::config::CompilationTarget::Windows => {
-                    // For Windows: the result should already be executable
-                    result.executable_path
-                }
-                crate::config::CompilationTarget::Wasm => {
-                    return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                        "WebAssembly 编译为可执行文件暂未实现".to_string()
-                    )));
-                }
-            };
+            if matches!(config.target_platform, crate::config::CompilationTarget::Wasm) {
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    "WebAssembly 编译为可执行文件暂未实现".to_string()
+                )));
+            }
+
+            // QiCompiler::compile already emits and links the executable.
+            // Do not feed the executable back into clang as LLVM IR.
+            let final_executable = result.executable_path;
 
             
             // Move or rename output file if custom output is specified

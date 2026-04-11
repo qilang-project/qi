@@ -42,6 +42,15 @@
 1. **内存压力**: 使用率超过阈值(默认gc_threshold)
 2. **大分配**: 单次分配>1MB时检查GC
 
+### 当前实现
+
+- 运行时已使用**标记-清扫**作为主 GC 框架
+- GC 基于**显式根集合**和**对象引用图**
+- 新分配对象默认先放入根集合，避免误回收
+- 当对象进入其他对象图后，编译器会生成 `qi_runtime_gc_add_reference` 维护引用边
+- 作用域退出时，堆对象当前会先通过 `qi_runtime_gc_remove_root` 脱离根集合，再由 GC 统一回收
+- 也就是说，当前阶段已经不是“直接 dealloc 为主”，而是“退根 + tracing GC 回收”为主
+
 ### GC流程
 ```llvm
 %should_gc = call i64 @qi_runtime_gc_should_collect()
@@ -54,6 +63,7 @@ do_gc:
 
 skip_gc:
     %ptr = call ptr @qi_runtime_alloc(i64 %size)
+    %root = call i64 @qi_runtime_gc_add_root(ptr %ptr)
 ```
 
 ## 运行示例
@@ -91,5 +101,5 @@ grep "qi_runtime_gc_collect" output.ll
 
 1. **向后兼容**: 现有代码继续正常工作
 2. **性能优化**: 智能选择栈/堆,平衡性能和灵活性
-3. **自动管理**: 作用域退出时自动清理堆分配
+3. **自动管理**: 作用域退出后对象先退根, 实际内存由 GC 回收
 4. **GC透明**: 用户无需手动管理内存

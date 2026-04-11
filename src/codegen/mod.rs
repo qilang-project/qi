@@ -56,6 +56,11 @@ impl CodeGenerator {
         self.ir_builder.set_verbose(verbose);
     }
 
+    /// Set external function return struct types for cross-module struct returns
+    pub fn set_external_function_return_struct_types(&mut self, map: std::collections::HashMap<String, String>) {
+        self.ir_builder.set_external_function_return_struct_types(map);
+    }
+
     /// Set whether this module is the entry module (has the main entry point)
     pub fn set_is_entry_module(&mut self, is_entry: bool) {
         self.ir_builder.set_is_entry_module(is_entry);

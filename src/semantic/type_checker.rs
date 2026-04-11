@@ -112,6 +112,8 @@ impl TypeChecker {
             AstNode::异步块表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
             AstNode::闭包表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
             AstNode::匹配表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            // Format string expression returns a string type
+            AstNode::格式字符串表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::字符串)),
         }
     }
 

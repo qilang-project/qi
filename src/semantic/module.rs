@@ -76,6 +76,10 @@ impl ModuleRegistry {
 
         // Track by module name for lookup
         self.modules_by_name.insert(module.name.clone(), path_key.clone());
+        if let Some(package_name) = &module.package_name {
+            let qualified_name = format!("{}.{}", package_name, module.name);
+            self.modules_by_name.insert(qualified_name, path_key.clone());
+        }
 
         // Track by package name for lookup
         if let Some(package_name) = &module.package_name {
@@ -231,6 +235,9 @@ impl ModuleRegistry {
                     BasicType::可变引用 => "ptr".to_string(),
                 }
             }
+            Some(crate::parser::ast::TypeNode::结构体类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::自定义类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::指针类型(_)) => "ptr".to_string(),
             _ => "i64".to_string(), // Default to i64
         }
     }

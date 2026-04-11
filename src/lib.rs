@@ -147,6 +147,8 @@ impl QiCompiler {
             let mut external_functions = std::collections::HashMap::new();
             // Collect import aliases for namespace resolution
             let mut import_aliases = std::collections::HashMap::new();
+            // Track which external functions return struct pointers
+            let mut external_fn_return_struct_types = std::collections::HashMap::new();
 
             if let Some(module) = current_module {
                 // Get current module's package name
@@ -200,6 +202,15 @@ impl QiCompiler {
                                             .map(|(_, ty)| ty.clone())
                                             .collect();
 
+                                        // Track struct return types for ptr-returning functions
+                                        // by looking at the original return type annotation in the module AST
+                                        if sig.return_type == "ptr" {
+                                            // Try to find the actual struct type name from the module's AST
+                                            if let Some(struct_name) = get_function_return_struct_name(&imported_module, func_name) {
+                                                external_fn_return_struct_types.insert(mangled_name.clone(), struct_name);
+                                            }
+                                        }
+
                                         // Only register the original function name
                                         external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
                                     }
@@ -215,6 +226,9 @@ impl QiCompiler {
 
             // Set external functions for this module
             codegen.set_external_functions(external_functions);
+
+            // Set external function return struct types
+            codegen.set_external_function_return_struct_types(external_fn_return_struct_types);
 
             // Set import aliases for namespace resolution
             codegen.set_import_aliases(import_aliases);
@@ -676,6 +690,13 @@ impl QiCompiler {
             }
         }
 
+        // 1.5. Try package-internal submodule paths such as Web.控制器 -> <package_root>/控制器.qi
+        if module_path.len() > 1 {
+            if let Some(package_path) = self.resolve_package_internal_module_path(current_file, module_path) {
+                return Ok(package_path);
+            }
+        }
+
         // 2. Try relative path import (current directory first) - for non-explicit paths
         let mut import_path = parent_dir.to_path_buf();
         for component in module_path {
@@ -707,8 +728,7 @@ impl QiCompiler {
         if !module_path.is_empty() {
             if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
                 let packages_root = std::path::Path::new(&package_root);
-                let package_path = packages_root.join(&module_path[0]).join(format!("{}.qi", module_path[0]));
-                if package_path.exists() {
+                if let Some(package_path) = self.resolve_package_path_from_root(packages_root, module_path) {
                     return Ok(package_path);
                 }
             }
@@ -737,8 +757,7 @@ impl QiCompiler {
             }
 
             for packages_root in default_package_paths {
-                let package_path = packages_root.join(&module_path[0]).join(format!("{}.qi", module_path[0]));
-                if package_path.exists() {
+                if let Some(package_path) = self.resolve_package_path_from_root(&packages_root, module_path) {
                     return Ok(package_path);
                 }
             }
@@ -748,6 +767,90 @@ impl QiCompiler {
             std::io::ErrorKind::NotFound,
             format!("无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)", module_path.join("/"))
         )))
+    }
+
+    fn resolve_package_internal_module_path(
+        &self,
+        current_file: &PathBuf,
+        module_path: &[String],
+    ) -> Option<PathBuf> {
+        let package_name = module_path.first()?;
+        let mut ancestor = current_file.parent()?.to_path_buf();
+
+        loop {
+            let entry_file = ancestor.join(format!("{}.qi", package_name));
+            let matches_package_root = ancestor
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == package_name)
+                .unwrap_or(false);
+
+            if matches_package_root && entry_file.exists() {
+                let package_dir = ancestor;
+                let submodule_path = self.resolve_submodule_path_in_package(&package_dir, &module_path[1..]);
+                if let Some(path) = submodule_path {
+                    return Some(path);
+                }
+                break;
+            }
+
+            if !ancestor.pop() {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn resolve_package_path_from_root(
+        &self,
+        packages_root: &std::path::Path,
+        module_path: &[String],
+    ) -> Option<PathBuf> {
+        let package_name = module_path.first()?;
+        let package_dir = packages_root.join(package_name);
+        if !package_dir.is_dir() {
+            return None;
+        }
+
+        if module_path.len() == 1 {
+            let package_entry = package_dir.join(format!("{}.qi", package_name));
+            if package_entry.exists() {
+                return Some(package_entry);
+            }
+            return None;
+        }
+
+        self.resolve_submodule_path_in_package(&package_dir, &module_path[1..])
+    }
+
+    fn resolve_submodule_path_in_package(
+        &self,
+        package_dir: &std::path::Path,
+        submodule_parts: &[String],
+    ) -> Option<PathBuf> {
+        if submodule_parts.is_empty() {
+            return None;
+        }
+
+        let mut flat_path = package_dir.to_path_buf();
+        for part in submodule_parts {
+            flat_path.push(part);
+        }
+        flat_path.set_extension("qi");
+        if flat_path.exists() {
+            return Some(flat_path);
+        }
+
+        if submodule_parts.len() == 1 {
+            let nested_name = &submodule_parts[0];
+            let nested_entry = package_dir.join(nested_name).join(format!("{}.qi", nested_name));
+            if nested_entry.exists() {
+                return Some(nested_entry);
+            }
+        }
+
+        None
     }
     
     /// Discover and parse all files in the same package directory
@@ -970,6 +1073,18 @@ impl QiCompiler {
         
         Ok(())
     }
+}
+
+/// Helper: given a module and function name, extract the struct type name from return type annotation
+fn get_function_return_struct_name(module: &crate::semantic::module::Module, func_name: &str) -> Option<String> {
+    // We need to look at the module's exports to find the function's return type node
+    // The FunctionSignature only has a string, so we need to check if the module has an AST
+    // Since Module doesn't carry the AST, we use a heuristic: if the symbol is a Function
+    // and its return_type is "ptr", we can't easily recover the struct name here.
+    // This requires the module to carry the original AST or a richer type annotation.
+    // For now, this is a placeholder - struct name recovery requires parser AST storage in Module.
+    let _ = (module, func_name);
+    None
 }
 
 /// Result of a compilation operation

@@ -784,6 +784,102 @@ impl ModuleRegistry {
             "未来<字符串>",  // 返回Future<字符串>
         ));
 
+        // 流式对话
+        llm_module.add_function(ModuleFunction::new(
+            "流式对话",
+            "qi_llm_stream_chat",
+            vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
+            "整数",  // 返回流句柄
+        ));
+
+        // 读取流片段
+        llm_module.add_function(ModuleFunction::new(
+            "读取流",
+            "qi_llm_stream_next",
+            vec!["整数".to_string()], // 流句柄
+            "字符串",
+        ));
+
+        // 关闭流
+        llm_module.add_function(ModuleFunction::new(
+            "关闭流",
+            "qi_llm_stream_close",
+            vec!["整数".to_string()], // 流句柄
+            "整数",
+        ));
+
+        // 注册工具
+        llm_module.add_function(ModuleFunction::new(
+            "注册工具",
+            "qi_llm_register_tool",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
+        // 清空工具
+        llm_module.add_function(ModuleFunction::new(
+            "清空工具",
+            "qi_llm_clear_tools",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 工具对话
+        llm_module.add_function(ModuleFunction::new(
+            "工具对话",
+            "qi_llm_chat_with_tools",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+
+        // 继续工具对话
+        llm_module.add_function(ModuleFunction::new(
+            "继续工具对话",
+            "qi_llm_continue_with_tools",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+
+        // 是否有工具调用
+        llm_module.add_function(ModuleFunction::new(
+            "有工具调用",
+            "qi_llm_has_tool_call",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+
+        // 获取工具调用 ID
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用ID",
+            "qi_llm_get_tool_call_id",
+            vec!["字符串".to_string()],
+            "字符串",
+        ));
+
+        // 获取工具调用名称
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用名称",
+            "qi_llm_get_tool_call_name",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+
+        // 获取工具调用参数
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用参数",
+            "qi_llm_get_tool_call_arguments",
+            vec!["字符串".to_string()],
+            "字符串",
+        ));
+
+        // 添加工具结果
+        llm_module.add_function(ModuleFunction::new(
+            "添加工具结果",
+            "qi_llm_add_tool_result",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
         // Register module with both Chinese and path formats
         self.modules.insert("大模型".to_string(), llm_module.clone());
         self.modules.insert("标准库.大模型".to_string(), llm_module.clone());
@@ -1740,6 +1836,20 @@ impl ModuleRegistry {
             "字符串",  // 返回格式化的JSON字符串
         ));
 
+        json_module.add_function(ModuleFunction::new(
+            "从键值",
+            "qi_json_from_pairs",
+            vec!["字符串".to_string()], // 形如 "键=值;键2=值2"
+            "字符串",  // 返回JSON字符串
+        ));
+
+        json_module.add_function(ModuleFunction::new(
+            "从文本",
+            "qi_json_from_text",
+            vec!["字符串".to_string()],
+            "字符串",  // 返回 {"结果":"..."}
+        ));
+
         // 内存管理
         json_module.add_function(ModuleFunction::new(
             "删除",
@@ -2170,6 +2280,14 @@ impl ModuleRegistry {
         string_module.add_function(ModuleFunction::new(
             "结束于",
             "qi_string_ends_with",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
+        // 字符串相等比较
+        string_module.add_function(ModuleFunction::new(
+            "等于",
+            "qi_string_equals",
             vec!["字符串".to_string(), "字符串".to_string()],
             "整数",
         ));

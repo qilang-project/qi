@@ -256,8 +256,12 @@ pub struct IrBuilder {
     async_function_types: std::collections::HashMap<String, String>,
     /// Track all function return types (including sync functions)
     function_return_types: std::collections::HashMap<String, String>,
+    /// Track functions that return struct pointers (mangled_name -> struct_type_name)
+    function_return_struct_types: std::collections::HashMap<String, String>,
     /// Track defined function parameter types (name -> params)
     function_param_types: std::collections::HashMap<String, Vec<String>>,
+    /// Track original function parameter declarations for default and variadic lowering
+    function_parameters: std::collections::HashMap<String, Vec<crate::parser::ast::Parameter>>,
     /// Track if we're currently inside an async function
     in_async_context: bool,
     /// Track defined functions in current module
@@ -266,6 +270,8 @@ pub struct IrBuilder {
     global_variables: std::collections::HashSet<String>,
     /// Track external function signatures (name -> (params, return_type))
     external_functions: std::collections::HashMap<String, (Vec<String>, String)>,
+    /// Track which external functions return struct pointers (mangled_name -> struct_type_name)
+    external_function_return_struct_types: std::collections::HashMap<String, String>,
     /// Track struct definitions (name -> field_types)
     struct_definitions: std::collections::HashMap<String, Vec<String>>,
     /// Track struct field names (struct_name -> field_names)
@@ -317,11 +323,14 @@ impl IrBuilder {
             boolean_variables: std::collections::HashSet::new(),
             async_function_types: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            function_return_struct_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
+            function_parameters: std::collections::HashMap::new(),
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
             global_variables: std::collections::HashSet::new(),
             external_functions: std::collections::HashMap::new(),
+            external_function_return_struct_types: std::collections::HashMap::new(),
             struct_definitions: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
             trait_definitions: std::collections::HashMap::new(),
@@ -386,6 +395,10 @@ impl IrBuilder {
         // Memory allocation functions
         self.external_functions.insert("malloc".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_runtime_alloc".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_runtime_dealloc".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_gc_should_collect".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_gc_collect".to_string(), (vec![], "void".to_string()));
 
         // String module functions (标准库.文本)
         self.external_functions.insert("qi_string_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
@@ -400,8 +413,18 @@ impl IrBuilder {
         self.external_functions.insert("qi_string_to_upper".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_string_to_lower".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_string_compare".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_string_equals".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_string_byte_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_string_char_count".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_string_find_from".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_string_substring_from".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_string_split".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
 
         // Other runtime functions can be added here if needed
+        self.external_functions.insert("qi_runtime_gc_add_root".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_gc_remove_root".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_gc_add_reference".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_gc_clear_references".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
         self
     }
 
@@ -486,10 +509,132 @@ impl IrBuilder {
         format!("%t{}", self.temp_counter)
     }
 
+    /// Look up the LLVM type of a struct field by field name
+    fn get_struct_field_type(&self, struct_name: &str, field_name: &str) -> Option<String> {
+        if let Some(field_names) = self.struct_field_names.get(struct_name) {
+            if let Some(idx) = field_names.iter().position(|n| n == field_name) {
+                if let Some(field_types) = self.struct_definitions.get(struct_name) {
+                    return field_types.get(idx).cloned();
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up the struct type name for a struct field that is itself a struct pointer
+    fn get_struct_field_struct_type(&self, _struct_name: &str, _field_name: &str) -> Option<String> {
+        // TODO: implement nested struct type tracking via struct_field_struct_types
+        None
+    }
+
     #[allow(dead_code)]
     fn generate_label(&mut self) -> String {
         self.label_counter += 1;
         format!("L{}", self.label_counter)
+    }
+
+    fn infer_ir_value_type(&self, value: &str) -> Option<String> {
+        if value.starts_with('@') || value.contains("getelementptr") {
+            Some("ptr".to_string())
+        } else if value.contains('.') {
+            Some("double".to_string())
+        } else if value.starts_with('%') {
+            let var_name = value.trim_start_matches('%');
+            self.variable_types.get(var_name).cloned()
+        } else if value == "0" || value == "1" {
+            Some("i1".to_string())
+        } else if value.parse::<i64>().is_ok() {
+            Some("i64".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn mangled_bare_name(&self, name: &str) -> String {
+        if name.chars().any(|c| !c.is_ascii()) {
+            self.mangle_function_name(name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn variadic_array_temp(&mut self, values: Vec<String>, element_type: &str) -> String {
+        let temp = self.generate_temp();
+        let temp_name = temp.trim_start_matches('%').to_string();
+        let size = values.len();
+
+        self.array_element_types.insert(temp_name.clone(), element_type.to_string());
+        self.array_sizes.insert(temp_name, size);
+        self.variable_types.insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+        self.add_instruction(IrInstruction::数组分配 {
+            dest: temp.clone(),
+            size: size.to_string(),
+            element_type: element_type.to_string(),
+        });
+
+        for (index, value) in values.into_iter().enumerate() {
+            self.add_instruction(IrInstruction::数组存储 {
+                array: temp.clone(),
+                index: index.to_string(),
+                value,
+                element_type: element_type.to_string(),
+            });
+        }
+
+        temp
+    }
+
+    fn is_pointer_value(&self, value: &str) -> bool {
+        if value.starts_with('@') {
+            return true;
+        }
+        if value.starts_with('%') {
+            let name = value.trim_start_matches('%');
+            return self.variable_types.get(name).map(|t| t == "ptr").unwrap_or(false);
+        }
+        false
+    }
+
+    fn lower_call_arguments(
+        &mut self,
+        callee: &str,
+        supplied_args: Vec<String>,
+    ) -> Result<Vec<String>, String> {
+        let params = match self.function_parameters.get(callee).cloned() {
+            Some(params) => params,
+            None => return Ok(supplied_args),
+        };
+
+        let variadic_index = params.iter().position(|p| p.is_variadic);
+        let fixed_count = variadic_index.unwrap_or(params.len());
+        let mut lowered = supplied_args;
+
+        // Fill missing non-variadic arguments with default values.
+        while lowered.len() < fixed_count {
+            let param = &params[lowered.len()];
+            if let Some(default_value) = &param.default_value {
+                let default_temp = self.build_node(default_value)?;
+                lowered.push(default_temp);
+            } else {
+                return Err(format!("函数 '{}' 缺少参数 '{}'", callee, param.name));
+            }
+        }
+
+        if let Some(index) = variadic_index {
+            let variadic_values = if lowered.len() > index {
+                lowered.split_off(index)
+            } else {
+                Vec::new()
+            };
+            let element_type = self.get_llvm_type(&params[index].type_annotation);
+            let variadic_len = variadic_values.len();
+            let array_temp = self.variadic_array_temp(variadic_values, &element_type);
+            lowered.push(array_temp);
+            lowered.push(variadic_len.to_string());
+        }
+
+        Ok(lowered)
     }
 
     /// Get the full function name from a function call expression, including module prefix
@@ -546,6 +691,13 @@ impl IrBuilder {
         self.import_aliases = aliases;
     }
 
+    /// Set external function return struct types (for cross-module struct pointer returns)
+    pub fn set_external_function_return_struct_types(&mut self, map: std::collections::HashMap<String, String>) {
+        for (k, v) in map {
+            self.external_function_return_struct_types.insert(k, v);
+        }
+    }
+
     /// Process an import statement and register the imported module
     fn process_import(&mut self, import_stmt: &crate::parser::ast::ImportStatement) -> Result<(), String> {
         // Check if this is a relative path (starts with . or ..)
@@ -587,6 +739,25 @@ impl IrBuilder {
                 self.import_aliases.insert(import_key, package_name.clone());
             }
 
+            return Ok(());
+        }
+
+        // For non-standard-library multi-component imports (user-defined packages like Web.控制器),
+        // lib.rs has already resolved the import and populated import_aliases before codegen.
+        // Skip the module_registry lookup in that case to avoid "module not found" errors.
+        let first_component = import_stmt.module_path.first().map(|s| s.as_str()).unwrap_or("");
+        let is_stdlib = first_component == "标准库";
+        if !is_stdlib && import_stmt.module_path.len() > 1 {
+            // User-defined package import: use last component as alias key if not already registered
+            let last_component = import_stmt.module_path.last()
+                .ok_or_else(|| "导入路径为空".to_string())?
+                .clone();
+            let import_key = import_stmt.alias.clone().unwrap_or(last_component);
+            let module_dot_path = import_stmt.module_path.join(".");
+            // Register if not already set by lib.rs pre-processing
+            if !self.import_aliases.contains_key(&import_key) {
+                self.import_aliases.insert(import_key, module_dot_path);
+            }
             return Ok(());
         }
 
@@ -794,6 +965,18 @@ impl IrBuilder {
             _ => {
                 "i64".to_string()
             }
+        }
+    }
+
+    fn get_array_element_llvm_type(
+        &self,
+        type_annotation: &Option<crate::parser::ast::TypeNode>,
+    ) -> Option<String> {
+        match type_annotation {
+            Some(crate::parser::ast::TypeNode::数组类型(array_type)) => {
+                Some(self.get_llvm_type_from_ast(array_type.element_type.as_ref()))
+            }
+            _ => None,
         }
     }
 
@@ -1092,8 +1275,27 @@ impl IrBuilder {
                             } else if let Some(ret_type) = self.function_return_types.get(&self.mangle_function_name(&function_name) as &str) {
                                 ret_type  // Use stored return type from function signature
                             } else {
-                                "i64"
+                                let mangled = self.mangle_function_name(&function_name);
+                                if let Some((_pt, rt)) = self.external_functions.get(&mangled as &str)
+                                    .or_else(|| self.external_functions.get(&function_name as &str)) {
+                                    rt.as_str()  // Use return type from cross-module external function
+                                } else {
+                                    "i64"
+                                }
                             };
+                            // Propagate struct type from type annotation when type is ptr
+                            if ty == "ptr" {
+                                if let Some(type_ann) = &decl.type_annotation {
+                                    let struct_name = match type_ann {
+                                        crate::parser::ast::TypeNode::自定义类型(tn) => Some(tn.clone()),
+                                        crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                                        _ => None,
+                                    };
+                                    if let Some(sn) = struct_name {
+                                        self.variable_struct_types.insert(decl.name.clone(), sn);
+                                    }
+                                }
+                            }
                             (ty.to_string(), None)
                         }
                         AstNode::取地址表达式(_) => {
@@ -1114,15 +1316,12 @@ impl IrBuilder {
                                     if inner_type_info.starts_with("struct.") {
                                         // Extract struct type name
                                         let struct_name = inner_type_info.strip_prefix("struct.").unwrap();
-                                        eprintln!("[AWAIT-VAR-DECL] Future inner type is struct: {}", struct_name);
                                         ("ptr".to_string(), Some(struct_name.to_string()))
                                     } else {
                                         // Basic type from Future inner type
-                                        eprintln!("[AWAIT-VAR-DECL] Future inner type: {}", inner_type_info);
                                         (inner_type_info.to_string(), None)
                                     }
                                 } else {
-                                    eprintln!("[AWAIT-VAR-DECL] No Future inner type found for {}, defaulting to i64", future_var);
                                     ("i64".to_string(), None)
                                 }
                             } else if let AstNode::函数调用表达式(call_expr) = await_expr.expression.as_ref() {
@@ -1137,30 +1336,24 @@ impl IrBuilder {
                                 if let Some(inner_type_info) = self.function_future_inner_types.get(&mangled) {
                                     if inner_type_info.starts_with("struct.") {
                                         let struct_name = inner_type_info.strip_prefix("struct.").unwrap();
-                                        eprintln!("[AWAIT-VAR-DECL] Function {} returns Future<struct {}>, allocating ptr", function_name, struct_name);
                                         ("ptr".to_string(), Some(struct_name.to_string()))
                                     } else {
-                                        eprintln!("[AWAIT-VAR-DECL] Function {} returns Future<{}>, using that type", function_name, inner_type_info);
                                         (inner_type_info.to_string(), None)
                                     }
                                 } else {
-                                    eprintln!("[AWAIT-VAR-DECL] No Future inner type for function {}, defaulting to i64", function_name);
                                     ("i64".to_string(), None)
                                 }
                             } else {
-                                eprintln!("[AWAIT-VAR-DECL] await expression not from identifier or function call, defaulting to i64");
                                 ("i64".to_string(), None)
                             };
 
                             // Preserve struct type information if present
                             if let Some(struct_name) = struct_name {
-                                eprintln!("[AWAIT-VAR-DECL] Preserving struct type {} for variable {}", struct_name, decl.name);
                                 self.variable_struct_types.insert(decl.name.clone(), struct_name);
                             }
 
                             // Now build the await expression
                             let init_value = self.build_node(&**initializer)?;
-                            eprintln!("[AWAIT-VAR-DECL] Final type for variable {}: {}", &decl.name, ty);
 
                             (ty, Some(init_value))
                         }
@@ -1186,7 +1379,21 @@ impl IrBuilder {
                     }
                 } else {
                     let ty = self.get_llvm_type(&decl.type_annotation);
-                    (ty.to_string(), None)
+                    // For uninitialized struct-type declarations, pre-register struct type
+                    let type_str = ty.to_string();
+                    if type_str == "ptr" {
+                        if let Some(type_ann) = &decl.type_annotation {
+                            let struct_type_name = match type_ann {
+                                crate::parser::ast::TypeNode::自定义类型(tn) => Some(tn.clone()),
+                                crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                                _ => None,
+                            };
+                            if let Some(stn) = struct_type_name {
+                                self.variable_struct_types.insert(decl.name.clone(), stn.clone());
+                            }
+                        }
+                    }
+                    (type_str, None)
                 };
 
                 // Record the variable type for later use (both original and mangled names)
@@ -1224,7 +1431,6 @@ impl IrBuilder {
                                 self.get_llvm_type_from_ast(inner_type)
                             }
                         };
-                        eprintln!("[FUTURE-TRACK] Variable {} (mangled: {}) has Future inner type: {}", decl.name, mangled_name, inner_type_info);
                         self.future_inner_types.insert(decl.name.clone(), inner_type_info.clone());
                         self.future_inner_types.insert(mangled_name.clone(), inner_type_info);
                     } else if let crate::parser::ast::TypeNode::基础类型(crate::parser::ast::BasicType::布尔) = type_ann {
@@ -1297,6 +1503,12 @@ impl IrBuilder {
                             self.array_element_types.insert(mangled_name.clone(), elem_type);
                         }
 
+                        // Propagate struct type from source temp to the declared variable
+                        if let Some(src_struct_type) = self.variable_struct_types.get(value_name).cloned() {
+                            self.variable_struct_types.insert(decl.name.clone(), src_struct_type.clone());
+                            self.variable_struct_types.insert(mangled_name.clone(), src_struct_type);
+                        }
+
                         // Determine the actual type of the value being stored
                         let value_var_name = value.trim_start_matches('%');
                         let inferred_value_type = self.variable_types.get(value_var_name)
@@ -1348,17 +1560,15 @@ impl IrBuilder {
                 // For array parameters, add hidden length parameters
                 let mut params: Vec<String> = Vec::new();
                 for p in &func_decl.parameters {
-                    let type_str = self.get_llvm_type(&p.type_annotation);
-                    let param_name = if p.name.chars().any(|c| !c.is_ascii()) {
-                        format!("%{}", self.mangle_function_name(&p.name))
-                    } else {
-                        format!("%{}", p.name)
-                    };
+                    let element_type_str = self.get_llvm_type(&p.type_annotation);
+                    let type_str = if p.is_variadic { "ptr".to_string() } else { element_type_str.clone() };
+                    let bare_param_name = self.mangled_bare_name(&p.name);
+                    let param_name = format!("%{}", bare_param_name);
                     params.push(format!("{} {}", type_str, param_name));
 
-                    // If this is an array parameter, add a hidden length parameter
+                    // If this is an array or variadic parameter, add a hidden length parameter
                     if let Some(ref type_ann) = p.type_annotation {
-                        if matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
+                        if p.is_variadic || matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
                             let length_param_name = format!("{}_length", param_name);
                             params.push(format!("i64 {}", length_param_name));
                         }
@@ -1372,18 +1582,39 @@ impl IrBuilder {
                     } else {
                         param.name.clone()
                     };
-                    let type_str = self.get_llvm_type(&param.type_annotation);
+                    let element_type_str = self.get_llvm_type(&param.type_annotation);
+                    let type_str = if param.is_variadic { "ptr".to_string() } else { element_type_str.clone() };
                     // Store with a special prefix to indicate this is a parameter (direct value)
                     self.variable_types.insert(format!("param_{}", param_name), type_str.clone());
                     self.variable_types.insert(param_name.clone(), type_str.clone());
 
-                    // If this is an array parameter, mark it as having a dynamic length from the hidden parameter
                     if let Some(ref type_ann) = param.type_annotation {
-                        if matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
+                        match type_ann {
+                            crate::parser::ast::TypeNode::自定义类型(type_name) => {
+                                self.variable_struct_types.insert(param_name.clone(), type_name.clone());
+                            }
+                            crate::parser::ast::TypeNode::结构体类型(struct_type) => {
+                                self.variable_struct_types.insert(param_name.clone(), struct_type.name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // If this is an array or variadic parameter, mark it as having a dynamic length from the hidden parameter
+                    if let Some(ref type_ann) = param.type_annotation {
+                        if param.is_variadic || matches!(type_ann, crate::parser::ast::TypeNode::数组类型(_)) {
                             // Store a special marker that this array's length comes from a parameter
                             // We'll use this marker when accessing .长度
                             let length_param_name = format!("{}_length", param_name);
                             self.variable_types.insert(length_param_name.clone(), "i64".to_string());
+                            self.variable_types.insert(format!("param_{}", length_param_name), "i64".to_string());
+                            let array_element_type = if param.is_variadic {
+                                element_type_str.clone()
+                            } else {
+                                self.get_array_element_llvm_type(&param.type_annotation)
+                                    .unwrap_or_else(|| "i64".to_string())
+                            };
+                            self.array_element_types.insert(param_name.clone(), array_element_type);
                         }
                     }
 
@@ -1410,14 +1641,34 @@ impl IrBuilder {
                 };
 
                 // Record the function's parameter types for later function calls
-                let param_types: Vec<String> = func_decl.parameters
-                    .iter()
-                    .map(|p| self.get_llvm_type(&p.type_annotation))
-                    .collect();
+                let mut param_types: Vec<String> = Vec::new();
+                for p in &func_decl.parameters {
+                    if p.is_variadic {
+                        param_types.push("ptr".to_string());
+                        param_types.push("i64".to_string());
+                    } else {
+                        param_types.push(self.get_llvm_type(&p.type_annotation));
+                    }
+                }
                 self.function_param_types.insert(func_name.clone(), param_types);
+                self.function_parameters.insert(func_name.clone(), func_decl.parameters.clone());
 
                 // Record the function's return type for later function calls
                 self.function_return_types.insert(func_name.clone(), return_type.clone());
+
+                // Track which functions return struct pointers, for variable_struct_types propagation
+                if return_type == "ptr" {
+                    if let Some(ref ret_type_node) = func_decl.return_type {
+                        let struct_name = match ret_type_node {
+                            crate::parser::ast::TypeNode::自定义类型(tn) => Some(tn.clone()),
+                            crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                            _ => None,
+                        };
+                        if let Some(sn) = struct_name {
+                            self.function_return_struct_types.insert(func_name.clone(), sn);
+                        }
+                    }
+                }
 
                 // If function returns Future<T>, track the inner type
                 if let Some(ref ret_type_node) = func_decl.return_type {
@@ -1789,6 +2040,18 @@ impl IrBuilder {
                 // Check if range is an array literal - if so, we know the size
                 let max_iterations = match &*for_stmt.range {
                     AstNode::数组字面量表达式(arr_lit) => arr_lit.elements.len().to_string(),
+                    AstNode::标识符表达式(ident) => {
+                        let bare_name = self.mangled_bare_name(&ident.name);
+                        if let Some(size) = self.array_sizes.get(&ident.name)
+                            .or_else(|| self.array_sizes.get(&bare_name))
+                        {
+                            size.to_string()
+                        } else if self.variable_types.contains_key(&format!("{}_length", bare_name)) {
+                            format!("%{}_length", bare_name)
+                        } else {
+                            "10".to_string()
+                        }
+                    }
                     _ => "10".to_string(), // Default fallback
                 };
                 
@@ -2314,11 +2577,27 @@ impl IrBuilder {
                         } else {
                             format!("%{}", bare_mangled)
                         };
+                        let existing_target_type = self.variable_types.get(&ident.name)
+                            .cloned()
+                            .or_else(|| self.variable_types.get(&bare_mangled).cloned());
+                        let inferred_value_type = self.infer_ir_value_type(&value);
+                        let value_type = existing_target_type.clone().or(inferred_value_type);
+
+                        // Update variable_types so subsequent uses of this var have the correct type
+                        if let Some(ref vt) = value_type {
+                            self.variable_types.insert(ident.name.clone(), vt.clone());
+                            self.variable_types.insert(bare_mangled.clone(), vt.clone());
+                        }
+                        // If the assigned value is a struct pointer, propagate struct type too
+                        let value_var = value.trim_start_matches('%');
+                        if let Some(st) = self.variable_struct_types.get(value_var).cloned() {
+                            self.variable_struct_types.insert(bare_mangled.clone(), st);
+                        }
 
                         self.add_instruction(IrInstruction::存储 {
                             target: target_name.clone(),
                             value,
-                            value_type: None,
+                            value_type,
                         });
                         Ok(target_name)
                     }
@@ -2326,20 +2605,35 @@ impl IrBuilder {
                         // Field assignment: obj.field = value
                         // First get the field address
                         let object = self.build_node(&field_access.object)?;
-                        let field_addr = format!("%t{}", self.generate_temp());
+                        let field_addr = self.generate_temp();
+                        let object_var_name = object.trim_start_matches('%');
+                        let struct_type = self.variable_struct_types.get(object_var_name)
+                            .cloned()
+                            .unwrap_or_else(|| "unknown".to_string());
                         self.add_instruction(IrInstruction::字段访问 {
                             dest: field_addr.clone(),
-                            object,
+                            object: object.clone(),
                             field: field_access.field.clone(),
-                            struct_type: "unknown".to_string(), // TODO: track struct types
+                            struct_type,
                         });
+                        let value_type = self.infer_ir_value_type(&value);
                         
                         // Then store the value to that address
                         self.add_instruction(IrInstruction::存储 {
                             target: field_addr.clone(),
-                            value,
-                            value_type: None,
+                            value: value.clone(),
+                            value_type,
                         });
+                        let value_var = value.trim_start_matches('%');
+                        if self.variable_types.get(value_var).map(|t| t == "ptr").unwrap_or(false) ||
+                           value.starts_with('@') {
+                            let gc_temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(gc_temp),
+                                callee: "qi_runtime_gc_add_reference".to_string(),
+                                arguments: vec![object.clone(), value.clone()],
+                            });
+                        }
                         Ok(field_addr)
                     }
                     AstNode::数组访问表达式(array_access) => {
@@ -2358,9 +2652,17 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::数组存储 {
                             array: array.clone(),
                             index,
-                            value,
+                            value: value.clone(),
                             element_type: element_type.to_string(),
                         });
+                        if self.is_pointer_value(&value) {
+                            let gc_temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(gc_temp),
+                                callee: "qi_runtime_gc_add_reference".to_string(),
+                                arguments: vec![array.clone(), value],
+                            });
+                        }
                         Ok(array)
                     }
                     _ => Err(format!("Invalid assignment target: {:?}", assign_expr.target)),
@@ -2621,6 +2923,10 @@ impl IrBuilder {
                     }
                 };
 
+                if !mapped_callee.starts_with("qi_") && mapped_callee != "printf" {
+                    arg_temps = self.lower_call_arguments(&mapped_callee, arg_temps)?;
+                }
+
                 // Special handling: 打印 or 打印行 with multiple arguments -> map to printf with proper format
                 if (function_name == "打印" || function_name == "打印行") && arg_temps.len() >= 2 {
                     let is_println = function_name == "打印行";
@@ -2855,10 +3161,21 @@ impl IrBuilder {
                             "ptr"  // All crypto functions return string (ptr)
                         } else if let Some(ret_type) = self.function_return_types.get(&mapped_callee) {
                             ret_type
+                        } else if let Some((_param_types, ret_type)) = self.external_functions.get(&mapped_callee) {
+                            ret_type.as_str()  // Return type from external (cross-module) function
                         } else {
                             "i64"
                         };
-                        self.variable_types.insert(temp.trim_start_matches('%').to_string(), return_type.to_string());
+                        let temp_var_name = temp.trim_start_matches('%').to_string();
+                        self.variable_types.insert(temp_var_name.clone(), return_type.to_string());
+                        // If this function returns a struct pointer, track the struct type
+                        if return_type == "ptr" {
+                            if let Some(struct_name) = self.function_return_struct_types.get(&mapped_callee).cloned()
+                                .or_else(|| self.external_function_return_struct_types.get(&mapped_callee).cloned())
+                            {
+                                self.variable_struct_types.insert(temp_var_name, struct_name);
+                            }
+                        }
 
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: Some(temp.clone()),
@@ -2911,7 +3228,6 @@ impl IrBuilder {
                     });
 
                     if let Some(inner_type) = inner_type_opt {
-                        eprintln!("[AWAIT-EXPR-PROPAGATE] Propagating inner type {} from variable {} to temp {}", inner_type, orig_name, future_var);
                         self.future_inner_types.insert(future_var.to_string(), inner_type.clone());
                         inner_type_propagated = true;
                     }
@@ -2929,10 +3245,7 @@ impl IrBuilder {
 
                         // Look up the function's Future inner type
                         if let Some(inner_type) = self.function_future_inner_types.get(&mangled) {
-                            eprintln!("[AWAIT-EXPR-FUNC-CALL] Awaiting function {} -> temp {}, inner_type={}", function_name, future_var, inner_type);
                             self.future_inner_types.insert(future_var.to_string(), inner_type.clone());
-                        } else {
-                            eprintln!("[AWAIT-EXPR-FUNC-CALL] Awaiting function {} -> temp {}, no inner type found", function_name, future_var);
                         }
                     }
                 }
@@ -2989,7 +3302,6 @@ impl IrBuilder {
                         self.future_inner_types.get(future_var).map(|s| s.as_str())
                     }
                     .unwrap_or("i64");
-                    eprintln!("[AWAIT-EXPR] original_var_name={:?}, future_var={}, inner_type={}", original_var_name, future_var, inner_type);
 
                     // Map inner type to the final result type (after any conversions)
                     let return_type = if inner_type.starts_with("struct.") {
@@ -3003,11 +3315,8 @@ impl IrBuilder {
                             _ => "i64",          // Default
                         }
                     };
-                    eprintln!("[AWAIT-EXPR] return_type={}, await_temp={}", return_type, await_temp);
-
                     // Track the final result type (after any conversions)
                     let temp_key = await_temp.trim_start_matches('%').to_string();
-                    eprintln!("[AWAIT-EXPR] Inserting variable_types[{}] = {}", temp_key, return_type);
                     self.variable_types.insert(temp_key, return_type.to_string());
                     Ok(await_temp)
                 } else {
@@ -3163,23 +3472,44 @@ impl IrBuilder {
                         AstNode::字面量表达式(lit_expr) => {
                             use crate::parser::ast::LiteralValue;
                             match &lit_expr.value {
-                                LiteralValue::浮点数(_) => "double",
-                                LiteralValue::整数(_) => "i64",
-                                LiteralValue::布尔(_) => "i1",
-                                _ => "i64",
+                                LiteralValue::浮点数(_) => "double".to_string(),
+                                LiteralValue::整数(_) => "i64".to_string(),
+                                LiteralValue::布尔(_) => "i1".to_string(),
+                                LiteralValue::字符串(_) => "ptr".to_string(),
+                                LiteralValue::字符(_) => "i8".to_string(),
                             }
                         }
-                        _ => "i64", // Default to i64 for complex expressions
+                        AstNode::结构体实例化表达式(_) => "ptr".to_string(),
+                        AstNode::标识符表达式(ident) => {
+                            let bare_name = self.mangled_bare_name(&ident.name);
+                            self.variable_types.get(&ident.name)
+                                .or_else(|| self.variable_types.get(&bare_name))
+                                .cloned()
+                                .unwrap_or_else(|| "i64".to_string())
+                        }
+                        AstNode::函数调用表达式(call_expr) => {
+                            let function_name = self.get_full_function_name(call_expr);
+                            let mapped = if let Some(runtime_func) = self.map_to_runtime_function(&function_name) {
+                                runtime_func
+                            } else {
+                                self.mangle_function_name(&function_name)
+                            };
+                            self.function_return_types.get(&mapped)
+                                .or_else(|| self.external_functions.get(&mapped).map(|(_, ret)| ret))
+                                .cloned()
+                                .unwrap_or_else(|| "i64".to_string())
+                        }
+                        _ => "i64".to_string(),
                     }
                 } else {
-                    "i64" // Empty array defaults to i64
+                    "i64".to_string()
                 };
 
                 let temp = self.generate_temp();
 
                 // Record the array element type and size
                 let temp_name = temp.trim_start_matches('%');
-                self.array_element_types.insert(temp_name.to_string(), element_type.to_string());
+                self.array_element_types.insert(temp_name.to_string(), element_type.clone());
                 let size = array_literal.elements.len();
                 self.array_sizes.insert(temp_name.to_string(), size);
 
@@ -3187,7 +3517,7 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::数组分配 {
                     dest: temp.clone(),
                     size: size.to_string(),
-                    element_type: element_type.to_string(),
+                    element_type: element_type.clone(),
                 });
 
                 // Store each element
@@ -3196,9 +3526,17 @@ impl IrBuilder {
                     self.add_instruction(IrInstruction::数组存储 {
                         array: temp.clone(),
                         index: i.to_string(),
-                        value: element_var,
-                        element_type: element_type.to_string(),
+                        value: element_var.clone(),
+                        element_type: element_type.clone(),
                     });
+                    if self.is_pointer_value(&element_var) {
+                        let gc_temp = self.generate_temp();
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: Some(gc_temp),
+                            callee: "qi_runtime_gc_add_reference".to_string(),
+                            arguments: vec![temp.clone(), element_var],
+                        });
+                    }
                 }
 
                 Ok(temp)
@@ -3303,9 +3641,24 @@ impl IrBuilder {
                                     crate::parser::ast::BasicType::浮点数 => "double".to_string(),
                                     crate::parser::ast::BasicType::布尔 => "i1".to_string(),
                                     crate::parser::ast::BasicType::字符串 => "ptr".to_string(),
-                                    _ => "i64".to_string(),
+                                    crate::parser::ast::BasicType::长整数 => "i64".to_string(),
+                                    crate::parser::ast::BasicType::短整数 => "i16".to_string(),
+                                    crate::parser::ast::BasicType::字节 => "i8".to_string(),
+                                    crate::parser::ast::BasicType::字符 => "i8".to_string(),
+                                    crate::parser::ast::BasicType::空 => "void".to_string(),
+                                    crate::parser::ast::BasicType::数组 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::字典 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::列表 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::集合 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::指针 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::引用 => "ptr".to_string(),
+                                    crate::parser::ast::BasicType::可变引用 => "ptr".to_string(),
                                 }
                             }
+                            crate::parser::ast::TypeNode::结构体类型(_) => "ptr".to_string(),
+                            crate::parser::ast::TypeNode::自定义类型(_) => "ptr".to_string(),
+                            crate::parser::ast::TypeNode::指针类型(_) => "ptr".to_string(),
+                            crate::parser::ast::TypeNode::数组类型(_) => "ptr".to_string(),
                             _ => "i64".to_string(),
                         }
                     })
@@ -3387,15 +3740,12 @@ impl IrBuilder {
                 // Allocate memory for the struct
                 let struct_type = format!("{}.type", struct_literal.struct_name);
                 if needs_heap_allocation {
-                    // Heap allocation using malloc
-                    eprintln!("[HEAP-ALLOC] Heap-allocating struct {} in Future-returning function", struct_literal.struct_name);
-                    // Call malloc with the size of the struct
-                    // Get struct size (assuming each field is i64 for now, which is 8 bytes)
+                    // Heap allocation using runtime allocator so GC can track it
                     let field_count = struct_literal.fields.len();
-                    let struct_size = field_count * 8;  // i64 = 8 bytes
+                    let struct_size = field_count * 8;  // TODO: use exact field layout
                     self.add_instruction(IrInstruction::函数调用 {
                         dest: Some(temp.clone()),
-                        callee: "malloc".to_string(),
+                        callee: "qi_runtime_alloc".to_string(),
                         arguments: vec![struct_size.to_string()],
                     });
                     // IMPORTANT: Record both pointer type and struct type for this variable
@@ -3403,6 +3753,19 @@ impl IrBuilder {
                     let temp_var = temp.trim_start_matches('%');
                     self.variable_types.insert(temp_var.to_string(), "ptr".to_string());
                     self.variable_struct_types.insert(temp_var.to_string(), struct_literal.struct_name.clone());
+                    self.record_allocation(AllocationInfo {
+                        ptr: temp.clone(),
+                        size: struct_size,
+                        type_name: struct_type.clone(),
+                        scope_level: self.scope_level,
+                        is_heap: true,
+                    });
+                    let gc_temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(gc_temp),
+                        callee: "qi_runtime_gc_add_root".to_string(),
+                        arguments: vec![temp.clone()],
+                    });
                 } else {
                     // Stack allocation using alloca (normal case)
                     self.add_instruction(IrInstruction::分配 {
@@ -3427,9 +3790,21 @@ impl IrBuilder {
                     // Store the field value
                     self.add_instruction(IrInstruction::存储 {
                         target: field_ptr,
-                        value: field_value,
+                        value: field_value.clone(),
                         value_type: None, // Type will be inferred
                     });
+                    if needs_heap_allocation {
+                        let field_val_name = field_value.trim_start_matches('%');
+                        if self.variable_types.get(field_val_name).map(|t| t == "ptr").unwrap_or(false) ||
+                           field_value.starts_with('@') {
+                            let gc_temp = self.generate_temp();
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(gc_temp),
+                                callee: "qi_runtime_gc_add_reference".to_string(),
+                                arguments: vec![temp.clone(), field_value.clone()],
+                            });
+                        }
+                    }
                 }
 
                 // Record that this is a pointer type
@@ -3519,13 +3894,16 @@ impl IrBuilder {
                                     .cloned()
                                     .unwrap_or_else(|| "unknown".to_string());
 
+                                // Look up the field type from struct definitions
+                                let field_type = self.get_struct_field_type(&struct_type, &field_access.field);
+
                                 // Generate field access instruction
                                 let temp = self.generate_temp();
                                 self.add_instruction(IrInstruction::字段访问 {
                                     dest: temp.clone(),
                                     object: object_var,
                                     field: field_access.field.clone(),
-                                    struct_type,
+                                    struct_type: struct_type.clone(),
                                 });
 
                                 // Load the field value
@@ -3533,8 +3911,20 @@ impl IrBuilder {
                                 self.add_instruction(IrInstruction::加载 {
                                     dest: load_temp.clone(),
                                     source: temp,
-                                    load_type: None,
+                                    load_type: field_type.clone(),
                                 });
+
+                                // If field is a struct pointer, propagate struct type info
+                                if let Some(ref ft) = field_type {
+                                    let load_name = load_temp.trim_start_matches('%').to_string();
+                                    self.variable_types.insert(load_name.clone(), ft.clone());
+                                    // Check if field type is a known struct (ptr but not "ptr" from string)
+                                    if ft == "ptr" {
+                                        if let Some(field_struct) = self.get_struct_field_struct_type(&struct_type, &field_access.field) {
+                                            self.variable_struct_types.insert(load_name, field_struct);
+                                        }
+                                    }
+                                }
 
                                 Ok(load_temp)
                             }
@@ -3550,13 +3940,16 @@ impl IrBuilder {
                             .cloned()
                             .unwrap_or_else(|| "unknown".to_string());
 
+                        // Look up the field type from struct definitions
+                        let field_type = self.get_struct_field_type(&struct_type, &field_access.field);
+
                         // Generate field access instruction
                         let temp = self.generate_temp();
                         self.add_instruction(IrInstruction::字段访问 {
                             dest: temp.clone(),
                             object: object_var,
                             field: field_access.field.clone(),
-                            struct_type,
+                            struct_type: struct_type.clone(),
                         });
 
                         // Load the field value
@@ -3564,8 +3957,19 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::加载 {
                             dest: load_temp.clone(),
                             source: temp,
-                            load_type: None,
+                            load_type: field_type.clone(),
                         });
+
+                        // Propagate field type info
+                        if let Some(ref ft) = field_type {
+                            let load_name = load_temp.trim_start_matches('%').to_string();
+                            self.variable_types.insert(load_name.clone(), ft.clone());
+                            if ft == "ptr" {
+                                if let Some(field_struct) = self.get_struct_field_struct_type(&struct_type, &field_access.field) {
+                                    self.variable_struct_types.insert(load_name, field_struct);
+                                }
+                            }
+                        }
 
                         Ok(load_temp)
                     }
@@ -4577,6 +4981,98 @@ impl IrBuilder {
                 Ok(loaded_result)
             }
 
+            AstNode::格式字符串表达式(format_str) => {
+                // Format string expression - builds a string by concatenating literal parts and evaluated expressions
+                // We build the result by starting with the first part and concatenating
+
+                let mut current_result: Option<String> = None;
+
+                for part in &format_str.parts {
+                    match part {
+                        crate::parser::ast::FormatStringPart::文本(text) => {
+                            // Create a string literal for the text using the existing string literal handling
+                            let text_node = AstNode::字面量表达式(crate::parser::ast::LiteralExpression {
+                                value: crate::parser::ast::LiteralValue::字符串(text.clone()),
+                                span: Default::default(),
+                            });
+                            let text_result = self.build_node(&text_node)?;
+
+                            if let Some(current) = current_result {
+                                // Concatenate current + text
+                                let new_result = self.generate_temp();
+                                self.variable_types.insert(new_result.trim_start_matches('%').to_string(), "ptr".to_string());
+                                self.add_instruction(IrInstruction::字符串连接 {
+                                    dest: new_result.clone(),
+                                    left: current,
+                                    right: text_result,
+                                });
+                                current_result = Some(new_result);
+                            } else {
+                                current_result = Some(text_result);
+                            }
+                        }
+                        crate::parser::ast::FormatStringPart::表达式 { expr, format: _ } => {
+                            // Evaluate the expression
+                            let expr_result = self.build_node(expr)?;
+
+                            // Check if the result is already a string - extract type info before mutable borrow
+                            let expr_type_opt = if expr_result.starts_with('%') {
+                                self.variable_types.get(expr_result.trim_start_matches('%')).cloned()
+                            } else {
+                                None
+                            };
+                            let is_string = expr_result.starts_with('@') ||
+                                expr_type_opt.as_ref().map(|t| *t == "ptr").unwrap_or(false);
+
+                            let str_result = if is_string {
+                                expr_result
+                            } else {
+                                // Convert to string based on type
+                                let expr_type = expr_type_opt.unwrap_or("i64".to_string());
+                                let is_float = expr_type == "double" || expr_type.contains("float");
+
+                                let conv_temp = self.generate_temp();
+                                let conv_func = if is_float {
+                                    "qi_runtime_float_to_string"
+                                } else {
+                                    "qi_runtime_int_to_string"
+                                };
+                                self.variable_types.insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(conv_temp.clone()),
+                                    callee: conv_func.to_string(),
+                                    arguments: vec![expr_result],
+                                });
+                                conv_temp
+                            };
+
+                            if let Some(current) = current_result {
+                                // Concatenate current + expression result
+                                let new_result = self.generate_temp();
+                                self.variable_types.insert(new_result.trim_start_matches('%').to_string(), "ptr".to_string());
+                                self.add_instruction(IrInstruction::字符串连接 {
+                                    dest: new_result.clone(),
+                                    left: current,
+                                    right: str_result,
+                                });
+                                current_result = Some(new_result);
+                            } else {
+                                current_result = Some(str_result);
+                            }
+                        }
+                    }
+                }
+
+                // Return the result, or empty string if no parts
+                Ok(current_result.unwrap_or_else(|| {
+                    let temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::字符串常量 {
+                        name: "@.emptystr = private unnamed_addr constant [1 x i8] c\"\\00\", align 1".to_string(),
+                    });
+                    temp
+                }))
+            }
+
             _ => {
                 #[allow(unreachable_patterns)]
                 Err(format!("Unsupported AST node: {:?}", node))
@@ -4724,6 +5220,15 @@ impl IrBuilder {
             }
             Some(crate::parser::ast::TypeNode::数组类型(_)) => {
                 // Array types (e.g., 数组<整数>) are represented as pointers to array data
+                "ptr".to_string()
+            }
+            Some(crate::parser::ast::TypeNode::结构体类型(_)) => {
+                "ptr".to_string()
+            }
+            Some(crate::parser::ast::TypeNode::自定义类型(_)) => {
+                "ptr".to_string()
+            }
+            Some(crate::parser::ast::TypeNode::指针类型(_)) => {
                 "ptr".to_string()
             }
             Some(crate::parser::ast::TypeNode::未来类型(_inner_type)) => {
@@ -4965,6 +5470,8 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_json_free(i64)\n");
         ir.push_str("declare ptr @qi_json_to_string(i64)\n");
         ir.push_str("declare ptr @qi_json_to_string_pretty(i64)\n");
+        ir.push_str("declare ptr @qi_json_from_pairs(ptr)\n");
+        ir.push_str("declare ptr @qi_json_from_text(ptr)\n");
         ir.push_str("declare void @qi_json_free_string(ptr)\n");
         ir.push_str("\n");
 
@@ -5056,6 +5563,18 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_llm_close_session(i64)\n");
         ir.push_str("declare void @qi_llm_free_string(ptr)\n");
         ir.push_str("declare ptr @qi_llm_chat_async(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_llm_stream_chat(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_llm_stream_next(i64)\n");
+        ir.push_str("declare i64 @qi_llm_stream_close(i64)\n");
+        ir.push_str("declare i64 @qi_llm_register_tool(i64, ptr, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_llm_clear_tools(i64)\n");
+        ir.push_str("declare ptr @qi_llm_chat_with_tools(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_llm_continue_with_tools(i64)\n");
+        ir.push_str("declare i64 @qi_llm_has_tool_call(ptr)\n");
+        ir.push_str("declare ptr @qi_llm_get_tool_call_id(ptr)\n");
+        ir.push_str("declare ptr @qi_llm_get_tool_call_name(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_llm_get_tool_call_arguments(ptr)\n");
+        ir.push_str("declare i64 @qi_llm_add_tool_result(i64, ptr, ptr, ptr)\n");
         ir.push_str("\n");
 
         // OS functions
@@ -5426,6 +5945,10 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_dealloc(ptr, i64)\n");
         ir.push_str("declare i64 @qi_runtime_gc_should_collect()\n");
         ir.push_str("declare void @qi_runtime_gc_collect()\n");
+        ir.push_str("declare i64 @qi_runtime_gc_add_root(ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_gc_remove_root(ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_gc_add_reference(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_runtime_gc_clear_references(ptr)\n");
         ir.push_str("\n");
         
         ir.push_str("; String operations\n");
@@ -5451,6 +5974,7 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_string_contains(ptr, ptr)\n");
         ir.push_str("declare i64 @qi_string_starts_with(ptr, ptr)\n");
         ir.push_str("declare i64 @qi_string_ends_with(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_string_equals(ptr, ptr)\n");
         ir.push_str("; Note: qi_string_free already declared in future operations\n");
         ir.push_str("\n");
         
@@ -5521,7 +6045,12 @@ impl IrBuilder {
             "qi_string_starts_with", "qi_string_ends_with", "qi_string_find", "qi_string_find_from",
             "qi_string_replace", "qi_string_trim", "qi_string_to_upper", "qi_string_to_lower",
             "qi_string_byte_length", "qi_string_char_count", "qi_string_split", "qi_string_compare",
-            "qi_string_substring_from", "qi_runtime_string_concat"
+            "qi_string_equals",
+            "qi_string_substring_from", "qi_runtime_string_concat",
+            "qi_runtime_alloc", "qi_runtime_dealloc",
+            "qi_runtime_gc_should_collect", "qi_runtime_gc_collect",
+            "qi_runtime_gc_add_root", "qi_runtime_gc_remove_root",
+            "qi_runtime_gc_add_reference", "qi_runtime_gc_clear_references"
         ]);
 
         if !self.external_functions.is_empty() {
@@ -5615,6 +6144,12 @@ impl IrBuilder {
                     }
                 }
                 IrInstruction::存储 { target, value, value_type } => {
+                    // Determine target type by looking up the target variable
+                    let target_var_name = target.trim_start_matches('%').trim_start_matches('_');
+                    let target_type = self.variable_types.get(target_var_name)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "i64".to_string());
+
                     // Determine the type based on the value_type if provided, otherwise infer
                     let inferred_type = if let Some(vt) = value_type {
                         vt.to_string()
@@ -5629,8 +6164,11 @@ impl IrBuilder {
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| "i64".to_string())
                     } else if value == "0" || value == "1" {
-                        // These could be boolean values - prefer i1 for boolean constants
-                        "i1".to_string()
+                        if target_type == "i1" || target_type == "i32" || target_type == "i64" {
+                            target_type.clone()
+                        } else {
+                            "i64".to_string()
+                        }
                     } else if value.parse::<i64>().is_ok() {
                         "i64".to_string()
                     } else {
@@ -5638,16 +6176,18 @@ impl IrBuilder {
                         "i64".to_string()
                     };
 
-                    // Determine target type by looking up the target variable
-                    let target_var_name = target.trim_start_matches('%').trim_start_matches('_');
-                    let target_type = self.variable_types.get(target_var_name)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "i64".to_string());
-
                     // If types don't match, insert conversion (i32 -> i64)
                     let value_to_store = if inferred_type == "i32" && target_type == "i64" {
                         let ext_temp = self.generate_temp();
                         ir.push_str(&format!("{} = sext i32 {} to i64\n", ext_temp, value));
+                        ext_temp
+                    } else if inferred_type == "i1" && target_type == "i64" {
+                        let ext_temp = self.generate_temp();
+                        ir.push_str(&format!("{} = zext i1 {} to i64\n", ext_temp, value));
+                        ext_temp
+                    } else if inferred_type == "i1" && target_type == "i32" {
+                        let ext_temp = self.generate_temp();
+                        ir.push_str(&format!("{} = zext i1 {} to i32\n", ext_temp, value));
                         ext_temp
                     } else if inferred_type == "i64" && target_type == "i32" {
                         let ext_temp = self.generate_temp();
@@ -5659,6 +6199,10 @@ impl IrBuilder {
 
                     let final_type = if inferred_type == "i32" && target_type == "i64" {
                         "i64".to_string()
+                    } else if inferred_type == "i1" && target_type == "i64" {
+                        "i64".to_string()
+                    } else if inferred_type == "i1" && target_type == "i32" {
+                        "i32".to_string()
                     } else if inferred_type == "i64" && target_type == "i32" {
                         "i32".to_string()
                     } else {
@@ -5666,6 +6210,17 @@ impl IrBuilder {
                     };
 
                     ir.push_str(&format!("store {} {}, ptr {}\n", final_type, value_to_store, target));
+
+                    // Update target variable type to match what was stored
+                    let tgt_var = target.trim_start_matches('%');
+                    self.variable_types.insert(tgt_var.to_string(), final_type.clone());
+                    // Propagate struct type info from value to target
+                    if final_type == "ptr" {
+                        let val_var = value.trim_start_matches('%');
+                        if let Some(st) = self.variable_struct_types.get(val_var).cloned() {
+                            self.variable_struct_types.insert(tgt_var.to_string(), st);
+                        }
+                    }
                 }
                 IrInstruction::整数常量 { dest, value } => {
                     ir.push_str(&format!("{} = add i64 0, {}\n", dest, value));
@@ -5679,28 +6234,27 @@ impl IrBuilder {
                 }
                 IrInstruction::加载 { dest, source, load_type } => {
                     // Use explicit load type if provided, otherwise infer
-                    let inferred_type = if let Some(ref lt) = load_type {
-                        lt.as_str()
+                    let inferred_type: String = if let Some(ref lt) = load_type {
+                        lt.clone()
                     } else if source.starts_with('@') && source.contains(".str") {
-                        // Check if we're loading a string constant (starts with @ and contains .str)
-                        "ptr"
+                        "ptr".to_string()
                     } else if source.starts_with('%') {
-                        // Look up variable type from our tracking for variables
-                        // Remove the % prefix to get the original variable name
                         let var_name = source.trim_start_matches('%');
-
-                        // NOTE: We used to check for param_ here and skip the load, but this caused issues
-                        // because variable_types accumulates state across multiple functions.
-                        // If a load instruction was generated, we should trust it and emit the load.
-                        // The decision of whether to load or not should be made earlier, in build_node.
-
-                        // Look up the variable type from our tracking (we store both original and mangled names)
-                        self.variable_types.get(var_name).map(|s| s.as_str()).unwrap_or("i64")
+                        self.variable_types.get(var_name).cloned().unwrap_or_else(|| "i64".to_string())
                     } else {
-                        // Default to i64 for most variables
-                        "i64"
+                        "i64".to_string()
                     };
                     ir.push_str(&format!("{} = load {}, ptr {}\n", dest, inferred_type, source));
+                    // Update dest type in variable_types so subsequent uses have the correct type
+                    let dest_var = dest.trim_start_matches('%');
+                    self.variable_types.insert(dest_var.to_string(), inferred_type.clone());
+                    // Propagate struct type from source to dest when loading a ptr
+                    if inferred_type == "ptr" {
+                        let source_var = source.trim_start_matches('%');
+                        if let Some(st) = self.variable_struct_types.get(source_var).cloned() {
+                            self.variable_struct_types.insert(dest_var.to_string(), st);
+                        }
+                    }
                 }
                 IrInstruction::二元操作 { dest, left, operator, right, operand_type } => {
                     // Use the operand_type that was determined when creating the instruction
@@ -5855,9 +6409,17 @@ impl IrBuilder {
                             } else if arg.starts_with('%') {
                                 // Variable or temporary - look up in variable_types HashMap
                                 let arg_var_name = arg.trim_start_matches('%');
+                                // When variable_types doesn't have an entry but variable_struct_types does,
+                                // the variable is a struct pointer — use "ptr" instead of i64 default
                                 let current_arg_type = self.variable_types.get(arg_var_name)
                                     .map(|s| s.as_str())
-                                    .unwrap_or("i64");
+                                    .unwrap_or_else(|| {
+                                        if self.variable_struct_types.contains_key(arg_var_name) {
+                                            "ptr"
+                                        } else {
+                                            "i64"
+                                        }
+                                    });
 
                                 // Determine expected type for this parameter
                                 let expected_type = if let Some(ref param_types) = expected_param_types {
@@ -6130,11 +6692,13 @@ impl IrBuilder {
                                 }
                             }
                         } else if callee.starts_with("qi_runtime_") {
+                            if let Some((_, ret_ty)) = self.external_functions.get(&callee as &str) {
+                                ret_ty.as_str()
                             // Create functions return ptr - MUST BE FIRST
-                            if callee == "qi_runtime_create_channel" || callee == "qi_runtime_waitgroup_create" ||
-                               callee == "qi_runtime_mutex_create" || callee == "qi_runtime_rwlock_create" ||
-                               callee == "qi_runtime_condvar_create" || callee == "qi_runtime_once_create" ||
-                               callee == "qi_runtime_timer_create" {
+                            } else if callee == "qi_runtime_create_channel" || callee == "qi_runtime_waitgroup_create" ||
+                                      callee == "qi_runtime_mutex_create" || callee == "qi_runtime_rwlock_create" ||
+                                      callee == "qi_runtime_condvar_create" || callee == "qi_runtime_once_create" ||
+                                      callee == "qi_runtime_timer_create" {
                                 "ptr"
                             // Math functions return double
                             } else if callee.contains("math_sqrt") || callee.contains("math_pow") ||
@@ -6161,6 +6725,11 @@ impl IrBuilder {
                             // Timer functions that return i64
                             } else if callee == "qi_runtime_set_timeout" || callee == "qi_runtime_timer_expired" ||
                                       callee == "qi_runtime_timer_stop" || callee == "qi_runtime_get_time_ms" {
+                                "i64"
+                            } else if callee == "qi_runtime_gc_add_root" ||
+                                      callee == "qi_runtime_gc_remove_root" ||
+                                      callee == "qi_runtime_gc_add_reference" ||
+                                      callee == "qi_runtime_gc_clear_references" {
                                 "i64"
                             // Synchronization create functions return ptr
                             } else if callee == "qi_runtime_waitgroup_create" ||
@@ -6206,7 +6775,8 @@ impl IrBuilder {
                         } else if callee.starts_with("qi_json_") {
                             match callee.as_str() {
                                 "qi_json_encode" | "qi_json_get_string" | "qi_json_array_get_string" |
-                                "qi_json_to_string" | "qi_json_to_string_pretty" => "ptr",  // Return strings
+                                "qi_json_to_string" | "qi_json_to_string_pretty" |
+                                "qi_json_from_pairs" | "qi_json_from_text" => "ptr",  // Return strings
                                 "qi_json_decode" | "qi_json_create_object" | "qi_json_create_array" |
                                 "qi_json_get_object" | "qi_json_get_array" |
                                 "qi_json_array_get_object" | "qi_json_array_get_array" |
@@ -6260,9 +6830,15 @@ impl IrBuilder {
                             }
                         } else if callee.starts_with("qi_llm_") {
                             match callee.as_str() {
-                                "qi_llm_chat" | "qi_llm_chat_async" => "ptr",  // Return LLM response string / Future<String>
+                                "qi_llm_chat" | "qi_llm_chat_async" | "qi_llm_stream_next" |
+                                "qi_llm_chat_with_tools" | "qi_llm_continue_with_tools" |
+                                "qi_llm_get_tool_call_id" | "qi_llm_get_tool_call_name" |
+                                "qi_llm_get_tool_call_arguments" => "ptr",  // Return LLM response string / Future<String>
                                 "qi_llm_create_session" | "qi_llm_set_config" | "qi_llm_clear_history" |
-                                "qi_llm_get_history_count" | "qi_llm_close_session" => "i64",  // Return i64
+                                "qi_llm_get_history_count" | "qi_llm_close_session" |
+                                "qi_llm_stream_chat" | "qi_llm_stream_close" |
+                                "qi_llm_register_tool" | "qi_llm_clear_tools" |
+                                "qi_llm_has_tool_call" | "qi_llm_add_tool_result" => "i64",  // Return i64
                                 "qi_llm_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown LLM functions
                             }
@@ -6458,10 +7034,10 @@ impl IrBuilder {
                         _ => 8, // Default to 8 bytes
                     };
 
-                    if array_size <= SMALL_ARRAY_THRESHOLD {
-                        // Small array: stack allocation
-                        ir.push_str(&format!("  {} = alloca [{} x {}], align 8\n", dest, size, element_type));
-                    } else {
+                        if array_size <= SMALL_ARRAY_THRESHOLD {
+                            // Small array: stack allocation
+                            ir.push_str(&format!("  {} = alloca [{} x {}], align 8\n", dest, size, element_type));
+                        } else {
                         // Large array: heap allocation with GC check
                         let bytes = array_size * elem_size;
                         let (alloc_ir, ptr) = self.generate_allocation_with_gc_check(bytes, element_type, true);
@@ -6480,6 +7056,8 @@ impl IrBuilder {
                         if ptr != *dest {
                             ir.push_str(&format!("  {} = bitcast ptr {} to [{} x {}]*\n", dest, ptr, size, element_type));
                         }
+                        ir.push_str(&format!("  %gc_root_{} = call i64 @qi_runtime_gc_add_root(ptr {})\n",
+                            dest.trim_start_matches('%').replace('.', "_"), ptr));
                     }
                 }
                 IrInstruction::数组存储 { array, index, value, element_type } => {
@@ -6566,7 +7144,6 @@ impl IrBuilder {
                         // Record the final type of the dest variable for later use
                         let dest_var = dest.trim_start_matches('%');
                         self.variable_types.insert(dest_var.to_string(), final_type.to_string());
-                        eprintln!("[AWAIT-EXPR] Recorded type for {}: {}", dest_var, final_type);
                     } else {
                         // This is an async coroutine - call qi_runtime_await
                         ir.push_str(&format!("{} = call ptr @qi_runtime_await(ptr {})\n", dest, future));
@@ -6748,6 +7325,60 @@ impl IrBuilder {
         false
     }
 
+    /// Get the type of an expression for format string interpolation
+    fn get_expression_type(&self, expr: &AstNode) -> String {
+        match expr {
+            AstNode::字面量表达式(literal) => {
+                match literal.value {
+                    crate::parser::ast::LiteralValue::整数(_) => "i64".to_string(),
+                    crate::parser::ast::LiteralValue::浮点数(_) => "double".to_string(),
+                    crate::parser::ast::LiteralValue::字符串(_) => "ptr".to_string(),
+                    crate::parser::ast::LiteralValue::布尔(_) => "i1".to_string(),
+                    crate::parser::ast::LiteralValue::字符(_) => "i8".to_string(),
+                }
+            }
+            AstNode::标识符表达式(ident) => {
+                // Check variable types
+                if let Some(var_type) = self.variable_types.get(&ident.name) {
+                    var_type.clone()
+                } else {
+                    "i64".to_string() // Default to integer
+                }
+            }
+            AstNode::二元操作表达式(binary) => {
+                // Check if it's a float operation by checking the operands
+                let left_is_float = match &*binary.left {
+                    AstNode::字面量表达式(lit) => {
+                        matches!(&lit.value, crate::parser::ast::LiteralValue::浮点数(_))
+                    }
+                    AstNode::标识符表达式(ident) => {
+                        self.variable_types.get(&ident.name)
+                            .map(|t| t.contains("double") || t.contains("float"))
+                            .unwrap_or(false)
+                    }
+                    _ => false
+                };
+                let right_is_float = match &*binary.right {
+                    AstNode::字面量表达式(lit) => {
+                        matches!(&lit.value, crate::parser::ast::LiteralValue::浮点数(_))
+                    }
+                    AstNode::标识符表达式(ident) => {
+                        self.variable_types.get(&ident.name)
+                            .map(|t| t.contains("double") || t.contains("float"))
+                            .unwrap_or(false)
+                    }
+                    _ => false
+                };
+                if left_is_float || right_is_float {
+                    "double".to_string()
+                } else {
+                    "i64".to_string()
+                }
+            }
+            _ => "i64".to_string() // Default to integer
+        }
+    }
+
     /// Check if a statement or block contains a return statement
     fn contains_return(&self, stmts: &[AstNode]) -> bool {
         for stmt in stmts {
@@ -6908,11 +7539,12 @@ impl IrBuilder {
             .cloned()
             .collect();
 
-        // Generate deallocation calls
+        // Heap objects leave the current root set when scope exits.
+        // Actual reclamation is deferred to tracing GC.
         for alloc in &allocations_to_free {
             ir.push_str(&format!(
-                "  call i32 @qi_runtime_dealloc(ptr {}, i64 {})\n",
-                alloc.ptr, alloc.size
+                "  %gc_unroot_{} = call i64 @qi_runtime_gc_remove_root(ptr {})\n",
+                alloc.ptr.trim_start_matches('%').replace('.', "_"), alloc.ptr
             ));
         }
 

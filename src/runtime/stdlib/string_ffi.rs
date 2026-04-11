@@ -381,6 +381,26 @@ pub extern "C" fn qi_string_split(
     -1
 }
 
+/// Compare two strings for equality
+/// Returns 1 if equal, 0 if not equal
+#[no_mangle]
+pub extern "C" fn qi_string_equals(
+    a_ptr: *const c_char,
+    b_ptr: *const c_char,
+) -> i64 {
+    if a_ptr.is_null() && b_ptr.is_null() {
+        return 1;
+    }
+    if a_ptr.is_null() || b_ptr.is_null() {
+        return 0;
+    }
+    unsafe {
+        let a = CStr::from_ptr(a_ptr);
+        let b = CStr::from_ptr(b_ptr);
+        if a == b { 1 } else { 0 }
+    }
+}
+
 /// Free a string allocated by string functions
 /// Note: Uses qi_string_free from future.rs (already defined)
 

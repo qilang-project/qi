@@ -267,7 +267,7 @@ fn test_parse_array_literal() {
 
 #[test]
 fn test_parse_struct_declaration() {
-    let source = "类型 Person { 字符串 name; 整数 age; }";
+    let source = "类型 Person { name: 字符串, age: 整数 }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -289,7 +289,7 @@ fn test_parse_empty_struct() {
 
 #[test]
 fn test_parse_struct_with_single_field() {
-    let source = "类型 Point { 整数 x; }";
+    let source = "类型 Point { x: 整数 }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -300,7 +300,7 @@ fn test_parse_struct_with_single_field() {
 
 #[test]
 fn test_parse_struct_with_multiple_fields() {
-    let source = "类型 Rectangle { 浮点数 width; 浮点数 height; 字符串 color; }";
+    let source = "类型 Rectangle { width: 浮点数, height: 浮点数, color: 字符串 }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -311,7 +311,7 @@ fn test_parse_struct_with_multiple_fields() {
 
 #[test]
 fn test_parse_struct_with_chinese_field_names() {
-    let source = "类型 学生 { 字符串 姓名; 整数 年龄; 浮点数 成绩; }";
+    let source = "类型 学生 { 姓名: 字符串, 年龄: 整数, 成绩: 浮点数 }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
@@ -322,13 +322,24 @@ fn test_parse_struct_with_chinese_field_names() {
 
 #[test]
 fn test_parse_multiple_struct_declarations() {
-    let source = "类型 Person { 字符串 name; } 类型 Point { 整数 x; 整数 y; }";
+    let source = "类型 Person { name: 字符串 } 类型 Point { x: 整数, y: 整数 }";
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
     assert!(result.is_ok());
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 2);
+}
+
+#[test]
+fn test_parse_legacy_type_first_struct_fields() {
+    let source = "类型 Point { 整数 x; 整数 y; }";
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]
@@ -365,6 +376,77 @@ fn test_parse_complex_program() {
     assert!(result.is_ok());
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 2);
+}
+
+#[test]
+fn test_parse_default_and_variadic_parameters() {
+    let source = r#"
+    函数 问候(名字: 字符串 = "朋友") : 字符串 {
+        返回 名字;
+    }
+
+    函数 求和(数字...: 整数) : 整数 {
+        返回 0;
+    }
+    "#;
+
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok(), "default/variadic parameters should parse: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
+}
+
+#[test]
+fn test_parse_parenthesized_for_loop() {
+    let source = r#"
+    函数 入口() {
+        对于 (数字 在 数字们) {
+            变量 当前: 整数 = 数字;
+        }
+    }
+    "#;
+
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok(), "parenthesized for loop should parse: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
+}
+
+#[test]
+fn test_parse_export_statement() {
+    let source = r#"
+    包 Web;
+    导出 响应::响应404;
+    导出 路由表::创建路由表;
+    "#;
+
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok(), "export statements should parse: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 2);
+}
+
+#[test]
+fn test_parse_length_as_identifier() {
+    let source = r#"
+    函数 入口() {
+        变量 长度: 整数 = 10;
+        变量 值: 整数 = 长度;
+    }
+    "#;
+
+    let parser = Parser::new();
+    let result = parser.parse_source(source);
+
+    assert!(result.is_ok(), "长度 should be usable as an identifier: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.statements.len(), 1);
 }
 
 #[test]

@@ -770,6 +770,55 @@ pub extern "C" fn qi_json_encode(json_str: *const c_char) -> *mut c_char {
     }
 }
 
+/// 从 "键=值;键2=值2" 简写创建 JSON 字符串
+#[no_mangle]
+pub extern "C" fn qi_json_from_pairs(pairs: *const c_char) -> *mut c_char {
+    if pairs.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let 文本 = CStr::from_ptr(pairs).to_string_lossy().to_string();
+        let mut 对象 = Map::new();
+
+        for 项 in 文本.split(|c| c == ';' || c == '\n') {
+            let 清理项 = 项.trim();
+            if 清理项.is_empty() {
+                continue;
+            }
+
+            if let Some((键, 值)) = 清理项.split_once('=') {
+                let 键 = 键.trim();
+                let 值 = 值.trim();
+                if !键.is_empty() {
+                    对象.insert(键.to_string(), Value::String(值.to_string()));
+                }
+            }
+        }
+
+        if 对象.is_empty() {
+            对象.insert("结果".to_string(), Value::String(文本));
+        }
+
+        CString::new(Value::Object(对象).to_string()).unwrap().into_raw()
+    }
+}
+
+/// 从普通文本创建 {"结果":"..."} JSON 字符串
+#[no_mangle]
+pub extern "C" fn qi_json_from_text(text: *const c_char) -> *mut c_char {
+    if text.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let 文本 = CStr::from_ptr(text).to_string_lossy().to_string();
+        let mut 对象 = Map::new();
+        对象.insert("结果".to_string(), Value::String(文本));
+        CString::new(Value::Object(对象).to_string()).unwrap().into_raw()
+    }
+}
+
 /// 释放JSON对象
 #[no_mangle]
 pub extern "C" fn qi_json_free(json_id: i64) -> i64 {

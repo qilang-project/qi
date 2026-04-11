@@ -491,6 +491,7 @@ impl ParserErrorRecovery {
             TokenKind::长度 => "长度".to_string(),
             TokenKind::打印 => "打印".to_string(),
             TokenKind::类型 => "类型".to_string(),
+            TokenKind::结构体 => "结构体".to_string(),
             TokenKind::字符串 => "字符串".to_string(),
             TokenKind::布尔 => "布尔".to_string(),
             TokenKind::文件结束 => "文件结束".to_string(),
@@ -564,6 +565,9 @@ impl ParserErrorRecovery {
 
             // Struct instantiation
             TokenKind::新建 => "新建".to_string(),
+
+            // Format string literal
+            TokenKind::格式字符串字面量 => "格式字符串".to_string(),
         }
     }
 

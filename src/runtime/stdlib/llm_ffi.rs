@@ -5,14 +5,17 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
+use std::io::Read;
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
-use std::collections::HashMap;
-use serde_json::json;
+use std::collections::{HashMap, VecDeque};
+use serde_json::{json, Value};
 
 // LLM 会话池
 static LLM会话池: OnceLock<Mutex<HashMap<i64, LLM会话>>> = OnceLock::new();
 static 会话计数器: OnceLock<Mutex<i64>> = OnceLock::new();
+static LLM流池: OnceLock<Mutex<HashMap<i64, LLM流>>> = OnceLock::new();
+static 流计数器: OnceLock<Mutex<i64>> = OnceLock::new();
 
 fn 获取会话池() -> &'static Mutex<HashMap<i64, LLM会话>> {
     LLM会话池.get_or_init(|| Mutex::new(HashMap::new()))
@@ -20,6 +23,14 @@ fn 获取会话池() -> &'static Mutex<HashMap<i64, LLM会话>> {
 
 fn 获取会话计数器() -> &'static Mutex<i64> {
     会话计数器.get_or_init(|| Mutex::new(0))
+}
+
+fn 获取流池() -> &'static Mutex<HashMap<i64, LLM流>> {
+    LLM流池.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn 获取流计数器() -> &'static Mutex<i64> {
+    流计数器.get_or_init(|| Mutex::new(0))
 }
 
 /// LLM 会话结构
@@ -31,49 +42,48 @@ struct LLM会话 {
     密钥: Option<String>,
     /// 模型名称
     模型: String,
-    /// 对话历史
-    历史: Vec<消息>,
+    /// 对话历史，使用 OpenAI-compatible message JSON 表示，便于保存 tool_calls/tool 结果
+    历史: Vec<Value>,
+    /// 可用工具定义
+    工具列表: Vec<Value>,
+    /// provider-safe 工具名 -> Qi 原始工具名
+    工具名称映射: HashMap<String, String>,
     /// 配置参数
     配置: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
-struct 消息 {
-    角色: String,  // "user", "assistant", "system"
-    内容: String,
-}
-
 impl LLM会话 {
+    fn 标准化端点(端点: String) -> String {
+        let 去尾端点 = 端点.trim_end_matches('/').to_string();
+        if 去尾端点.ends_with("/chat/completions") {
+            去尾端点
+        } else {
+            format!("{}/chat/completions", 去尾端点)
+        }
+    }
+
     fn 创建(端点: String, 模型: String, 密钥: Option<String>) -> Self {
         Self {
-            端点,
+            端点: Self::标准化端点(端点),
             密钥,
             模型,
             历史: Vec::new(),
+            工具列表: Vec::new(),
+            工具名称映射: HashMap::new(),
             配置: HashMap::new(),
         }
     }
 
-    /// 发送HTTP请求到LLM API
-    fn 调用API(&self, 提示: &str) -> Result<String, String> {
-        use reqwest::blocking::Client;
-        use serde_json::Value;
-
-        // 构建请求体
+    fn 构建请求体(&self, 提示: &str, 流式: bool, 使用工具: bool) -> Value {
         let mut 消息列表 = self.历史.clone();
-        消息列表.push(消息 {
-            角色: "user".to_string(),
-            内容: 提示.to_string(),
-        });
+        消息列表.push(json!({
+            "role": "user",
+            "content": 提示
+        }));
 
-        let 请求体 = json!({
+        let mut 请求体 = json!({
             "model": self.模型,
-            "messages": 消息列表.iter().map(|msg| {
-                json!({
-                    "role": msg.角色,
-                    "content": msg.内容
-                })
-            }).collect::<Vec<_>>(),
+            "messages": 消息列表,
             "temperature": self.配置.get("temperature")
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.7),
@@ -82,45 +92,262 @@ impl LLM会话 {
                 .unwrap_or(2000),
         });
 
-        // 使用 reqwest 发送 HTTP POST 请求
+        if 流式 {
+            请求体["stream"] = json!(true);
+        }
+
+        if 使用工具 && !self.工具列表.is_empty() {
+            请求体["tools"] = Value::Array(self.工具列表.clone());
+            请求体["tool_choice"] = json!("auto");
+        }
+
+        请求体
+    }
+
+    fn 构建继续请求体(&self, 使用工具: bool) -> Value {
+        let mut 请求体 = json!({
+            "model": self.模型,
+            "messages": self.历史,
+            "temperature": self.配置.get("temperature")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.7),
+            "max_tokens": self.配置.get("max_tokens")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(2000),
+        });
+
+        if 使用工具 && !self.工具列表.is_empty() {
+            请求体["tools"] = Value::Array(self.工具列表.clone());
+            请求体["tool_choice"] = json!("auto");
+        }
+
+        请求体
+    }
+
+    fn 发送请求体(&self, 请求体: Value) -> Result<reqwest::blocking::Response, String> {
+        use reqwest::blocking::Client;
+
         let 客户端 = Client::new();
         let mut 请求构建器 = 客户端
             .post(&self.端点)
             .header("Content-Type", "application/json");
 
-        // 添加 API 密钥（如果有）
         if let Some(ref 密钥) = self.密钥 {
             请求构建器 = 请求构建器.header("Authorization", format!("Bearer {}", 密钥));
         }
 
-        // 发送请求
         let 响应 = 请求构建器
             .json(&请求体)
             .send()
             .map_err(|e| format!("HTTP请求失败: {}", e))?;
 
-        // 检查状态码
         if !响应.status().is_success() {
             let 状态码 = 响应.status();
             let 错误文本 = 响应.text().unwrap_or_else(|_| "无法读取错误响应".to_string());
             return Err(format!("API返回错误 {}: {}", 状态码, 错误文本));
         }
 
-        // 解析响应
-        let 响应体: Value = 响应
-            .json()
-            .map_err(|e| format!("解析响应失败: {}", e))?;
+        Ok(响应)
+    }
 
-        // 提取 AI 回复文本
-        let 回复文本 = 响应体
+    fn 提取消息(响应体: &Value) -> Result<Value, String> {
+        响应体
             .get("choices")
             .and_then(|choices| choices.get(0))
             .and_then(|choice| choice.get("message"))
-            .and_then(|message| message.get("content"))
-            .and_then(|content| content.as_str())
-            .ok_or_else(|| "响应格式错误：无法提取回复内容".to_string())?;
+            .cloned()
+            .ok_or_else(|| "响应格式错误：无法提取 message".to_string())
+    }
 
-        Ok(回复文本.to_string())
+    fn 提取文本(消息: &Value) -> Result<String, String> {
+        Ok(消息
+            .get("content")
+            .and_then(|content| content.as_str())
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// 发送HTTP请求到LLM API
+    fn 调用API(&self, 提示: &str) -> Result<String, String> {
+        let 请求体 = self.构建请求体(提示, false, false);
+        let 响应体: Value = self.发送请求体(请求体)?
+            .json()
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        let 消息 = Self::提取消息(&响应体)?;
+        Self::提取文本(&消息)
+    }
+
+    /// 带工具定义发送请求，返回完整 assistant message JSON
+    fn 调用工具API(&self, 提示: &str) -> Result<Value, String> {
+        let 请求体 = self.构建请求体(提示, false, true);
+        let 响应体: Value = self.发送请求体(请求体)?
+            .json()
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        Self::提取消息(&响应体)
+    }
+
+    /// 继续工具对话，通常在添加 tool 结果后调用
+    fn 继续工具API(&self) -> Result<Value, String> {
+        let 请求体 = self.构建继续请求体(true);
+        let 响应体: Value = self.发送请求体(请求体)?
+            .json()
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        Self::提取消息(&响应体)
+    }
+
+    /// 打开流式响应
+    fn 打开流(&self, 提示: &str) -> Result<reqwest::blocking::Response, String> {
+        let 请求体 = self.构建请求体(提示, true, false);
+        self.发送请求体(请求体)
+    }
+}
+
+struct LLM流 {
+    会话句柄: i64,
+    提示: String,
+    响应: reqwest::blocking::Response,
+    缓冲: String,
+    待返回: VecDeque<String>,
+    完成: bool,
+    累计: String,
+}
+
+impl LLM流 {
+    fn 创建(会话句柄: i64, 提示: String, 响应: reqwest::blocking::Response) -> Self {
+        Self {
+            会话句柄,
+            提示,
+            响应,
+            缓冲: String::new(),
+            待返回: VecDeque::new(),
+            完成: false,
+            累计: String::new(),
+        }
+    }
+
+    fn 读取下个片段(&mut self) -> Result<Option<String>, String> {
+        loop {
+            if let Some(片段) = self.待返回.pop_front() {
+                self.累计.push_str(&片段);
+                return Ok(Some(片段));
+            }
+
+            if self.完成 {
+                return Ok(None);
+            }
+
+            let mut 字节 = [0u8; 4096];
+            let 数量 = self.响应.read(&mut 字节)
+                .map_err(|e| format!("读取流失败: {}", e))?;
+
+            if 数量 == 0 {
+                self.完成 = true;
+                return Ok(None);
+            }
+
+            self.缓冲.push_str(&String::from_utf8_lossy(&字节[..数量]));
+            self.解析缓冲();
+        }
+    }
+
+    fn 查找事件分隔符(文本: &str) -> Option<(usize, usize)> {
+        let 双换行 = 文本.find("\n\n").map(|pos| (pos, 2));
+        let 双回车换行 = 文本.find("\r\n\r\n").map(|pos| (pos, 4));
+        match (双换行, 双回车换行) {
+            (Some(a), Some(b)) => Some(if a.0 < b.0 { a } else { b }),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
+
+    fn 解析缓冲(&mut self) {
+        while let Some((位置, 分隔长度)) = Self::查找事件分隔符(&self.缓冲) {
+            let 事件 = self.缓冲[..位置].to_string();
+            self.缓冲.drain(..位置 + 分隔长度);
+
+            let mut 数据 = String::new();
+            for 行 in 事件.lines() {
+                let 去空白 = 行.trim_start();
+                if let Some(内容) = 去空白.strip_prefix("data:") {
+                    数据.push_str(内容.trim());
+                }
+            }
+
+            if 数据.is_empty() {
+                continue;
+            }
+
+            if 数据 == "[DONE]" {
+                self.完成 = true;
+                continue;
+            }
+
+            if let Ok(JSON) = serde_json::from_str::<Value>(&数据) {
+                let delta = JSON
+                    .get("choices")
+                    .and_then(|choices| choices.get(0))
+                    .and_then(|choice| choice.get("delta"));
+
+                if let Some(内容) = delta
+                    .and_then(|d| d.get("content"))
+                    .and_then(|content| content.as_str())
+                {
+                    if !内容.is_empty() {
+                        self.待返回.push_back(内容.to_string());
+                    }
+                }
+
+                if let Some(工具调用) = delta.and_then(|d| d.get("tool_calls")) {
+                    self.待返回.push_back(json!({
+                        "类型": "工具调用片段",
+                        "数据": 工具调用
+                    }).to_string());
+                }
+            }
+        }
+    }
+}
+
+fn 转为C字符串指针(文本: String) -> *mut c_char {
+    match CString::new(文本.replace('\0', "")) {
+        Ok(c_str) => c_str.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+fn 工具安全名称(名称: &str) -> String {
+    if !名称.is_empty()
+        && 名称.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return 名称.to_string();
+    }
+
+    let mut 安全名称 = String::from("qi_tool_");
+    for 字节 in 名称.as_bytes() {
+        安全名称.push_str(&format!("{:02x}", 字节));
+    }
+    安全名称
+}
+
+fn 保存流历史(流: &LLM流) {
+    if 流.累计.is_empty() {
+        return;
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&流.会话句柄) {
+        会话.历史.push(json!({
+            "role": "user",
+            "content": 流.提示
+        }));
+        会话.历史.push(json!({
+            "role": "assistant",
+            "content": 流.累计
+        }));
     }
 }
 
@@ -194,30 +421,329 @@ pub extern "C" fn qi_llm_chat(
             match 会话.调用API(&提示) {
                 Ok(响应) => {
                     // 添加到历史
-                    会话.历史.push(消息 {
-                        角色: "user".to_string(),
-                        内容: 提示.clone(),
-                    });
-                    会话.历史.push(消息 {
-                        角色: "assistant".to_string(),
-                        内容: 响应.clone(),
-                    });
+                    会话.历史.push(json!({
+                        "role": "user",
+                        "content": 提示.clone()
+                    }));
+                    会话.历史.push(json!({
+                        "role": "assistant",
+                        "content": 响应.clone()
+                    }));
 
-                    if let Ok(c_str) = CString::new(响应) {
-                        return c_str.into_raw();
-                    }
+                    return 转为C字符串指针(响应);
                 }
                 Err(错误) => {
                     let 错误信息 = format!("LLM调用失败: {}", 错误);
-                    if let Ok(c_str) = CString::new(错误信息) {
-                        return c_str.into_raw();
-                    }
+                    return 转为C字符串指针(错误信息);
                 }
             }
         }
     }
 
     std::ptr::null_mut()
+}
+
+/// 打开流式 LLM 对话。
+///
+/// 返回: 流句柄 (>0 成功, <0 失败)
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_chat(
+    session_handle: i64,
+    prompt: *const c_char,
+) -> i64 {
+    if prompt.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 提示 = CStr::from_ptr(prompt).to_string_lossy().to_string();
+
+        let 会话克隆 = {
+            let 会话池 = 获取会话池().lock().unwrap();
+            match 会话池.get(&session_handle) {
+                Some(会话) => 会话.clone(),
+                None => return -1,
+            }
+        };
+
+        let 响应 = match 会话克隆.打开流(&提示) {
+            Ok(响应) => 响应,
+            Err(_) => return -1,
+        };
+
+        let mut 计数器 = 获取流计数器().lock().unwrap();
+        *计数器 += 1;
+        let 流句柄 = *计数器;
+
+        let mut 流池 = 获取流池().lock().unwrap();
+        流池.insert(流句柄, LLM流::创建(session_handle, 提示, 响应));
+
+        流句柄
+    }
+}
+
+/// 读取流式对话的下一个片段。结束时返回空字符串。
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_next(stream_handle: i64) -> *mut c_char {
+    let mut 流池 = 获取流池().lock().unwrap();
+
+    if let Some(流) = 流池.get_mut(&stream_handle) {
+        match 流.读取下个片段() {
+            Ok(Some(片段)) => return 转为C字符串指针(片段),
+            Ok(None) => return 转为C字符串指针(String::new()),
+            Err(错误) => return 转为C字符串指针(format!("流式读取失败: {}", 错误)),
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// 关闭流式对话，并把已经收到的内容写入会话历史。
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_close(stream_handle: i64) -> i64 {
+    let 流 = {
+        let mut 流池 = 获取流池().lock().unwrap();
+        流池.remove(&stream_handle)
+    };
+
+    if let Some(流) = 流 {
+        保存流历史(&流);
+        return 1;
+    }
+
+    -1
+}
+
+/// 注册工具定义。
+///
+/// parameters_json 应是 JSON Schema 对象字符串，例如 {"type":"object","properties":{...}}
+#[no_mangle]
+pub extern "C" fn qi_llm_register_tool(
+    session_handle: i64,
+    tool_name: *const c_char,
+    tool_description: *const c_char,
+    parameters_json: *const c_char,
+) -> i64 {
+    if tool_name.is_null() || tool_description.is_null() || parameters_json.is_null() {
+        return -1;
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        unsafe {
+            let 工具名 = CStr::from_ptr(tool_name).to_string_lossy().to_string();
+            let 工具描述 = CStr::from_ptr(tool_description).to_string_lossy().to_string();
+            let 参数文本 = CStr::from_ptr(parameters_json).to_string_lossy().to_string();
+            let 安全工具名 = 工具安全名称(&工具名);
+            let 参数结构 = serde_json::from_str::<Value>(&参数文本)
+                .unwrap_or_else(|_| json!({"type": "object", "properties": {}}));
+
+            会话.工具列表.push(json!({
+                "type": "function",
+                "function": {
+                    "name": 安全工具名,
+                    "description": format!("{}（Qi工具名：{}）", 工具描述, 工具名),
+                    "parameters": 参数结构
+                }
+            }));
+            会话.工具名称映射.insert(安全工具名, 工具名);
+            return 1;
+        }
+    }
+
+    -1
+}
+
+/// 清空会话工具定义。
+#[no_mangle]
+pub extern "C" fn qi_llm_clear_tools(session_handle: i64) -> i64 {
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        会话.工具列表.clear();
+        会话.工具名称映射.clear();
+        return 1;
+    }
+    -1
+}
+
+/// 带工具调用能力的对话，返回 assistant message JSON。
+#[no_mangle]
+pub extern "C" fn qi_llm_chat_with_tools(
+    session_handle: i64,
+    prompt: *const c_char,
+) -> *mut c_char {
+    if prompt.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        unsafe {
+            let 提示 = CStr::from_ptr(prompt).to_string_lossy().to_string();
+            match 会话.调用工具API(&提示) {
+                Ok(消息) => {
+                    会话.历史.push(json!({
+                        "role": "user",
+                        "content": 提示
+                    }));
+                    会话.历史.push(消息.clone());
+                    return 转为C字符串指针(消息.to_string());
+                }
+                Err(错误) => return 转为C字符串指针(format!("工具对话失败: {}", 错误)),
+            }
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+/// 添加工具结果后继续模型推理，返回 assistant message JSON。
+#[no_mangle]
+pub extern "C" fn qi_llm_continue_with_tools(session_handle: i64) -> *mut c_char {
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        match 会话.继续工具API() {
+            Ok(消息) => {
+                会话.历史.push(消息.clone());
+                return 转为C字符串指针(消息.to_string());
+            }
+            Err(错误) => return 转为C字符串指针(format!("继续工具对话失败: {}", 错误)),
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
+fn 解析工具调用(assistant_message_json: *const c_char) -> Option<Value> {
+    if assistant_message_json.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let 文本 = CStr::from_ptr(assistant_message_json).to_string_lossy().to_string();
+        let 消息: Value = serde_json::from_str(&文本).ok()?;
+        消息.get("tool_calls")
+            .and_then(|calls| calls.get(0))
+            .cloned()
+    }
+}
+
+/// 判断 assistant message JSON 是否包含工具调用。
+#[no_mangle]
+pub extern "C" fn qi_llm_has_tool_call(assistant_message_json: *const c_char) -> i64 {
+    if 解析工具调用(assistant_message_json).is_some() {
+        1
+    } else {
+        0
+    }
+}
+
+/// 获取第一个工具调用 ID。
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_id(assistant_message_json: *const c_char) -> *mut c_char {
+    let 调用 = match 解析工具调用(assistant_message_json) {
+        Some(调用) => 调用,
+        None => return std::ptr::null_mut(),
+    };
+
+    let 调用ID = 调用
+        .get("id")
+        .and_then(|id| id.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    转为C字符串指针(调用ID)
+}
+
+/// 获取第一个工具调用名称；返回 Qi 原始中文工具名。
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_name(
+    session_handle: i64,
+    assistant_message_json: *const c_char,
+) -> *mut c_char {
+    let 调用 = match 解析工具调用(assistant_message_json) {
+        Some(调用) => 调用,
+        None => return std::ptr::null_mut(),
+    };
+
+    let 安全名称 = 调用
+        .get("function")
+        .and_then(|func| func.get("name"))
+        .and_then(|name| name.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let 会话池 = 获取会话池().lock().unwrap();
+    let 名称 = 会话池
+        .get(&session_handle)
+        .and_then(|会话| 会话.工具名称映射.get(&安全名称))
+        .cloned()
+        .unwrap_or(安全名称);
+
+    转为C字符串指针(名称)
+}
+
+/// 获取第一个工具调用参数 JSON。
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_arguments(assistant_message_json: *const c_char) -> *mut c_char {
+    let 调用 = match 解析工具调用(assistant_message_json) {
+        Some(调用) => 调用,
+        None => return std::ptr::null_mut(),
+    };
+
+    let 参数 = 调用
+        .get("function")
+        .and_then(|func| func.get("arguments"));
+
+    let 参数文本 = match 参数 {
+        Some(Value::String(s)) => s.clone(),
+        Some(value) => value.to_string(),
+        None => String::new(),
+    };
+
+    转为C字符串指针(参数文本)
+}
+
+/// 添加工具执行结果到会话历史，供下一次工具对话继续推理。
+#[no_mangle]
+pub extern "C" fn qi_llm_add_tool_result(
+    session_handle: i64,
+    tool_call_id: *const c_char,
+    tool_name: *const c_char,
+    result: *const c_char,
+) -> i64 {
+    if tool_call_id.is_null() || result.is_null() {
+        return -1;
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        unsafe {
+            let 调用ID = CStr::from_ptr(tool_call_id).to_string_lossy().to_string();
+            let 结果 = CStr::from_ptr(result).to_string_lossy().to_string();
+            let 工具名 = if tool_name.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(tool_name).to_string_lossy().to_string()
+            };
+            let 安全工具名 = 工具安全名称(&工具名);
+
+            let mut 工具消息 = json!({
+                "role": "tool",
+                "tool_call_id": 调用ID,
+                "content": 结果
+            });
+
+            if !安全工具名.is_empty() {
+                工具消息["name"] = json!(安全工具名);
+            }
+
+            会话.历史.push(工具消息);
+            return 1;
+        }
+    }
+
+    -1
 }
 
 /// 设置会话配置参数
@@ -371,14 +897,14 @@ pub extern "C" fn qi_llm_chat_async(
                     {
                         let mut 会话池 = 获取会话池().lock().unwrap();
                         if let Some(会话) = 会话池.get_mut(&session_handle) {
-                            会话.历史.push(消息 {
-                                角色: "user".to_string(),
-                                内容: 提示.clone(),
-                            });
-                            会话.历史.push(消息 {
-                                角色: "assistant".to_string(),
-                                内容: 响应.clone(),
-                            });
+                            会话.历史.push(json!({
+                                "role": "user",
+                                "content": 提示.clone()
+                            }));
+                            会话.历史.push(json!({
+                                "role": "assistant",
+                                "content": 响应.clone()
+                            }));
                         }
                     }
 

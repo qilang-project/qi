@@ -67,6 +67,7 @@ pub enum AstNode {
     解引用表达式(DereferenceExpression),
     闭包表达式(ClosureExpression),
     匹配表达式(MatchExpression),
+    格式字符串表达式(FormatStringExpression),
 }
 
 /// Program node
@@ -110,11 +111,33 @@ pub struct FunctionDeclaration {
     pub span: Span,
 }
 
-/// Function parameter
+/// Parameter with default value
+#[derive(Debug, Clone)]
+pub struct ParameterWithDefault {
+    pub name: String,
+    pub type_annotation: Option<TypeNode>,
+    pub default_value: Option<Box<AstNode>>,
+    pub is_variadic: bool,
+    pub span: Span,
+}
+
+/// Basic function parameter
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
     pub type_annotation: Option<TypeNode>,
+    pub default_value: Option<Box<AstNode>>,
+    pub is_variadic: bool,
+    pub span: Span,
+}
+
+/// Parameter with variadic support
+#[derive(Debug, Clone)]
+pub struct ParameterWithVariadic {
+    pub name: String,
+    pub type_annotation: Option<TypeNode>,
+    pub default_value: Option<Box<AstNode>>,
+    pub is_variadic: bool,
     pub span: Span,
 }
 
@@ -702,6 +725,23 @@ pub struct AsyncBlockExpression {
     pub span: Span,
 }
 
+/// Format string expression (格式字符串表达式) - f"Hello {name}!"
+#[derive(Debug, Clone)]
+pub struct FormatStringExpression {
+    /// Parts of the format string - either literal text or expressions to interpolate
+    pub parts: Vec<FormatStringPart>,
+    pub span: Span,
+}
+
+/// Part of a format string - either literal text or an interpolated expression
+#[derive(Debug, Clone)]
+pub enum FormatStringPart {
+    /// Literal string text
+    文本(String),
+    /// Interpolated expression with optional format specifier
+    表达式 { expr: Box<AstNode>, format: Option<String> },
+}
+
 // ===== 泛型支持 | Generic Support =====
 
 /// Generic parameter (泛型参数)
@@ -764,4 +804,86 @@ pub fn unescape_string(s: &str) -> String {
         }
     }
     out
+}
+
+/// Parse a format string content into a FormatStringExpression
+/// Format: "text {expr} more text {expr2}" -> FormatStringExpression with parts
+pub fn parse_format_string(content: &str) -> AstNode {
+    let mut parts = Vec::new();
+    let mut current_text = String::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            // Handle escape sequences
+            match chars[i + 1] {
+                'n' => current_text.push('\n'),
+                't' => current_text.push('\t'),
+                'r' => current_text.push('\r'),
+                '\\' => current_text.push('\\'),
+                '"' => current_text.push('"'),
+                '{' => current_text.push('{'),
+                '}' => current_text.push('}'),
+                c => current_text.push(c),
+            }
+            i += 2;
+            continue;
+        }
+
+        if chars[i] == '{' {
+            // Save current text if any
+            if !current_text.is_empty() {
+                parts.push(FormatStringPart::文本(current_text.clone()));
+                current_text.clear();
+            }
+
+            // Find matching closing brace
+            let start = i + 1;
+            let mut brace_depth = 1;
+            i += 1;
+            while i < chars.len() && brace_depth > 0 {
+                if chars[i] == '{' {
+                    brace_depth += 1;
+                } else if chars[i] == '}' {
+                    brace_depth -= 1;
+                }
+                if brace_depth > 0 {
+                    i += 1;
+                }
+            }
+
+            if i < chars.len() && chars[i] == '}' {
+                let expr_str: String = chars[start..i].iter().collect();
+                let expr_str = expr_str.trim();
+
+                // Parse the expression using a simple identifier for now
+                // In a full implementation, we would recursively parse the expression
+                let expr = AstNode::标识符表达式(IdentifierExpression {
+                    name: expr_str.to_string(),
+                    span: Default::default(),
+                });
+
+                parts.push(FormatStringPart::表达式 {
+                    expr: Box::new(expr),
+                    format: None,
+                });
+                i += 1;
+            }
+            continue;
+        }
+
+        current_text.push(chars[i]);
+        i += 1;
+    }
+
+    // Save any remaining text
+    if !current_text.is_empty() {
+        parts.push(FormatStringPart::文本(current_text));
+    }
+
+    AstNode::格式字符串表达式(FormatStringExpression {
+        parts,
+        span: Default::default(),
+    })
 }

@@ -151,7 +151,7 @@ impl Parser {
         use crate::parser::__parse__Program::ProgramParser;
         ProgramParser::new()
             .parse(&cleaned)
-            .map_err(|_| ParseError::ParseFailed)
+            .map_err(|e| ParseError::General(format!("{:?}", e)))
     }
 
     /// Parse tokens into an AST (legacy method - tokenizes first)

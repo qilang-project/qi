@@ -345,6 +345,82 @@ pub extern "C" fn qi_runtime_gc_collect() {
     }
 }
 
+/// Register a heap object as a GC root.
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_add_root(ptr: *mut u8) -> i64 {
+    if ptr.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                if runtime.memory_manager.add_root(ptr).is_ok() {
+                    return 1;
+                }
+            }
+        }
+    }
+    -1
+}
+
+/// Remove a heap object from the GC root set.
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_remove_root(ptr: *mut u8) -> i64 {
+    if ptr.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                if runtime.memory_manager.remove_root(ptr).is_ok() {
+                    return 1;
+                }
+            }
+        }
+    }
+    -1
+}
+
+/// Add a reference edge between two heap objects.
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_add_reference(from: *mut u8, to: *mut u8) -> i64 {
+    if from.is_null() || to.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                if runtime.memory_manager.add_reference(from, to).is_ok() {
+                    return 1;
+                }
+            }
+        }
+    }
+    -1
+}
+
+/// Clear all outgoing references for a heap object.
+#[no_mangle]
+pub extern "C" fn qi_runtime_gc_clear_references(ptr: *mut u8) -> i64 {
+    if ptr.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        if let Some(runtime_mutex) = RUNTIME.as_ref() {
+            if let Ok(mut runtime) = runtime_mutex.lock() {
+                if runtime.memory_manager.clear_references(ptr).is_ok() {
+                    return 1;
+                }
+            }
+        }
+    }
+    -1
+}
+
 /// Get runtime metrics as JSON string
 #[no_mangle]
 pub extern "C" fn qi_runtime_get_metrics() -> *const c_char {
