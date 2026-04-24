@@ -147,6 +147,35 @@ impl Parser {
 
         let cleaned = strip_comments(source);
 
+        // Normalize Chinese fullwidth colon （：U+FF1A) to ASCII colon outside string literals,
+        // so users can write `：` anywhere `:` is accepted in the grammar.
+        fn normalize_colons(s: &str) -> String {
+            let mut out = String::with_capacity(s.len());
+            let mut in_string = false;
+            let mut escape = false;
+            for ch in s.chars() {
+                if in_string {
+                    if escape {
+                        escape = false;
+                    } else if ch == '\\' {
+                        escape = true;
+                    } else if ch == '"' {
+                        in_string = false;
+                    }
+                    out.push(ch);
+                } else if ch == '"' {
+                    in_string = true;
+                    out.push(ch);
+                } else if ch == '：' {
+                    out.push(':');
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        }
+        let cleaned = normalize_colons(&cleaned);
+
         // Use LALRPOP-generated parser with cleaned string input
         use crate::parser::__parse__Program::ProgramParser;
         ProgramParser::new()
