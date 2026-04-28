@@ -40,6 +40,7 @@ pub mod signal_ffi;
 pub mod multipart_ffi;
 pub mod exception_ffi;
 pub mod closure_ffi;
+pub mod qi_str;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};
