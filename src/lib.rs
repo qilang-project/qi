@@ -12,6 +12,7 @@ pub mod cli;
 pub mod codegen;
 pub mod error;
 pub mod lexer;
+pub mod package;
 pub mod parser;
 pub mod runtime;
 pub mod semantic;
@@ -130,6 +131,12 @@ impl QiCompiler {
         
         // 1.5. Process public imports (re-exports)
         self.process_public_imports(&mut module_registry, &compiled_modules)?;
+        let (
+            external_struct_definitions,
+            external_struct_field_names,
+            external_struct_function_fields,
+        ) =
+            self.collect_struct_layouts(&compiled_modules);
 
         let mut object_files: Vec<PathBuf> = Vec::new();
         let mut ir_files: Vec<PathBuf> = Vec::new();
@@ -183,39 +190,92 @@ impl QiCompiler {
                         let alias_name = import.alias.as_ref().unwrap_or(import_module_name);
                         import_aliases.insert(alias_name.clone(), import_module_name.clone());
 
-                        // IMPORTANT: Only add functions from different packages as external
-                        // Functions from the same package are compiled together and should be local
-                        let is_same_package = match (current_package_name, imported_module.package_name.as_ref()) {
-                            (Some(current), Some(imported)) => current == imported,
-                            (None, None) => true, // Both have no package name
-                            _ => false, // One has package name, other doesn't
-                        };
+                        // Add all exported functions from imported module as external
+                        // declarations. Each module compiles to its own .ll/.o, so even
+                        // same-package siblings need extern declarations for cross-file calls.
+                        for (func_name, symbol) in &imported_module.exports {
+                            if symbol.kind == crate::semantic::module::SymbolKind::Function {
+                                if let Some(sig) = &symbol.function_signature {
+                                    // Mangle the function name same way as builder does
+                                    let mangled_name = self.mangle_function_name(func_name);
+                                    let param_types: Vec<String> = sig.parameters.iter()
+                                        .map(|(_, ty)| ty.clone())
+                                        .collect();
 
-                        if !is_same_package {
-                            // Add all exported functions from imported module as external
-                            for (func_name, symbol) in &imported_module.exports {
-                                if symbol.kind == crate::semantic::module::SymbolKind::Function {
-                                    if let Some(sig) = &symbol.function_signature {
-                                        // Mangle the function name same way as builder does
-                                        let mangled_name = self.mangle_function_name(func_name);
-                                        let param_types: Vec<String> = sig.parameters.iter()
-                                            .map(|(_, ty)| ty.clone())
-                                            .collect();
-
-                                        // Track struct return types for ptr-returning functions
-                                        // by looking at the original return type annotation in the module AST
-                                        if sig.return_type == "ptr" {
-                                            // Try to find the actual struct type name from the module's AST
-                                            if let Some(struct_name) = get_function_return_struct_name(&imported_module, func_name) {
-                                                external_fn_return_struct_types.insert(mangled_name.clone(), struct_name);
-                                            }
+                                    // Track struct return types for ptr-returning functions
+                                    // by looking at the original return type annotation in the module AST
+                                    if sig.return_type == "ptr" {
+                                        // Try to find the actual struct type name from the module's AST
+                                        if let Some(struct_name) = get_function_return_struct_name(&imported_module, func_name) {
+                                            external_fn_return_struct_types.insert(mangled_name.clone(), struct_name);
                                         }
+                                    }
 
-                                        // Only register the original function name
-                                        external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                    // Only register the original function name
+                                    external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Register all top-level functions from OTHER same-package modules as
+                // external declarations. Each .qi file generates its own .ll/.o, so any
+                // cross-file call within the same package needs a `declare` in the
+                // caller's IR. This includes private functions, which are still emitted
+                // as global symbols by the codegen.
+                for (other_path, other_ast) in compiled_modules.iter() {
+                    if other_path == module_path {
+                        continue;
+                    }
+                    let other_key = other_path.canonicalize()
+                        .unwrap_or_else(|_| other_path.clone())
+                        .to_string_lossy()
+                        .to_string();
+                    let other_module = match module_registry.get_module(&other_key) {
+                        Some(m) => m,
+                        None => continue,
+                    };
+                    let same_pkg = match (current_package_name, other_module.package_name.as_ref()) {
+                        (Some(a), Some(b)) => a == b,
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !same_pkg {
+                        continue;
+                    }
+                    let other_program = match other_ast {
+                        crate::parser::ast::AstNode::程序(p) => p,
+                        _ => continue,
+                    };
+                    for stmt in &other_program.statements {
+                        if let crate::parser::ast::AstNode::函数声明(func) = stmt {
+                            let mangled_name = self.mangle_function_name(&func.name);
+                            if external_functions.contains_key(&mangled_name) {
+                                continue;
+                            }
+                            let param_types: Vec<String> = func.parameters.iter()
+                                .map(|p| crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                    &p.type_annotation
+                                ))
+                                .collect();
+                            let return_type = crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                &func.return_type
+                            );
+                            if return_type == "ptr" {
+                                if let Some(rt) = func.return_type.as_ref() {
+                                    let struct_name = match rt {
+                                        crate::parser::ast::TypeNode::自定义类型(name) => Some(name.clone()),
+                                        crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                                        _ => None,
+                                    };
+                                    if let Some(name) = struct_name {
+                                        external_fn_return_struct_types
+                                            .insert(mangled_name.clone(), name);
                                     }
                                 }
                             }
+                            external_functions.insert(mangled_name, (param_types, return_type));
                         }
                     }
                 }
@@ -229,6 +289,12 @@ impl QiCompiler {
 
             // Set external function return struct types
             codegen.set_external_function_return_struct_types(external_fn_return_struct_types);
+
+            codegen.set_external_struct_definitions(
+                external_struct_definitions.clone(),
+                external_struct_field_names.clone(),
+                external_struct_function_fields.clone(),
+            );
 
             // Set import aliases for namespace resolution
             codegen.set_import_aliases(import_aliases);
@@ -691,6 +757,20 @@ impl QiCompiler {
         }
 
         // 1.5. Try package-internal submodule paths such as Web.控制器 -> <package_root>/控制器.qi
+        if !module_path.is_empty() {
+            if let Ok(Some(package_manifest)) = crate::package::ResolvedPackageManifest::discover(current_file) {
+                if let Some(package_name) = package_manifest.package_name() {
+                    if module_path.first().map(|s| s.as_str()) == Some(package_name) {
+                        if let Some(package_path) =
+                            package_manifest.resolve_module_path(package_name, module_path)
+                        {
+                            return Ok(package_path);
+                        }
+                    }
+                }
+            }
+        }
+
         if module_path.len() > 1 {
             if let Some(package_path) = self.resolve_package_internal_module_path(current_file, module_path) {
                 return Ok(package_path);
@@ -726,6 +806,10 @@ impl QiCompiler {
 
         // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
+            if let Some(local_package_path) = self.resolve_local_manifest_package_path(current_file, module_path) {
+                return Ok(local_package_path);
+            }
+
             if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
                 let packages_root = std::path::Path::new(&package_root);
                 if let Some(package_path) = self.resolve_package_path_from_root(packages_root, module_path) {
@@ -767,6 +851,141 @@ impl QiCompiler {
             std::io::ErrorKind::NotFound,
             format!("无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)", module_path.join("/"))
         )))
+    }
+
+    fn resolve_local_manifest_package_path(
+        &self,
+        current_file: &PathBuf,
+        module_path: &[String],
+    ) -> Option<PathBuf> {
+        let package_name = module_path.first()?;
+        let mut ancestor = current_file.parent()?.to_path_buf();
+
+        loop {
+            if let Ok(entries) = std::fs::read_dir(&ancestor) {
+                for entry in entries.flatten() {
+                    let package_dir = entry.path();
+                    if !package_dir.is_dir() {
+                        continue;
+                    }
+
+                    let manifest = match crate::package::ResolvedPackageManifest::discover(&package_dir) {
+                        Ok(Some(manifest)) if manifest.root_dir == package_dir.canonicalize().unwrap_or(package_dir.clone()) => manifest,
+                        _ => continue,
+                    };
+
+                    if manifest.package_name() == Some(package_name.as_str()) {
+                        if let Some(package_path) =
+                            manifest.resolve_module_path(package_name, module_path)
+                        {
+                            return Some(package_path);
+                        }
+                    }
+                }
+            }
+
+            if !ancestor.pop() {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn collect_struct_layouts(
+        &self,
+        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
+    ) -> (
+        std::collections::HashMap<String, Vec<String>>,
+        std::collections::HashMap<String, Vec<String>>,
+        std::collections::HashMap<(String, String), (Vec<String>, String)>,
+    ) {
+        let mut definitions = std::collections::HashMap::new();
+        let mut field_names = std::collections::HashMap::new();
+        let mut function_fields = std::collections::HashMap::new();
+
+        for ast_node in compiled_modules.values() {
+            if let crate::parser::ast::AstNode::程序(program) = ast_node {
+                for statement in &program.statements {
+                    if let crate::parser::ast::AstNode::结构体声明(struct_decl) = statement {
+                        definitions.insert(
+                            struct_decl.name.clone(),
+                            struct_decl
+                                .fields
+                                .iter()
+                                .map(|field| self.type_node_to_llvm_type(&field.type_annotation))
+                                .collect(),
+                        );
+                        field_names.insert(
+                            struct_decl.name.clone(),
+                            struct_decl
+                                .fields
+                                .iter()
+                                .map(|field| field.name.clone())
+                                .collect(),
+                        );
+                        for field in &struct_decl.fields {
+                            if let crate::parser::ast::TypeNode::函数类型(function_type) =
+                                &field.type_annotation
+                            {
+                                function_fields.insert(
+                                    (struct_decl.name.clone(), field.name.clone()),
+                                    (
+                                        function_type
+                                            .parameters
+                                            .iter()
+                                            .map(|param| self.type_node_to_llvm_type(param))
+                                            .collect(),
+                                        self.type_node_to_llvm_type(&function_type.return_type),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        (definitions, field_names, function_fields)
+    }
+
+    fn type_node_to_llvm_type(&self, type_node: &crate::parser::ast::TypeNode) -> String {
+        use crate::parser::ast::{BasicType, TypeNode};
+
+        match type_node {
+            TypeNode::基础类型(BasicType::整数 | BasicType::长整数) => "i64".to_string(),
+            TypeNode::基础类型(BasicType::短整数) => "i16".to_string(),
+            TypeNode::基础类型(BasicType::字节 | BasicType::字符) => "i8".to_string(),
+            TypeNode::基础类型(BasicType::浮点数) => "double".to_string(),
+            TypeNode::基础类型(BasicType::布尔) => "i1".to_string(),
+            TypeNode::基础类型(BasicType::空) => "void".to_string(),
+            TypeNode::基础类型(
+                BasicType::字符串
+                | BasicType::数组
+                | BasicType::字典
+                | BasicType::列表
+                | BasicType::集合
+                | BasicType::指针
+                | BasicType::引用
+                | BasicType::可变引用,
+            )
+            | TypeNode::函数类型(_)
+            | TypeNode::数组类型(_)
+            | TypeNode::结构体类型(_)
+            | TypeNode::自定义类型(_)
+            | TypeNode::指针类型(_)
+            | TypeNode::引用类型(_)
+            | TypeNode::字典类型(_)
+            | TypeNode::列表类型(_)
+            | TypeNode::集合类型(_)
+            | TypeNode::通道类型(_)
+            | TypeNode::未来类型(_)
+            | TypeNode::结果类型(_)
+            | TypeNode::选项类型(_)
+            | TypeNode::泛型类型(_)
+            | TypeNode::联合体类型(_) => "ptr".to_string(),
+            TypeNode::枚举类型(_) => "i64".to_string(),
+        }
     }
 
     fn resolve_package_internal_module_path(

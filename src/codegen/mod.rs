@@ -61,6 +61,16 @@ impl CodeGenerator {
         self.ir_builder.set_external_function_return_struct_types(map);
     }
 
+    pub fn set_external_struct_definitions(
+        &mut self,
+        definitions: std::collections::HashMap<String, Vec<String>>,
+        field_names: std::collections::HashMap<String, Vec<String>>,
+        function_fields: std::collections::HashMap<(String, String), (Vec<String>, String)>,
+    ) {
+        self.ir_builder
+            .set_external_struct_definitions(definitions, field_names, function_fields);
+    }
+
     /// Set whether this module is the entry module (has the main entry point)
     pub fn set_is_entry_module(&mut self, is_entry: bool) {
         self.ir_builder.set_is_entry_module(is_entry);

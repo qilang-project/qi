@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::sync::Mutex;
 
 // 列表类型枚举
@@ -13,6 +13,7 @@ enum ListValue {
     Integer(Vec<i64>),
     Float(Vec<f64>),
     String(Vec<String>),
+    Pointer(Vec<usize>),
 }
 
 // 全局列表存储
@@ -371,6 +372,94 @@ pub extern "C" fn qi_list_string_size(list_id: i64) -> i64 {
     let lists = LISTS.lock().unwrap();
     if let Some(ref map) = *lists {
         if let Some(ListValue::String(ref list)) = map.get(&(list_id as u64)) {
+            return list.len() as i64;
+        }
+    }
+    0
+}
+
+// ============================================================================
+// 指针列表 (Pointer List)
+// ============================================================================
+
+/// 创建指针列表
+#[no_mangle]
+pub extern "C" fn qi_list_ptr_create() -> i64 {
+    init_lists();
+    let id = next_list_id();
+
+    let mut lists = LISTS.lock().unwrap();
+    if let Some(ref mut map) = *lists {
+        map.insert(id, ListValue::Pointer(Vec::new()));
+    }
+
+    id as i64
+}
+
+/// 向指针列表添加元素
+#[no_mangle]
+pub extern "C" fn qi_list_ptr_push(list_id: i64, value: *mut c_void) -> i64 {
+    if list_id <= 0 {
+        return 0;
+    }
+
+    let mut lists = LISTS.lock().unwrap();
+    if let Some(ref mut map) = *lists {
+        if let Some(ListValue::Pointer(ref mut list)) = map.get_mut(&(list_id as u64)) {
+            list.push(value as usize);
+            return 1;
+        }
+    }
+    0
+}
+
+/// 从指针列表获取元素
+#[no_mangle]
+pub extern "C" fn qi_list_ptr_get(list_id: i64, index: i64) -> *mut c_void {
+    if list_id <= 0 || index < 0 {
+        return std::ptr::null_mut();
+    }
+
+    let lists = LISTS.lock().unwrap();
+    if let Some(ref map) = *lists {
+        if let Some(ListValue::Pointer(ref list)) = map.get(&(list_id as u64)) {
+            if (index as usize) < list.len() {
+                return list[index as usize] as *mut c_void;
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// 设置指针列表元素
+#[no_mangle]
+pub extern "C" fn qi_list_ptr_set(list_id: i64, index: i64, value: *mut c_void) -> i64 {
+    if list_id <= 0 || index < 0 {
+        return 0;
+    }
+
+    let mut lists = LISTS.lock().unwrap();
+    if let Some(ref mut map) = *lists {
+        if let Some(ListValue::Pointer(ref mut list)) = map.get_mut(&(list_id as u64)) {
+            if (index as usize) < list.len() {
+                list[index as usize] = value as usize;
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// 获取指针列表大小
+#[no_mangle]
+pub extern "C" fn qi_list_ptr_size(list_id: i64) -> i64 {
+    if list_id <= 0 {
+        return 0;
+    }
+
+    let lists = LISTS.lock().unwrap();
+    if let Some(ref map) = *lists {
+        if let Some(ListValue::Pointer(ref list)) = map.get(&(list_id as u64)) {
             return list.len() as i64;
         }
     }

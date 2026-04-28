@@ -360,6 +360,10 @@ impl TcpConnection {
 
     /// Create TcpConnection from existing TcpStream (用于服务器接受的连接)
     pub fn from_stream(stream: TcpStream) -> IoResult<Self> {
+        // 关掉 Nagle 算法：小响应不再等 ~40ms 的 ACK 合并，p99 直接砍。
+        // 失败不致命，记一下日志继续即可。
+        let _ = stream.set_nodelay(true);
+
         let peer_addr = stream.peer_addr().map_err(|e| IoError::NetworkOperationFailed {
             endpoint: "unknown".to_string(),
             message: format!("获取对端地址失败: {}", e),

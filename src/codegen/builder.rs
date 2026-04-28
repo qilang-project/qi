@@ -1,6 +1,22 @@
 //! IR builder for Qi language
 
 use crate::parser::ast::{AstNode, BinaryOperator};
+
+/// 简单分析：函数体里有没有直接 `返回 闭包(...)` 的语句。
+/// 用于推断函数是否返回闭包对象（决定调用方是否把结果标为 closure 变量）。
+fn function_body_returns_closure(body: &[AstNode]) -> bool {
+    for stmt in body {
+        if let AstNode::返回语句(ret) = stmt {
+            if let Some(val) = &ret.value {
+                if matches!(val.as_ref(), AstNode::闭包表达式(_)) {
+                    return true;
+                }
+            }
+        }
+        // 块嵌套时简化处理 — 实际场景大多是顶层 return；嵌套见到再扩展
+    }
+    false
+}
 use super::module_registry::{ModuleRegistry, ModuleFunction};
 
 /// IR instruction
@@ -244,6 +260,11 @@ pub struct IrBuilder {
     label_counter: usize,
     /// Track variable types for better code generation
     variable_types: std::collections::HashMap<String, String>,
+    /// Map user-facing identifier → internal unique LLVM name.
+    /// Used for catch error variables to avoid alloca-name collisions when
+    /// the same identifier is used in multiple `try`/`catch` blocks within
+    /// one function. Looked up by 标识符表达式 / 赋值表达式 before mangling.
+    variable_alias: std::collections::HashMap<String, String>,
     /// Track constant variables (cannot be reassigned)
     constant_variables: std::collections::HashSet<String>,
     /// Track Future variable inner types (variable_name -> inner_type like "i64", "i1", "double")
@@ -262,6 +283,8 @@ pub struct IrBuilder {
     function_param_types: std::collections::HashMap<String, Vec<String>>,
     /// Track original function parameter declarations for default and variadic lowering
     function_parameters: std::collections::HashMap<String, Vec<crate::parser::ast::Parameter>>,
+    /// Track function pointer variable signatures (variable_name -> (param_types, return_type))
+    function_pointer_signatures: std::collections::HashMap<String, (Vec<String>, String)>,
     /// Track if we're currently inside an async function
     in_async_context: bool,
     /// Track defined functions in current module
@@ -276,6 +299,8 @@ pub struct IrBuilder {
     struct_definitions: std::collections::HashMap<String, Vec<String>>,
     /// Track struct field names (struct_name -> field_names)
     struct_field_names: std::collections::HashMap<String, Vec<String>>,
+    /// Track struct function pointer fields ((struct_name, field_name) -> (param_types, return_type))
+    struct_field_function_signatures: std::collections::HashMap<(String, String), (Vec<String>, String)>,
     /// Track trait definitions (trait_name -> [(method_name, param_types, return_type)])
     trait_definitions: std::collections::HashMap<String, Vec<(String, Vec<String>, Option<String>)>>,
     /// Track variable struct types (variable_name -> struct_type_name)
@@ -292,6 +317,18 @@ pub struct IrBuilder {
     loop_stack: Vec<(String, String)>,
     /// Wrapper functions for goroutine spawn (generated at the end)
     goroutine_wrappers: Vec<String>,
+    /// 闭包：待生成的顶层函数 AST。主流程结束后再处理。
+    pending_closures: Vec<AstNode>,
+    /// 闭包计数器（生成 __closure_N 名字）
+    closure_counter: usize,
+    /// 已知的闭包变量签名（var_name → (param_types, ret_type)）
+    closure_signatures: std::collections::HashMap<String, (Vec<String>, String)>,
+    /// 标记某变量持有闭包对象（LLVM 类型仍是 ptr，但调用走 fat call）
+    closure_variables: std::collections::HashSet<String>,
+    /// 标记某函数返回闭包对象（让调用方把返回值传播为 closure_variable）
+    functions_returning_closure: std::collections::HashSet<String>,
+    /// 需要生成 trampoline 的函数（被 box 成闭包对象用），mangled 名字
+    pending_trampolines: std::collections::HashSet<String>,
     /// Module registry for standard library modules
     module_registry: ModuleRegistry,
     /// Imported modules in current compilation unit (module_path -> alias or module_name)
@@ -317,6 +354,7 @@ impl IrBuilder {
             temp_counter: 0,
             label_counter: 0,
             variable_types: std::collections::HashMap::new(),
+            variable_alias: std::collections::HashMap::new(),
             constant_variables: std::collections::HashSet::new(),
             future_inner_types: std::collections::HashMap::new(),
             function_future_inner_types: std::collections::HashMap::new(),
@@ -326,6 +364,7 @@ impl IrBuilder {
             function_return_struct_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
             function_parameters: std::collections::HashMap::new(),
+            function_pointer_signatures: std::collections::HashMap::new(),
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
             global_variables: std::collections::HashSet::new(),
@@ -333,6 +372,7 @@ impl IrBuilder {
             external_function_return_struct_types: std::collections::HashMap::new(),
             struct_definitions: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
+            struct_field_function_signatures: std::collections::HashMap::new(),
             trait_definitions: std::collections::HashMap::new(),
             variable_struct_types: std::collections::HashMap::new(),
             array_element_types: std::collections::HashMap::new(),
@@ -341,6 +381,12 @@ impl IrBuilder {
             current_package_name: None,
             loop_stack: Vec::new(),
             goroutine_wrappers: Vec::new(),
+            pending_closures: Vec::new(),
+            closure_counter: 0,
+            closure_signatures: std::collections::HashMap::new(),
+            closure_variables: std::collections::HashSet::new(),
+            functions_returning_closure: std::collections::HashSet::new(),
+            pending_trampolines: std::collections::HashSet::new(),
             module_registry: ModuleRegistry::new(),
             imported_modules: std::collections::HashMap::new(),
             allocations: Vec::new(),
@@ -425,6 +471,175 @@ impl IrBuilder {
         self.external_functions.insert("qi_runtime_gc_remove_root".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_runtime_gc_add_reference".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_runtime_gc_clear_references".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+
+        // JSON module functions
+        self.external_functions.insert("qi_json_encode".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_json_decode".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_create_object".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_json_create_array".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_string".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_int".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_float".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "double".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_bool".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_object".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_set_array".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_get_string".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_json_get_int".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_get_float".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_json_get_bool".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_get_object".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_get_array".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_array_push_string".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_array_push_int".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_array_push_float".to_string(), (vec!["i64".to_string(), "double".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_array_push_bool".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_json_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+
+        // Conversion runtime functions
+        self.external_functions.insert("qi_runtime_int_to_string".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_runtime_float_to_string".to_string(), (vec!["double".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_runtime_string_to_int".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_string_to_float".to_string(), (vec!["ptr".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_runtime_int_to_float".to_string(), (vec!["i64".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_runtime_float_to_int".to_string(), (vec!["double".to_string()], "i64".to_string()));
+
+        // Print runtime functions
+        self.external_functions.insert("qi_runtime_print_int".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_println_int".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_print_float".to_string(), (vec!["double".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_println_float".to_string(), (vec!["double".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_print_string".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_println_string".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_print_bool".to_string(), (vec!["i32".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_runtime_println_bool".to_string(), (vec!["i32".to_string()], "i32".to_string()));
+
+        // List module functions
+        self.external_functions.insert("qi_list_int_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_push".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_get".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_set".to_string(), (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_pop".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_clear".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_remove".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_insert".to_string(), (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_contains".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_int_index_of".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_float_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_list_float_push".to_string(), (vec!["i64".to_string(), "double".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_float_get".to_string(), (vec!["i64".to_string(), "i64".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_list_float_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_string_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_list_string_push".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_string_get".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_list_string_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_ptr_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_list_ptr_push".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_ptr_get".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_list_ptr_set".to_string(), (vec!["i64".to_string(), "i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_ptr_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_list_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+
+        // Hashmap module functions
+        self.external_functions.insert("qi_hashmap_int_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_set".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_get".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_contains".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_remove".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_int_clear".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_float_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_float_set".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "double".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_float_get".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_hashmap_float_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_string_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_string_set".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_string_get".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_hashmap_string_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_hashmap_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+
+        // Random module functions
+        self.external_functions.insert("qi_random_int".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_random_float".to_string(), (vec!["double".to_string(), "double".to_string()], "double".to_string()));
+        self.external_functions.insert("qi_random_bool".to_string(), (vec![], "i32".to_string()));
+        self.external_functions.insert("qi_random_string".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_random_uuid".to_string(), (vec![], "ptr".to_string()));
+
+        // Web runtime helper
+        self.external_functions.insert("qi_web_call_handler_safe".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_safe_process_request".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_panic_for_test".to_string(), (vec![], "i64".to_string()));
+
+        // TLS module functions
+        self.external_functions.insert("qi_tls_create_config".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_free_config".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_listen".to_string(), (vec!["ptr".to_string(), "i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_accept".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_read_string".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_tls_write_string".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_close".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_server_close".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_tls_free_string".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_h2_serve".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string(), "i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+
+        // Bytes module functions
+        self.external_functions.insert("qi_bytes_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_with_capacity".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_from_string".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_to_string".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_bytes_length".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_get".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_set".to_string(), (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_push".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_push_string".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_extend".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_slice".to_string(), (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_compare".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_find".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_to_hex".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_bytes_from_hex".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_to_base64".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_bytes_from_base64".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_bytes_free_string".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_closure_create".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_closure_get_fn".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_closure_get_int".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_closure_get_ptr".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_closure_set_int".to_string(), (vec!["ptr".to_string(), "i64".to_string(), "i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_closure_set_ptr".to_string(), (vec!["ptr".to_string(), "i64".to_string(), "ptr".to_string()], "void".to_string()));
+
+        self.external_functions.insert("qi_exc_alloc_frame".to_string(), (vec![], "ptr".to_string()));
+        self.external_functions.insert("setjmp".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_exc_pop".to_string(), (vec![], "void".to_string()));
+        self.external_functions.insert("qi_exc_throw".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_exc_message".to_string(), (vec![], "ptr".to_string()));
+        self.external_functions.insert("qi_exc_clear".to_string(), (vec![], "void".to_string()));
+        self.external_functions.insert("qi_exc_free_message".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_signal_install_shutdown".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_signal_should_shutdown".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_signal_reset".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_network_tcp_listener_set_nonblocking".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_network_tcp_read_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_network_tcp_write_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_compress_gzip_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_compress_gunzip_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_async_serve".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_serialize_http_response".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_multipart_parse".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_multipart_extract_boundary".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_multipart_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_multipart_name".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_multipart_filename".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_multipart_content_type".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_multipart_body".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_multipart_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+
+        // DateTime sleep functions
+        self.external_functions.insert("qi_datetime_sleep_millis".to_string(), (vec!["i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_datetime_sleep_seconds".to_string(), (vec!["i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_datetime_sleep_micros".to_string(), (vec!["i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_datetime_now_millis".to_string(), (vec![], "i64".to_string()));
         self
     }
 
@@ -442,7 +657,70 @@ impl IrBuilder {
 
         // Second pass: generate code
         self.build_node(ast)?;
+
+        // Third pass: emit pending closure top-level functions（嵌套闭包可能再产生 pending）
+        while let Some(closure_ast) = self.pending_closures.pop() {
+            self.collect_function_signatures(&closure_ast)?;
+            self.build_node(&closure_ast)?;
+        }
+
+        // Fourth pass: 给被 box 成 closure 的函数生成 trampoline
+        // trampoline 接受 (env, 用户参数...) 调用真函数（忽略 env）
+        let trampolines: Vec<String> = self.pending_trampolines.iter().cloned().collect();
+        for fn_name in trampolines {
+            self.emit_trampoline(&fn_name);
+        }
+
         self.emit_llvm_ir()
+    }
+
+    /// 为函数 `fn_name` 生成 trampoline `fn_name__t(env, args...) → fn_name(args...)`
+    /// 直接 push 字符串 IR 到 goroutine_wrappers 列表（emit 末尾会输出）
+    fn emit_trampoline(&mut self, fn_name: &str) {
+        // 优先用本模块签名；否则用 external_functions 跨模块签名
+        let (param_types, ret_type) = if let Some(p) = self.function_param_types.get(fn_name).cloned() {
+            let r = self.function_return_types.get(fn_name).cloned()
+                .unwrap_or_else(|| "i64".to_string());
+            (p, r)
+        } else if let Some((p, r)) = self.external_functions.get(fn_name).cloned() {
+            (p, r)
+        } else {
+            return;
+        };
+
+        let mut def = String::new();
+        // 参数：第一个 ptr %env，后面是用户参数
+        let mut params_ir = vec!["ptr %env".to_string()];
+        let mut call_args = Vec::new();
+        for (i, ty) in param_types.iter().enumerate() {
+            let pname = format!("%a{}", i);
+            params_ir.push(format!("{} {}", ty, pname));
+            call_args.push(format!("{} {}", ty, pname));
+        }
+
+        let trampoline_name = format!("{}__t", fn_name);
+        if ret_type == "void" {
+            def.push_str(&format!(
+                "define void @{}({}) {{\n",
+                trampoline_name,
+                params_ir.join(", ")
+            ));
+            def.push_str(&format!("  call void @{}({})\n", fn_name, call_args.join(", ")));
+            def.push_str("  ret void\n}\n");
+        } else {
+            def.push_str(&format!(
+                "define {} @{}({}) {{\n",
+                ret_type,
+                trampoline_name,
+                params_ir.join(", ")
+            ));
+            let null = if ret_type == "ptr" { "null" } else { "0" };
+            def.push_str(&format!("  %r = call {} @{}({})\n", ret_type, fn_name, call_args.join(", ")));
+            // 如果 fn_name 没注册（外部模块）— null/0 fallback；但此分支不会进，因为 pending 只追加我们看见的函数
+            let _ = null;
+            def.push_str(&format!("  ret {} %r\n}}\n", ret_type));
+        }
+        self.goroutine_wrappers.push(def);
     }
 
     /// First pass: collect function signatures (parameter types and return types)
@@ -488,6 +766,17 @@ impl IrBuilder {
                 // Store in function_param_types and function_return_types
                 self.function_param_types.insert(func_name.clone(), param_types);
                 self.function_return_types.insert(func_name.clone(), return_type);
+
+                // 如果函数返回类型是 函数(...) 且函数体直接 `返回 闭包(...)`，
+                // 标记它返回闭包，让调用方把结果当 closure 处理
+                if matches!(
+                    func_decl.return_type.as_ref(),
+                    Some(crate::parser::ast::TypeNode::函数类型(_))
+                ) && function_body_returns_closure(&func_decl.body)
+                {
+                    self.functions_returning_closure.insert(func_decl.name.clone());
+                    self.functions_returning_closure.insert(func_name.clone());
+                }
 
                 if self.verbose {
                     eprintln!("[DEBUG] Collected signature for {}: {:?} -> {:?}",
@@ -548,6 +837,178 @@ impl IrBuilder {
         } else {
             None
         }
+    }
+
+    /// 递归扫描闭包体，收集自由标识符（不在 local_names 里的标识符）。
+    /// 同时把局部声明（变量声明）追加到 local_names。
+    fn collect_free_identifiers(
+        &self,
+        node: &AstNode,
+        local_names: &mut std::collections::HashSet<String>,
+        frees: &mut Vec<String>,
+    ) {
+        use crate::parser::ast::*;
+        match node {
+            AstNode::标识符表达式(id) => {
+                if !local_names.contains(&id.name) {
+                    frees.push(id.name.clone());
+                }
+            }
+            AstNode::变量声明(decl) => {
+                if let Some(init) = &decl.initializer {
+                    self.collect_free_identifiers(init, local_names, frees);
+                }
+                local_names.insert(decl.name.clone());
+            }
+            AstNode::赋值表达式(assign) => {
+                self.collect_free_identifiers(&assign.target, local_names, frees);
+                self.collect_free_identifiers(&assign.value, local_names, frees);
+            }
+            AstNode::二元操作表达式(b) => {
+                self.collect_free_identifiers(&b.left, local_names, frees);
+                self.collect_free_identifiers(&b.right, local_names, frees);
+            }
+            AstNode::一元操作表达式(u) => {
+                self.collect_free_identifiers(&u.operand, local_names, frees);
+            }
+            AstNode::函数调用表达式(call) => {
+                // callee 是字符串名（不是 AST 节点）— 仍可能引用外层变量（函数指针变量）
+                if !local_names.contains(&call.callee) {
+                    frees.push(call.callee.clone());
+                }
+                for a in &call.arguments {
+                    self.collect_free_identifiers(a, local_names, frees);
+                }
+            }
+            AstNode::方法调用表达式(mc) => {
+                self.collect_free_identifiers(&mc.object, local_names, frees);
+                for a in &mc.arguments {
+                    self.collect_free_identifiers(a, local_names, frees);
+                }
+            }
+            AstNode::字段访问表达式(f) => {
+                self.collect_free_identifiers(&f.object, local_names, frees);
+            }
+            AstNode::数组访问表达式(a) => {
+                self.collect_free_identifiers(&a.array, local_names, frees);
+                self.collect_free_identifiers(&a.index, local_names, frees);
+            }
+            AstNode::返回语句(r) => {
+                if let Some(v) = &r.value {
+                    self.collect_free_identifiers(v, local_names, frees);
+                }
+            }
+            AstNode::如果语句(if_stmt) => {
+                self.collect_free_identifiers(&if_stmt.condition, local_names, frees);
+                let mut sub = local_names.clone();
+                for s in &if_stmt.then_branch {
+                    self.collect_free_identifiers(s, &mut sub, frees);
+                }
+                if let Some(else_b) = &if_stmt.else_branch {
+                    let mut sub2 = local_names.clone();
+                    self.collect_free_identifiers(else_b, &mut sub2, frees);
+                }
+            }
+            AstNode::当语句(while_stmt) => {
+                self.collect_free_identifiers(&while_stmt.condition, local_names, frees);
+                let mut sub = local_names.clone();
+                for s in &while_stmt.body {
+                    self.collect_free_identifiers(s, &mut sub, frees);
+                }
+            }
+            AstNode::块语句(block) => {
+                let mut sub = local_names.clone();
+                for s in &block.statements {
+                    self.collect_free_identifiers(s, &mut sub, frees);
+                }
+            }
+            AstNode::表达式语句(e) => {
+                self.collect_free_identifiers(&e.expression, local_names, frees);
+            }
+            AstNode::字符串连接表达式(concat) => {
+                self.collect_free_identifiers(&concat.left, local_names, frees);
+                self.collect_free_identifiers(&concat.right, local_names, frees);
+            }
+            AstNode::结构体实例化表达式(s) => {
+                for f in &s.fields {
+                    self.collect_free_identifiers(&f.value, local_names, frees);
+                }
+            }
+            // 其他节点类型：保守起见跳过，闭包不捕获就行
+            _ => {}
+        }
+    }
+
+    /// 把闭包表达式合成为顶层函数声明：env 参数 + 序言（从 env 读 caps）+ 用户体。
+    /// 用户体里直接引用 freevar 名字，会被捕获到的本地变量满足。
+    fn synthesize_closure_function(
+        &self,
+        name: &str,
+        closure_expr: &crate::parser::ast::ClosureExpression,
+        captured: &[(String, String)],
+    ) -> AstNode {
+        use crate::parser::ast::*;
+
+        // env 参数
+        let env_param = Parameter {
+            name: "__env".to_string(),
+            type_annotation: Some(TypeNode::基础类型(BasicType::指针)),
+            default_value: None,
+            is_variadic: false,
+            span: Default::default(),
+        };
+
+        // 用户参数
+        let mut params: Vec<Parameter> = vec![env_param];
+        params.extend(closure_expr.parameters.iter().cloned());
+
+        // 序言：每个 cap 一行 `变量 name: <ty> = qi_closure_get_int/ptr(__env, idx);`
+        let mut body: Vec<AstNode> = Vec::new();
+        for (i, (cap_name, ty)) in captured.iter().enumerate() {
+            let getter_fn = if ty == "ptr" { "qi_closure_get_ptr" } else { "qi_closure_get_int" };
+            let env_arg = AstNode::标识符表达式(IdentifierExpression {
+                name: "__env".to_string(),
+                span: Default::default(),
+            });
+            let idx_arg = AstNode::字面量表达式(LiteralExpression {
+                value: LiteralValue::整数(i as i64),
+                span: Default::default(),
+            });
+            let call = AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
+                callee: getter_fn.to_string(),
+                arguments: vec![env_arg, idx_arg],
+                span: Default::default(),
+            });
+
+            // 类型还原：ptr 用字符串/指针，i64 用整数
+            let var_type = if ty == "ptr" {
+                Some(TypeNode::基础类型(BasicType::字符串))
+            } else {
+                Some(TypeNode::基础类型(BasicType::整数))
+            };
+
+            body.push(AstNode::变量声明(VariableDeclaration {
+                name: cap_name.clone(),
+                type_annotation: var_type,
+                initializer: Some(Box::new(call)),
+                is_mutable: true,
+                span: Default::default(),
+            }));
+        }
+
+        // 用户体
+        body.extend(closure_expr.body.iter().cloned());
+
+        AstNode::函数声明(FunctionDeclaration {
+            name: name.to_string(),
+            visibility: Visibility::私有,
+            parameters: params,
+            return_type: closure_expr.return_type.clone(),
+            body,
+            is_inline: false,
+            span: Default::default(),
+        })
     }
 
     fn mangled_bare_name(&self, name: &str) -> String {
@@ -695,6 +1156,25 @@ impl IrBuilder {
     pub fn set_external_function_return_struct_types(&mut self, map: std::collections::HashMap<String, String>) {
         for (k, v) in map {
             self.external_function_return_struct_types.insert(k, v);
+        }
+    }
+
+    pub fn set_external_struct_definitions(
+        &mut self,
+        definitions: std::collections::HashMap<String, Vec<String>>,
+        field_names: std::collections::HashMap<String, Vec<String>>,
+        function_fields: std::collections::HashMap<(String, String), (Vec<String>, String)>,
+    ) {
+        for (name, fields) in definitions {
+            self.struct_definitions.entry(name).or_insert(fields);
+        }
+        for (name, fields) in field_names {
+            self.struct_field_names.entry(name).or_insert(fields);
+        }
+        for (key, signature) in function_fields {
+            self.struct_field_function_signatures
+                .entry(key)
+                .or_insert(signature);
         }
     }
 
@@ -962,9 +1442,72 @@ impl IrBuilder {
             TypeNode::结构体类型(_) | TypeNode::自定义类型(_) | TypeNode::指针类型(_) => {
                 "ptr".to_string()
             }
+            TypeNode::函数类型(_) => {
+                "ptr".to_string()
+            }
             _ => {
                 "i64".to_string()
             }
+        }
+    }
+
+    fn get_struct_field_llvm_type(&self, struct_name: &str, field_name: &str) -> Option<String> {
+        let field_names = self.struct_field_names.get(struct_name)?;
+        let field_index = field_names.iter().position(|name| name == field_name)?;
+        self.struct_definitions
+            .get(struct_name)
+            .and_then(|field_types| field_types.get(field_index))
+            .cloned()
+    }
+
+    fn function_type_signature(
+        &self,
+        function_type: &crate::parser::ast::FunctionType,
+    ) -> (Vec<String>, String) {
+        let param_types = function_type
+            .parameters
+            .iter()
+            .map(|param| self.get_llvm_type_from_ast(param))
+            .collect();
+        let return_type = self.get_llvm_type_from_ast(&function_type.return_type);
+        (param_types, return_type)
+    }
+
+    fn record_function_pointer_signature(
+        &mut self,
+        name: &str,
+        type_annotation: &Option<crate::parser::ast::TypeNode>,
+    ) {
+        if let Some(crate::parser::ast::TypeNode::函数类型(function_type)) = type_annotation {
+            let signature = self.function_type_signature(function_type);
+            self.function_pointer_signatures
+                .insert(name.to_string(), signature.clone());
+            let mangled_name = self.mangled_bare_name(name);
+            self.function_pointer_signatures
+                .insert(mangled_name.clone(), signature.clone());
+            self.function_pointer_signatures
+                .insert(format!("param_{}", mangled_name), signature);
+        }
+    }
+
+    fn lookup_function_pointer_signature(&self, name: &str) -> Option<(Vec<String>, String)> {
+        let mangled_name = self.mangled_bare_name(name);
+        self.function_pointer_signatures
+            .get(name)
+            .or_else(|| self.function_pointer_signatures.get(&mangled_name))
+            .or_else(|| self.function_pointer_signatures.get(&format!("param_{}", name)))
+            .or_else(|| self.function_pointer_signatures.get(&format!("param_{}", mangled_name)))
+            .cloned()
+    }
+
+    fn function_pointer_value_ref(&self, name: &str) -> String {
+        let mangled_name = self.mangled_bare_name(name);
+        if self.variable_types.contains_key(&format!("param_{}", name))
+            || self.variable_types.contains_key(&format!("param_{}", mangled_name))
+        {
+            format!("%{}", mangled_name)
+        } else {
+            format!("%{}", mangled_name)
         }
     }
 
@@ -1238,8 +1781,8 @@ impl IrBuilder {
                                    runtime_func.contains("math_abs_float") || runtime_func.contains("int_to_float") ||
                                    runtime_func.contains("string_to_float") {
                                     "double"
-                                } else if runtime_func.contains("string_length") {
-                                    "i64"  // string_length returns integer, not string
+                                } else if runtime_func.contains("string_length") || runtime_func.contains("string_to_int") {
+                                    "i64"  // string_length and string_to_int return integer, not string
                                 } else if runtime_func.starts_with("qi_crypto_") && runtime_func != "qi_crypto_free_string" {
                                     "ptr"  // All crypto functions return string (ptr)
                                 } else if runtime_func.contains("read_string") ||
@@ -1249,7 +1792,7 @@ impl IrBuilder {
                                           runtime_func == "qi_runtime_string_concat" {
                                     "ptr"
                                 } else if runtime_func.contains("math_abs_int") || runtime_func.contains("float_to_int") ||
-                                          runtime_func.contains("string_to_int") || runtime_func.contains("array_length") ||
+                                          runtime_func.contains("array_length") ||
                                           runtime_func.contains("get_time_ms") || runtime_func.contains("file_open") ||
                                           runtime_func.contains("file_read") || runtime_func.contains("file_write") ||
                                           runtime_func.contains("tcp_connect") {
@@ -1279,6 +1822,14 @@ impl IrBuilder {
                                 if let Some((_pt, rt)) = self.external_functions.get(&mangled as &str)
                                     .or_else(|| self.external_functions.get(&function_name as &str)) {
                                     rt.as_str()  // Use return type from cross-module external function
+                                } else if let Some(type_ann) = &decl.type_annotation {
+                                    // Fall back to the variable's declared type when the callee is
+                                    // unknown (e.g. higher-order calls through a function pointer)
+                                    let llvm_ty = self.get_llvm_type_from_ast(type_ann);
+                                    if llvm_ty == "ptr" { "ptr" }
+                                    else if llvm_ty == "double" { "double" }
+                                    else if llvm_ty == "i1" { "i1" }
+                                    else { "i64" }
                                 } else {
                                     "i64"
                                 }
@@ -1357,6 +1908,11 @@ impl IrBuilder {
 
                             (ty, Some(init_value))
                         }
+                        AstNode::闭包表达式(_) => {
+                            // 闭包表达式 → ptr (堆上的 closure 对象)；额外标记会在末尾传播
+                            let init_value = self.build_node(&**initializer)?;
+                            ("ptr".to_string(), Some(init_value))
+                        }
                         AstNode::结构体实例化表达式(struct_lit) => {
                             // Struct literals return pointers
                             let init_value = self.build_node(&**initializer)?;
@@ -1404,6 +1960,68 @@ impl IrBuilder {
                 };
                 self.variable_types.insert(decl.name.clone(), type_name.to_string());
                 self.variable_types.insert(mangled_name.clone(), type_name.to_string());
+                self.record_function_pointer_signature(&decl.name, &decl.type_annotation);
+
+                // 类型注解是 函数(...) → 变量持有 closure 对象，调用走 fat call
+                if let Some(crate::parser::ast::TypeNode::函数类型(ft)) = &decl.type_annotation {
+                    self.closure_variables.insert(decl.name.clone());
+                    self.closure_variables.insert(mangled_name.clone());
+                    let pts: Vec<String> = ft.parameters.iter()
+                        .map(|p| self.get_llvm_type_from_ast(p)).collect();
+                    let rt = self.get_llvm_type_from_ast(&ft.return_type);
+                    self.closure_signatures.insert(decl.name.clone(), (pts.clone(), rt.clone()));
+                    self.closure_signatures.insert(mangled_name.clone(), (pts, rt));
+                }
+
+                // 闭包初始化 — 三种情况都把 LHS 标为 closure 变量：
+                //   (a) RHS 直接是 `闭包(...)` 表达式
+                //   (b) RHS 是返回闭包的函数调用
+                if let Some(initializer) = &decl.initializer {
+                    let mut should_mark = false;
+                    let mut sig_to_propagate = None;
+
+                    match initializer.as_ref() {
+                        AstNode::闭包表达式(_) => {
+                            if let Some(value) = pre_evaluated_init.as_ref() {
+                                let rhs_key = value.trim_start_matches('%').to_string();
+                                if self.closure_variables.contains(&rhs_key) {
+                                    should_mark = true;
+                                    sig_to_propagate = self.closure_signatures.get(&rhs_key).cloned();
+                                }
+                            }
+                        }
+                        AstNode::函数调用表达式(call) => {
+                            let mangled = if call.callee.chars().any(|c| !c.is_ascii()) {
+                                self.mangle_function_name(&call.callee)
+                            } else {
+                                call.callee.clone()
+                            };
+                            if self.functions_returning_closure.contains(&call.callee)
+                                || self.functions_returning_closure.contains(&mangled)
+                            {
+                                should_mark = true;
+                                // 用类型注解里的函数签名推断闭包签名
+                                if let Some(crate::parser::ast::TypeNode::函数类型(ft)) = &decl.type_annotation {
+                                    let pts: Vec<String> = ft.parameters.iter()
+                                        .map(|p| self.get_llvm_type_from_ast(p))
+                                        .collect();
+                                    let rt = self.get_llvm_type_from_ast(&ft.return_type);
+                                    sig_to_propagate = Some((pts, rt));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    if should_mark {
+                        self.closure_variables.insert(decl.name.clone());
+                        self.closure_variables.insert(mangled_name.clone());
+                        if let Some(sig) = sig_to_propagate {
+                            self.closure_signatures.insert(decl.name.clone(), sig.clone());
+                            self.closure_signatures.insert(mangled_name.clone(), sig);
+                        }
+                    }
+                }
 
                 // Track constant variables (is_mutable == false means it's a constant)
                 if !decl.is_mutable {
@@ -1587,6 +2205,18 @@ impl IrBuilder {
                     // Store with a special prefix to indicate this is a parameter (direct value)
                     self.variable_types.insert(format!("param_{}", param_name), type_str.clone());
                     self.variable_types.insert(param_name.clone(), type_str.clone());
+                    self.record_function_pointer_signature(&param.name, &param.type_annotation);
+
+                    // 函数指针类型参数 — 自动标 closure_variable，调用时走 fat call
+                    if let Some(crate::parser::ast::TypeNode::函数类型(ft)) = &param.type_annotation {
+                        self.closure_variables.insert(param.name.clone());
+                        self.closure_variables.insert(param_name.clone());
+                        let pts: Vec<String> = ft.parameters.iter()
+                            .map(|p| self.get_llvm_type_from_ast(p)).collect();
+                        let rt = self.get_llvm_type_from_ast(&ft.return_type);
+                        self.closure_signatures.insert(param.name.clone(), (pts.clone(), rt.clone()));
+                        self.closure_signatures.insert(param_name.clone(), (pts, rt));
+                    }
 
                     if let Some(ref type_ann) = param.type_annotation {
                         match type_ann {
@@ -2821,6 +3451,33 @@ impl IrBuilder {
                                     "integer" // Default
                                 }
                             }
+                            AstNode::字段访问表达式(field_access) => {
+                                if let AstNode::标识符表达式(ident) = &*field_access.object {
+                                    let struct_type = self.variable_struct_types.get(&ident.name).cloned().or_else(|| {
+                                        let mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
+                                            format!("_Z_{}", self.mangle_function_name(&ident.name).trim_start_matches("_Z_"))
+                                        } else {
+                                            ident.name.clone()
+                                        };
+                                        self.variable_struct_types.get(&mangled).cloned()
+                                    });
+                                    if let Some(struct_name) = struct_type {
+                                        match self
+                                            .get_struct_field_llvm_type(&struct_name, &field_access.field)
+                                            .as_deref()
+                                        {
+                                            Some("ptr") => "string",
+                                            Some("double") => "float",
+                                            Some("i1") => "boolean",
+                                            _ => "integer",
+                                        }
+                                    } else {
+                                        "integer"
+                                    }
+                                } else {
+                                    "integer"
+                                }
+                            }
                             _ => "integer", // Default to integer
                         };
 
@@ -2902,6 +3559,139 @@ impl IrBuilder {
                         };
                         arg_temps.push(length_value);
                     }
+                }
+
+                // 闭包变量调用 — fat call：先 qi_closure_get_fn 拿真函数指针，再 call fn(obj, args)
+                let is_closure_call = {
+                    let bare = self.mangled_bare_name(&function_name);
+                    self.closure_variables.contains(&function_name)
+                        || self.closure_variables.contains(&bare)
+                };
+                if is_closure_call {
+                    let bare = self.mangled_bare_name(&function_name);
+                    let sig = self.closure_signatures.get(&bare)
+                        .or_else(|| self.closure_signatures.get(&function_name))
+                        .cloned();
+                    let (param_types, return_type) = sig.unwrap_or_else(|| (vec![], "void".to_string()));
+
+                    // 加载闭包对象指针（如果是参数直接用，否则 load alloca）
+                    let is_param = self.variable_types.contains_key(&format!("param_{}", function_name))
+                        || self.variable_types.contains_key(&format!("param_{}", bare));
+                    let obj_ref = if is_param {
+                        format!("%{}", bare)
+                    } else {
+                        let loaded = self.generate_temp();
+                        let source = if self.global_variables.contains(&function_name)
+                            || self.global_variables.contains(&bare)
+                        {
+                            format!("@{}", bare)
+                        } else {
+                            format!("%{}", bare)
+                        };
+                        self.add_instruction(IrInstruction::加载 {
+                            dest: loaded.clone(),
+                            source,
+                            load_type: Some("ptr".to_string()),
+                        });
+                        loaded
+                    };
+
+                    // 取真函数指针
+                    let fn_tmp = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(fn_tmp.clone()),
+                        callee: "qi_closure_get_fn".to_string(),
+                        arguments: vec![obj_ref.clone()],
+                    });
+                    self.variable_types
+                        .insert(fn_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                    // 调用：fn_tmp(obj, 用户参数...)
+                    let mut full_args = vec![obj_ref.clone()];
+                    full_args.extend(arg_temps);
+                    // 用 ptr + 用户参数类型注册 fn_tmp 签名
+                    let mut full_param_types = vec!["ptr".to_string()];
+                    full_param_types.extend(param_types);
+                    self.function_param_types
+                        .insert(fn_tmp.clone(), full_param_types);
+
+                    if return_type == "void" {
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: None,
+                            callee: fn_tmp,
+                            arguments: full_args,
+                        });
+                        return Ok(String::new());
+                    }
+                    let temp = self.generate_temp();
+                    self.variable_types
+                        .insert(temp.trim_start_matches('%').to_string(), return_type.clone());
+                    self.function_return_types
+                        .insert(fn_tmp.clone(), return_type);
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(temp.clone()),
+                        callee: fn_tmp,
+                        arguments: full_args,
+                    });
+                    return Ok(temp);
+                }
+
+                if let Some((param_types, return_type)) =
+                    self.lookup_function_pointer_signature(&function_name)
+                {
+                    let mangled_name = self.mangled_bare_name(&function_name);
+                    let is_param = self.variable_types.contains_key(&format!("param_{}", function_name))
+                        || self.variable_types.contains_key(&format!("param_{}", mangled_name));
+
+                    // For parameters the function pointer value is already in SSA form
+                    // (the parameter register itself). For local/global variables, we
+                    // first have to load the pointer value out of the alloca/global.
+                    let callee_ref = if is_param {
+                        format!("%{}", mangled_name)
+                    } else {
+                        let loaded = self.generate_temp();
+                        let source = if self.global_variables.contains(&function_name)
+                            || self.global_variables.contains(&mangled_name)
+                        {
+                            format!("@{}", mangled_name)
+                        } else {
+                            format!("%{}", mangled_name)
+                        };
+                        self.add_instruction(IrInstruction::加载 {
+                            dest: loaded.clone(),
+                            source,
+                            load_type: Some("ptr".to_string()),
+                        });
+                        self.variable_types
+                            .insert(loaded.trim_start_matches('%').to_string(), "ptr".to_string());
+                        loaded
+                    };
+
+                    self.function_param_types
+                        .insert(callee_ref.clone(), param_types);
+
+                    if return_type == "void" {
+                        self.add_instruction(IrInstruction::函数调用 {
+                            dest: None,
+                            callee: callee_ref,
+                            arguments: arg_temps,
+                        });
+                        return Ok(String::new());
+                    }
+
+                    let temp = self.generate_temp();
+                    self.variable_types.insert(
+                        temp.trim_start_matches('%').to_string(),
+                        return_type.clone(),
+                    );
+                    self.function_return_types
+                        .insert(callee_ref.clone(), return_type);
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(temp.clone()),
+                        callee: callee_ref,
+                        arguments: arg_temps,
+                    });
+                    return Ok(temp);
                 }
 
                 // Determine the callee name (mutable to allow printf override)
@@ -3126,8 +3916,8 @@ impl IrBuilder {
                     if has_return_value {
                         // Record the return type of this function call for later use
                         let return_type = if mapped_callee.starts_with("qi_runtime_") {
-                            if mapped_callee.contains("string_length") {
-                                "i64"  // string_length returns integer, not string
+                            if mapped_callee.contains("string_length") || mapped_callee.contains("string_to_int") {
+                                "i64"  // string_length and string_to_int return integer, not string
                             } else if mapped_callee.contains("string") || mapped_callee.contains("concat") ||
                                mapped_callee.contains("read_string") || mapped_callee.contains("int_to_string") ||
                                mapped_callee.contains("float_to_string") {
@@ -3138,7 +3928,7 @@ impl IrBuilder {
                             } else if mapped_callee.contains("get_time_ms") || mapped_callee.contains("array_length") ||
                                       mapped_callee.contains("file_open") || mapped_callee.contains("file_read") ||
                                       mapped_callee.contains("file_write") || mapped_callee.contains("tcp_connect") ||
-                                      mapped_callee.contains("string_to_int") || mapped_callee.contains("float_to_int") ||
+                                      mapped_callee.contains("float_to_int") ||
                                       mapped_callee.contains("create_channel") || mapped_callee.contains("create_task") ||
                                       mapped_callee.contains("create_timer") {
                                 "i64"  // Functions that explicitly return i64 or pointers treated as i64
@@ -3346,12 +4136,17 @@ impl IrBuilder {
             }
             AstNode::标识符表达式(ident) => {
                 let temp = self.generate_temp();
-                
+
+                // 用 variable_alias 解析用户标识符到内部唯一名（catch error variable 用的）
+                let resolved_name = self.variable_alias.get(&ident.name)
+                    .cloned()
+                    .unwrap_or_else(|| ident.name.clone());
+
                 // Also compute the bare mangled name without %
-                let bare_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
-                    self.mangle_function_name(&ident.name)
+                let bare_mangled = if resolved_name.chars().any(|c| !c.is_ascii()) {
+                    self.mangle_function_name(&resolved_name)
                 } else {
-                    ident.name.clone()
+                    resolved_name.clone()
                 };
 
                 // Check if it's a global variable
@@ -3364,6 +4159,35 @@ impl IrBuilder {
                 } else {
                     format!("%{}", bare_mangled) // Local or parameter
                 };
+
+                if !self.variable_types.contains_key(&ident.name)
+                    && !self.variable_types.contains_key(bare_mangled.as_str())
+                    && !is_global
+                    && (self.function_return_types.contains_key(&bare_mangled)
+                        || self.external_functions.contains_key(&bare_mangled))
+                {
+                    // 函数名作为值（不是直接 callee）— 自动 box 成 closure 对象，
+                    // 让它能赋给 closure 变量、存进 ptr 列表、传到接受 函数(...) 的位置。
+                    // callee = trampoline 函数（接受 env 第一参数，忽略 env，转调真函数）。
+                    // 直接调用 函数(...) 时，函数调用 codegen 走的是字符串 callee，不会进这里。
+                    let trampoline = format!("{}__t", bare_mangled);
+                    self.pending_trampolines.insert(bare_mangled.clone());
+
+                    let obj_tmp = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(obj_tmp.clone()),
+                        callee: "qi_closure_create".to_string(),
+                        arguments: vec![format!("@{}", trampoline), "0".to_string()],
+                    });
+                    let obj_key = obj_tmp.trim_start_matches('%').to_string();
+                    self.variable_types.insert(obj_key.clone(), "ptr".to_string());
+                    self.closure_variables.insert(obj_key.clone());
+                    // 记签名：从 function_param_types / function_return_types 拼
+                    let param_types = self.function_param_types.get(&bare_mangled).cloned().unwrap_or_default();
+                    let ret_type = self.function_return_types.get(&bare_mangled).cloned().unwrap_or_else(|| "i64".to_string());
+                    self.closure_signatures.insert(obj_key, (param_types, ret_type));
+                    return Ok(obj_tmp);
+                }
                 
                 // Get the variable type and record it for the loaded value
                 // Try multiple keys: original name, var_name without %, mangled name, mangled with _Z_ prefix
@@ -3659,6 +4483,7 @@ impl IrBuilder {
                             crate::parser::ast::TypeNode::自定义类型(_) => "ptr".to_string(),
                             crate::parser::ast::TypeNode::指针类型(_) => "ptr".to_string(),
                             crate::parser::ast::TypeNode::数组类型(_) => "ptr".to_string(),
+                            crate::parser::ast::TypeNode::函数类型(_) => "ptr".to_string(),
                             _ => "i64".to_string(),
                         }
                     })
@@ -3671,6 +4496,14 @@ impl IrBuilder {
                 
                 self.struct_definitions.insert(struct_decl.name.clone(), field_types);
                 self.struct_field_names.insert(struct_decl.name.clone(), field_names);
+                for field in &struct_decl.fields {
+                    if let crate::parser::ast::TypeNode::函数类型(function_type) = &field.type_annotation {
+                        self.struct_field_function_signatures.insert(
+                            (struct_decl.name.clone(), field.name.clone()),
+                            self.function_type_signature(function_type),
+                        );
+                    }
+                }
                 Ok("".to_string())
             }
             AstNode::枚举声明(_enum_decl) => {
@@ -3715,27 +4548,9 @@ impl IrBuilder {
                 // Create a temporary for the struct instance
                 let temp = self.generate_temp();
 
-                // Check if we're in a Future-returning function that returns this struct type
-                // If so, we need to heap-allocate the struct instead of stack-allocating it
-                let needs_heap_allocation = if let Some(ref ast_return_type) = self.current_function_ast_return_type {
-                    match ast_return_type {
-                        crate::parser::ast::TypeNode::未来类型(inner_type) => {
-                            // Check if inner type matches this struct
-                            match inner_type.as_ref() {
-                                crate::parser::ast::TypeNode::自定义类型(type_name) => {
-                                    type_name == &struct_literal.struct_name
-                                }
-                                crate::parser::ast::TypeNode::结构体类型(struct_type) => {
-                                    &struct_type.name == &struct_literal.struct_name
-                                }
-                                _ => false,
-                            }
-                        }
-                        _ => false,
-                    }
-                } else {
-                    false
-                };
+                // Struct instances must always be heap-allocated because they are passed as
+                // pointers and outlive the creating function's stack frame.
+                let needs_heap_allocation = true;
 
                 // Allocate memory for the struct
                 let struct_type = format!("{}.type", struct_literal.struct_name);
@@ -3786,12 +4601,22 @@ impl IrBuilder {
                         field: field.name.clone(),
                         struct_type: struct_literal.struct_name.clone(),
                     });
+                    let field_type = self
+                        .get_struct_field_llvm_type(&struct_literal.struct_name, &field.name)
+                        .unwrap_or_else(|| {
+                            self.infer_ir_value_type(&field_value)
+                                .unwrap_or_else(|| "i64".to_string())
+                        });
+                    self.variable_types.insert(
+                        field_ptr.trim_start_matches('%').to_string(),
+                        field_type.clone(),
+                    );
 
                     // Store the field value
                     self.add_instruction(IrInstruction::存储 {
                         target: field_ptr,
                         value: field_value.clone(),
-                        value_type: None, // Type will be inferred
+                        value_type: Some(field_type),
                     });
                     if needs_heap_allocation {
                         let field_val_name = field_value.trim_start_matches('%');
@@ -3966,8 +4791,14 @@ impl IrBuilder {
                             self.variable_types.insert(load_name.clone(), ft.clone());
                             if ft == "ptr" {
                                 if let Some(field_struct) = self.get_struct_field_struct_type(&struct_type, &field_access.field) {
-                                    self.variable_struct_types.insert(load_name, field_struct);
+                                    self.variable_struct_types.insert(load_name.clone(), field_struct);
                                 }
+                            }
+                            // 函数指针字段 — 标 closure_variable，让访问后的临时变量调用走 fat call
+                            let key = (struct_type.clone(), field_access.field.clone());
+                            if let Some(sig) = self.struct_field_function_signatures.get(&key).cloned() {
+                                self.closure_variables.insert(load_name.clone());
+                                self.closure_signatures.insert(load_name, sig);
                             }
                         }
 
@@ -4111,6 +4942,63 @@ impl IrBuilder {
                 Ok(format!("method_{}", func_name))
             }
             AstNode::方法调用表达式(method_call) => {
+                // 优先检查：obj.字段(args) 当字段是函数指针字段时 → 字段读取 + fat call
+                // 用 标识符识别 obj，看 variable_struct_types 是否有它的 struct，字段是不是 function 字段
+                if !method_call.method_name.starts_with("::") {
+                    if let AstNode::标识符表达式(obj_ident) = &*method_call.object {
+                        let mangled_obj = self.mangled_bare_name(&obj_ident.name);
+                        let struct_type = self.variable_struct_types.get(&obj_ident.name).cloned()
+                            .or_else(|| self.variable_struct_types.get(&mangled_obj).cloned());
+                        if let Some(stype) = struct_type {
+                            let key = (stype.clone(), method_call.method_name.clone());
+                            if let Some(sig) = self.struct_field_function_signatures.get(&key).cloned() {
+                                // 这是函数指针字段调用 — 取字段，fat call
+                                let field_obj = self.build_node(&AstNode::字段访问表达式(
+                                    crate::parser::ast::FieldAccessExpression {
+                                        object: method_call.object.clone(),
+                                        field: method_call.method_name.clone(),
+                                        span: Default::default(),
+                                    }
+                                ))?;
+                                // field_obj 是 closure obj ptr — 取 fn ptr，fat call
+                                let fn_tmp = self.generate_temp();
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(fn_tmp.clone()),
+                                    callee: "qi_closure_get_fn".to_string(),
+                                    arguments: vec![field_obj.clone()],
+                                });
+                                self.variable_types.insert(fn_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                                let mut full_args = vec![field_obj];
+                                for a in &method_call.arguments {
+                                    full_args.push(self.build_node(a)?);
+                                }
+                                let mut full_param_types = vec!["ptr".to_string()];
+                                full_param_types.extend(sig.0.iter().cloned());
+                                self.function_param_types.insert(fn_tmp.clone(), full_param_types);
+
+                                if sig.1 == "void" {
+                                    self.add_instruction(IrInstruction::函数调用 {
+                                        dest: None,
+                                        callee: fn_tmp,
+                                        arguments: full_args,
+                                    });
+                                    return Ok(String::new());
+                                }
+                                let ret_tmp = self.generate_temp();
+                                self.variable_types.insert(ret_tmp.trim_start_matches('%').to_string(), sig.1.clone());
+                                self.function_return_types.insert(fn_tmp.clone(), sig.1.clone());
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: Some(ret_tmp.clone()),
+                                    callee: fn_tmp,
+                                    arguments: full_args,
+                                });
+                                return Ok(ret_tmp);
+                            }
+                        }
+                    }
+                }
+
                 // Check if this is a static method call (method_name starts with ::)
                 // But first check if it's a module call - modules take precedence
                 if method_call.method_name.starts_with("::") {
@@ -4220,6 +5108,70 @@ impl IrBuilder {
                         return Ok(temp);
                     } else {
                         return Err("Static method call must have a type name as the object".to_string().into());
+                    }
+                }
+
+                if let AstNode::标识符表达式(ident) = &*method_call.object {
+                    let mangled_name = self.mangled_bare_name(&ident.name);
+                    let struct_type = self
+                        .variable_struct_types
+                        .get(&ident.name)
+                        .or_else(|| self.variable_struct_types.get(&mangled_name))
+                        .cloned();
+
+                    if let Some(struct_name) = struct_type {
+                        if let Some((param_types, return_type)) = self
+                            .struct_field_function_signatures
+                            .get(&(struct_name.clone(), method_call.method_name.clone()))
+                            .cloned()
+                        {
+                            let object_ptr = self.build_node(&method_call.object)?;
+                            let field_ptr = self.generate_temp();
+                            self.add_instruction(IrInstruction::字段访问 {
+                                dest: field_ptr.clone(),
+                                object: object_ptr,
+                                field: method_call.method_name.clone(),
+                                struct_type: struct_name,
+                            });
+                            self.variable_types
+                                .insert(field_ptr.trim_start_matches('%').to_string(), "ptr".to_string());
+
+                            let function_ptr = self.generate_temp();
+                            self.add_instruction(IrInstruction::加载 {
+                                dest: function_ptr.clone(),
+                                source: field_ptr,
+                                load_type: Some("ptr".to_string()),
+                            });
+
+                            self.function_param_types
+                                .insert(function_ptr.clone(), param_types);
+                            self.function_return_types
+                                .insert(function_ptr.clone(), return_type.clone());
+
+                            let mut args = Vec::new();
+                            for arg in &method_call.arguments {
+                                args.push(self.build_node(arg)?);
+                            }
+
+                            if return_type == "void" {
+                                self.add_instruction(IrInstruction::函数调用 {
+                                    dest: None,
+                                    callee: function_ptr,
+                                    arguments: args,
+                                });
+                                return Ok(String::new());
+                            }
+
+                            let temp = self.generate_temp();
+                            self.variable_types
+                                .insert(temp.trim_start_matches('%').to_string(), return_type);
+                            self.add_instruction(IrInstruction::函数调用 {
+                                dest: Some(temp.clone()),
+                                callee: function_ptr,
+                                arguments: args,
+                            });
+                            return Ok(temp);
+                        }
                     }
                 }
 
@@ -4718,88 +5670,222 @@ impl IrBuilder {
             }
 
             AstNode::尝试语句(try_stmt) => {
-                // Try/Catch/Finally implementation
-                // Uses setjmp/longjmp style exception handling in LLVM IR
+                // 真正的 try/catch/finally —— setjmp/longjmp 风格
+                //
+                // 生成的 IR：
+                //   %buf = call ptr @qi_exc_alloc_frame()
+                //   %r   = call i32 @setjmp(%buf) [returns_twice]
+                //   %normal = icmp eq i32 %r, 0
+                //   br i1 %normal, label %try_body, label %catch_entry
+                // try_body:
+                //   ; ... user try statements ...
+                //   call void @qi_exc_pop()
+                //   br label %finally_or_end
+                // catch_entry:
+                //   %err = call ptr @qi_exc_message()
+                //   ; store %err to user error variable
+                //   call void @qi_exc_clear()
+                //   ; ... user catch statements ...
+                //   br label %finally_or_end
+                // finally:
+                //   ; ... user finally statements ...
+                //   br label %end
+                // end:
 
-                let try_label = self.generate_label();
+                let body_label = self.generate_label();
                 let catch_label = self.generate_label();
-                let finally_label = self.generate_label();
+                let after_catch_label = self.generate_label();
                 let end_label = self.generate_label();
 
-                // Try block label
-                self.add_instruction(IrInstruction::标签 { name: try_label.clone() });
+                // 1. 分配 jmp_buf + push 异常栈
+                let buf_tmp = self.generate_temp();
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(buf_tmp.clone()),
+                    callee: "qi_exc_alloc_frame".to_string(),
+                    arguments: vec![],
+                });
+                self.variable_types
+                    .insert(buf_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
 
-                // Build try block statements
+                // 2. 调用 setjmp — 必须在 caller 栈帧执行，所以直接调 libc
+                let setjmp_tmp = self.generate_temp();
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(setjmp_tmp.clone()),
+                    callee: "setjmp".to_string(),
+                    arguments: vec![buf_tmp.clone()],
+                });
+                self.variable_types
+                    .insert(setjmp_tmp.trim_start_matches('%').to_string(), "i32".to_string());
+
+                // 3. 比较 setjmp 结果：0 → 进 try body；非 0 → 进 catch
+                let cmp_tmp = self.generate_temp();
+                self.add_instruction(IrInstruction::二元操作 {
+                    dest: cmp_tmp.clone(),
+                    left: setjmp_tmp.clone(),
+                    operator: BinaryOperator::等于,
+                    right: "0".to_string(),
+                    operand_type: "i32".to_string(),
+                });
+                self.add_instruction(IrInstruction::条件跳转 {
+                    condition: cmp_tmp,
+                    true_label: body_label.clone(),
+                    false_label: catch_label.clone(),
+                });
+
+                // 4. try body
+                self.add_instruction(IrInstruction::标签 { name: body_label });
                 for stmt in &try_stmt.try_body {
                     self.build_node(stmt)?;
                 }
+                // 正常退出 try：弹栈、跳到 catch 后的 finally/end
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: None,
+                    callee: "qi_exc_pop".to_string(),
+                    arguments: vec![],
+                });
+                self.add_instruction(IrInstruction::跳转 { label: after_catch_label.clone() });
 
-                // Jump to finally or end after try block (no exception)
-                if try_stmt.finally_body.is_some() {
-                    self.add_instruction(IrInstruction::跳转 { label: finally_label.clone() });
-                } else {
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
-                }
+                // 5. catch entry
+                self.add_instruction(IrInstruction::标签 { name: catch_label });
 
-                // Catch clauses
-                if !try_stmt.catch_clauses.is_empty() {
-                    self.add_instruction(IrInstruction::标签 { name: catch_label.clone() });
+                // 弹栈（catch 内代码不再受这个 frame 保护；嵌套 try 可以重新 push）
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: None,
+                    callee: "qi_exc_pop".to_string(),
+                    arguments: vec![],
+                });
 
-                    for catch_clause in &try_stmt.catch_clauses {
-                        // If there's an error variable, create it
-                        if let Some(error_var) = &catch_clause.error_var {
-                            let mangled_name = self.mangle_function_name(error_var);
-                            self.add_instruction(IrInstruction::分配 {
-                                dest: format!("%{}", mangled_name),
-                                type_name: "ptr".to_string(),
-                            });
-                            self.variable_types.insert(mangled_name, "ptr".to_string());
-                        }
+                // 没有 catch 子句 — 只有 finally：跑完 finally 后 re-throw
+                if try_stmt.catch_clauses.is_empty() {
+                    // 取异常消息（在 finally 跑前取，避免 finally 内嵌套 try 改 last_error）
+                    let saved_msg_tmp = self.generate_temp();
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: Some(saved_msg_tmp.clone()),
+                        callee: "qi_exc_message".to_string(),
+                        arguments: vec![],
+                    });
+                    self.variable_types
+                        .insert(saved_msg_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
 
-                        // Build catch block
-                        for stmt in &catch_clause.body {
+                    if let Some(finally_body) = &try_stmt.finally_body {
+                        for stmt in finally_body {
                             self.build_node(stmt)?;
                         }
                     }
+                    // re-throw 用保存的消息
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: None,
+                        callee: "qi_exc_throw".to_string(),
+                        arguments: vec![saved_msg_tmp],
+                    });
+                    self.add_instruction(IrInstruction::不可达);
 
-                    // After catch, jump to finally or end
-                    if try_stmt.finally_body.is_some() {
-                        self.add_instruction(IrInstruction::跳转 { label: finally_label.clone() });
-                    } else {
-                        self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    // try 正常退出路径走的 after_catch_label —— 给它一个"跑 finally → end"的实现
+                    self.add_instruction(IrInstruction::标签 { name: after_catch_label });
+                    if let Some(finally_body) = &try_stmt.finally_body {
+                        for stmt in finally_body {
+                            self.build_node(stmt)?;
+                        }
                     }
+                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::标签 { name: end_label });
+                    return Ok(String::new());
                 }
 
-                // Finally block
-                if let Some(finally_body) = &try_stmt.finally_body {
-                    self.add_instruction(IrInstruction::标签 { name: finally_label.clone() });
+                // 取错误消息（用于绑定到 catch error variable）
+                let err_msg_tmp = self.generate_temp();
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(err_msg_tmp.clone()),
+                    callee: "qi_exc_message".to_string(),
+                    arguments: vec![],
+                });
+                self.variable_types
+                    .insert(err_msg_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
 
-                    for stmt in finally_body {
+                // 走每个 catch 子句（目前只支持第一个匹配 — 没有类型 dispatch）
+                for catch_clause in &try_stmt.catch_clauses {
+                    let mut prev_alias_entry: Option<(String, Option<String>)> = None;
+                    if let Some(error_var) = &catch_clause.error_var {
+                        // 生成唯一的内部 alloca 名 — 避免同函数内多个 try 的 catch
+                        // 用同一用户标识符时 LLVM 报 "multiple definition"。
+                        // 中文字符在 LLVM IR 中非法，要用 mangle_function_name 编码。
+                        let mangled_var = if error_var.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(error_var)
+                        } else {
+                            error_var.clone()
+                        };
+                        let unique_name = format!("__catch_{}_{}", mangled_var, self.label_counter);
+                        self.label_counter += 1;
+                        let alloca_name = format!("%{}", unique_name);
+
+                        self.add_instruction(IrInstruction::分配 {
+                            dest: alloca_name.clone(),
+                            type_name: "ptr".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::存储 {
+                            target: alloca_name,
+                            value: err_msg_tmp.clone(),
+                            value_type: Some("ptr".to_string()),
+                        });
+                        self.variable_types
+                            .insert(error_var.clone(), "ptr".to_string());
+                        self.variable_types
+                            .insert(unique_name.clone(), "ptr".to_string());
+                        // 把用户标识符映射到唯一内部名；保存旧映射以便 catch 退出时恢复
+                        let old = self.variable_alias.insert(error_var.clone(), unique_name);
+                        prev_alias_entry = Some((error_var.clone(), old));
+                    }
+
+                    for stmt in &catch_clause.body {
                         self.build_node(stmt)?;
                     }
 
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    // 还原 alias（避免 catch 之外仍把 error_var 当成内部名）
+                    if let Some((key, old)) = prev_alias_entry {
+                        match old {
+                            Some(v) => { self.variable_alias.insert(key, v); }
+                            None => { self.variable_alias.remove(&key); }
+                        }
+                    }
+
+                    break; // 第一个 catch 子句已经处理；多个子句没有类型分派
                 }
 
-                // End label
+                // 清空错误消息，避免外层 catch 看到旧消息
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: None,
+                    callee: "qi_exc_clear".to_string(),
+                    arguments: vec![],
+                });
+
+                self.add_instruction(IrInstruction::跳转 { label: after_catch_label.clone() });
+
+                // 6. catch 之后：finally（如果有），否则 end
+                self.add_instruction(IrInstruction::标签 { name: after_catch_label });
+                if let Some(finally_body) = &try_stmt.finally_body {
+                    for stmt in finally_body {
+                        self.build_node(stmt)?;
+                    }
+                }
+                self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+
+                // 7. end
                 self.add_instruction(IrInstruction::标签 { name: end_label });
 
                 Ok(String::new())
             }
 
             AstNode::抛出语句(throw_stmt) => {
-                // Throw/raise an exception
-                // Build the expression to throw
+                // 真正的 throw —— 调 qi_exc_throw（内部 longjmp 到栈顶 frame）
                 let error_value = self.build_node(&throw_stmt.expression)?;
 
-                // Call runtime panic/throw function
                 self.add_instruction(IrInstruction::函数调用 {
                     dest: None,
-                    callee: "qi_runtime_throw".to_string(),
+                    callee: "qi_exc_throw".to_string(),
                     arguments: vec![error_value],
                 });
 
-                // After throw, code is unreachable
+                // throw 后控制流不可达
                 self.add_instruction(IrInstruction::不可达);
 
                 Ok(String::new())
@@ -4828,23 +5914,97 @@ impl IrBuilder {
             }
 
             AstNode::闭包表达式(closure_expr) => {
-                // Closures are compiled as anonymous functions + captured environment
-                let closure_name = format!("__closure_{}", self.temp_counter);
-                self.temp_counter += 1;
+                // 真闭包：堆分配 env，挂全局函数，闭包值是 fat object 指针
+                let closure_name = format!("__closure_{}", self.closure_counter);
+                self.closure_counter += 1;
 
-                // Store captured variables (for now, just generate the function)
-                // In a full implementation, we'd create a closure struct with captured vars
-
-                // Build the closure body
+                // 1. 收集 freevar — 闭包体里引用、但不是参数也不是局部声明、也不是已知函数的标识符
+                let mut local_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+                for p in &closure_expr.parameters {
+                    local_names.insert(p.name.clone());
+                }
+                let mut frees: Vec<String> = Vec::new();
                 for stmt in &closure_expr.body {
-                    self.build_node(stmt)?;
+                    self.collect_free_identifiers(stmt, &mut local_names, &mut frees);
                 }
 
-                // Return a function pointer
-                let result_temp = self.generate_temp();
-                self.variable_types.insert(result_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                // 过滤：保留实际在外层作用域可见的（变量类型表里有，且不是已注册的全局函数）
+                let mut captured: Vec<(String, String)> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for name in frees {
+                    if seen.contains(&name) { continue; }
+                    seen.insert(name.clone());
+                    // 跳过已知函数（全局函数引用不算捕获）
+                    if self.function_return_types.contains_key(&name)
+                        || self.defined_functions.contains(&name)
+                        || self.external_functions.contains_key(&name)
+                    {
+                        continue;
+                    }
+                    // 看 variable_types 里是否记录
+                    let ty = self.variable_types.get(&name)
+                        .or_else(|| {
+                            let mangled = self.mangled_bare_name(&name);
+                            self.variable_types.get(&mangled)
+                        })
+                        .cloned();
+                    if let Some(t) = ty {
+                        captured.push((name, t));
+                    }
+                    // 没记录就当全局/未知，不捕获
+                }
 
-                Ok(result_temp)
+                // 2. 构造闭包顶层函数 AST：env 参数 + 序言（从 env 读 caps 到本地 var）+ 用户体
+                let closure_decl = self.synthesize_closure_function(
+                    &closure_name,
+                    closure_expr,
+                    &captured,
+                );
+                self.pending_closures.push(closure_decl);
+
+                // 3. 当前位置：malloc env + 设 fn_ptr + 填 caps，返回 obj 指针
+                let obj_tmp = self.generate_temp();
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(obj_tmp.clone()),
+                    callee: "qi_closure_create".to_string(),
+                    arguments: vec![
+                        format!("@{}", closure_name),
+                        captured.len().to_string(),
+                    ],
+                });
+
+                for (i, (name, ty)) in captured.iter().enumerate() {
+                    // 加载用户当前作用域的变量值
+                    let val_tmp = self.build_node(&AstNode::标识符表达式(
+                        crate::parser::ast::IdentifierExpression {
+                            name: name.clone(),
+                            span: Default::default(),
+                        }
+                    ))?;
+                    let setter = if ty == "ptr" { "qi_closure_set_ptr" } else { "qi_closure_set_int" };
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: None,
+                        callee: setter.to_string(),
+                        arguments: vec![
+                            obj_tmp.clone(),
+                            i.to_string(),
+                            val_tmp,
+                        ],
+                    });
+                }
+
+                // 4. 标记闭包变量类型 + 记签名（供调用点查）
+                let key = obj_tmp.trim_start_matches('%').to_string();
+                self.variable_types.insert(key.clone(), "ptr".to_string());
+                self.closure_variables.insert(key.clone());
+
+                let param_types: Vec<String> = closure_expr.parameters.iter()
+                    .map(|p| self.get_llvm_type(&p.type_annotation))
+                    .collect();
+                let ret_type = self.get_return_type(&closure_expr.return_type);
+                self.closure_signatures.insert(key, (param_types, ret_type));
+
+                Ok(obj_tmp)
             }
 
             AstNode::匹配表达式(match_expr) => {
@@ -5231,6 +6391,9 @@ impl IrBuilder {
             Some(crate::parser::ast::TypeNode::指针类型(_)) => {
                 "ptr".to_string()
             }
+            Some(crate::parser::ast::TypeNode::函数类型(_)) => {
+                "ptr".to_string()
+            }
             Some(crate::parser::ast::TypeNode::未来类型(_inner_type)) => {
                 // Future types are represented as pointers to Future runtime structs
                 // The Future<T> is a heap-allocated structure managed by the runtime
@@ -5403,7 +6566,8 @@ impl IrBuilder {
         // Goroutine spawn functions
         ir.push_str("; Goroutine spawn functions\n");
         ir.push_str("declare void @qi_runtime_spawn_goroutine(ptr)\n");
-        ir.push_str("declare void @qi_runtime_spawn_goroutine_with_args(ptr, ptr)\n");
+        ir.push_str("declare void @qi_runtime_spawn_goroutine_with_args(ptr, ptr, i64)\n");
+        // qi_runtime_async_serve 通过 external_functions 自动按需声明（避免重复）
         ir.push_str("declare ptr @qi_runtime_select(ptr)\n");
         ir.push_str("declare void @qi_runtime_timer_cancel(ptr)\n");
         ir.push_str("declare i32 @qi_runtime_retry(ptr, i32)\n");
@@ -5607,6 +6771,9 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_cli_set_version(i64, ptr)\n");
         ir.push_str("declare i64 @qi_cli_set_author(i64, ptr)\n");
         ir.push_str("declare i64 @qi_cli_set_about(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_long_about(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_override_usage(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_set_after_help(i64, ptr)\n");
         ir.push_str("declare i64 @qi_cli_create_arg(ptr)\n");
         ir.push_str("declare i64 @qi_cli_arg_set_short(i64, ptr)\n");
         ir.push_str("declare i64 @qi_cli_arg_set_long(i64, ptr)\n");
@@ -5616,9 +6783,77 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_cli_arg_set_flag(i64)\n");
         ir.push_str("declare i64 @qi_cli_arg_set_multiple(i64)\n");
         ir.push_str("declare i64 @qi_cli_arg_set_env(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_arg_set_global(i64)\n");
+        ir.push_str("declare ptr @qi_web_call_handler_safe(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_web_safe_process_request(ptr, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_web_panic_for_test()\n");
+        ir.push_str("declare i64 @qi_tls_create_config(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_tls_free_config(i64)\n");
+        ir.push_str("declare i64 @qi_tls_listen(ptr, i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_tls_accept(i64)\n");
+        ir.push_str("declare ptr @qi_tls_read_string(i64, i64)\n");
+        ir.push_str("declare i64 @qi_tls_write_string(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_tls_close(i64)\n");
+        ir.push_str("declare i64 @qi_tls_server_close(i64)\n");
+        ir.push_str("declare void @qi_tls_free_string(ptr)\n");
+        ir.push_str("declare i64 @qi_h2_serve(ptr, ptr, ptr, i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_bytes_create()\n");
+        ir.push_str("declare i64 @qi_bytes_with_capacity(i64)\n");
+        ir.push_str("declare i64 @qi_bytes_from_string(ptr)\n");
+        ir.push_str("declare ptr @qi_bytes_to_string(i64)\n");
+        ir.push_str("declare i64 @qi_bytes_length(i64)\n");
+        ir.push_str("declare i64 @qi_bytes_get(i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_set(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_push(i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_push_string(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_bytes_extend(i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_slice(i64, i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_compare(i64, i64)\n");
+        ir.push_str("declare i64 @qi_bytes_find(i64, i64)\n");
+        ir.push_str("declare ptr @qi_bytes_to_hex(i64)\n");
+        ir.push_str("declare i64 @qi_bytes_from_hex(ptr)\n");
+        ir.push_str("declare ptr @qi_bytes_to_base64(i64)\n");
+        ir.push_str("declare i64 @qi_bytes_from_base64(ptr)\n");
+        ir.push_str("declare i64 @qi_bytes_free(i64)\n");
+        ir.push_str("declare void @qi_bytes_free_string(ptr)\n");
+        // Closure runtime
+        ir.push_str("declare ptr @qi_closure_create(ptr, i64)\n");
+        ir.push_str("declare ptr @qi_closure_get_fn(ptr)\n");
+        ir.push_str("declare i64 @qi_closure_get_int(ptr, i64)\n");
+        ir.push_str("declare ptr @qi_closure_get_ptr(ptr, i64)\n");
+        ir.push_str("declare void @qi_closure_set_int(ptr, i64, i64)\n");
+        ir.push_str("declare void @qi_closure_set_ptr(ptr, i64, ptr)\n");
+
+        // Exception (try/catch/throw) runtime
+        ir.push_str("declare ptr @qi_exc_alloc_frame()\n");
+        // Direct libc setjmp — must be called from caller's stack frame, not wrapped.
+        // 'returns_twice' attribute prevents LLVM from sinking allocas across the call.
+        ir.push_str("declare i32 @setjmp(ptr) #2\n");
+        ir.push_str("declare void @qi_exc_pop()\n");
+        ir.push_str("declare void @qi_exc_throw(ptr) noreturn\n");
+        ir.push_str("declare ptr @qi_exc_message()\n");
+        ir.push_str("declare void @qi_exc_clear()\n");
+        ir.push_str("declare void @qi_exc_free_message(ptr)\n");
+        ir.push_str("attributes #2 = { returns_twice }\n");
+        ir.push_str("declare i64 @qi_signal_install_shutdown()\n");
+        ir.push_str("declare i64 @qi_signal_should_shutdown()\n");
+        ir.push_str("declare i64 @qi_signal_reset()\n");
+        ir.push_str("declare i64 @qi_network_tcp_listener_set_nonblocking(i64, i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_read_bytes(i64, i64)\n");
+        ir.push_str("declare i64 @qi_network_tcp_write_bytes(i64, i64)\n");
+        ir.push_str("declare i64 @qi_multipart_parse(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_multipart_extract_boundary(ptr)\n");
+        ir.push_str("declare i64 @qi_multipart_count(i64)\n");
+        ir.push_str("declare ptr @qi_multipart_name(i64, i64)\n");
+        ir.push_str("declare ptr @qi_multipart_filename(i64, i64)\n");
+        ir.push_str("declare ptr @qi_multipart_content_type(i64, i64)\n");
+        ir.push_str("declare i64 @qi_multipart_body(i64, i64)\n");
+        ir.push_str("declare i64 @qi_multipart_free(i64)\n");
         ir.push_str("declare i64 @qi_cli_app_add_arg(i64, i64)\n");
         ir.push_str("declare i64 @qi_cli_create_subcommand(ptr)\n");
         ir.push_str("declare i64 @qi_cli_app_add_subcommand(i64, i64)\n");
+        ir.push_str("declare i64 @qi_cli_app_add_alias(i64, ptr)\n");
+        ir.push_str("declare i64 @qi_cli_print_help(i64)\n");
         ir.push_str("declare i64 @qi_cli_parse(i64)\n");
         ir.push_str("declare ptr @qi_cli_get_value(i64, ptr)\n");
         ir.push_str("declare i64 @qi_cli_get_flag(i64, ptr)\n");
@@ -5725,6 +6960,8 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_compress_gzip_string(ptr)\n");
         ir.push_str("declare ptr @qi_compress_gunzip_string(ptr)\n");
         ir.push_str("declare void @qi_compress_free_string(ptr)\n");
+        // 注：qi_compress_gzip_bytes / qi_compress_gunzip_bytes 通过 external_functions
+        // 自动按需声明（避免与 module 调用点重复）
         ir.push_str("\n");
 
         // Test functions
@@ -5818,6 +7055,11 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_list_string_push(i64, ptr)\n");
         ir.push_str("declare ptr @qi_list_string_get(i64, i64)\n");
         ir.push_str("declare i64 @qi_list_string_size(i64)\n");
+        ir.push_str("declare i64 @qi_list_ptr_create()\n");
+        ir.push_str("declare i64 @qi_list_ptr_push(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_list_ptr_get(i64, i64)\n");
+        ir.push_str("declare i64 @qi_list_ptr_set(i64, i64, ptr)\n");
+        ir.push_str("declare i64 @qi_list_ptr_size(i64)\n");
         ir.push_str("declare i64 @qi_list_free(i64)\n");
         ir.push_str("\n");
 
@@ -6050,7 +7292,81 @@ impl IrBuilder {
             "qi_runtime_alloc", "qi_runtime_dealloc",
             "qi_runtime_gc_should_collect", "qi_runtime_gc_collect",
             "qi_runtime_gc_add_root", "qi_runtime_gc_remove_root",
-            "qi_runtime_gc_add_reference", "qi_runtime_gc_clear_references"
+            "qi_runtime_gc_add_reference", "qi_runtime_gc_clear_references",
+            // Conversion runtime functions (declared in emit_llvm_ir)
+            "qi_runtime_int_to_string", "qi_runtime_float_to_string",
+            "qi_runtime_string_to_int", "qi_runtime_string_to_float",
+            "qi_runtime_int_to_float", "qi_runtime_float_to_int",
+            // Print runtime functions (declared in emit_llvm_ir)
+            "qi_runtime_print_int", "qi_runtime_println_int",
+            "qi_runtime_print_float", "qi_runtime_println_float",
+            "qi_runtime_print_string", "qi_runtime_println_string",
+            "qi_runtime_print_bool", "qi_runtime_println_bool",
+            // JSON module functions (declared in emit_llvm_ir)
+            "qi_json_encode", "qi_json_decode", "qi_json_create_object", "qi_json_create_array",
+            "qi_json_set_string", "qi_json_set_int", "qi_json_set_float", "qi_json_set_bool",
+            "qi_json_set_object", "qi_json_set_array",
+            "qi_json_get_string", "qi_json_get_int", "qi_json_get_float", "qi_json_get_bool",
+            "qi_json_get_object", "qi_json_get_array",
+            "qi_json_array_push_string", "qi_json_array_push_int", "qi_json_array_push_float",
+            "qi_json_array_push_bool", "qi_json_array_push_object", "qi_json_array_get_string",
+            "qi_json_array_get_int", "qi_json_array_get_float", "qi_json_array_get_bool",
+            "qi_json_array_get_object", "qi_json_array_size", "qi_json_array_remove",
+            "qi_json_array_clear", "qi_json_object_keys", "qi_json_object_size",
+            "qi_json_object_has_key", "qi_json_object_remove", "qi_json_object_clear",
+            "qi_json_to_string", "qi_json_pretty_string", "qi_json_clone", "qi_json_equals",
+            "qi_json_free", "qi_json_release_string",
+            // List module functions (declared in emit_llvm_ir)
+            "qi_list_int_create", "qi_list_int_push", "qi_list_int_get", "qi_list_int_set",
+            "qi_list_int_size", "qi_list_int_pop", "qi_list_int_clear", "qi_list_int_remove",
+            "qi_list_int_insert", "qi_list_int_contains", "qi_list_int_index_of",
+            "qi_list_float_create", "qi_list_float_push", "qi_list_float_get", "qi_list_float_size",
+            "qi_list_string_create", "qi_list_string_push", "qi_list_string_get", "qi_list_string_size",
+            "qi_list_ptr_create", "qi_list_ptr_push", "qi_list_ptr_get", "qi_list_ptr_set",
+            "qi_list_ptr_size", "qi_list_free",
+            // Hashmap module functions (declared in emit_llvm_ir)
+            "qi_hashmap_int_create", "qi_hashmap_int_set", "qi_hashmap_int_get",
+            "qi_hashmap_int_contains", "qi_hashmap_int_remove", "qi_hashmap_int_size",
+            "qi_hashmap_int_clear",
+            "qi_hashmap_float_create", "qi_hashmap_float_set", "qi_hashmap_float_get",
+            "qi_hashmap_float_size",
+            "qi_hashmap_string_create", "qi_hashmap_string_set", "qi_hashmap_string_get",
+            "qi_hashmap_string_size",
+            "qi_hashmap_free",
+            // Random module functions (declared in emit_llvm_ir)
+            "qi_random_int", "qi_random_float", "qi_random_bool", "qi_random_string", "qi_random_uuid",
+            // DateTime sleep / time functions (declared in emit_llvm_ir)
+            "qi_datetime_sleep_millis", "qi_datetime_sleep_seconds", "qi_datetime_sleep_micros",
+            "qi_datetime_now_millis",
+            // Web runtime helper (declared in emit_llvm_ir)
+            "qi_web_call_handler_safe", "qi_web_safe_process_request", "qi_web_panic_for_test",
+            // TLS module functions (declared in emit_llvm_ir)
+            "qi_tls_create_config", "qi_tls_free_config", "qi_tls_listen", "qi_tls_accept",
+            "qi_tls_read_string", "qi_tls_write_string", "qi_tls_close",
+            "qi_tls_server_close", "qi_tls_free_string",
+            // HTTP/2 server (declared in emit_llvm_ir)
+            "qi_h2_serve",
+            // Bytes module (declared in emit_llvm_ir)
+            "qi_bytes_create", "qi_bytes_with_capacity", "qi_bytes_from_string", "qi_bytes_to_string",
+            "qi_bytes_length", "qi_bytes_get", "qi_bytes_set", "qi_bytes_push", "qi_bytes_push_string",
+            "qi_bytes_extend", "qi_bytes_slice", "qi_bytes_compare", "qi_bytes_find",
+            "qi_bytes_to_hex", "qi_bytes_from_hex", "qi_bytes_to_base64", "qi_bytes_from_base64",
+            "qi_bytes_free", "qi_bytes_free_string",
+            // Closure runtime (declared in emit_llvm_ir)
+            "qi_closure_create", "qi_closure_get_fn",
+            "qi_closure_get_int", "qi_closure_get_ptr",
+            "qi_closure_set_int", "qi_closure_set_ptr",
+            // Exception runtime (declared in emit_llvm_ir)
+            "qi_exc_alloc_frame", "setjmp", "qi_exc_pop",
+            "qi_exc_throw", "qi_exc_message", "qi_exc_clear", "qi_exc_free_message",
+            // Signal module (declared in emit_llvm_ir)
+            "qi_signal_install_shutdown", "qi_signal_should_shutdown", "qi_signal_reset",
+            "qi_network_tcp_listener_set_nonblocking",
+            "qi_network_tcp_read_bytes", "qi_network_tcp_write_bytes",
+            // Multipart module
+            "qi_multipart_parse", "qi_multipart_extract_boundary", "qi_multipart_count",
+            "qi_multipart_name", "qi_multipart_filename", "qi_multipart_content_type",
+            "qi_multipart_body", "qi_multipart_free"
         ]);
 
         if !self.external_functions.is_empty() {
@@ -6238,6 +7554,10 @@ impl IrBuilder {
                         lt.clone()
                     } else if source.starts_with('@') && source.contains(".str") {
                         "ptr".to_string()
+                    } else if source.starts_with('@') {
+                        // Other globals: look up the declared type
+                        let var_name = source.trim_start_matches('@');
+                        self.variable_types.get(var_name).cloned().unwrap_or_else(|| "i64".to_string())
                     } else if source.starts_with('%') {
                         let var_name = source.trim_start_matches('%');
                         self.variable_types.get(var_name).cloned().unwrap_or_else(|| "i64".to_string())
@@ -6394,7 +7714,9 @@ impl IrBuilder {
 
                         // Get the expected parameter types from function signature if available
                         let mangled_callee = self.mangle_function_name(&callee);
-                        let expected_param_types = if let Some(param_types) = self.function_param_types.get(&mangled_callee as &str) {
+                        let expected_param_types = if let Some(param_types) = self.function_param_types.get(&callee as &str) {
+                            Some(param_types.clone())
+                        } else if let Some(param_types) = self.function_param_types.get(&mangled_callee as &str) {
                             Some(param_types.clone())
                         } else if let Some((param_types, _)) = self.external_functions.get(&callee as &str) {
                             Some(param_types.clone())
@@ -6443,6 +7765,42 @@ impl IrBuilder {
                                         "double"
                                     } else if callee == "qi_runtime_print_bool" || callee == "qi_runtime_println_bool" {
                                         "i32"
+                                    } else if callee == "qi_list_ptr_push" {
+                                        if i == 0 { "i64" } else { "ptr" }
+                                    } else if callee == "qi_list_ptr_set" {
+                                        if i == 2 { "ptr" } else { "i64" }
+                                    } else if callee == "qi_list_ptr_get" || callee == "qi_list_ptr_size" {
+                                        "i64"
+                                    } else if callee == "qi_list_string_push" {
+                                        if i == 0 { "i64" } else { "ptr" }
+                                    } else if callee == "qi_list_string_get" || callee == "qi_list_string_size" {
+                                        "i64"
+                                    } else if callee.starts_with("qi_cli_") {
+                                        match callee.as_str() {
+                                            "qi_cli_create_app"
+                                            | "qi_cli_create_arg"
+                                            | "qi_cli_create_subcommand" => "ptr",
+                                            "qi_cli_set_version"
+                                            | "qi_cli_set_author"
+                                            | "qi_cli_set_about"
+                                            | "qi_cli_set_long_about"
+                                            | "qi_cli_set_override_usage"
+                                            | "qi_cli_set_after_help"
+                                            | "qi_cli_arg_set_short"
+                                            | "qi_cli_arg_set_long"
+                                            | "qi_cli_arg_set_help"
+                                            | "qi_cli_arg_set_default"
+                                            | "qi_cli_arg_set_env"
+                                            | "qi_cli_app_add_alias"
+                                            | "qi_cli_get_value"
+                                            | "qi_cli_get_flag"
+                                            | "qi_cli_has_value"
+                                            | "qi_cli_has_subcommand"
+                                            | "qi_cli_get_subcommand" => {
+                                                if i == 0 { "i64" } else { "ptr" }
+                                            }
+                                            _ => "i64",
+                                        }
                                     // Network TCP string functions - must come before generic read_string check
                                     } else if callee == "qi_network_tcp_read_string" {
                                         // qi_network_tcp_read_string(i64, i64) - handle, buffer_size
@@ -6708,8 +8066,8 @@ impl IrBuilder {
                                callee.contains("math_abs_float") || callee.contains("int_to_float") ||
                                callee.contains("string_to_float") {
                                 "double"
-                            // String length returns i64, not ptr
-                            } else if callee.contains("string_length") {
+                            // String length and string_to_int return i64, not ptr
+                            } else if callee.contains("string_length") || callee.contains("string_to_int") {
                                 "i64"
                             // String comparison returns i32 (strcmp-style: 0 if equal)
                             } else if callee.contains("string_compare") {
@@ -6877,8 +8235,9 @@ impl IrBuilder {
                         // List functions - check return type based on function name
                         } else if callee.starts_with("qi_list_") {
                             match callee.as_str() {
+                                "qi_list_ptr_get" => "ptr",
                                 "qi_list_string_get" => "ptr",  // Return string
-                                "qi_list_free" => "void",  // Cleanup function
+                                "qi_list_free" => "i64",
                                 _ => "i64"  // Most list functions return i64
                             }
                         // HashMap functions - check return type based on function name
@@ -6898,6 +8257,8 @@ impl IrBuilder {
                             // Check if this is a known async function
                             if self.async_function_types.contains_key(callee) {
                                 "ptr"
+                            } else if let Some(ret_type) = self.function_return_types.get(callee) {
+                                ret_type
                             } else if let Some(ret_type) = self.function_return_types.get(&self.mangle_function_name(&callee) as &str) {
                                 ret_type  // Use stored return type from function signature
                             } else if let Some((_param_types, ret_type)) = self.external_functions.get(callee) {
@@ -6934,13 +8295,23 @@ impl IrBuilder {
                         } else {
                             match dest {
                                 Some(dest_var) => {
-                                    ir.push_str(&format!("{} = call {} @{}({})\n", dest_var, ret_type, final_callee, args_str));
+                                    let callee_ref = if final_callee.starts_with('%') {
+                                        final_callee.clone()
+                                    } else {
+                                        format!("@{}", final_callee)
+                                    };
+                                    ir.push_str(&format!("{} = call {} {}({})\n", dest_var, ret_type, callee_ref, args_str));
                                     // Store the return type for this temporary variable
                                     let var_name = dest_var.trim_start_matches('%');
                                     self.variable_types.insert(var_name.to_string(), ret_type.to_string());
                                 }
                                 None => {
-                                    ir.push_str(&format!("call void @{}({})\n", final_callee, args_str));
+                                    let callee_ref = if final_callee.starts_with('%') {
+                                        final_callee.clone()
+                                    } else {
+                                        format!("@{}", final_callee)
+                                    };
+                                    ir.push_str(&format!("call void {}({})\n", callee_ref, args_str));
                                 }
                             }
                         }
@@ -6964,10 +8335,23 @@ impl IrBuilder {
                         if ty == "void" {
                             ir.push_str("ret void\n");
                         } else {
+                            // Normalize integer literals when the return type is ptr — `ret ptr 0`
+                            // is invalid in modern LLVM; use `null` instead.
+                            let normalized: String = if ty == "ptr" {
+                                if val == "0" || val == "0i64" {
+                                    "null".to_string()
+                                } else if val.parse::<i64>().is_ok() {
+                                    "null".to_string()
+                                } else {
+                                    val.clone()
+                                }
+                            } else {
+                                val.clone()
+                            };
                             if self.verbose {
-                                eprintln!("[DEBUG] Generating return: ret {} {}", ty, val);
+                                eprintln!("[DEBUG] Generating return: ret {} {}", ty, normalized);
                             }
-                            ir.push_str(&format!("ret {} {}\n", ty, val));
+                            ir.push_str(&format!("ret {} {}\n", ty, normalized));
                         }
                     } else {
                         // Default to i64 if not within a function context
@@ -7248,9 +8632,9 @@ impl IrBuilder {
                         let wrapper_ptr2 = self.generate_temp();
                         ir.push_str(&format!("{} = inttoptr i64 {} to ptr\n", wrapper_ptr2, wrapper_ptr1));
 
-                        // Call qi_runtime_spawn_goroutine_with_args(wrapper, args)
-                        ir.push_str(&format!("call void @qi_runtime_spawn_goroutine_with_args(ptr {}, ptr {})\n",
-                            wrapper_ptr2, args_array));
+                        // Call qi_runtime_spawn_goroutine_with_args(wrapper, args, count)
+                        ir.push_str(&format!("call void @qi_runtime_spawn_goroutine_with_args(ptr {}, ptr {}, i64 {})\n",
+                            wrapper_ptr2, args_array, arguments.len()));
                     }
                 }
                 IrInstruction::创建通道 { dest, channel_type, buffer_size } => {

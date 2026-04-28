@@ -125,6 +125,69 @@ pub extern "C" fn qi_cli_set_about(app_id: i64, about: *const c_char) -> i64 {
     }
 }
 
+/// 设置详细说明
+#[no_mangle]
+pub extern "C" fn qi_cli_set_long_about(app_id: i64, detail: *const c_char) -> i64 {
+    if detail.is_null() || app_id <= 0 {
+        return -1;
+    }
+
+    unsafe {
+        let detail_string = CStr::from_ptr(detail).to_string_lossy().into_owned();
+        let detail_static: &'static str = Box::leak(detail_string.into_boxed_str());
+        let mut apps = APPS.lock().unwrap();
+
+        if let Some(app) = apps.get_mut(&(app_id as usize)) {
+            app.command = std::mem::replace(&mut app.command, Command::new("")).long_about(detail_static);
+            1
+        } else {
+            -1
+        }
+    }
+}
+
+/// 设置用法
+#[no_mangle]
+pub extern "C" fn qi_cli_set_override_usage(app_id: i64, usage: *const c_char) -> i64 {
+    if usage.is_null() || app_id <= 0 {
+        return -1;
+    }
+
+    unsafe {
+        let usage_string = CStr::from_ptr(usage).to_string_lossy().into_owned();
+        let usage_static: &'static str = Box::leak(usage_string.into_boxed_str());
+        let mut apps = APPS.lock().unwrap();
+
+        if let Some(app) = apps.get_mut(&(app_id as usize)) {
+            app.command = std::mem::replace(&mut app.command, Command::new("")).override_usage(usage_static);
+            1
+        } else {
+            -1
+        }
+    }
+}
+
+/// 设置尾部帮助
+#[no_mangle]
+pub extern "C" fn qi_cli_set_after_help(app_id: i64, help: *const c_char) -> i64 {
+    if help.is_null() || app_id <= 0 {
+        return -1;
+    }
+
+    unsafe {
+        let help_string = CStr::from_ptr(help).to_string_lossy().into_owned();
+        let help_static: &'static str = Box::leak(help_string.into_boxed_str());
+        let mut apps = APPS.lock().unwrap();
+
+        if let Some(app) = apps.get_mut(&(app_id as usize)) {
+            app.command = std::mem::replace(&mut app.command, Command::new("")).after_help(help_static);
+            1
+        } else {
+            -1
+        }
+    }
+}
+
 // ==================== 参数创建与配置 ====================
 
 /// 创建参数
@@ -289,6 +352,23 @@ pub extern "C" fn qi_cli_arg_set_env(_arg_id: i64, _env_var: *const c_char) -> i
     1
 }
 
+/// 设置为全局参数（被所有子命令继承，可在任意层级位置出现）
+#[no_mangle]
+pub extern "C" fn qi_cli_arg_set_global(arg_id: i64) -> i64 {
+    if arg_id <= 0 {
+        return -1;
+    }
+
+    let mut args = ARGS.lock().unwrap();
+
+    if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
+        arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).global(true);
+        1
+    } else {
+        -1
+    }
+}
+
 // ==================== 应用参数添加 ====================
 
 /// 添加参数到应用
@@ -353,6 +433,48 @@ pub extern "C" fn qi_cli_app_add_subcommand(app_id: i64, subcommand_id: i64) -> 
     if let Some(app) = apps.get_mut(&(app_id as usize)) {
         app.command = std::mem::replace(&mut app.command, Command::new("")).subcommand(subcommand);
         1
+    } else {
+        -1
+    }
+}
+
+/// 添加命令别名
+#[no_mangle]
+pub extern "C" fn qi_cli_app_add_alias(app_id: i64, alias: *const c_char) -> i64 {
+    if alias.is_null() || app_id <= 0 {
+        return -1;
+    }
+
+    unsafe {
+        let alias_string = CStr::from_ptr(alias).to_string_lossy().into_owned();
+        let alias_static: &'static str = Box::leak(alias_string.into_boxed_str());
+        let mut apps = APPS.lock().unwrap();
+
+        if let Some(app) = apps.get_mut(&(app_id as usize)) {
+            app.command = std::mem::replace(&mut app.command, Command::new("")).alias(alias_static);
+            1
+        } else {
+            -1
+        }
+    }
+}
+
+/// 显示帮助
+#[no_mangle]
+pub extern "C" fn qi_cli_print_help(app_id: i64) -> i64 {
+    if app_id <= 0 {
+        return -1;
+    }
+
+    let mut apps = APPS.lock().unwrap();
+    if let Some(app) = apps.get_mut(&(app_id as usize)) {
+        match app.command.clone().print_help() {
+            Ok(_) => {
+                println!();
+                1
+            }
+            Err(_) => -1,
+        }
     } else {
         -1
     }

@@ -368,17 +368,44 @@ pub extern "C" fn qi_string_ends_with(
     }
 }
 
-/// Split a string by a delimiter
-/// Returns a handle to a string list (整数列表句柄)
-/// Note: This is simplified - in a full implementation, would return a list handle
+/// Split a string by a delimiter.
+/// Returns a string-list handle (compatible with 列表::字符串列表大小 / 获取字符串).
+/// Empty delimiter returns a list of one element (the original string).
 #[no_mangle]
 pub extern "C" fn qi_string_split(
-    _text_ptr: *const c_char,
-    _delimiter_ptr: *const c_char,
+    text_ptr: *const c_char,
+    delimiter_ptr: *const c_char,
 ) -> i64 {
-    // TODO: Implement proper list integration
-    // For now, return -1 to indicate not implemented
-    -1
+    let list_handle = crate::runtime::stdlib::list::qi_list_string_create();
+    if text_ptr.is_null() {
+        return list_handle;
+    }
+
+    unsafe {
+        let text = match CStr::from_ptr(text_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return list_handle,
+        };
+
+        let parts: Vec<&str> = if delimiter_ptr.is_null() {
+            vec![text]
+        } else {
+            match CStr::from_ptr(delimiter_ptr).to_str() {
+                Ok(d) if !d.is_empty() => text.split(d).collect(),
+                _ => vec![text],
+            }
+        };
+
+        for part in parts {
+            let c = match CString::new(part) {
+                Ok(c) => c,
+                Err(_) => continue, // skip parts containing NUL
+            };
+            crate::runtime::stdlib::list::qi_list_string_push(list_handle, c.as_ptr());
+        }
+    }
+
+    list_handle
 }
 
 /// Compare two strings for equality

@@ -34,6 +34,12 @@ pub mod config_ffi;
 pub mod compress_ffi;
 pub mod test_ffi;
 pub mod database_ffi;
+pub mod web_ffi;
+pub mod bytes_ffi;
+pub mod signal_ffi;
+pub mod multipart_ffi;
+pub mod exception_ffi;
+pub mod closure_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};

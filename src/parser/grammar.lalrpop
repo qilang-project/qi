@@ -17,6 +17,20 @@ PackageDeclaration: String = {
 };
 
 ImportStatement: ImportStatement = {
+    "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" => ImportStatement {
+        module_path: path,
+        items: Some(items),
+        alias: None,
+        is_public: false,
+        span: Default::default(),
+    },
+    "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" => ImportStatement {
+        module_path: path,
+        items: Some(items),
+        alias: None,
+        is_public: false,
+        span: Default::default(),
+    },
     "导入" <path:ModulePath> ";" => ImportStatement {
         module_path: path,
         items: None,
@@ -59,6 +73,24 @@ ImportStatement: ImportStatement = {
         is_public: true,
         span: Default::default(),
     },
+    "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" => ImportStatement {
+        module_path: path,
+        items: Some(items),
+        alias: None,
+        is_public: true,
+        span: Default::default(),
+    },
+    "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" => ImportStatement {
+        module_path: path,
+        items: Some(items),
+        alias: None,
+        is_public: true,
+        span: Default::default(),
+    },
+};
+
+ImportItemList: Vec<String> = {
+    <items:Comma<ModuleIdentifier>> => items,
 };
 
 ModulePath: Vec<String> = {
@@ -2011,6 +2043,22 @@ ExprList: Vec<AstNode> = {
 };
 
 Type: TypeNode = {
+    "函数" "(" ")" ":" <return_type:Type> => TypeNode::函数类型(FunctionType {
+        parameters: vec![],
+        return_type: Box::new(return_type),
+    }),
+    "函数" "(" ")" "：" <return_type:Type> => TypeNode::函数类型(FunctionType {
+        parameters: vec![],
+        return_type: Box::new(return_type),
+    }),
+    "函数" "(" <params:FunctionTypeParameterList> ")" ":" <return_type:Type> => TypeNode::函数类型(FunctionType {
+        parameters: params,
+        return_type: Box::new(return_type),
+    }),
+    "函数" "(" <params:FunctionTypeParameterList> ")" "：" <return_type:Type> => TypeNode::函数类型(FunctionType {
+        parameters: params,
+        return_type: Box::new(return_type),
+    }),
     // 容器类型 - 使用特殊语法避免冲突
     "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
         element_type: Box::new(element_type),
@@ -2062,6 +2110,10 @@ Type: TypeNode = {
 
     // 自定义类型 (struct names, etc.) - 使用TypeName避免冲突
     <name:TypeName> => TypeNode::自定义类型(name),
+};
+
+FunctionTypeParameterList: Vec<TypeNode> = {
+    <params:Comma<Type>> => params,
 };
 
 // 用于类型名称的标识符，避免与其他Identifier冲突

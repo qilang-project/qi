@@ -161,6 +161,40 @@ pub extern "C" fn qi_compress_free_string(s: *mut c_char) {
     }
 }
 
+/// 二进制安全的 gzip 压缩：输入字节切片句柄 -> 输出新字节切片句柄。
+/// 失败返回 -1。新句柄归调用方所有，需调用 字节切片::释放 释放。
+#[no_mangle]
+pub extern "C" fn qi_compress_gzip_bytes(handle: i64) -> i64 {
+    let data = match crate::runtime::stdlib::bytes_ffi::clone_bytes(handle) {
+        Some(v) => v,
+        None => return -1,
+    };
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if encoder.write_all(&data).is_err() {
+        return -1;
+    }
+    match encoder.finish() {
+        Ok(compressed) => crate::runtime::stdlib::bytes_ffi::register_bytes(compressed),
+        Err(_) => -1,
+    }
+}
+
+/// 二进制安全的 gunzip 解压：输入字节切片句柄 -> 输出新字节切片句柄。
+/// 失败返回 -1。
+#[no_mangle]
+pub extern "C" fn qi_compress_gunzip_bytes(handle: i64) -> i64 {
+    let data = match crate::runtime::stdlib::bytes_ffi::clone_bytes(handle) {
+        Some(v) => v,
+        None => return -1,
+    };
+    let mut decoder = GzDecoder::new(&data[..]);
+    let mut out = Vec::new();
+    if decoder.read_to_end(&mut out).is_err() {
+        return -1;
+    }
+    crate::runtime::stdlib::bytes_ffi::register_bytes(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

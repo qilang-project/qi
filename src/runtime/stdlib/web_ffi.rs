@@ -1,0 +1,159 @@
+//! Web framework runtime helpers
+//!
+//! Provides panic-safe helpers used by qi-web's `recover` middleware so a
+//! crashing handler returns a 500 response instead of taking down the goroutine.
+
+use std::ffi::{c_char, c_void, CStr, CString};
+use std::io::Write;
+
+/// Call a Qi handler `fn(*const Ctx) -> *const Response` with panic isolation.
+/// Returns the handler's response pointer on success, or null on panic.
+/// The qi-web recover middleware checks for null and synthesizes a 500.
+/// Uses C-unwind so panics from the called Qi/Rust code can unwind here.
+#[no_mangle]
+pub extern "C-unwind" fn qi_web_call_handler_safe(
+    handler_fn: *const c_void,
+    ctx_ptr: *const c_void,
+) -> *const c_void {
+    if handler_fn.is_null() {
+        return std::ptr::null();
+    }
+    let handler_addr = handler_fn as usize;
+    let ctx_addr = ctx_ptr as usize;
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unsafe {
+            let func = std::mem::transmute::<
+                usize,
+                extern "C-unwind" fn(*const c_void) -> *const c_void,
+            >(handler_addr);
+            func(ctx_addr as *const c_void)
+        }
+    }));
+
+    match result {
+        Ok(ptr) => ptr,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[qi-web] handler panic recovered: {}", msg);
+            std::ptr::null()
+        }
+    }
+}
+
+/// 调用 (app_ptr, raw_request_ptr) -> response_string_ptr 的处理函数，panic 兜底。
+/// 返回 *mut c_char（C 字符串）；qi 侧把它当 字符串 接收。
+/// panic 时返回一个固定的 "HTTP/1.1 500 ..." 字符串。
+/// C-unwind ABI 让 panic 能从被调用方传到这里被 catch_unwind 抓到。
+#[no_mangle]
+pub extern "C-unwind" fn qi_web_safe_process_request(
+    process_fn: *const c_void,
+    app_ptr: *const c_void,
+    raw_request_ptr: *const c_char,
+) -> *const c_char {
+    if process_fn.is_null() {
+        return fallback_500();
+    }
+    let process_addr = process_fn as usize;
+    let app_addr = app_ptr as usize;
+    let raw_addr = raw_request_ptr as usize;
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unsafe {
+            let func = std::mem::transmute::<
+                usize,
+                extern "C-unwind" fn(*const c_void, *const c_char) -> *const c_char,
+            >(process_addr);
+            func(app_addr as *const c_void, raw_addr as *const c_char)
+        }
+    }));
+
+    match result {
+        Ok(ptr) if !ptr.is_null() => ptr,
+        Ok(_) => fallback_500(),
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[qi-web] request panic recovered: {}", msg);
+            fallback_500()
+        }
+    }
+}
+
+/// 测试用：故意 panic 让 recover 能演示
+/// 用 "C-unwind" ABI 才能让 panic 越过 FFI 边界传递到上游的 catch_unwind
+#[no_mangle]
+pub extern "C-unwind" fn qi_web_panic_for_test() -> i64 {
+    panic!("intentional panic for recover demo");
+}
+
+/// 一次性 HTTP/1.1 响应序列化：把状态行 + 头部 + Content-Length + body 一锅写完，
+/// 一个 alloc，零中间字符串。返回字节切片句柄，调用方负责 free。
+///
+/// 替代 qi-web 端 `输出响应头部` + `缓冲::从字符串` + `缓冲::追加字符串` 那条 ~10
+/// 次小分配的链条。对 hot path 的"快响应"尤其有效（bench_最小 那种）。
+#[no_mangle]
+pub extern "C" fn qi_runtime_serialize_http_response(
+    status_code: i64,
+    status_text_ptr: *const c_char,
+    headers_ptr: *const c_char,
+    body_ptr: *const c_char,
+) -> i64 {
+    fn cstr_or_empty<'a>(p: *const c_char) -> &'a [u8] {
+        if p.is_null() {
+            &[]
+        } else {
+            unsafe { CStr::from_ptr(p).to_bytes() }
+        }
+    }
+
+    let status_text = cstr_or_empty(status_text_ptr);
+    let headers = cstr_or_empty(headers_ptr);
+    let body = cstr_or_empty(body_ptr);
+
+    // 预估：状态行 ~32 + 头部 + "Content-Length: NNNN\r\n\r\n" + body
+    let cap = 48 + headers.len() + 32 + body.len();
+    let mut out: Vec<u8> = Vec::with_capacity(cap);
+
+    out.extend_from_slice(b"HTTP/1.1 ");
+    let _ = write!(out, "{}", status_code);
+    out.extend_from_slice(b" ");
+    out.extend_from_slice(status_text);
+    out.extend_from_slice(b"\r\n");
+    if !headers.is_empty() {
+        out.extend_from_slice(headers);
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"Content-Length: ");
+    let _ = write!(out, "{}", body.len());
+    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(body);
+
+    crate::runtime::stdlib::bytes_ffi::register_bytes(out)
+}
+
+fn fallback_500() -> *const c_char {
+    let body = "Internal Server Error";
+    let response = format!(
+        "HTTP/1.1 500 Internal Server Error\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Connection: close\r\n\
+         Content-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    // intentional leak — returned as a static-like C string for the qi runtime
+    let cstr = CString::new(response).unwrap();
+    cstr.into_raw() as *const c_char
+}

@@ -212,7 +212,7 @@ impl ModuleRegistry {
     }
 
     /// Convert TypeNode to LLVM type string
-    fn type_node_to_llvm_type(type_annotation: &Option<crate::parser::ast::TypeNode>) -> String {
+    pub fn type_node_to_llvm_type(type_annotation: &Option<crate::parser::ast::TypeNode>) -> String {
         use crate::parser::ast::{TypeNode, BasicType};
         match type_annotation {
             Some(TypeNode::基础类型(basic_type)) => {
@@ -238,7 +238,20 @@ impl ModuleRegistry {
             Some(crate::parser::ast::TypeNode::结构体类型(_)) => "ptr".to_string(),
             Some(crate::parser::ast::TypeNode::自定义类型(_)) => "ptr".to_string(),
             Some(crate::parser::ast::TypeNode::指针类型(_)) => "ptr".to_string(),
-            _ => "i64".to_string(), // Default to i64
+            Some(crate::parser::ast::TypeNode::函数类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::数组类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::列表类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::字典类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::集合类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::通道类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::引用类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::未来类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::结果类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::选项类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::泛型类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::联合体类型(_)) => "ptr".to_string(),
+            Some(crate::parser::ast::TypeNode::枚举类型(_)) => "i64".to_string(),
+            None => "i64".to_string(),
         }
     }
 }

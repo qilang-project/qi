@@ -45,6 +45,16 @@ toml = "0.8.8"
 # HTTP client for LLM API calls
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 
+# TLS server support (pure-Rust, used by 标准库.TLS)
+rustls = { version = "0.23", features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+
+# HTTP/2 server (used by 标准库.HTTP2)
+h2 = "0.4"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+bytes = "1"
+http = "1"
+
 # File handling and path management
 glob = "0.3.1"
 walkdir = "2.4.0"
@@ -74,6 +84,9 @@ proptest = { version = "1.5.0", optional = true }
 
 # Cross-platform memory management
 crossbeam = "0.8.4"
+
+# Sharded concurrent map — eliminates global mutex on TCP/bytes pools
+dashmap = "6.1"
 
 # System calls for FFI
 libc = "0.2.158"

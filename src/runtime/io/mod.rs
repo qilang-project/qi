@@ -6,6 +6,8 @@
 pub mod filesystem;
 pub mod http;
 pub mod network_ffi;
+pub mod tls_ffi;
+pub mod h2_ffi;
 pub mod http_ffi;
 pub mod websocket_ffi;
 pub mod stdio;

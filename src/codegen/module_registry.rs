@@ -138,6 +138,310 @@ impl ModuleRegistry {
         self.register_compress_module();
         self.register_test_module();
         self.register_database_module();
+        self.register_web_runtime_module();
+        self.register_tls_module();
+    }
+
+    fn register_tls_module(&mut self) {
+        let mut tls_module = Module::new("TLS");
+
+        tls_module.add_function(ModuleFunction::new(
+            "创建配置",
+            "qi_tls_create_config",
+            vec!["字符串".to_string(), "字符串".to_string()], // 证书路径, 私钥路径
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "释放配置",
+            "qi_tls_free_config",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS监听",
+            "qi_tls_listen",
+            vec![
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ], // host, port, backlog, config_handle
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS接受连接",
+            "qi_tls_accept",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS读取",
+            "qi_tls_read_string",
+            vec!["整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS写入",
+            "qi_tls_write_string",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS关闭",
+            "qi_tls_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        tls_module.add_function(ModuleFunction::new(
+            "TLS服务器关闭",
+            "qi_tls_server_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        self.modules.insert("TLS".to_string(), tls_module.clone());
+        self.modules.insert("标准库.TLS".to_string(), tls_module);
+
+        let mut h2_module = Module::new("HTTP2");
+        h2_module.add_function(ModuleFunction::new(
+            "运行服务器",
+            "qi_h2_serve",
+            vec![
+                "字符串".to_string(),  // 证书路径
+                "字符串".to_string(),  // 私钥路径
+                "字符串".to_string(),  // 主机
+                "整数".to_string(),    // 端口
+                "指针".to_string(),    // 处理函数指针 (处理原始请求)
+                "指针".to_string(),    // 应用值指针
+            ],
+            "整数",
+        ));
+        self.modules.insert("HTTP2".to_string(), h2_module.clone());
+        self.modules.insert("标准库.HTTP2".to_string(), h2_module);
+
+        let mut bytes_module = Module::new("字节切片");
+        bytes_module.add_function(ModuleFunction::new("创建", "qi_bytes_create", vec![], "整数"));
+        bytes_module.add_function(ModuleFunction::new(
+            "创建带容量",
+            "qi_bytes_with_capacity",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "从字符串",
+            "qi_bytes_from_string",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "转字符串",
+            "qi_bytes_to_string",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "长度",
+            "qi_bytes_length",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "获取",
+            "qi_bytes_get",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "设置",
+            "qi_bytes_set",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "追加字节",
+            "qi_bytes_push",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "追加字符串",
+            "qi_bytes_push_string",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "追加切片",
+            "qi_bytes_extend",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "切片",
+            "qi_bytes_slice",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "比较",
+            "qi_bytes_compare",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "查找",
+            "qi_bytes_find",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "转十六进制",
+            "qi_bytes_to_hex",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "从十六进制",
+            "qi_bytes_from_hex",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "转Base64",
+            "qi_bytes_to_base64",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "从Base64",
+            "qi_bytes_from_base64",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
+            "释放切片",
+            "qi_bytes_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        self.modules.insert("字节切片".to_string(), bytes_module.clone());
+        self.modules.insert("标准库.字节切片".to_string(), bytes_module);
+
+        let mut signal_module = Module::new("信号");
+        signal_module.add_function(ModuleFunction::new(
+            "安装关闭处理",
+            "qi_signal_install_shutdown",
+            vec![],
+            "整数",
+        ));
+        signal_module.add_function(ModuleFunction::new(
+            "应关闭",
+            "qi_signal_should_shutdown",
+            vec![],
+            "整数",
+        ));
+        signal_module.add_function(ModuleFunction::new(
+            "重置",
+            "qi_signal_reset",
+            vec![],
+            "整数",
+        ));
+        self.modules.insert("信号".to_string(), signal_module.clone());
+        self.modules.insert("标准库.信号".to_string(), signal_module);
+
+        let mut mp_module = Module::new("多部分");
+        mp_module.add_function(ModuleFunction::new(
+            "解析",
+            "qi_multipart_parse",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "提取边界",
+            "qi_multipart_extract_boundary",
+            vec!["字符串".to_string()],
+            "字符串",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "数量",
+            "qi_multipart_count",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "字段名",
+            "qi_multipart_name",
+            vec!["整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "文件名",
+            "qi_multipart_filename",
+            vec!["整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "内容类型",
+            "qi_multipart_content_type",
+            vec!["整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "主体",
+            "qi_multipart_body",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        mp_module.add_function(ModuleFunction::new(
+            "释放部分",
+            "qi_multipart_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        self.modules.insert("多部分".to_string(), mp_module.clone());
+        self.modules.insert("标准库.多部分".to_string(), mp_module);
+    }
+
+    fn register_web_runtime_module(&mut self) {
+        let mut web_module = Module::new("Web运行时");
+
+        // 调用一个 ptr→ptr 的 handler 时用 catch_unwind 包裹；panic 时返回 0/null
+        web_module.add_function(ModuleFunction::new(
+            "安全调用处理器",
+            "qi_web_call_handler_safe",
+            vec!["指针".to_string(), "指针".to_string()], // handler 函数指针, 上下文指针
+            "指针",                                          // 响应指针（panic 时为 null）
+        ));
+
+        web_module.add_function(ModuleFunction::new(
+            "安全处理请求",
+            "qi_web_safe_process_request",
+            vec!["指针".to_string(), "指针".to_string(), "字符串".to_string()],
+            "字符串", // panic 时返回预制 500 响应
+        ));
+
+        web_module.add_function(ModuleFunction::new(
+            "测试_故意panic",
+            "qi_web_panic_for_test",
+            vec![],
+            "整数",
+        ));
+
+        // 一次性 HTTP/1.1 响应序列化：避免 qi 端 8 次字符串 + 拼接 + 字节池往返
+        web_module.add_function(ModuleFunction::new(
+            "序列化响应",
+            "qi_runtime_serialize_http_response",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "整数", // 字节切片句柄
+        ));
+
+        self.modules.insert("Web运行时".to_string(), web_module.clone());
+        self.modules.insert("标准库.Web运行时".to_string(), web_module);
     }
 
     /// Register the crypto module
@@ -366,6 +670,40 @@ impl ModuleRegistry {
             "qi_network_tcp_server_close",
             vec!["整数".to_string()], // 服务器句柄
             "整数",  // 返回成功/失败
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "TCP设置非阻塞",
+            "qi_network_tcp_listener_set_nonblocking",
+            vec!["整数".to_string(), "整数".to_string()], // 服务器句柄, 0/1
+            "整数",
+        ));
+
+        // 真 M:N 异步服务器：runtime 接管整个 accept 循环 + 每条连接的 IO。
+        // 完整性检测在 Rust 侧内联，不再调 Qi 回调。
+        // (服务器句柄, 处理函数, 应用值指针) -> 0 成功 / -1 错误
+        network_module.add_function(ModuleFunction::new(
+            "异步服务",
+            "qi_runtime_async_serve",
+            vec![
+                "整数".to_string(),
+                "ptr".to_string(),
+                "ptr".to_string(),
+            ],
+            "整数",
+        ));
+
+        network_module.add_function(ModuleFunction::new(
+            "TCP读取字节",
+            "qi_network_tcp_read_bytes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "TCP写入字节",
+            "qi_network_tcp_write_bytes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
         ));
 
         // UDP functions
@@ -1084,6 +1422,24 @@ impl ModuleRegistry {
             vec!["整数".to_string(), "字符串".to_string()], // 应用ID, 描述
             "整数",
         ));
+        cli_module.add_function(ModuleFunction::new(
+            "设置详细",
+            "qi_cli_set_long_about",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        cli_module.add_function(ModuleFunction::new(
+            "设置用法",
+            "qi_cli_set_override_usage",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        cli_module.add_function(ModuleFunction::new(
+            "设置尾部帮助",
+            "qi_cli_set_after_help",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
 
         // 参数创建与配置
         cli_module.add_function(ModuleFunction::new(
@@ -1149,6 +1505,13 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        cli_module.add_function(ModuleFunction::new(
+            "参数设置全局",
+            "qi_cli_arg_set_global",
+            vec!["整数".to_string()], // 参数ID
+            "整数",
+        ));
+
         // 应用参数添加
         cli_module.add_function(ModuleFunction::new(
             "应用添加参数",
@@ -1169,6 +1532,18 @@ impl ModuleRegistry {
             "应用添加子命令",
             "qi_cli_app_add_subcommand",
             vec!["整数".to_string(), "整数".to_string()], // 应用ID, 子命令ID
+            "整数",
+        ));
+        cli_module.add_function(ModuleFunction::new(
+            "添加别名",
+            "qi_cli_app_add_alias",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        cli_module.add_function(ModuleFunction::new(
+            "显示帮助",
+            "qi_cli_print_help",
+            vec!["整数".to_string()],
             "整数",
         ));
 
@@ -1574,6 +1949,13 @@ impl ModuleRegistry {
         list_module.add_function(ModuleFunction::new("添加字符串", "qi_list_string_push", vec!["整数".to_string(), "字符串".to_string()], "整数"));
         list_module.add_function(ModuleFunction::new("获取字符串", "qi_list_string_get", vec!["整数".to_string(), "整数".to_string()], "字符串"));
         list_module.add_function(ModuleFunction::new("字符串列表大小", "qi_list_string_size", vec!["整数".to_string()], "整数"));
+
+        // 指针列表
+        list_module.add_function(ModuleFunction::new("创建指针列表", "qi_list_ptr_create", vec![], "整数"));
+        list_module.add_function(ModuleFunction::new("添加指针", "qi_list_ptr_push", vec!["整数".to_string(), "指针".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("获取指针", "qi_list_ptr_get", vec!["整数".to_string(), "整数".to_string()], "指针"));
+        list_module.add_function(ModuleFunction::new("设置指针", "qi_list_ptr_set", vec!["整数".to_string(), "整数".to_string(), "指针".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new("指针列表大小", "qi_list_ptr_size", vec!["整数".to_string()], "整数"));
 
         // 通用操作
         list_module.add_function(ModuleFunction::new("删除列表", "qi_list_free", vec!["整数".to_string()], "整数"));
@@ -2603,6 +2985,21 @@ impl ModuleRegistry {
             "qi_compress_gunzip_string",
             vec!["字符串".to_string()],
             "ptr",
+        ));
+
+        // 二进制安全：直接对字节切片句柄做 gzip / gunzip，不经 base64
+        compress_module.add_function(ModuleFunction::new(
+            "压缩字节",
+            "qi_compress_gzip_bytes",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
+        compress_module.add_function(ModuleFunction::new(
+            "解压字节",
+            "qi_compress_gunzip_bytes",
+            vec!["整数".to_string()],
+            "i64",
         ));
 
         self.modules.insert("压缩".to_string(), compress_module.clone());
