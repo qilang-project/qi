@@ -41,6 +41,7 @@ pub mod multipart_ffi;
 pub mod exception_ffi;
 pub mod closure_ffi;
 pub mod qi_str;
+pub mod qi_str_ffi;
 
 // Re-export main components
 pub use string::{StringModule, StringOperation};
