@@ -706,6 +706,32 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 异步 TCP IO — 返回 未来<整数>，用 等待 关键字消费
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP连接",
+            "qi_network_async_tcp_connect",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "未来<整数>",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP读取字节",
+            "qi_network_async_tcp_read_bytes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "未来<整数>",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP写入字节",
+            "qi_network_async_tcp_write_bytes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "未来<整数>",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP关闭",
+            "qi_network_async_tcp_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
         // UDP functions
         network_module.add_function(ModuleFunction::new(
             "UDP绑定",

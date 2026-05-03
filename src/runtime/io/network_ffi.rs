@@ -1010,3 +1010,191 @@ fn request_has_connection_close(bytes: &[u8]) -> bool {
     }
     false
 }
+
+// ============================================================================
+// 异步 TCP IO — 每个操作返回 qi::Future，配 等待 关键字使用
+// ============================================================================
+//
+// 跟旧 std-based TCP 池并存。这里的 TcpStream 是 tokio::net::TcpStream，
+// 由 tokio runtime 用 epoll/kqueue 多路复用。N 个并发 read/write 不 pin N 个
+// OS 线程（取决于 await 真不真，目前还是 sync wrapper 里 block_on）。
+
+use std::sync::atomic::AtomicI64 as StdAtomicI64;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream as TokioTcpStream;
+use tokio::sync::Mutex as TokioMutex;
+
+static TOKIO_TCP_POOL: OnceLock<DashMap<i64, std::sync::Arc<TokioMutex<TokioTcpStream>>>> =
+    OnceLock::new();
+static TOKIO_TCP_NEXT: StdAtomicI64 = StdAtomicI64::new(1_000_000); // 跟 std 池的句柄段错开
+
+fn tokio_tcp_pool() -> &'static DashMap<i64, std::sync::Arc<TokioMutex<TokioTcpStream>>> {
+    TOKIO_TCP_POOL.get_or_init(DashMap::new)
+}
+
+fn next_tokio_handle() -> i64 {
+    TOKIO_TCP_NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// 创建一个新的 pending Future + 拿到它的字段 Arc 给 task 用
+fn new_pending_future() -> (
+    *mut crate::runtime::async_runtime::future::Future,
+    std::sync::Arc<std::sync::Mutex<crate::runtime::async_runtime::future::FutureState>>,
+    std::sync::Arc<std::sync::Mutex<Option<crate::runtime::async_runtime::future::FutureValue>>>,
+    std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    std::sync::Arc<tokio::sync::Notify>,
+) {
+    use crate::runtime::async_runtime::future::Future;
+    let f = Box::new(Future::pending());
+    let f_ptr = Box::into_raw(f);
+    unsafe {
+        (
+            f_ptr,
+            (*f_ptr).state.clone(),
+            (*f_ptr).value.clone(),
+            (*f_ptr).error.clone(),
+            (*f_ptr).notify.clone(),
+        )
+    }
+}
+
+fn fail_immediately(
+    f_ptr: *mut crate::runtime::async_runtime::future::Future,
+    msg: String,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::FutureState;
+    unsafe {
+        *(*f_ptr).error.lock().unwrap() = Some(msg);
+        *(*f_ptr).state.lock().unwrap() = FutureState::Failed;
+        (*f_ptr).notify.notify_waiters();
+    }
+    f_ptr
+}
+
+/// 异步 TCP 连接 — 返回 未来<整数>。整数是连接句柄（>0），失败 -1。
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_connect(
+    host: *const c_char,
+    port: u16,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{FutureState, FutureValue};
+
+    let (f_ptr, state, value, error, notify) = new_pending_future();
+
+    let host_str = if host.is_null() {
+        return fail_immediately(f_ptr, "null host".to_string());
+    } else {
+        unsafe { CStr::from_ptr(host).to_string_lossy().to_string() }
+    };
+
+    异步运行时().spawn(async move {
+        let addr = format!("{}:{}", host_str, port);
+        match TokioTcpStream::connect(&addr).await {
+            Ok(stream) => {
+                let _ = stream.set_nodelay(true);
+                let handle = next_tokio_handle();
+                tokio_tcp_pool().insert(handle, std::sync::Arc::new(TokioMutex::new(stream)));
+                *value.lock().unwrap() = Some(FutureValue::Integer(handle));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Err(e) => {
+                *error.lock().unwrap() = Some(format!("connect {} failed: {}", addr, e));
+                *state.lock().unwrap() = FutureState::Failed;
+                notify.notify_waiters();
+            }
+        }
+    });
+
+    f_ptr
+}
+
+/// 异步读字节 — 返回 未来<整数>。整数是字节切片句柄（>0），EOF=0，错误<0。
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_read_bytes(
+    handle: i64,
+    buffer_size: i64,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{FutureState, FutureValue};
+
+    let (f_ptr, state, value, error, notify) = new_pending_future();
+
+    let stream = match tokio_tcp_pool().get(&handle) {
+        Some(e) => e.clone(),
+        None => return fail_immediately(f_ptr, format!("invalid tcp handle {}", handle)),
+    };
+
+    let buf_size = if buffer_size <= 0 { 4096 } else { buffer_size as usize };
+
+    异步运行时().spawn(async move {
+        let mut buf = vec![0u8; buf_size];
+        let mut s = stream.lock().await;
+        match s.read(&mut buf).await {
+            Ok(0) => {
+                *value.lock().unwrap() = Some(FutureValue::Integer(0));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Ok(n) => {
+                buf.truncate(n);
+                let bytes_handle = crate::runtime::stdlib::bytes_ffi::register_bytes(buf);
+                *value.lock().unwrap() = Some(FutureValue::Integer(bytes_handle));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Err(e) => {
+                *error.lock().unwrap() = Some(format!("read failed: {}", e));
+                *state.lock().unwrap() = FutureState::Failed;
+                notify.notify_waiters();
+            }
+        }
+    });
+
+    f_ptr
+}
+
+/// 异步写字节 — 返回 未来<整数>。整数是写入字节数（≥0），错误 < 0。
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_write_bytes(
+    handle: i64,
+    bytes_handle: i64,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{FutureState, FutureValue};
+
+    let (f_ptr, state, value, error, notify) = new_pending_future();
+
+    let stream = match tokio_tcp_pool().get(&handle) {
+        Some(e) => e.clone(),
+        None => return fail_immediately(f_ptr, format!("invalid tcp handle {}", handle)),
+    };
+
+    let data = match crate::runtime::stdlib::bytes_ffi::clone_bytes(bytes_handle) {
+        Some(d) => d,
+        None => return fail_immediately(f_ptr, format!("invalid bytes handle {}", bytes_handle)),
+    };
+
+    异步运行时().spawn(async move {
+        let mut s = stream.lock().await;
+        match s.write_all(&data).await {
+            Ok(()) => {
+                let _ = s.flush().await;
+                *value.lock().unwrap() = Some(FutureValue::Integer(data.len() as i64));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Err(e) => {
+                *error.lock().unwrap() = Some(format!("write failed: {}", e));
+                *state.lock().unwrap() = FutureState::Failed;
+                notify.notify_waiters();
+            }
+        }
+    });
+
+    f_ptr
+}
+
+/// 关闭异步 TCP 连接，释放池中条目
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_close(handle: i64) -> i64 {
+    if tokio_tcp_pool().remove(&handle).is_some() { 1 } else { 0 }
+}

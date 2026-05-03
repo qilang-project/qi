@@ -622,6 +622,10 @@ impl IrBuilder {
         self.external_functions.insert("qi_network_tcp_listener_set_nonblocking".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_network_tcp_read_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_network_tcp_write_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_network_async_tcp_connect".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_network_async_tcp_read_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_network_async_tcp_write_bytes".to_string(), (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_network_async_tcp_close".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_compress_gzip_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_compress_gunzip_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_runtime_async_serve".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
@@ -8155,11 +8159,16 @@ impl IrBuilder {
                             match callee.as_str() {
                                 "qi_network_resolve_host" | "qi_network_get_local_ip" | "qi_network_udp_recv_string" |
                                 "qi_network_tcp_read_string" => "ptr",  // Return strings
+                                // Async TCP returns *mut Future
+                                "qi_network_async_tcp_connect"
+                                | "qi_network_async_tcp_read_bytes"
+                                | "qi_network_async_tcp_write_bytes" => "ptr",
                                 "qi_network_tcp_connect" | "qi_network_tcp_read" | "qi_network_tcp_write" |
                                 "qi_network_tcp_write_string" |
                                 "qi_network_tcp_close" | "qi_network_tcp_flush" | "qi_network_tcp_bytes_read" |
                                 "qi_network_tcp_bytes_written" | "qi_network_port_available" |
                                 "qi_network_tcp_listen" | "qi_network_tcp_accept" | "qi_network_tcp_server_close" |
+                                "qi_network_async_tcp_close" |
                                 "qi_network_udp_bind" | "qi_network_udp_send_string" | "qi_network_udp_send_to" | "qi_network_udp_recv_from" |
                                 "qi_network_udp_close" | "qi_network_udp_set_timeout" | "qi_network_udp_set_broadcast" => "i64",  // Return i64
                                 "qi_network_free_string" => "void",  // Cleanup function
