@@ -731,6 +731,24 @@ impl ModuleRegistry {
             vec!["整数".to_string()],
             "整数",
         ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP监听",
+            "qi_network_async_tcp_listen",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "未来<整数>",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP接受",
+            "qi_network_async_tcp_accept",
+            vec!["整数".to_string()],
+            "未来<整数>",
+        ));
+        network_module.add_function(ModuleFunction::new(
+            "异步TCP监听关闭",
+            "qi_network_async_tcp_listener_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // UDP functions
         network_module.add_function(ModuleFunction::new(

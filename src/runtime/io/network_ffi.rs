@@ -1198,3 +1198,112 @@ pub extern "C" fn qi_network_async_tcp_write_bytes(
 pub extern "C" fn qi_network_async_tcp_close(handle: i64) -> i64 {
     if tokio_tcp_pool().remove(&handle).is_some() { 1 } else { 0 }
 }
+
+// ============================================================================
+// 异步 TCP listener
+// ============================================================================
+
+static TOKIO_LISTENER_POOL: OnceLock<DashMap<i64, std::sync::Arc<tokio::net::TcpListener>>> =
+    OnceLock::new();
+static TOKIO_LISTENER_NEXT: StdAtomicI64 = StdAtomicI64::new(2_000_000); // 跟其他句柄段错开
+
+fn tokio_listener_pool() -> &'static DashMap<i64, std::sync::Arc<tokio::net::TcpListener>> {
+    TOKIO_LISTENER_POOL.get_or_init(DashMap::new)
+}
+
+fn next_listener_handle() -> i64 {
+    TOKIO_LISTENER_NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// 异步 TCP 监听 — 返回 未来<整数 server_handle>
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_listen(
+    host: *const c_char,
+    port: u16,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{FutureState, FutureValue};
+    let (f_ptr, state, value, error, notify) = new_pending_future();
+
+    let host_str = if host.is_null() {
+        return fail_immediately(f_ptr, "null host".to_string());
+    } else {
+        unsafe { CStr::from_ptr(host).to_string_lossy().to_string() }
+    };
+
+    异步运行时().spawn(async move {
+        let addr = format!("{}:{}", host_str, port);
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                // 登记 raw fd 到信号关停名单（跟 std listener 一样的 SIGINT 处理）
+                use std::os::fd::AsRawFd;
+                let raw_fd = listener.as_raw_fd();
+                crate::runtime::stdlib::signal_ffi::qi_signal_register_listener_fd(raw_fd);
+                let handle = next_listener_handle();
+                tokio_listener_pool().insert(handle, std::sync::Arc::new(listener));
+                *value.lock().unwrap() = Some(FutureValue::Integer(handle));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Err(e) => {
+                *error.lock().unwrap() = Some(format!("listen {} failed: {}", addr, e));
+                *state.lock().unwrap() = FutureState::Failed;
+                notify.notify_waiters();
+            }
+        }
+    });
+
+    f_ptr
+}
+
+/// 异步 TCP 接受连接 — 返回 未来<整数 client_handle>
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_accept(
+    server_handle: i64,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{FutureState, FutureValue};
+    let (f_ptr, state, value, error, notify) = new_pending_future();
+
+    let listener = match tokio_listener_pool().get(&server_handle) {
+        Some(e) => e.clone(),
+        None => {
+            return fail_immediately(f_ptr, format!("invalid listener {}", server_handle));
+        }
+    };
+
+    异步运行时().spawn(async move {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let _ = stream.set_nodelay(true);
+                let handle = next_tokio_handle();
+                tokio_tcp_pool().insert(handle, std::sync::Arc::new(TokioMutex::new(stream)));
+                *value.lock().unwrap() = Some(FutureValue::Integer(handle));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+            Err(e) => {
+                // accept 错误（比如 listener 被信号 shutdown）-- 返回 -1 表示 EOF
+                *value.lock().unwrap() = Some(FutureValue::Integer(-1));
+                *error.lock().unwrap() = Some(format!("accept failed: {}", e));
+                *state.lock().unwrap() = FutureState::Completed;
+                notify.notify_waiters();
+            }
+        }
+    });
+
+    f_ptr
+}
+
+/// 关闭异步 TCP listener
+#[no_mangle]
+pub extern "C" fn qi_network_async_tcp_listener_close(server_handle: i64) -> i64 {
+    use std::os::fd::AsRawFd;
+    match tokio_listener_pool().remove(&server_handle) {
+        Some((_, listener)) => {
+            crate::runtime::stdlib::signal_ffi::qi_signal_unregister_listener_fd(
+                listener.as_raw_fd(),
+            );
+            1
+        }
+        None => 0,
+    }
+}
