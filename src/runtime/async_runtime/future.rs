@@ -39,79 +39,122 @@ pub struct Future {
     pub state: Arc<Mutex<FutureState>>,
     pub value: Arc<Mutex<Option<FutureValue>>>,
     pub error: Arc<Mutex<Option<String>>>,
+    /// Notification primitive — completers call notify_waiters(), awaiters
+    /// .notified().await. Replaces the old yield_now busy-wait.
+    pub notify: Arc<tokio::sync::Notify>,
 }
 
 impl Future {
-    /// Create a ready future with integer value
-    /// 创建就绪的整数未来
+    /// Internal — construct a Pending Future with empty value/error and a fresh Notify.
+    /// 用于异步 IO 的入口：先返回 Pending，tokio task 完成后调 complete()。
+    pub fn pending() -> Self {
+        Future {
+            state: Arc::new(Mutex::new(FutureState::Pending)),
+            value: Arc::new(Mutex::new(None)),
+            error: Arc::new(Mutex::new(None)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// 把 pending future 标记为完成，唤醒 awaiter
+    pub fn complete(&self, value: FutureValue) {
+        *self.value.lock().unwrap() = Some(value);
+        *self.state.lock().unwrap() = FutureState::Completed;
+        self.notify.notify_waiters();
+    }
+
+    /// 标记失败，唤醒 awaiter
+    pub fn fail(&self, error: String) {
+        *self.error.lock().unwrap() = Some(error);
+        *self.state.lock().unwrap() = FutureState::Failed;
+        self.notify.notify_waiters();
+    }
+
+    /// 创建已完成的整数 future
     pub fn ready_i64(value: i64) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Completed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::Integer(value)))),
-            error: Arc::new(Mutex::new(None)),
-        }
+        let f = Self::pending();
+        f.complete(FutureValue::Integer(value));
+        f
     }
-
-    /// Create a ready future with float value
-    /// 创建就绪的浮点数未来
     pub fn ready_f64(value: f64) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Completed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::Float(value)))),
-            error: Arc::new(Mutex::new(None)),
-        }
+        let f = Self::pending();
+        f.complete(FutureValue::Float(value));
+        f
     }
-
-    /// Create a ready future with boolean value
-    /// 创建就绪的布尔未来
     pub fn ready_bool(value: bool) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Completed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::Boolean(value)))),
-            error: Arc::new(Mutex::new(None)),
-        }
+        let f = Self::pending();
+        f.complete(FutureValue::Boolean(value));
+        f
     }
-
-    /// Create a ready future with string value
-    /// 创建就绪的字符串未来
     pub fn ready_string(value: String) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Completed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::String(value)))),
-            error: Arc::new(Mutex::new(None)),
-        }
+        let f = Self::pending();
+        f.complete(FutureValue::String(value));
+        f
     }
-
-    /// Create a ready future with pointer value
-    /// 创建就绪的指针未来
     pub fn ready_ptr(ptr: *mut u8) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Completed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::Pointer(ptr)))),
-            error: Arc::new(Mutex::new(None)),
-        }
+        let f = Self::pending();
+        f.complete(FutureValue::Pointer(ptr));
+        f
     }
-
-    /// Create a failed future
-    /// 创建失败的未来
     pub fn failed(error: String) -> Self {
-        Future {
-            state: Arc::new(Mutex::new(FutureState::Failed)),
-            value: Arc::new(Mutex::new(Some(FutureValue::None))),
-            error: Arc::new(Mutex::new(Some(error))),
-        }
+        let f = Self::pending();
+        f.fail(error);
+        f
     }
 
-    /// Check if future is completed
-    /// 检查是否已完成
     pub fn is_completed(&self) -> bool {
         let state = self.state.lock().unwrap();
         *state == FutureState::Completed
     }
 
-    /// Await the future and get the value
-    /// 等待未来并获取值
+    /// Async-aware await — uses tokio::sync::Notify, no busy-wait
+    async fn await_value_async(&self) -> Result<FutureValue, String> {
+        loop {
+            // 先订阅再检查 state，避免 race: complete() 可能在我们检查 state
+            // 之后但订阅之前 fire，notified() 不能监听已经发生的事件。
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // 启用订阅（内部是注册 waker）
+            notified.as_mut().enable();
+            // 然后检查 state
+            {
+                let state = self.state.lock().unwrap();
+                match *state {
+                    FutureState::Completed => {
+                        return Ok(self.value.lock().unwrap().clone().unwrap_or(FutureValue::None));
+                    }
+                    FutureState::Failed => {
+                        return Err(self
+                            .error
+                            .lock()
+                            .unwrap()
+                            .clone()
+                            .unwrap_or_else(|| "Unknown error".to_string()));
+                    }
+                    FutureState::Pending => {}
+                }
+            }
+            // 状态还是 Pending，等通知
+            notified.await;
+            // 醒来重新检查 state
+        }
+    }
+
+    /// 同步入口 - bridge to async via runtime block_on。
+    /// - 在 tokio task 上下文里：block_in_place + Handle::block_on（worker 暂时进入"阻塞 IO"模式）
+    /// - 在普通 OS 线程：全局 runtime block_on
     pub fn await_value(&self) -> Result<FutureValue, String> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(self.await_value_async()))
+        } else {
+            crate::runtime::async_runtime::ffi::全局异步运行时()
+                .block_on(self.await_value_async())
+        }
+    }
+
+    /// 兼容老接口：保持 await_value 的签名给已有调用方，behavior 已切换
+    #[allow(dead_code)]
+    fn _legacy_busy_wait_await(&self) -> Result<FutureValue, String> {
         loop {
             let state = self.state.lock().unwrap();
             match *state {
@@ -127,7 +170,6 @@ impl Future {
                 }
                 FutureState::Pending => {
                     drop(state);
-                    // Yield to other tasks
                     std::thread::yield_now();
                 }
             }

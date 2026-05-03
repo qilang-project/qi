@@ -641,14 +641,8 @@ pub extern "C" fn qi_datetime_sleep_millis(millis: i64) {
     }
 }
 
-/// 异步睡眠 — **真正让出 tokio 任务调度**。
-///
-/// 当被 `启动` 派发的 goroutine 调用时（goroutine 跑在全局 tokio runtime 上），
-/// 通过 `block_in_place` 把当前 worker 切换到"阻塞 IO"模式，再 `block_on`
-/// `tokio::time::sleep().await`。tokio 的 timer wheel 会用一个独立线程统一管理
-/// 所有 sleep 的唤醒，所以 N 个并发睡眠不会 pin N 个 worker —— 这是真 M:N。
-///
-/// 当从非 tokio 上下文调用时，回退到普通 thread::sleep。
+/// 异步睡眠（同步阻塞版）— 在 tokio task 里调走 block_in_place + block_on，
+/// 在普通线程里走 thread::sleep。仍 pin 一个 worker。
 #[no_mangle]
 pub extern "C" fn qi_datetime_async_sleep_millis(millis: i64) {
     if millis <= 0 {
@@ -656,14 +650,51 @@ pub extern "C" fn qi_datetime_async_sleep_millis(millis: i64) {
     }
     let dur = std::time::Duration::from_millis(millis as u64);
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // 已在 tokio task 上下文 — 用 block_in_place + sleep().await 让 worker 复用
         tokio::task::block_in_place(|| {
             handle.block_on(tokio::time::sleep(dur));
         });
     } else {
-        // 不在 tokio 上下文 — 同步路径
         thread::sleep(dur);
     }
+}
+
+/// 异步睡眠（**返回 未来<空>** 版）— 真正的 Future API。
+///
+/// 调用方式（qi 侧）：
+/// ```qi
+/// 等待 时间.异步睡眠未来(1000);  // 等 1 秒，CPU 占用 0
+/// ```
+///
+/// 实现：返回一个 pending Future，spawn 一个 tokio task 跑 sleep，sleep 完成后
+/// complete() 这个 future。qi `等待` 通过 Future::await_value（已改成 block_on）
+/// 等待 Notify。
+///
+/// 注意：仍受语言限制 —— `等待` 在 sync wrapper 里 block 当前 worker。要 1000 个
+/// 这种 sleep 在 12 个线程上并发完成，需要 compiler async/await 把 `等待` 真正
+/// 编译成 .await（让 task 自己 yield）。这一步等下个 milestone。
+#[no_mangle]
+pub extern "C" fn qi_datetime_async_sleep_future(
+    millis: i64,
+) -> *mut crate::runtime::async_runtime::future::Future {
+    use crate::runtime::async_runtime::future::{Future, FutureValue};
+    let f = Box::new(Future::pending());
+    let f_ptr = Box::into_raw(f);
+
+    // clone Arc 字段供 task 用
+    let state = unsafe { (*f_ptr).state.clone() };
+    let value = unsafe { (*f_ptr).value.clone() };
+    let notify = unsafe { (*f_ptr).notify.clone() };
+
+    let dur = std::time::Duration::from_millis(millis.max(0) as u64);
+    crate::runtime::async_runtime::ffi::全局异步运行时().spawn(async move {
+        tokio::time::sleep(dur).await;
+        *value.lock().unwrap() = Some(FutureValue::None);
+        *state.lock().unwrap() =
+            crate::runtime::async_runtime::future::FutureState::Completed;
+        notify.notify_waiters();
+    });
+
+    f_ptr
 }
 
 /// 睡眠指定微秒数

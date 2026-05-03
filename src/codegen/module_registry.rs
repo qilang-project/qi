@@ -2495,9 +2495,10 @@ impl ModuleRegistry {
         dt_module.add_function(ModuleFunction::new("睡眠秒", "qi_datetime_sleep_seconds", vec!["整数".to_string()], "空"));
         dt_module.add_function(ModuleFunction::new("睡眠毫秒", "qi_datetime_sleep_millis", vec!["整数".to_string()], "空"));
         dt_module.add_function(ModuleFunction::new("睡眠微秒", "qi_datetime_sleep_micros", vec!["整数".to_string()], "空"));
-        // 异步睡眠：在 启动 派发的 goroutine 里调用时走 tokio timer wheel，
-        // 不会 pin 一个 worker 给 sleep —— 真正的 M:N
+        // 异步睡眠（同步 block_in_place 版）— 仍 pin worker
         dt_module.add_function(ModuleFunction::new("异步睡眠毫秒", "qi_datetime_async_sleep_millis", vec!["整数".to_string()], "空"));
+        // 异步睡眠返回 Future — 真正的 Future API。 用 等待 时间.异步睡眠未来(N) 调
+        dt_module.add_function(ModuleFunction::new("异步睡眠未来", "qi_datetime_async_sleep_future", vec!["整数".to_string()], "未来<空>"));
 
         self.modules.insert("时间".to_string(), dt_module.clone());
         self.modules.insert("标准库.时间".to_string(), dt_module.clone());

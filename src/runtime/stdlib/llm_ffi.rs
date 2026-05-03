@@ -928,6 +928,7 @@ pub extern "C" fn qi_llm_chat_async(
             state: future_state,
             value: future_value,
             error: future_error,
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         });
         Box::into_raw(future)
     }

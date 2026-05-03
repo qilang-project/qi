@@ -638,6 +638,7 @@ impl IrBuilder {
         // DateTime sleep functions
         self.external_functions.insert("qi_datetime_sleep_millis".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_async_sleep_millis".to_string(), (vec!["i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_datetime_async_sleep_future".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_datetime_sleep_seconds".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_sleep_micros".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_now_millis".to_string(), (vec![], "i64".to_string()));
@@ -8221,8 +8222,9 @@ impl IrBuilder {
                         } else if callee.starts_with("qi_datetime_") {
                             match callee.as_str() {
                                 "qi_datetime_format" | "qi_datetime_format_local" => "ptr",  // Return formatted string
+                                "qi_datetime_async_sleep_future" => "ptr",  // Returns *mut Future
                                 "qi_datetime_free_string" => "void",  // Cleanup function
-                                _ => "i64"  // Most datetime functions return i64 (timestamps or components)
+                                _ => "i64"  // Most datetime functions return i64 (timestamps or components, including sleep)
                             }
                         // MCP functions - check return type based on function name
                         } else if callee.starts_with("qi_mcp_") {
