@@ -143,6 +143,157 @@ pub extern "C" fn qi_runtime_serialize_http_response(
     crate::runtime::stdlib::bytes_ffi::register_bytes(out)
 }
 
+// ============================================================================
+// HTTP/1.1 请求解析 fast path —— 替代 qi-web 端 13 次 字符串::子串/查找 链条
+// ============================================================================
+
+/// HTTP request parsed into 5 fields. Lives as long as the qi caller holds
+/// the opaque pointer; freed via qi_web_request_parts_free.
+pub struct RequestParts {
+    method: CString,
+    path: CString,
+    query: CString,
+    headers: CString,
+    body: CString,
+}
+
+/// 从字节切片句柄解析 HTTP/1.1 请求，返回 *mut RequestParts。
+/// 失败返回 null。调用方负责调 qi_web_request_parts_free 释放。
+#[no_mangle]
+pub extern "C" fn qi_web_parse_request_bytes(bytes_handle: i64) -> *mut RequestParts {
+    let bytes = match crate::runtime::stdlib::bytes_ffi::clone_bytes(bytes_handle) {
+        Some(b) => b,
+        None => return std::ptr::null_mut(),
+    };
+    let parts = parse_http_request(&bytes);
+    Box::into_raw(Box::new(parts))
+}
+
+/// 从 c_string 解析（兼容旧 qi-web 解析请求 签名）
+#[no_mangle]
+pub extern "C" fn qi_web_parse_request_cstr(s: *const c_char) -> *mut RequestParts {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
+    Box::into_raw(Box::new(parse_http_request(bytes)))
+}
+
+fn parse_http_request(bytes: &[u8]) -> RequestParts {
+    // 找第一个 \r\n（或 \n）— 请求行结束
+    let line_end = find_subslice(bytes, b"\r\n").unwrap_or_else(|| {
+        find_subslice(bytes, b"\n").unwrap_or(bytes.len())
+    });
+    let request_line = &bytes[..line_end];
+
+    // request_line: METHOD SP PATH SP HTTP-VERSION
+    let mut method = &b""[..];
+    let mut full_path = &b""[..];
+    if let Some(sp1) = request_line.iter().position(|&b| b == b' ') {
+        method = &request_line[..sp1];
+        let rest = &request_line[sp1 + 1..];
+        if let Some(sp2) = rest.iter().position(|&b| b == b' ') {
+            full_path = &rest[..sp2];
+        } else {
+            full_path = rest;
+        }
+    }
+
+    // path?query
+    let (path, query) = match full_path.iter().position(|&b| b == b'?') {
+        Some(qmark) => (&full_path[..qmark], &full_path[qmark + 1..]),
+        None => (full_path, &b""[..]),
+    };
+
+    // 跳过 \r\n（或 \n），找 \r\n\r\n（或 \n\n）
+    let after_line_start = if bytes.get(line_end..line_end + 2) == Some(b"\r\n") {
+        line_end + 2
+    } else if bytes.get(line_end..line_end + 1) == Some(b"\n") {
+        line_end + 1
+    } else {
+        line_end
+    };
+    let rest = &bytes[after_line_start..];
+    let (headers, body) = match find_subslice(rest, b"\r\n\r\n") {
+        Some(boundary) => (&rest[..boundary], &rest[boundary + 4..]),
+        None => match find_subslice(rest, b"\n\n") {
+            Some(boundary) => (&rest[..boundary], &rest[boundary + 2..]),
+            None => (rest, &b""[..]),
+        },
+    };
+
+    RequestParts {
+        method: cstring_from_bytes(method),
+        path: cstring_from_bytes(path),
+        query: cstring_from_bytes(query),
+        headers: cstring_from_bytes(headers),
+        body: cstring_from_bytes(body),
+    }
+}
+
+fn cstring_from_bytes(b: &[u8]) -> CString {
+    // 内嵌 NUL 替换为空格（C 字符串约束）
+    let cleaned: Vec<u8> = b.iter().map(|&x| if x == 0 { b' ' } else { x }).collect();
+    CString::new(cleaned).unwrap_or_else(|_| CString::new("").unwrap())
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+// 每个访问器返回 *新 alloc 的* CString — 不能借引用，否则 qi 调用方释放
+// RequestParts 后 qi 持有的 字符串 会变成 dangling pointer。
+fn dup_cstring(src: &CString) -> *const c_char {
+    let bytes = src.as_bytes();
+    match CString::new(bytes) {
+        Ok(c) => c.into_raw() as *const c_char,
+        Err(_) => CString::new("").unwrap().into_raw() as *const c_char,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_web_request_method(p: *const RequestParts) -> *const c_char {
+    if p.is_null() { return CString::new("").unwrap().into_raw(); }
+    unsafe { dup_cstring(&(*p).method) }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_web_request_path(p: *const RequestParts) -> *const c_char {
+    if p.is_null() { return CString::new("").unwrap().into_raw(); }
+    unsafe { dup_cstring(&(*p).path) }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_web_request_query(p: *const RequestParts) -> *const c_char {
+    if p.is_null() { return CString::new("").unwrap().into_raw(); }
+    unsafe { dup_cstring(&(*p).query) }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_web_request_headers(p: *const RequestParts) -> *const c_char {
+    if p.is_null() { return CString::new("").unwrap().into_raw(); }
+    unsafe { dup_cstring(&(*p).headers) }
+}
+
+#[no_mangle]
+pub extern "C" fn qi_web_request_body(p: *const RequestParts) -> *const c_char {
+    if p.is_null() { return CString::new("").unwrap().into_raw(); }
+    unsafe { dup_cstring(&(*p).body) }
+}
+
+/// Returns 0 (i64) — qi codegen assigns return values; void breaks at the
+/// emission point, so we return a dummy i64 instead.
+#[no_mangle]
+pub extern "C" fn qi_web_request_parts_free(p: *mut RequestParts) -> i64 {
+    if !p.is_null() {
+        unsafe { drop(Box::from_raw(p)); }
+    }
+    0
+}
+
 fn fallback_500() -> *const c_char {
     let body = "Internal Server Error";
     let response = format!(

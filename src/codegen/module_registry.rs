@@ -440,6 +440,56 @@ impl ModuleRegistry {
             "整数", // 字节切片句柄
         ));
 
+        // HTTP 请求解析 fast path —— 替代 qi 端 13 次 字符串::子串/查找
+        web_module.add_function(ModuleFunction::new(
+            "解析请求字节",
+            "qi_web_parse_request_bytes",
+            vec!["整数".to_string()],
+            "整数", // 不透明 RequestParts 指针
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "解析请求字符串",
+            "qi_web_parse_request_cstr",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "请求方法",
+            "qi_web_request_method",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "请求路径",
+            "qi_web_request_path",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "请求查询",
+            "qi_web_request_query",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "请求头部",
+            "qi_web_request_headers",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "请求主体",
+            "qi_web_request_body",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "释放请求",
+            "qi_web_request_parts_free",
+            vec!["整数".to_string()],
+            "整数", // 实际返回 0 — 用 整数 避开 void-call 赋值问题
+        ));
+
         self.modules.insert("Web运行时".to_string(), web_module.clone());
         self.modules.insert("标准库.Web运行时".to_string(), web_module);
     }

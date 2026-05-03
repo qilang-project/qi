@@ -633,6 +633,14 @@ impl IrBuilder {
         self.external_functions.insert("qi_compress_gunzip_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_runtime_async_serve".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_runtime_serialize_http_response".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_parse_request_bytes".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_parse_request_cstr".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_request_method".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_request_path".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_request_query".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_request_headers".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_request_body".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_request_parts_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_multipart_parse".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_multipart_extract_boundary".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_multipart_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
