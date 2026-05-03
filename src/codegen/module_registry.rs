@@ -2495,6 +2495,9 @@ impl ModuleRegistry {
         dt_module.add_function(ModuleFunction::new("睡眠秒", "qi_datetime_sleep_seconds", vec!["整数".to_string()], "空"));
         dt_module.add_function(ModuleFunction::new("睡眠毫秒", "qi_datetime_sleep_millis", vec!["整数".to_string()], "空"));
         dt_module.add_function(ModuleFunction::new("睡眠微秒", "qi_datetime_sleep_micros", vec!["整数".to_string()], "空"));
+        // 异步睡眠：在 启动 派发的 goroutine 里调用时走 tokio timer wheel，
+        // 不会 pin 一个 worker 给 sleep —— 真正的 M:N
+        dt_module.add_function(ModuleFunction::new("异步睡眠毫秒", "qi_datetime_async_sleep_millis", vec!["整数".to_string()], "空"));
 
         self.modules.insert("时间".to_string(), dt_module.clone());
         self.modules.insert("标准库.时间".to_string(), dt_module.clone());

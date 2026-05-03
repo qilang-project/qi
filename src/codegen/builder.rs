@@ -637,6 +637,7 @@ impl IrBuilder {
 
         // DateTime sleep functions
         self.external_functions.insert("qi_datetime_sleep_millis".to_string(), (vec!["i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_datetime_async_sleep_millis".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_sleep_seconds".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_sleep_micros".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_now_millis".to_string(), (vec![], "i64".to_string()));

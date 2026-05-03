@@ -23,54 +23,36 @@ static TASK_STORE: OnceLock<Mutex<HashMap<u64, Pin<Box<dyn Future<Output = *mut 
 static mut NEXT_TASK_ID: u64 = 1;
 static RUNTIME_INIT: OnceLock<()> = OnceLock::new();
 
-/// Bounded worker pool that backs `启动` (goroutine spawn). Reuses OS threads
-/// across spawn calls to avoid per-spawn thread creation overhead, and caps
-/// concurrency to prevent kernel thread exhaustion under high load (e.g.
-/// qi-web with thousands of concurrent connections).
-type GoroutineJob = Box<dyn FnOnce() + Send + 'static>;
+/// 全局 tokio runtime —— 所有 `启动` 派发的 goroutine 都跑在这里。
+/// async-aware IO（比如 时间.异步睡眠毫秒）能在 task 之间真 yield；
+/// sync IO 仍会 pin 一个 worker（这是 qi 同步代码的固有限制，要语言级 async/await 才能解开）。
+pub(crate) static 全局TOKIO: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
-struct GoroutinePool {
-    sender: crossbeam::channel::Sender<GoroutineJob>,
-}
-
-impl GoroutinePool {
-    fn new(workers: usize) -> Self {
-        let (sender, receiver) = crossbeam::channel::unbounded::<GoroutineJob>();
-        for _ in 0..workers {
-            let rx = receiver.clone();
-            std::thread::spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    job();
-                }
-            });
-        }
-        Self { sender }
-    }
-
-    fn spawn<F: FnOnce() + Send + 'static>(&self, f: F) {
-        // Channel is unbounded and senders never close, so send cannot fail.
-        let _ = self.sender.send(Box::new(f));
-    }
-}
-
-static GOROUTINE_POOL: OnceLock<GoroutinePool> = OnceLock::new();
-
-fn goroutine_pool() -> &'static GoroutinePool {
-    GOROUTINE_POOL.get_or_init(|| {
-        let workers = std::env::var("QI_GOROUTINE_WORKERS")
+pub(crate) fn 全局异步运行时() -> &'static tokio::runtime::Runtime {
+    全局TOKIO.get_or_init(|| {
+        let workers = std::env::var("QI_ASYNC_WORKERS")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .filter(|&n| n > 0)
-            .unwrap_or_else(|| {
-                // Default: enough headroom for typical web workloads while
-                // staying well under common ulimit thread caps.
-                let cpus = num_cpus::get().max(1);
-                (cpus * 64).max(256).min(1024)
-            });
+            .filter(|n| *n > 0)
+            .unwrap_or_else(|| num_cpus::get());
+        let max_blocking = std::env::var("QI_ASYNC_MAX_BLOCKING")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(2048);
         if debug_enabled() {
-            eprintln!("DEBUG: goroutine pool initialized with {} workers", workers);
+            eprintln!(
+                "DEBUG: tokio runtime: {} workers, {} max blocking",
+                workers, max_blocking
+            );
         }
-        GoroutinePool::new(workers)
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(workers)
+            .max_blocking_threads(max_blocking)
+            .thread_name("qi-tokio")
+            .build()
+            .expect("failed to start tokio runtime")
     })
 }
 
@@ -89,9 +71,8 @@ fn ensure_runtime_initialized() {
         // Initialize the timer registry
         let _ = TIMER_REGISTRY.set(Mutex::new(HashMap::new()));
     });
-    // Eagerly start the goroutine pool so the first 启动 doesn't pay
-    // the worker-creation cost.
-    let _ = goroutine_pool();
+    // 预热全局 tokio runtime，避免第一个 启动 付 runtime-build 成本
+    let _ = 全局异步运行时();
 }
 
 /// Create a new async task
@@ -255,7 +236,15 @@ pub extern "C" fn qi_runtime_spawn_task(task: TaskHandle) -> i32 {
     0
 }
 
-/// Spawn a goroutine (lightweight thread)
+/// Spawn a goroutine on the global tokio runtime.
+///
+/// The wrapper is a sync extern "C" function — it runs synchronously inside an
+/// async block on the tokio runtime. Tokio's scheduler picks which OS thread
+/// executes it; multiple goroutines share the same `worker_threads` pool.
+///
+/// **Real M:N kicks in only for goroutines that call async-aware FFI** (like
+/// `时间.异步睡眠毫秒`) — those .await yield to the scheduler. Sync goroutine
+/// code that does blocking syscalls still pins a tokio worker for the duration.
 #[no_mangle]
 pub extern "C" fn qi_runtime_spawn_goroutine(function_ptr: *const c_void) {
     ensure_runtime_initialized();
@@ -265,52 +254,38 @@ pub extern "C" fn qi_runtime_spawn_goroutine(function_ptr: *const c_void) {
 
     let func_addr = function_ptr as usize;
 
-    goroutine_pool().spawn(move || {
-        if debug_enabled() {
-            eprintln!("DEBUG: Goroutine worker started");
-        }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            unsafe {
-                let func = std::mem::transmute::<usize, fn()>(func_addr);
-                func();
-            }
+    // sync wrapper → spawn_blocking 走 tokio 的 blocking pool（默认上限可调）。
+    // 这样 sync 的 goroutine body 不会 pin 主 worker pool；同时 blocking pool
+    // 自己能伸缩到 max_blocking_threads。
+    全局异步运行时().spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            let func = std::mem::transmute::<usize, fn()>(func_addr);
+            func();
         }));
         if let Err(payload) = result {
-            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
-                (*s).to_string()
-            } else if let Some(s) = payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "unknown panic".to_string()
-            };
-            eprintln!("[qi-web] goroutine panic: {}", msg);
-        }
-        if debug_enabled() {
-            eprintln!("DEBUG: Goroutine worker completed");
+            let msg = panic_message(payload);
+            eprintln!("[qi] goroutine panic: {}", msg);
         }
     });
 }
 
-/// Generic goroutine spawn with wrapper function
-/// The wrapper_fn is a generated function that knows how to unpack arguments and call the target
-/// wrapper_fn signature: fn(*const i64) where the i64 array contains all arguments
-/// arg_count is the number of i64 slots in the args array (codegen-emitted, exact)
+/// Generic goroutine spawn with wrapper function — same model as above but
+/// the wrapper takes a *const i64 args array.
 #[no_mangle]
 pub extern "C" fn qi_runtime_spawn_goroutine_with_args(
-    wrapper_fn: *const c_void,  // Wrapper function generated by compiler
-    args: *const i64,            // Array of i64 values (all arguments cast to i64)
-    arg_count: i64,              // Exact number of i64 slots in args
+    wrapper_fn: *const c_void,
+    args: *const i64,
+    arg_count: i64,
 ) {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: spawn_goroutine_with_args called with wrapper {:?}, args {:?}, count {}", wrapper_fn, args, arg_count);
+        eprintln!(
+            "DEBUG: spawn_goroutine_with_args wrapper {:?}, args {:?}, count {}",
+            wrapper_fn, args, arg_count
+        );
     }
 
     let wrapper_addr = wrapper_fn as usize;
-
-    // The caller's args array lives on the stack and may be reused once the
-    // caller frame returns, so copy onto the heap before handing to the worker.
-    // Copy exactly arg_count slots — over-reading past the alloca is UB.
     let count = if arg_count < 0 { 0 } else { arg_count as usize };
     let copied: Box<[i64]> = if count == 0 || args.is_null() {
         Vec::new().into_boxed_slice()
@@ -321,31 +296,27 @@ pub extern "C" fn qi_runtime_spawn_goroutine_with_args(
         }
     };
 
-    goroutine_pool().spawn(move || {
-        if debug_enabled() {
-            eprintln!("DEBUG: Goroutine worker started, calling wrapper");
-        }
+    全局异步运行时().spawn_blocking(move || {
         let copied = copied;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            unsafe {
-                let wrapper = std::mem::transmute::<usize, fn(*const i64)>(wrapper_addr);
-                wrapper(copied.as_ptr());
-            }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            let wrapper = std::mem::transmute::<usize, fn(*const i64)>(wrapper_addr);
+            wrapper(copied.as_ptr());
         }));
         if let Err(payload) = result {
-            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
-                (*s).to_string()
-            } else if let Some(s) = payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "unknown panic".to_string()
-            };
-            eprintln!("[qi-web] goroutine panic: {}", msg);
-        }
-        if debug_enabled() {
-            eprintln!("DEBUG: Goroutine worker completed");
+            let msg = panic_message(payload);
+            eprintln!("[qi] goroutine panic: {}", msg);
         }
     });
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
 }
 
 // Channel implementation

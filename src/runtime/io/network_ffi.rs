@@ -757,25 +757,8 @@ mod tests {
 //
 // 这版的目的：证明 M:N 在简单 HTTP 上能拿到大幅提升。
 
-use std::sync::OnceLock as StdOnceLock;
-
-static ASYNC_RUNTIME: StdOnceLock<tokio::runtime::Runtime> = StdOnceLock::new();
-
-fn 异步运行时() -> &'static tokio::runtime::Runtime {
-    ASYNC_RUNTIME.get_or_init(|| {
-        let workers = std::env::var("QI_ASYNC_WORKERS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or_else(|| num_cpus::get());
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(workers)
-            .thread_name("qi-async")
-            .build()
-            .expect("failed to start tokio runtime for async server")
-    })
-}
+// 复用 async_runtime 模块里的全局 tokio runtime
+use crate::runtime::async_runtime::ffi::全局异步运行时 as 异步运行时;
 
 // Qi 把函数值统一包成 closure 对象传过来：
 //   offset 0..8  : trampoline 函数指针

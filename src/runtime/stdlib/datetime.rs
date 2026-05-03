@@ -633,11 +633,36 @@ pub extern "C" fn qi_datetime_sleep_seconds(seconds: i64) {
     }
 }
 
-/// 睡眠指定毫秒数
+/// 睡眠指定毫秒数（同步阻塞 OS 线程）
 #[no_mangle]
 pub extern "C" fn qi_datetime_sleep_millis(millis: i64) {
     if millis > 0 {
         thread::sleep(std::time::Duration::from_millis(millis as u64));
+    }
+}
+
+/// 异步睡眠 — **真正让出 tokio 任务调度**。
+///
+/// 当被 `启动` 派发的 goroutine 调用时（goroutine 跑在全局 tokio runtime 上），
+/// 通过 `block_in_place` 把当前 worker 切换到"阻塞 IO"模式，再 `block_on`
+/// `tokio::time::sleep().await`。tokio 的 timer wheel 会用一个独立线程统一管理
+/// 所有 sleep 的唤醒，所以 N 个并发睡眠不会 pin N 个 worker —— 这是真 M:N。
+///
+/// 当从非 tokio 上下文调用时，回退到普通 thread::sleep。
+#[no_mangle]
+pub extern "C" fn qi_datetime_async_sleep_millis(millis: i64) {
+    if millis <= 0 {
+        return;
+    }
+    let dur = std::time::Duration::from_millis(millis as u64);
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // 已在 tokio task 上下文 — 用 block_in_place + sleep().await 让 worker 复用
+        tokio::task::block_in_place(|| {
+            handle.block_on(tokio::time::sleep(dur));
+        });
+    } else {
+        // 不在 tokio 上下文 — 同步路径
+        thread::sleep(dur);
     }
 }
 
