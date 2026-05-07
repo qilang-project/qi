@@ -1034,6 +1034,7 @@ impl IrBuilder {
             return_type: closure_expr.return_type.clone(),
             body,
             is_inline: false,
+            is_async: false,
             span: Default::default(),
         })
     }

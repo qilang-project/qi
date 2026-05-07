@@ -114,6 +114,7 @@ impl KeywordTable {
         keywords.insert("内联".to_string(), TokenKind::内联);
         keywords.insert("联合体".to_string(), TokenKind::联合体);
         keywords.insert("异步".to_string(), TokenKind::异步);
+        keywords.insert("异步块".to_string(), TokenKind::异步块);
 
         // Control flow keywords - 控制流关键字
         keywords.insert("跳出".to_string(), TokenKind::跳出);

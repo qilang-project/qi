@@ -124,7 +124,8 @@ pub enum TokenKind {
     匹配,      // match
     内联,      // inline
     联合体,    // union
-    异步,      // async (for async blocks)
+    异步,      // async (function prefix: 异步 函数 X(...))
+    异步块,    // async block expression: 异步块 { ... } — 跟 异步 函数 区分以避 LALR 冲突
 
     // Boolean literal constants
     真,                 // true

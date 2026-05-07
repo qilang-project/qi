@@ -411,151 +411,167 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 普通函数(无接收器)
-    <vis:Visibility> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
     // 中文标点符号版本
-    <vis:Visibility> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
     // 混合标点符号版本：英文括号 + 中文大括号
-    <vis:Visibility> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
     // 混合标点符号版本：中文括号 + 英文大括号
-    <vis:Visibility> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: vec![],
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: Some(return_type),
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
         parameters: params,
         return_type: None,
         body,
         visibility: vis,
         is_inline: false,
+        is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
 };
@@ -682,6 +698,7 @@ InlineFunctionDeclaration: AstNode = {
         body,
         visibility: vis,
         is_inline: true,
+        is_async: false,
         span: Default::default(),
     }),
     <vis:Visibility> "内联" "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -691,6 +708,7 @@ InlineFunctionDeclaration: AstNode = {
         body,
         visibility: vis,
         is_inline: true,
+        is_async: false,
         span: Default::default(),
     }),
     <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -700,6 +718,7 @@ InlineFunctionDeclaration: AstNode = {
         body,
         visibility: vis,
         is_inline: true,
+        is_async: false,
         span: Default::default(),
     }),
     <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
@@ -709,6 +728,7 @@ InlineFunctionDeclaration: AstNode = {
         body,
         visibility: vis,
         is_inline: true,
+        is_async: false,
         span: Default::default(),
     }),
 };
@@ -1845,9 +1865,10 @@ MatchPatternOrList: Vec<MatchPattern> = {
     },
 };
 
-// 异步块表达式: 异步 { ... }
+// 异步块表达式: 异步块 { ... }
+// 注：以前是 异步 { ... }，但跟 异步 函数 X(...) 函数前缀冲突。改 异步块 完全消歧。
 AsyncBlockExpression: AstNode = {
-    "异步" <body:Block> => AstNode::异步块表达式(AsyncBlockExpression {
+    "异步块" <body:Block> => AstNode::异步块表达式(AsyncBlockExpression {
         body,
         span: Default::default(),
     }),

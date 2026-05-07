@@ -108,6 +108,9 @@ pub struct FunctionDeclaration {
     pub body: Vec<AstNode>,
     pub visibility: Visibility,
     pub is_inline: bool,  // 是否为内联函数
+    /// 异步函数标志：编译器把 body 转状态机，等待 表达式是真 yield 点。
+    /// 仅当返回类型是 未来<T> 时有意义。详见 docs/编译器异步状态机里程碑.md
+    pub is_async: bool,
     pub span: Span,
 }
 

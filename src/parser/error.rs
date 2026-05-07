@@ -562,6 +562,7 @@ impl ParserErrorRecovery {
             TokenKind::内联 => "内联".to_string(),
             TokenKind::联合体 => "联合体".to_string(),
             TokenKind::异步 => "异步".to_string(),
+            TokenKind::异步块 => "异步块".to_string(),
 
             // Struct instantiation
             TokenKind::新建 => "新建".to_string(),
