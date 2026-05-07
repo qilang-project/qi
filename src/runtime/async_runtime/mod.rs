@@ -39,6 +39,7 @@ pub mod queue;
 pub mod state;
 pub mod ffi;
 pub mod future;
+pub mod state_machine_poc;
 
 // Re-export core types
 pub use executor::{Executor, ExecutorHandle};

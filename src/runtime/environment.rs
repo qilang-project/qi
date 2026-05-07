@@ -398,16 +398,17 @@ mod tests {
 
         runtime.initialize().unwrap();
 
-        // Initial metrics
-        assert_eq!(runtime.metrics.programs_executed, 0);
-        assert_eq!(runtime.metrics.io_operations, 0);
+        // Initial metrics — atomic 字段用 load 读取
+        use std::sync::atomic::Ordering::Relaxed;
+        assert_eq!(runtime.metrics.programs_executed.load(Relaxed), 0);
+        assert_eq!(runtime.metrics.io_operations.load(Relaxed), 0);
 
         // Execute a program
         runtime.execute_program(b"test").unwrap();
 
         // Updated metrics
-        assert_eq!(runtime.metrics.programs_executed, 1);
-        assert_eq!(runtime.metrics.io_operations, 1);
+        assert_eq!(runtime.metrics.programs_executed.load(Relaxed), 1);
+        assert_eq!(runtime.metrics.io_operations.load(Relaxed), 1);
     }
 
     #[test]

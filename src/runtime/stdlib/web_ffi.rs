@@ -523,10 +523,14 @@ impl RouteNode {
     }
 }
 
-static ROUTER: OnceLock<Mutex<RouteNode>> = OnceLock::new();
+// Mutex 是写锁路径（注册路由时） + RwLock 想法不直接套，因为修改和读取都
+// 走同一棵树。但**注册只在 server 启动期发生，运行期 100% read**。所以：
+// 注册：write lock（启动时一次性，无并发竞争）
+// 匹配：read lock（多线程并发读，零阻塞）
+static ROUTER: OnceLock<std::sync::RwLock<RouteNode>> = OnceLock::new();
 
-fn router() -> &'static Mutex<RouteNode> {
-    ROUTER.get_or_init(|| Mutex::new(RouteNode::new()))
+fn router() -> &'static std::sync::RwLock<RouteNode> {
+    ROUTER.get_or_init(|| std::sync::RwLock::new(RouteNode::new()))
 }
 
 #[inline]
@@ -562,7 +566,7 @@ pub extern "C" fn qi_web_router_register(
     if mi < 0 {
         return -1;
     }
-    let mut router = router().lock().unwrap();
+    let mut router = router().write().unwrap();
     let mut cur: &mut RouteNode = &mut *router;
     for seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {
         if seg.len() >= 2 && seg.first() == Some(&b'{') && seg.last() == Some(&b'}') {
@@ -610,7 +614,7 @@ pub extern "C" fn qi_web_router_match(
     let path = unsafe { CStr::from_ptr(path_ptr).to_bytes() };
     let mi = method_idx(method);
 
-    let router = router().lock().unwrap();
+    let router = router().read().unwrap();
     let mut cur: &RouteNode = &*router;
     let mut params: Vec<u8> = Vec::new();
     for seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {

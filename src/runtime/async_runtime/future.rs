@@ -32,6 +32,18 @@ pub enum FutureValue {
 // The Pointer variant requires careful usage - only send across threads if the pointed data is thread-safe.
 unsafe impl Send for FutureValue {}
 
+/// State-machine waker — 由 codegen 生成的 poll fn + frame 指针组成。
+/// 编译器异步状态机里程碑（docs/编译器异步状态机里程碑.md §3）需要此字段。
+/// 当前 sync `等待` 路径不用，仅在状态机模式下注册。
+#[derive(Clone)]
+pub struct StateMachineWaker {
+    pub poll_fn: extern "C" fn(*mut u8),
+    pub frame: usize, // *mut u8 stored as usize for Send/Sync
+}
+
+unsafe impl Send for StateMachineWaker {}
+unsafe impl Sync for StateMachineWaker {}
+
 /// Future structure - heap allocated
 /// 未来结构 - 堆分配
 #[repr(C)]
@@ -42,6 +54,9 @@ pub struct Future {
     /// Notification primitive — completers call notify_waiters(), awaiters
     /// .notified().await. Replaces the old yield_now busy-wait.
     pub notify: Arc<tokio::sync::Notify>,
+    /// State-machine wakers — pushed by qi_future_register_waker, fired on
+    /// complete/fail. 仅 codegen 状态机路径使用。
+    pub sm_wakers: Arc<Mutex<Vec<StateMachineWaker>>>,
 }
 
 impl Future {
@@ -53,6 +68,7 @@ impl Future {
             value: Arc::new(Mutex::new(None)),
             error: Arc::new(Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
+            sm_wakers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -61,6 +77,11 @@ impl Future {
         *self.value.lock().unwrap() = Some(value);
         *self.state.lock().unwrap() = FutureState::Completed;
         self.notify.notify_waiters();
+        // 触发所有状态机 wakers — 调用方应该在 spawn / 异步上下文里 invoke poll
+        let wakers = std::mem::take(&mut *self.sm_wakers.lock().unwrap());
+        for w in wakers {
+            (w.poll_fn)(w.frame as *mut u8);
+        }
     }
 
     /// 标记失败，唤醒 awaiter
@@ -68,6 +89,25 @@ impl Future {
         *self.error.lock().unwrap() = Some(error);
         *self.state.lock().unwrap() = FutureState::Failed;
         self.notify.notify_waiters();
+        let wakers = std::mem::take(&mut *self.sm_wakers.lock().unwrap());
+        for w in wakers {
+            (w.poll_fn)(w.frame as *mut u8);
+        }
+    }
+
+    /// State-machine waker 注册：pending 时 push，已完成则立即调用
+    pub fn register_sm_waker(&self, waker: StateMachineWaker) {
+        let st = self.state.lock().unwrap().clone();
+        match st {
+            FutureState::Completed | FutureState::Failed => {
+                drop(st);
+                (waker.poll_fn)(waker.frame as *mut u8);
+            }
+            FutureState::Pending => {
+                drop(st);
+                self.sm_wakers.lock().unwrap().push(waker);
+            }
+        }
     }
 
     /// 创建已完成的整数 future
