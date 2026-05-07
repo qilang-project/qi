@@ -676,6 +676,16 @@ impl IrBuilder {
         self.external_functions.insert("qi_runtime_gc_should_collect".to_string(), (vec![], "i64".to_string()));
         self.external_functions.insert("qi_runtime_gc_collect".to_string(), (vec![], "void".to_string()));
 
+        // Crypto module FFI — 跨包调用时需要这些签名才能正确推类型
+        // （之前只在 declare 段写了，没注册到 external_functions，导致 qi-web 等
+        //  下游包调 加密.HMAC_SHA256 时 codegen 把 ptr 参数误判 i64）
+        self.external_functions.insert("qi_crypto_md5".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_crypto_sha256".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_crypto_sha512".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_crypto_base64_encode".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_crypto_base64_decode".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_crypto_hmac_sha256".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
+
         // String module functions (标准库.文本)
         self.external_functions.insert("qi_string_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_string_concat".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
@@ -7246,14 +7256,9 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_runtime_catch_error(ptr)\n");
         ir.push_str("\n");
 
-        // Crypto functions
+        // Crypto functions（除 free_string 外其他都已在 external_functions 注册，
+        // 自动 declare 由 emit 路径生成；这里只保留 free_string）
         ir.push_str("; Crypto functions\n");
-        ir.push_str("declare ptr @qi_crypto_md5(ptr)\n");
-        ir.push_str("declare ptr @qi_crypto_sha256(ptr)\n");
-        ir.push_str("declare ptr @qi_crypto_sha512(ptr)\n");
-        ir.push_str("declare ptr @qi_crypto_base64_encode(ptr)\n");
-        ir.push_str("declare ptr @qi_crypto_base64_decode(ptr)\n");
-        ir.push_str("declare ptr @qi_crypto_hmac_sha256(ptr, ptr)\n");
         ir.push_str("declare void @qi_crypto_free_string(ptr)\n");
         ir.push_str("\n");
 
