@@ -560,6 +560,14 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 一次 alloc 构建 请求标识文本（替代 prefix + "-" + int_to_string 三步链）
+        web_module.add_function(ModuleFunction::new(
+            "构建请求标识",
+            "qi_web_build_request_id",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+
         self.modules.insert("Web运行时".to_string(), web_module.clone());
         self.modules.insert("标准库.Web运行时".to_string(), web_module);
     }

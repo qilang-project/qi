@@ -688,6 +688,38 @@ pub extern "C" fn qi_web_match_free(m: *mut MatchResult) -> i64 {
     0
 }
 
+/// 一次 alloc 构建 请求标识文本（替代 qi 端 prefix + "-" + int_to_string(ms) 三步链）
+/// prefix 为空 → "qi-{ms}"；否则 "{prefix}-{ms}"
+/// 返回 *mut c_char，调用方负责 qi_string_free 释放
+#[no_mangle]
+pub extern "C" fn qi_web_build_request_id(
+    prefix_ptr: *const c_char,
+    ms: i64,
+) -> *mut c_char {
+    let prefix = if prefix_ptr.is_null() {
+        b"qi" as &[u8]
+    } else {
+        unsafe {
+            let cs = CStr::from_ptr(prefix_ptr);
+            let bytes = cs.to_bytes();
+            if bytes.is_empty() {
+                b"qi" as &[u8]
+            } else {
+                bytes
+            }
+        }
+    };
+    // 估算容量：prefix + "-" + 20 字节 i64 max
+    let mut buf: Vec<u8> = Vec::with_capacity(prefix.len() + 22);
+    buf.extend_from_slice(prefix);
+    buf.push(b'-');
+    let _ = std::io::Write::write_fmt(&mut buf, format_args!("{}", ms));
+    match CString::new(buf) {
+        Ok(c) => c.into_raw(),
+        Err(_) => CString::new("qi").unwrap().into_raw(),
+    }
+}
+
 fn fallback_500() -> *const c_char {
     let body = "Internal Server Error";
     let response = format!(

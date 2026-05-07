@@ -650,6 +650,7 @@ impl IrBuilder {
         self.external_functions.insert("qi_web_match_params".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_web_match_method_mask".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_web_match_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_build_request_id".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_multipart_parse".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_multipart_extract_boundary".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_multipart_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
