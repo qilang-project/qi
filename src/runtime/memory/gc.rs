@@ -7,6 +7,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use dashmap::{DashMap, DashSet};
+
 use super::{MemoryResult};
 
 /// Garbage collection strategies
@@ -112,15 +114,21 @@ impl GcResult {
     }
 }
 
-/// Garbage collector implementation
+/// Garbage collector implementation.
+///
+/// Lock-free 路径：roots / references / marked_objects 用 DashMap/DashSet，
+/// hot path（add_root/add_reference/forget_object）只触 sharded lock，
+/// 多线程并发不再排队等同一把全局锁。
+///
+/// stats 仍用 Mutex（写入很少 — 只在 GC cycle 时才写）。
 #[derive(Debug)]
 pub struct GarbageCollector {
     config: GcConfig,
     stats: Arc<Mutex<GcStats>>,
-    roots: Arc<Mutex<HashSet<*const u8>>>,
-    references: Arc<Mutex<HashMap<*const u8, HashSet<*const u8>>>>,
-    marked_objects: Arc<Mutex<HashSet<*const u8>>>,
-    current_cycle: u64,
+    roots: Arc<DashSet<*const u8>>,
+    references: Arc<DashMap<*const u8, HashSet<*const u8>>>,
+    marked_objects: Arc<DashSet<*const u8>>,
+    current_cycle: std::sync::atomic::AtomicU64,
 }
 
 impl GarbageCollector {
@@ -128,31 +136,32 @@ impl GarbageCollector {
         Self {
             config,
             stats: Arc::new(Mutex::new(GcStats::new())),
-            roots: Arc::new(Mutex::new(HashSet::new())),
-            references: Arc::new(Mutex::new(HashMap::new())),
-            marked_objects: Arc::new(Mutex::new(HashSet::new())),
-            current_cycle: 0,
+            roots: Arc::new(DashSet::new()),
+            references: Arc::new(DashMap::new()),
+            marked_objects: Arc::new(DashSet::new()),
+            current_cycle: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    pub fn initialize(&mut self) -> MemoryResult<()> {
+    pub fn initialize(&self) -> MemoryResult<()> {
         self.stats.lock().unwrap().reset();
-        self.roots.lock().unwrap().clear();
-        self.references.lock().unwrap().clear();
-        self.marked_objects.lock().unwrap().clear();
-        self.current_cycle = 0;
+        self.roots.clear();
+        self.references.clear();
+        self.marked_objects.clear();
+        self.current_cycle
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
     pub fn add_root(&self, ptr: *const u8) -> MemoryResult<()> {
         if !ptr.is_null() {
-            self.roots.lock().unwrap().insert(ptr);
+            self.roots.insert(ptr);
         }
         Ok(())
     }
 
     pub fn remove_root(&self, ptr: *const u8) -> MemoryResult<()> {
-        self.roots.lock().unwrap().remove(&ptr);
+        self.roots.remove(&ptr);
         Ok(())
     }
 
@@ -160,15 +169,13 @@ impl GarbageCollector {
         if ptr.is_null() {
             return Ok(());
         }
-
-        let mut refs_map = self.references.lock().unwrap();
-        let entry = refs_map.entry(ptr).or_insert_with(HashSet::new);
-        entry.clear();
+        let mut new_set = HashSet::new();
         for r in refs {
             if !r.is_null() {
-                entry.insert(r);
+                new_set.insert(r);
             }
         }
+        self.references.insert(ptr, new_set);
         Ok(())
     }
 
@@ -177,8 +184,6 @@ impl GarbageCollector {
             return Ok(());
         }
         self.references
-            .lock()
-            .unwrap()
             .entry(from)
             .or_insert_with(HashSet::new)
             .insert(to);
@@ -186,26 +191,29 @@ impl GarbageCollector {
     }
 
     pub fn clear_references(&self, ptr: *const u8) -> MemoryResult<()> {
-        self.references.lock().unwrap().remove(&ptr);
+        self.references.remove(&ptr);
         Ok(())
     }
 
     pub fn forget_object(&self, ptr: *const u8) -> MemoryResult<()> {
         self.remove_root(ptr)?;
         self.clear_references(ptr)?;
-        let mut refs_map = self.references.lock().unwrap();
-        for refs in refs_map.values_mut() {
-            refs.remove(&ptr);
+        // 把所有还引用 ptr 的边都摘掉 — 必须遍历整个 references map
+        for mut entry in self.references.iter_mut() {
+            entry.value_mut().remove(&ptr);
         }
         Ok(())
     }
 
     pub fn roots_snapshot(&self) -> HashSet<*const u8> {
-        self.roots.lock().unwrap().clone()
+        self.roots.iter().map(|r| *r).collect()
     }
 
     pub fn references_snapshot(&self) -> HashMap<*const u8, HashSet<*const u8>> {
-        self.references.lock().unwrap().clone()
+        self.references
+            .iter()
+            .map(|e| (*e.key(), e.value().clone()))
+            .collect()
     }
 
     pub fn get_stats(&self) -> GcStats {
@@ -213,14 +221,17 @@ impl GarbageCollector {
     }
 
     pub fn current_cycle(&self) -> u64 {
-        self.current_cycle
+        self.current_cycle.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn collect(&mut self, heap: &HashMap<*const u8, usize>) -> MemoryResult<GcResult> {
+    pub fn collect(&self, heap: &HashMap<*const u8, usize>) -> MemoryResult<GcResult> {
         let start_time = std::time::Instant::now();
-        self.current_cycle += 1;
+        let cycle = self
+            .current_cycle
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
 
-        self.marked_objects.lock().unwrap().clear();
+        self.marked_objects.clear();
         self.mark_phase()?;
 
         let collected_objects = self.sweep_candidates(heap);
@@ -236,7 +247,7 @@ impl GarbageCollector {
         let result = GcResult {
             objects_collected: collected_objects.len() as u64,
             bytes_collected,
-            cycle_number: self.current_cycle,
+            cycle_number: cycle,
             strategy_used: self.config.strategy,
             collected_objects,
         };
@@ -250,41 +261,36 @@ impl GarbageCollector {
     }
 
     fn mark_phase(&self) -> MemoryResult<()> {
-        let roots: Vec<*const u8> = self.roots.lock().unwrap().iter().copied().collect();
-        let mut marked = self.marked_objects.lock().unwrap();
+        let roots: Vec<*const u8> = self.roots.iter().map(|r| *r).collect();
         for root in roots {
-            self.mark_object(root, &mut marked);
+            self.mark_object(root);
         }
         Ok(())
     }
 
-    fn mark_object(&self, obj: *const u8, marked: &mut HashSet<*const u8>) {
-        if obj.is_null() || marked.contains(&obj) {
+    fn mark_object(&self, obj: *const u8) {
+        if obj.is_null() {
             return;
         }
-
-        marked.insert(obj);
+        if !self.marked_objects.insert(obj) {
+            return; // 已经 marked
+        }
 
         let children: Vec<*const u8> = self
             .references
-            .lock()
-            .unwrap()
             .get(&obj)
             .map(|refs| refs.iter().copied().collect())
             .unwrap_or_default();
 
         for child in children {
-            self.mark_object(child, marked);
+            self.mark_object(child);
         }
     }
 
     fn sweep_candidates(&self, heap: &HashMap<*const u8, usize>) -> Vec<*const u8> {
-        let marked = self.marked_objects.lock().unwrap();
-        let roots = self.roots.lock().unwrap();
-
         heap.keys()
             .copied()
-            .filter(|ptr| !marked.contains(ptr) && !roots.contains(ptr))
+            .filter(|ptr| !self.marked_objects.contains(ptr) && !self.roots.contains(ptr))
             .collect()
     }
 }

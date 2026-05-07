@@ -4,18 +4,32 @@
 //! including allocation tracking, tracing GC integration, and exact deallocation.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+use dashmap::DashMap;
 
 use super::{AllocatorType, GarbageCollector, GcConfig, MemoryError, MemoryResult, MemoryUsage};
 
-/// Main memory manager for the Qi runtime
+/// Main memory manager for the Qi runtime.
+///
+/// Hot path（allocate / deallocate / add_root / add_reference）走 DashMap +
+/// 原子计数器，无全局 mutex；外层 `RUNTIME` mutex 也不再需要持有。
 #[derive(Debug)]
 pub struct MemoryManager {
-    usage: Arc<Mutex<MemoryUsage>>,
+    /// 当前使用字节数（原子）
+    in_use_bytes: Arc<AtomicUsize>,
+    /// 累计分配字节数（原子，info only）
+    total_allocated: Arc<AtomicUsize>,
+    /// GC 周期数（原子，info only）
+    gc_cycles: Arc<AtomicUsize>,
+    /// 仅在偶尔需要 full snapshot 时拿（getMetrics）
+    usage_meta: Arc<Mutex<MemoryUsage>>,
     allocation_strategy: AllocatorType,
+    #[allow(dead_code)]
     gc_config: GcConfig,
     max_memory_bytes: usize,
-    allocations: Arc<Mutex<HashMap<*const u8, AllocationInfo>>>,
+    allocations: Arc<DashMap<*const u8, AllocationInfo>>,
     gc: GarbageCollector,
     gc_threshold: f64,
 }
@@ -42,26 +56,32 @@ impl MemoryManager {
         let gc_config = GcConfig::default();
 
         Ok(Self {
-            usage: Arc::new(Mutex::new(MemoryUsage::new())),
+            in_use_bytes: Arc::new(AtomicUsize::new(0)),
+            total_allocated: Arc::new(AtomicUsize::new(0)),
+            gc_cycles: Arc::new(AtomicUsize::new(0)),
+            usage_meta: Arc::new(Mutex::new(MemoryUsage::new())),
             allocation_strategy: AllocatorType::Hybrid,
             gc_config: gc_config.clone(),
             max_memory_bytes,
-            allocations: Arc::new(Mutex::new(HashMap::new())),
+            allocations: Arc::new(DashMap::new()),
             gc: GarbageCollector::new(gc_config),
             gc_threshold: gc_threshold.clamp(0.1, 0.95),
         })
     }
 
     /// Initialize the memory manager
-    pub fn initialize(&mut self) -> MemoryResult<()> {
-        *self.usage.lock().unwrap() = MemoryUsage::new();
-        self.allocations.lock().unwrap().clear();
+    pub fn initialize(&self) -> MemoryResult<()> {
+        self.in_use_bytes.store(0, Ordering::Relaxed);
+        self.total_allocated.store(0, Ordering::Relaxed);
+        self.gc_cycles.store(0, Ordering::Relaxed);
+        *self.usage_meta.lock().unwrap() = MemoryUsage::new();
+        self.allocations.clear();
         self.gc.initialize()?;
         Ok(())
     }
 
     /// Allocate memory with specified size and strategy
-    pub fn allocate(&mut self, size: usize, strategy: Option<AllocatorType>) -> MemoryResult<*mut u8> {
+    pub fn allocate(&self, size: usize, strategy: Option<AllocatorType>) -> MemoryResult<*mut u8> {
         if size == 0 {
             return Err(MemoryError::AllocationFailed {
                 requested: size,
@@ -69,8 +89,8 @@ impl MemoryManager {
             });
         }
 
-        let current_usage = self.usage.lock().unwrap().in_use;
-        if current_usage + size > self.max_memory_bytes {
+        let current = self.in_use_bytes.load(Ordering::Relaxed);
+        if current + size > self.max_memory_bytes {
             return Err(MemoryError::OutOfMemory { size });
         }
 
@@ -84,11 +104,12 @@ impl MemoryManager {
             allocator_type,
         };
 
-        self.allocations.lock().unwrap().insert(ptr as *const u8, info);
+        self.allocations.insert(ptr as *const u8, info);
         self.gc.add_root(ptr as *const u8)?;
         self.gc.clear_references(ptr as *const u8)?;
 
-        self.usage.lock().unwrap().record_allocation(size);
+        self.in_use_bytes.fetch_add(size, Ordering::Relaxed);
+        self.total_allocated.fetch_add(size, Ordering::Relaxed);
 
         if self.should_trigger_gc() {
             let _ = self.trigger_gc();
@@ -98,52 +119,47 @@ impl MemoryManager {
     }
 
     /// Deallocate memory
-    pub fn deallocate(&mut self, ptr: *mut u8) -> MemoryResult<()> {
+    pub fn deallocate(&self, ptr: *mut u8) -> MemoryResult<()> {
         if ptr.is_null() {
             return Ok(());
         }
 
         let info = self
             .allocations
-            .lock()
-            .unwrap()
             .remove(&(ptr as *const u8))
+            .map(|(_, v)| v)
             .ok_or(MemoryError::DeallocationFailed {
                 address: ptr as *const u8,
             })?;
 
         unsafe { self.deallocate_raw_with_layout(ptr, info.size, info.align)? };
         self.gc.forget_object(ptr as *const u8)?;
-        self.usage.lock().unwrap().record_deallocation(info.size);
+        self.in_use_bytes.fetch_sub(info.size, Ordering::Relaxed);
 
         Ok(())
     }
 
     /// Trigger garbage collection
-    pub fn trigger_gc(&mut self) -> MemoryResult<usize> {
+    pub fn trigger_gc(&self) -> MemoryResult<usize> {
         let heap: HashMap<*const u8, usize> = self
             .allocations
-            .lock()
-            .unwrap()
             .iter()
-            .map(|(ptr, info)| (*ptr, info.size))
+            .map(|e| (*e.key(), e.value().size))
             .collect();
 
         let result = self.gc.collect(&heap)?;
         let mut freed_bytes = 0usize;
 
         for ptr in &result.collected_objects {
-            if let Some(info) = self.allocations.lock().unwrap().remove(ptr) {
+            if let Some((_, info)) = self.allocations.remove(ptr) {
                 unsafe { self.deallocate_raw_with_layout(*ptr as *mut u8, info.size, info.align)? };
                 self.gc.forget_object(*ptr)?;
                 freed_bytes += info.size;
-                self.usage.lock().unwrap().record_deallocation(info.size);
+                self.in_use_bytes.fetch_sub(info.size, Ordering::Relaxed);
             }
         }
 
-        // Deallocation has already reduced `in_use`; here we only want to
-        // count that a GC cycle happened.
-        self.usage.lock().unwrap().record_gc(0);
+        self.gc_cycles.fetch_add(1, Ordering::Relaxed);
         Ok(freed_bytes)
     }
 
@@ -153,49 +169,49 @@ impl MemoryManager {
     }
 
     /// Trigger garbage collection and return bytes freed
-    pub fn collect(&mut self) -> MemoryResult<usize> {
+    pub fn collect(&self) -> MemoryResult<usize> {
         self.trigger_gc()
     }
 
     /// Register an allocation as a GC root
-    pub fn add_root(&mut self, ptr: *mut u8) -> MemoryResult<()> {
+    pub fn add_root(&self, ptr: *mut u8) -> MemoryResult<()> {
         self.gc.add_root(ptr as *const u8)
     }
 
     /// Remove an allocation from the GC root set
-    pub fn remove_root(&mut self, ptr: *mut u8) -> MemoryResult<()> {
+    pub fn remove_root(&self, ptr: *mut u8) -> MemoryResult<()> {
         self.gc.remove_root(ptr as *const u8)
     }
 
     /// Add a reference edge from one heap object to another
-    pub fn add_reference(&mut self, from: *mut u8, to: *mut u8) -> MemoryResult<()> {
+    pub fn add_reference(&self, from: *mut u8, to: *mut u8) -> MemoryResult<()> {
         self.gc.add_reference(from as *const u8, to as *const u8)
     }
 
     /// Replace all outgoing references for an object
-    pub fn set_references(&mut self, from: *mut u8, refs: Vec<*mut u8>) -> MemoryResult<()> {
+    pub fn set_references(&self, from: *mut u8, refs: Vec<*mut u8>) -> MemoryResult<()> {
         let refs: Vec<*const u8> = refs.into_iter().map(|ptr| ptr as *const u8).collect();
         self.gc.set_references(from as *const u8, refs)
     }
 
     /// Clear outgoing references for an object
-    pub fn clear_references(&mut self, ptr: *mut u8) -> MemoryResult<()> {
+    pub fn clear_references(&self, ptr: *mut u8) -> MemoryResult<()> {
         self.gc.clear_references(ptr as *const u8)
     }
 
     /// Get current memory usage in megabytes
     pub fn get_current_usage_mb(&self) -> f64 {
-        self.usage.lock().unwrap().usage_mb()
+        self.in_use_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0)
     }
 
     /// Get total allocated bytes
     pub fn get_total_allocated(&self) -> usize {
-        self.usage.lock().unwrap().total_allocated
+        self.total_allocated.load(Ordering::Relaxed)
     }
 
     /// Get currently in-use bytes
     pub fn get_in_use_bytes(&self) -> usize {
-        self.usage.lock().unwrap().in_use
+        self.in_use_bytes.load(Ordering::Relaxed)
     }
 
     /// Get available memory bytes
@@ -203,9 +219,12 @@ impl MemoryManager {
         self.max_memory_bytes.saturating_sub(self.get_in_use_bytes())
     }
 
-    /// Get memory usage statistics
+    /// Get memory usage statistics — slow path，构造一次 snapshot
     pub fn get_usage(&self) -> MemoryUsage {
-        self.usage.lock().unwrap().clone()
+        let mut u = self.usage_meta.lock().unwrap().clone();
+        u.in_use = self.in_use_bytes.load(Ordering::Relaxed);
+        u.total_allocated = self.total_allocated.load(Ordering::Relaxed);
+        u
     }
 
     /// Set allocation strategy
@@ -260,12 +279,13 @@ impl MemoryManager {
 
 impl Drop for MemoryManager {
     fn drop(&mut self) {
+        // 把所有还活着的 alloc 一次性收掉
         let remaining: Vec<(*const u8, AllocationInfo)> = self
             .allocations
-            .lock()
-            .unwrap()
-            .drain()
+            .iter()
+            .map(|e| (*e.key(), e.value().clone()))
             .collect();
+        self.allocations.clear();
 
         for (ptr, info) in remaining {
             let _ = self.gc.forget_object(ptr);

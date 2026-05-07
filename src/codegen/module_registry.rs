@@ -490,6 +490,76 @@ impl ModuleRegistry {
             "整数", // 实际返回 0 — 用 整数 避开 void-call 赋值问题
         ));
 
+        // 预解析的 keep-alive 标志（HTTP/1.1 默认 1 除非 Connection: close）
+        web_module.add_function(ModuleFunction::new(
+            "请求保持连接",
+            "qi_web_request_keep_alive",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        // 一次性序列化 + 自动 Connection 头
+        web_module.add_function(ModuleFunction::new(
+            "序列化响应保持",
+            "qi_runtime_serialize_http_response_ka",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
+            "整数",
+        ));
+
+        // 路由 Rust 镜像表 —— 注册时同步推一份；匹配走 Rust
+        web_module.add_function(ModuleFunction::new(
+            "路由注册",
+            "qi_web_router_register",
+            vec![
+                "字符串".to_string(), // method
+                "字符串".to_string(), // path
+                "整数".to_string(),   // handler index
+            ],
+            "整数", // 0 ok / -1 unknown method / -2 param conflict
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "路由匹配",
+            "qi_web_router_match",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数", // *mut MatchResult，0 = 路径不存在
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "匹配处理器",
+            "qi_web_match_handler",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "匹配路径命中",
+            "qi_web_match_path_hit",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "匹配参数",
+            "qi_web_match_params",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "匹配方法掩码",
+            "qi_web_match_method_mask",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        web_module.add_function(ModuleFunction::new(
+            "匹配释放",
+            "qi_web_match_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
         self.modules.insert("Web运行时".to_string(), web_module.clone());
         self.modules.insert("标准库.Web运行时".to_string(), web_module);
     }

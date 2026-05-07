@@ -641,6 +641,15 @@ impl IrBuilder {
         self.external_functions.insert("qi_web_request_headers".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_web_request_body".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_web_request_parts_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_request_keep_alive".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_runtime_serialize_http_response_ka".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_router_register".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_router_match".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_match_handler".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_match_path_hit".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_match_params".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_web_match_method_mask".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_web_match_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_multipart_parse".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_multipart_extract_boundary".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_multipart_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
@@ -1072,6 +1081,15 @@ impl IrBuilder {
             return self.variable_types.get(name).map(|t| t == "ptr").unwrap_or(false);
         }
         false
+    }
+
+    /// 判断指针值是不是 .rodata 字面量（@.str* 字符串常量），不需要 GC 追踪。
+    /// rodata 段永不被 GC 释放，对它们调用 add_reference 是无效负担 — qi-web hot
+    /// path 上 25 次 字段赋值 / 多次 struct 构造每个字符串字段都触发这个，是
+    /// 真正的瓶颈。
+    fn is_rodata_literal(&self, value: &str) -> bool {
+        // qi codegen 当前发出的字符串字面量名都是 @.strN 格式，见 字符串常量 emit
+        value.starts_with("@.str")
     }
 
     fn lower_call_arguments(
@@ -3272,8 +3290,10 @@ impl IrBuilder {
                             value_type,
                         });
                         let value_var = value.trim_start_matches('%');
-                        if self.variable_types.get(value_var).map(|t| t == "ptr").unwrap_or(false) ||
-                           value.starts_with('@') {
+                        let is_ptr = self.variable_types.get(value_var).map(|t| t == "ptr").unwrap_or(false)
+                            || value.starts_with('@');
+                        // 跳过 .rodata 字面量 — 永不被 GC 回收，追踪是浪费
+                        if is_ptr && !self.is_rodata_literal(&value) {
                             let gc_temp = self.generate_temp();
                             self.add_instruction(IrInstruction::函数调用 {
                                 dest: Some(gc_temp),
@@ -3302,7 +3322,7 @@ impl IrBuilder {
                             value: value.clone(),
                             element_type: element_type.to_string(),
                         });
-                        if self.is_pointer_value(&value) {
+                        if self.is_pointer_value(&value) && !self.is_rodata_literal(&value) {
                             let gc_temp = self.generate_temp();
                             self.add_instruction(IrInstruction::函数调用 {
                                 dest: Some(gc_temp),
@@ -4370,7 +4390,7 @@ impl IrBuilder {
                         value: element_var.clone(),
                         element_type: element_type.clone(),
                     });
-                    if self.is_pointer_value(&element_var) {
+                    if self.is_pointer_value(&element_var) && !self.is_rodata_literal(&element_var) {
                         let gc_temp = self.generate_temp();
                         self.add_instruction(IrInstruction::函数调用 {
                             dest: Some(gc_temp),
@@ -4637,8 +4657,9 @@ impl IrBuilder {
                     });
                     if needs_heap_allocation {
                         let field_val_name = field_value.trim_start_matches('%');
-                        if self.variable_types.get(field_val_name).map(|t| t == "ptr").unwrap_or(false) ||
-                           field_value.starts_with('@') {
+                        let is_ptr = self.variable_types.get(field_val_name).map(|t| t == "ptr").unwrap_or(false)
+                            || field_value.starts_with('@');
+                        if is_ptr && !self.is_rodata_literal(&field_value) {
                             let gc_temp = self.generate_temp();
                             self.add_instruction(IrInstruction::函数调用 {
                                 dest: Some(gc_temp),

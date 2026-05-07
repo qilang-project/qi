@@ -36,6 +36,14 @@ pub(crate) fn clone_bytes(handle: i64) -> Option<Vec<u8>> {
     pool().get(&handle).map(|v| v.clone())
 }
 
+/// 内部 API：用闭包借引用字节池数据，零拷贝。返回 None 表示句柄无效。
+pub(crate) fn with_bytes<F, R>(handle: i64, f: F) -> Option<R>
+where
+    F: FnOnce(&[u8]) -> R,
+{
+    pool().get(&handle).map(|v| f(v.as_slice()))
+}
+
 /// 内部 API：取出（移除）字节池中指定句柄的数据，避免 clone+remove 两次原子操作
 pub(crate) fn take_bytes(handle: i64) -> Option<Vec<u8>> {
     pool().remove(&handle).map(|(_, v)| v)

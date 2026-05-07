@@ -62,27 +62,58 @@ impl Default for RuntimeConfig {
 }
 
 /// Runtime performance metrics
-#[derive(Debug, Clone, Serialize)]
+///
+/// 计数字段用 AtomicU64，hot path 上 `&self` 就能 increment（不需要 RwLock 写锁）。
+/// 只读 snapshot 由 `get_metrics_snapshot` 取出 plain RuntimeMetrics。
+#[derive(Debug, Default)]
 pub struct RuntimeMetrics {
     /// Runtime initialization timestamp
-    #[serde(skip)]
-    pub startup_time: Instant,
-    /// Current memory usage in megabytes
-    pub memory_usage_mb: f64,
+    pub startup_time: Option<Instant>,
+    /// Current memory usage in megabytes (用 to_bits / from_bits 存到 AtomicU64)
+    pub memory_usage_mb_bits: std::sync::atomic::AtomicU64,
     /// Peak memory usage in megabytes
-    pub peak_memory_mb: f64,
+    pub peak_memory_mb_bits: std::sync::atomic::AtomicU64,
     /// Number of programs executed
-    pub programs_executed: u64,
-    /// Total execution time for all programs
-    pub total_execution_time: Duration,
+    pub programs_executed: std::sync::atomic::AtomicU64,
+    /// Total execution time for all programs (毫秒)
+    pub total_execution_time_ms: std::sync::atomic::AtomicU64,
     /// Number of I/O operations performed
-    pub io_operations: u64,
+    pub io_operations: std::sync::atomic::AtomicU64,
     /// Number of network operations performed
-    pub network_operations: u64,
+    pub network_operations: std::sync::atomic::AtomicU64,
     /// Number of garbage collections performed
-    pub gc_collections: u64,
+    pub gc_collections: std::sync::atomic::AtomicU64,
     /// Number of errors encountered
+    pub errors_encountered: std::sync::atomic::AtomicU64,
+}
+
+/// 不带原子的 snapshot — 用于 serialize / 显示
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeMetricsSnapshot {
+    pub memory_usage_mb: f64,
+    pub peak_memory_mb: f64,
+    pub programs_executed: u64,
+    pub total_execution_time: Duration,
+    pub io_operations: u64,
+    pub network_operations: u64,
+    pub gc_collections: u64,
     pub errors_encountered: u64,
+}
+
+impl RuntimeMetrics {
+    pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
+        use std::sync::atomic::Ordering::Relaxed;
+        RuntimeMetricsSnapshot {
+            memory_usage_mb: f64::from_bits(self.memory_usage_mb_bits.load(Relaxed)),
+            peak_memory_mb: f64::from_bits(self.peak_memory_mb_bits.load(Relaxed)),
+            programs_executed: self.programs_executed.load(Relaxed),
+            total_execution_time: Duration::from_millis(self.total_execution_time_ms.load(Relaxed)),
+            io_operations: self.io_operations.load(Relaxed),
+            network_operations: self.network_operations.load(Relaxed),
+            gc_collections: self.gc_collections.load(Relaxed),
+            errors_encountered: self.errors_encountered.load(Relaxed),
+        }
+    }
 }
 
 /// Runtime performance metrics for deserialization
@@ -106,33 +137,18 @@ pub struct RuntimeMetricsSerializable {
     pub errors_encountered: u64,
 }
 
-impl From<RuntimeMetrics> for RuntimeMetricsSerializable {
-    fn from(metrics: RuntimeMetrics) -> Self {
+impl From<&RuntimeMetrics> for RuntimeMetricsSerializable {
+    fn from(metrics: &RuntimeMetrics) -> Self {
+        let snap = metrics.snapshot();
         Self {
-            memory_usage_mb: metrics.memory_usage_mb,
-            peak_memory_mb: metrics.peak_memory_mb,
-            programs_executed: metrics.programs_executed,
-            total_execution_time: metrics.total_execution_time,
-            io_operations: metrics.io_operations,
-            network_operations: metrics.network_operations,
-            gc_collections: metrics.gc_collections,
-            errors_encountered: metrics.errors_encountered,
-        }
-    }
-}
-
-impl Default for RuntimeMetrics {
-    fn default() -> Self {
-        Self {
-            startup_time: std::time::Instant::now(),
-            memory_usage_mb: 0.0,
-            peak_memory_mb: 0.0,
-            programs_executed: 0,
-            total_execution_time: Duration::ZERO,
-            io_operations: 0,
-            network_operations: 0,
-            gc_collections: 0,
-            errors_encountered: 0,
+            memory_usage_mb: snap.memory_usage_mb,
+            peak_memory_mb: snap.peak_memory_mb,
+            programs_executed: snap.programs_executed,
+            total_execution_time: snap.total_execution_time,
+            io_operations: snap.io_operations,
+            network_operations: snap.network_operations,
+            gc_collections: snap.gc_collections,
+            errors_encountered: snap.errors_encountered,
         }
     }
 }
@@ -224,6 +240,7 @@ impl RuntimeEnvironment {
 
     /// Execute a compiled Qi program
     pub fn execute_program(&mut self, program_data: &[u8]) -> RuntimeResult<i32> {
+        use std::sync::atomic::Ordering::Relaxed;
         if self.state != RuntimeState::Ready {
             return Err(RuntimeError::program_execution_error(
                 format!(
@@ -242,8 +259,10 @@ impl RuntimeEnvironment {
         let result = self.simulate_program_execution(program_data)?;
 
         let execution_time = execution_start.elapsed();
-        self.metrics.total_execution_time += execution_time;
-        self.metrics.programs_executed += 1;
+        self.metrics
+            .total_execution_time_ms
+            .fetch_add(execution_time.as_millis() as u64, Relaxed);
+        self.metrics.programs_executed.fetch_add(1, Relaxed);
 
         self.state = RuntimeState::Ready;
         Ok(result)
@@ -271,43 +290,66 @@ impl RuntimeEnvironment {
         &self.metrics
     }
 
-    /// Update memory usage metrics
-    pub fn update_memory_metrics(&mut self) {
-        self.metrics.memory_usage_mb = self.memory_manager.get_current_usage_mb();
-        self.metrics.peak_memory_mb = self.metrics.peak_memory_mb.max(self.metrics.memory_usage_mb);
+    /// Update memory usage metrics — &self via 原子 CAS
+    pub fn update_memory_metrics(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let cur = self.memory_manager.get_current_usage_mb();
+        self.metrics
+            .memory_usage_mb_bits
+            .store(cur.to_bits(), Relaxed);
+        // CAS-update peak（loop until 当前值 ≤ peak 或更新成功）
+        let cur_bits = cur.to_bits();
+        let mut prev = self.metrics.peak_memory_mb_bits.load(Relaxed);
+        loop {
+            if f64::from_bits(prev) >= cur {
+                break;
+            }
+            match self.metrics.peak_memory_mb_bits.compare_exchange_weak(
+                prev,
+                cur_bits,
+                Relaxed,
+                Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(p) => prev = p,
+            }
+        }
     }
 
-    /// Increment I/O operations counter
-    pub fn increment_io_operations(&mut self) {
-        self.metrics.io_operations += 1;
+    /// Increment I/O operations counter — 原子 fetch_add，&self 即可
+    pub fn increment_io_operations(&self) {
+        self.metrics
+            .io_operations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Increment network operations counter
-    pub fn increment_network_operations(&mut self) {
-        self.metrics.network_operations += 1;
+    pub fn increment_network_operations(&self) {
+        self.metrics
+            .network_operations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Increment garbage collection counter
-    pub fn increment_gc_collections(&mut self) {
-        self.metrics.gc_collections += 1;
+    pub fn increment_gc_collections(&self) {
+        self.metrics
+            .gc_collections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Increment errors encountered counter
-    pub fn increment_errors(&mut self) {
-        self.metrics.errors_encountered += 1;
+    pub fn increment_errors(&self) {
+        self.metrics
+            .errors_encountered
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Simulate program execution (placeholder implementation)
-    fn simulate_program_execution(&mut self, program_data: &[u8]) -> RuntimeResult<i32> {
+    fn simulate_program_execution(&self, program_data: &[u8]) -> RuntimeResult<i32> {
         if self.config.debug_mode {
             println!("调试: 模拟执行程序，大小: {} 字节", program_data.len());
         }
 
-        // Simulate some basic operations
         self.increment_io_operations();
         self.update_memory_metrics();
 
-        // Return simulated exit code
         Ok(0)
     }
 }

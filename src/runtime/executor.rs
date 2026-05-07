@@ -6,12 +6,15 @@
 #![allow(static_mut_refs)]
 
 use std::ffi::{c_char, c_int, CStr};
-use std::sync::{Mutex, Once};
+use std::sync::{Mutex, Once, RwLock};
 
 use crate::runtime::{RuntimeEnvironment, RuntimeConfig};
 
 static RUNTIME_INIT: Once = Once::new();
-static mut RUNTIME: Option<Mutex<RuntimeEnvironment>> = None;
+// 改 RwLock 让 hot path（alloc / gc_*）走 concurrent read lock 而非串行 Mutex。
+// memory_manager 内部用 DashMap + 原子计数器，方法已是 &self，所以读锁就够了。
+// 写锁只在 initialize / terminate 时需要。
+static mut RUNTIME: Option<RwLock<RuntimeEnvironment>> = None;
 
 /// Initialize the Qi runtime
 ///
@@ -31,7 +34,7 @@ pub extern "C" fn qi_runtime_initialize() -> c_int {
                     return;
                 }
                 unsafe {
-                    RUNTIME = Some(Mutex::new(runtime));
+                    RUNTIME = Some(RwLock::new(runtime));
                 }
             }
             Err(e) => {
@@ -49,7 +52,7 @@ pub extern "C" fn qi_runtime_initialize() -> c_int {
 pub extern "C" fn qi_runtime_shutdown() -> c_int {
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.take() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(mut runtime) = runtime_mutex.write() {
                 match runtime.terminate() {
                     Ok(_) => 0,
                     Err(e) => {
@@ -77,9 +80,9 @@ pub extern "C" fn qi_runtime_execute(program_data: *const u8, data_len: usize) -
 
     unsafe {
         let data_slice = std::slice::from_raw_parts(program_data, data_len);
-        
+
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(mut runtime) = runtime_mutex.write() {
                 match runtime.execute_program(data_slice) {
                     Ok(exit_code) => exit_code,
                     Err(e) => {
@@ -113,7 +116,7 @@ pub extern "C" fn qi_runtime_print(s: *const c_char) -> c_int {
             std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
+                if let Ok(runtime) = runtime_mutex.read() {
                     runtime.increment_io_operations();
                 }
             }
@@ -139,7 +142,7 @@ pub extern "C" fn qi_runtime_println(s: *const c_char) -> c_int {
             std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
+                if let Ok(runtime) = runtime_mutex.read() {
                     runtime.increment_io_operations();
                 }
             }
@@ -158,13 +161,6 @@ pub extern "C" fn qi_runtime_print_int(value: i64) -> c_int {
     // Force flush to ensure output appears immediately
     std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -173,13 +169,6 @@ pub extern "C" fn qi_runtime_print_int(value: i64) -> c_int {
 pub extern "C" fn qi_runtime_println_int(value: i64) -> c_int {
     println!("{}", value);
     
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -190,13 +179,6 @@ pub extern "C" fn qi_runtime_print_float(value: f64) -> c_int {
     // Force flush to ensure output appears immediately
     std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -210,13 +192,6 @@ pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
         println!("{}", value);      // Show normal format for fractions
     }
 
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -228,13 +203,6 @@ pub extern "C" fn qi_runtime_print_bool(value: i32) -> c_int {
     // Force flush to ensure output appears immediately
     std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -244,13 +212,6 @@ pub extern "C" fn qi_runtime_println_bool(value: i32) -> c_int {
     let text = if value != 0 { "真" } else { "假" };
     println!("{}", text);
 
-    unsafe {
-        if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
-                runtime.increment_io_operations();
-            }
-        }
-    }
     0
 }
 
@@ -259,10 +220,9 @@ pub extern "C" fn qi_runtime_println_bool(value: i32) -> c_int {
 pub extern "C" fn qi_runtime_alloc(size: usize) -> *mut u8 {
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 match runtime.memory_manager.allocate(size, None) {
                     Ok(ptr) => {
-                        runtime.update_memory_metrics();
                         ptr
                     }
                     Err(e) => {
@@ -290,10 +250,9 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
 
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 match runtime.memory_manager.deallocate(ptr) {
                     Ok(_) => {
-                        runtime.update_memory_metrics();
                         0
                     }
                     Err(e) => {
@@ -319,7 +278,7 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
 pub extern "C" fn qi_runtime_gc_should_collect() -> i64 {
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if runtime.memory_manager.should_collect() {
                     return 1;
                 }
@@ -334,11 +293,10 @@ pub extern "C" fn qi_runtime_gc_should_collect() -> i64 {
 pub extern "C" fn qi_runtime_gc_collect() {
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if let Err(e) = runtime.memory_manager.collect() {
                     eprintln!("GC失败: {}", e);
                 } else {
-                    runtime.update_memory_metrics();
                 }
             }
         }
@@ -354,7 +312,7 @@ pub extern "C" fn qi_runtime_gc_add_root(ptr: *mut u8) -> i64 {
 
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if runtime.memory_manager.add_root(ptr).is_ok() {
                     return 1;
                 }
@@ -373,7 +331,7 @@ pub extern "C" fn qi_runtime_gc_remove_root(ptr: *mut u8) -> i64 {
 
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if runtime.memory_manager.remove_root(ptr).is_ok() {
                     return 1;
                 }
@@ -392,7 +350,7 @@ pub extern "C" fn qi_runtime_gc_add_reference(from: *mut u8, to: *mut u8) -> i64
 
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if runtime.memory_manager.add_reference(from, to).is_ok() {
                     return 1;
                 }
@@ -411,7 +369,7 @@ pub extern "C" fn qi_runtime_gc_clear_references(ptr: *mut u8) -> i64 {
 
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 if runtime.memory_manager.clear_references(ptr).is_ok() {
                     return 1;
                 }
@@ -426,9 +384,9 @@ pub extern "C" fn qi_runtime_gc_clear_references(ptr: *mut u8) -> i64 {
 pub extern "C" fn qi_runtime_get_metrics() -> *const c_char {
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(runtime) = runtime_mutex.lock() {
-                let metrics = runtime.get_metrics();
-                if let Ok(json) = serde_json::to_string(metrics) {
+            if let Ok(runtime) = runtime_mutex.read() {
+                let snap = runtime.get_metrics().snapshot();
+                if let Ok(json) = serde_json::to_string(&snap) {
                     let c_string = std::ffi::CString::new(json).unwrap();
                     return c_string.into_raw();
                 }
@@ -622,7 +580,7 @@ pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char)
 
             // Update I/O operation count
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
+                if let Ok(runtime) = runtime_mutex.read() {
                     runtime.increment_io_operations();
                 }
             }
@@ -659,7 +617,7 @@ pub extern "C" fn qi_runtime_file_read(
     // Update I/O operation count
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 runtime.increment_io_operations();
             }
         }
@@ -686,7 +644,7 @@ pub extern "C" fn qi_runtime_file_write(
     // Update I/O operation count
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
-            if let Ok(mut runtime) = runtime_mutex.lock() {
+            if let Ok(runtime) = runtime_mutex.read() {
                 runtime.increment_io_operations();
             }
         }
@@ -780,7 +738,7 @@ pub extern "C" fn qi_runtime_http_get(url: *const c_char) -> *mut c_char {
             if let Ok(c_string) = std::ffi::CString::new(mock_response) {
                 // Update I/O operation count
                 if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                    if let Ok(mut runtime) = runtime_mutex.lock() {
+                    if let Ok(runtime) = runtime_mutex.read() {
                         runtime.increment_io_operations();
                     }
                 }
@@ -816,7 +774,7 @@ pub extern "C" fn qi_runtime_http_post(url: *const c_char, data: *const c_char) 
             if let Ok(c_string) = std::ffi::CString::new(mock_response) {
                 // Update I/O operation count
                 if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                    if let Ok(mut runtime) = runtime_mutex.lock() {
+                    if let Ok(runtime) = runtime_mutex.read() {
                         runtime.increment_io_operations();
                     }
                 }
@@ -851,7 +809,7 @@ pub extern "C" fn qi_runtime_tcp_connect(host: *const c_char, port: i32) -> i64 
 
             // Update I/O operation count
             if let Some(runtime_mutex) = RUNTIME.as_ref() {
-                if let Ok(mut runtime) = runtime_mutex.lock() {
+                if let Ok(runtime) = runtime_mutex.read() {
                     runtime.increment_io_operations();
                 }
             }
