@@ -33,14 +33,16 @@ enum AwaitReturn {
 
 /// §4-4 单 await 形态识别（最窄子集——证明 multi-state 切 BB 设计可行）：
 ///   异步 函数 X(): 未来<整数> {
-///       变量 NAME: 整数 = 等待 IDENT();   // 调零参 异步函数 IDENT
-///       返回 EXPR;                         // EXPR 是 NAME 的简单表达式（见 AwaitReturn）
+///       变量 NAME: 整数 = 等待 IDENT(literal_args*);   // awaited 函数 + 字面量参数
+///       返回 EXPR;                                       // EXPR: 见 AwaitReturn
 ///   }
 ///
-/// 命中返回 (local_name, awaited_func_name, return_form)，否则 None。
+/// awaited args 仅支持整数字面量（带 identifier 或表达式参数留给下次扩 build_node 复用）
+///
+/// 命中返回 (local_name, awaited_func_name, awaited_args, return_form)，否则 None。
 fn single_await_async_body(
     func: &crate::parser::ast::FunctionDeclaration,
-) -> Option<(String, String, AwaitReturn)> {
+) -> Option<(String, String, Vec<i64>, AwaitReturn)> {
     use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue};
     if !func.parameters.is_empty() {
         // 暂不支持外层带参数（需要 frame layout 联合 args + awaited + locals）
@@ -49,7 +51,7 @@ fn single_await_async_body(
     if func.body.len() != 2 {
         return None;
     }
-    // body[0]: 变量 NAME: 整数 = 等待 IDENT()
+    // body[0]: 变量 NAME: 整数 = 等待 IDENT(literal_args*)
     let AstNode::变量声明(decl) = &func.body[0] else {
         return None;
     };
@@ -60,8 +62,19 @@ fn single_await_async_body(
     let AstNode::函数调用表达式(call) = await_expr.expression.as_ref() else {
         return None;
     };
-    if !call.arguments.is_empty() {
-        return None;
+    // 提取所有 awaited args — 必须是整数字面量
+    let mut awaited_args: Vec<i64> = Vec::with_capacity(call.arguments.len());
+    for arg in &call.arguments {
+        match arg {
+            AstNode::字面量表达式(lit) => {
+                if let LiteralValue::整数(n) = &lit.value {
+                    awaited_args.push(*n);
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
     }
     match &decl.type_annotation {
         Some(crate::parser::ast::TypeNode::基础类型(
@@ -124,7 +137,7 @@ fn single_await_async_body(
         }
         _ => return None,
     };
-    Some((decl.name.clone(), call.callee.clone(), form))
+    Some((decl.name.clone(), call.callee.clone(), awaited_args, form))
 }
 
 /// §4-3 状态机 MVP 返回形态识别（不限参数，仅看 body 形状）。
@@ -2439,7 +2452,7 @@ impl IrBuilder {
                     //       变量 a: 整数 = 等待 Y();   // Y 必须零参数 + 返回 未来<整数>
                     //       返回 a;                     // 直接透传
                     //   }
-                    if let Some((local_name, awaited_fn, ret_form)) = single_await_async_body(func_decl) {
+                    if let Some((local_name, awaited_fn, awaited_args, ret_form)) = single_await_async_body(func_decl) {
                         let _ = local_name; // 仅用于检测，IR 里用 SSA 名 %final_val
                         let mangled = if func_decl.name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(&func_decl.name)
@@ -2530,10 +2543,16 @@ impl IrBuilder {
                             self.add_instruction(IrInstruction::标签 {
                                 name: "s0:".to_string(),
                             });
+                            // 调 awaited 函数，传字面量参数列表
+                            let awaited_args_str: String = awaited_args
+                                .iter()
+                                .map(|n| format!("i64 {}", n))
+                                .collect::<Vec<_>>()
+                                .join(", ");
                             self.add_instruction(IrInstruction::标签 {
                                 name: format!(
-                                    "  %fut1 = call ptr @{}()",
-                                    awaited_mangled
+                                    "  %fut1 = call ptr @{}({})",
+                                    awaited_mangled, awaited_args_str
                                 ),
                             });
                             self.add_instruction(IrInstruction::标签 {
