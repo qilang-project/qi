@@ -2190,6 +2190,34 @@ impl IrBuilder {
                 }
             }
             AstNode::函数声明(func_decl) => {
+                // §4-2 异步函数 语义检查（docs/编译器异步状态机里程碑.md）：
+                // 异步 函数 必须返回 未来<T>，不能同时是 内联。
+                // codegen 阶段强制——TypeChecker 当前未接入 compile 流水线，所以
+                // 语义错误必须在这里抛，否则用户写错没人提示。
+                if func_decl.is_async {
+                    if func_decl.is_inline {
+                        return Err(format!(
+                            "函数 `{}`：异步函数 不能同时是 内联（异步需要状态机帧，内联会展开抹掉）",
+                            func_decl.name
+                        ));
+                    }
+                    match &func_decl.return_type {
+                        Some(crate::parser::ast::TypeNode::未来类型(_)) => { /* OK */ }
+                        Some(other) => {
+                            return Err(format!(
+                                "函数 `{}`：异步函数 必须返回 未来<T>，当前返回类型不是 未来<T> ({:?})",
+                                func_decl.name, other
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "函数 `{}`：异步函数 必须显式声明返回类型 未来<T>",
+                                func_decl.name
+                            ));
+                        }
+                    }
+                }
+
                 // Handle special cases and apply name mangling for Chinese function names
                 let func_name: String = match func_decl.name.as_str() {
                     "入口" => if self.is_entry_module { "main".to_string() } else { self.mangle_function_name("入口") }, // Special case for main function

@@ -457,6 +457,44 @@ impl TypeChecker {
     }
 
     pub fn check_function_declaration(&mut self, func: &crate::parser::ast::FunctionDeclaration) -> Result<TypeNode, TypeError> {
+        // §4-2 异步函数 语义检查（docs/编译器异步状态机里程碑.md）：
+        // 1. 异步函数 必须返回 未来<T>（裸值不行）
+        // 2. 异步 + 内联 互斥（内联函数被展开，没有状态机帧）
+        if func.is_async {
+            if func.is_inline {
+                self.errors.push(TypeError::General {
+                    message: format!(
+                        "函数 `{}`：异步函数不能同时是内联函数（异步需要状态机帧，内联会展开抹掉）",
+                        func.name
+                    ),
+                    span: func.span,
+                });
+            }
+            match &func.return_type {
+                Some(TypeNode::未来类型(_)) => {
+                    // OK
+                }
+                Some(other) => {
+                    self.errors.push(TypeError::General {
+                        message: format!(
+                            "函数 `{}`：异步函数 必须返回 未来<T>，当前返回类型 {:?} 不是 未来<T>",
+                            func.name, other
+                        ),
+                        span: func.span,
+                    });
+                }
+                None => {
+                    self.errors.push(TypeError::General {
+                        message: format!(
+                            "函数 `{}`：异步函数 必须显式声明返回类型 未来<T>",
+                            func.name
+                        ),
+                        span: func.span,
+                    });
+                }
+            }
+        }
+
         // Create function info
         let function_info = crate::semantic::symbol_table::FunctionInfo {
             parameters: func.parameters.clone(),
