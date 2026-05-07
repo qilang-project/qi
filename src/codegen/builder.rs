@@ -18,34 +18,102 @@ fn function_body_returns_closure(body: &[AstNode]) -> bool {
     false
 }
 
-/// §4-3 状态机 MVP 形态识别：
-///   异步 函数 X(): 未来<整数> { 返回 整数字面量; }
-///
-/// 这是状态机 codegen 在本会话能稳交付的最窄子集 —— 零参数、单一返回、字面量值。
-/// 满足条件返回 Some(literal_value)，否则 None（fall through 到老路径 sync wrap）。
+/// §4-3 状态机 MVP 返回形态识别（不限参数，仅看 body 形状）。
+/// 下面四种都支持：
+///   - `返回 字面量整数`         AsyncReturn::Literal(n)
+///   - `返回 单一参数名`         AsyncReturn::Param(idx)  — 透传第 idx 个参数
+///   - `返回 单一参数 + 字面量`  AsyncReturn::ParamAddLit(idx, n)
+///   - `返回 单一参数 * 字面量`  AsyncReturn::ParamMulLit(idx, n)
+/// 其他形态返回 None — fall through 到老 sync wrap 路径。
 ///
 /// 下次会话扩展：
-/// - §4-4 加 等待 翻译（多 state） + 局部变量
-/// - 带参数（args 写入 frame，poll fn 从 frame 读）
-/// - 多个 返回 路径（每条都 complete + free）
-fn trivial_async_int_body(func: &crate::parser::ast::FunctionDeclaration) -> Option<i64> {
-    if !func.parameters.is_empty() {
-        return None;
+/// - §4-4 加 等待 翻译（多 state）
+/// - 局部变量 + if/loop / 多 返回 路径
+/// - 任意表达式（复用 build_node 在 poll 上下文）
+#[derive(Debug, Clone, Copy)]
+enum AsyncReturn {
+    Literal(i64),
+    Param(usize),
+    ParamAddLit(usize, i64),
+    ParamMulLit(usize, i64),
+}
+
+fn trivial_async_int_body(
+    func: &crate::parser::ast::FunctionDeclaration,
+) -> Option<AsyncReturn> {
+    use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue};
+    // 参数全 i64 才支持（混合类型 frame 布局复杂，留给 §4-4）
+    for p in &func.parameters {
+        match &p.type_annotation {
+            Some(crate::parser::ast::TypeNode::基础类型(crate::parser::ast::BasicType::整数)) => {}
+            _ => return None,
+        }
     }
     if func.body.len() != 1 {
         return None;
     }
-    let crate::parser::ast::AstNode::返回语句(ret) = &func.body[0] else {
+    let AstNode::返回语句(ret) = &func.body[0] else {
         return None;
     };
     let value = ret.value.as_ref()?;
-    let crate::parser::ast::AstNode::字面量表达式(lit) = value.as_ref() else {
-        return None;
-    };
-    let crate::parser::ast::LiteralValue::整数(n) = &lit.value else {
-        return None;
-    };
-    Some(*n)
+
+    // 1. 字面量
+    if let AstNode::字面量表达式(lit) = value.as_ref() {
+        if let LiteralValue::整数(n) = &lit.value {
+            return Some(AsyncReturn::Literal(*n));
+        }
+    }
+    // 2. 单一参数名
+    if let AstNode::标识符表达式(id) = value.as_ref() {
+        let idx = func.parameters.iter().position(|p| p.name == id.name)?;
+        return Some(AsyncReturn::Param(idx));
+    }
+    // 3. 二元 (param, literal) 或 (literal, param) — 仅 + 和 *
+    if let AstNode::二元操作表达式(bin) = value.as_ref() {
+        let op = match bin.operator {
+            BinaryOperator::加 => '+',
+            BinaryOperator::乘 => '*',
+            _ => return None,
+        };
+        let extract_param_idx = |n: &AstNode| -> Option<usize> {
+            if let AstNode::标识符表达式(id) = n {
+                func.parameters.iter().position(|p| p.name == id.name)
+            } else {
+                None
+            }
+        };
+        let extract_lit = |n: &AstNode| -> Option<i64> {
+            if let AstNode::字面量表达式(l) = n {
+                if let LiteralValue::整数(v) = &l.value {
+                    return Some(*v);
+                }
+            }
+            None
+        };
+        // (param, literal)
+        if let (Some(idx), Some(lit)) = (
+            extract_param_idx(&bin.left),
+            extract_lit(&bin.right),
+        ) {
+            return Some(if op == '+' {
+                AsyncReturn::ParamAddLit(idx, lit)
+            } else {
+                AsyncReturn::ParamMulLit(idx, lit)
+            });
+        }
+        // (literal, param)
+        if let (Some(lit), Some(idx)) = (
+            extract_lit(&bin.left),
+            extract_param_idx(&bin.right),
+        ) {
+            return Some(if op == '+' {
+                AsyncReturn::ParamAddLit(idx, lit)
+            } else {
+                AsyncReturn::ParamMulLit(idx, lit)
+            });
+        }
+    }
+    None
 }
 use super::module_registry::{ModuleRegistry, ModuleFunction};
 
@@ -2257,34 +2325,50 @@ impl IrBuilder {
                         }
                     }
 
-                    // §4-3 状态机 codegen MVP — 仅支持「零参数 + 单一 返回 整数字面量」
-                    // 其他形态（带参数 / 多返回 / 等待 / 局部变量）下次会话扩
-                    if let Some(literal_value) = trivial_async_int_body(func_decl) {
+                    // §4-3 状态机 codegen MVP — 现支持
+                    //   返回 字面量 / 返回 参数 / 返回 参数+字面量 / 返回 参数*字面量
+                    //   参数全 i64
+                    // 其他形态（多返回 / 等待 / 局部变量 / 任意表达式）下次会话 §4-4 扩
+                    if let Some(ret_form) = trivial_async_int_body(func_decl) {
                         let mangled = if func_decl.name.chars().any(|c| !c.is_ascii()) {
                             self.mangle_function_name(&func_decl.name)
                         } else {
                             func_decl.name.clone()
                         };
-                        // emit_label 行尾加 `;` 注释，绕开 IrInstruction::标签 emit 给非
+                        // emit_label 行尾加 `;` 注释，绕开 IrInstruction::标签 给非
                         // instruction/label 行自动加冒号的逻辑（store/call void/ret 都没
-                        // ` = ` 也不以 `:`/`@` 结尾，否则会被加冒号变 `store ...:` 报错）。
-                        // LLVM IR `;` 起行尾注释，吃掉自动加的 `:`，行为等价于裸 IR。
+                        // ` = ` 也不以 `:`/`@` 结尾）。LLVM IR `;` 起行尾注释。
                         let emit_raw = |this: &mut Self, line: &str| {
                             this.add_instruction(IrInstruction::标签 {
                                 name: format!("{} ;", line),
                             });
                         };
-                        // 入口 fn：alloc frame + pending future + spawn_poll + return future
-                        // frame layout: [state: i64@0, return_future: ptr@8] = 16 bytes
+
+                        // frame layout：state(i64@0) + return_future(ptr@8) + args(i64*N @16+)
+                        let n_args = func_decl.parameters.len();
+                        let frame_size = 16 + 8 * n_args as i64;
+
+                        // 入口 fn 参数列表 + mangled 名
+                        let param_decls: Vec<String> = (0..n_args)
+                            .map(|i| format!("i64 %a{}", i))
+                            .collect();
+                        let param_decls_str = param_decls.join(", ");
+
+                        // entry fn
                         self.add_instruction(IrInstruction::标签 {
-                            name: format!("define ptr @{}() {{", mangled),
+                            name: format!(
+                                "define ptr @{}({}) {{",
+                                mangled, param_decls_str
+                            ),
                         });
                         self.add_instruction(IrInstruction::标签 {
                             name: "entry:".to_string(),
                         });
-                        // 这些含 ` = `，走 instruction 分支不被加冒号
                         self.add_instruction(IrInstruction::标签 {
-                            name: "  %frame = call ptr @qi_async_alloc_frame(i64 16)".to_string(),
+                            name: format!(
+                                "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
+                                frame_size
+                            ),
                         });
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %fut = call ptr @qi_future_pending()".to_string(),
@@ -2292,8 +2376,21 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %ret_p = getelementptr i8, ptr %frame, i64 8".to_string(),
                         });
-                        // 不含 ` = ` 的指令必须用 emit_raw（带 `;` 注释）
                         emit_raw(self, "  store ptr %fut, ptr %ret_p");
+                        // 把每个参数写进 frame[16 + 8*i]
+                        for i in 0..n_args {
+                            let off = 16 + 8 * i as i64;
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!(
+                                    "  %arg{}_p = getelementptr i8, ptr %frame, i64 {}",
+                                    i, off
+                                ),
+                            });
+                            emit_raw(
+                                self,
+                                &format!("  store i64 %a{}, ptr %arg{}_p", i, i),
+                            );
+                        }
                         emit_raw(
                             self,
                             &format!(
@@ -2306,7 +2403,7 @@ impl IrBuilder {
                             name: "}".to_string(),
                         });
 
-                        // poll fn：从 frame 读 return_future，complete with literal，free frame
+                        // poll fn：从 frame 读 return_future + 各参数，按 ret_form 计算结果
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define void @{}_poll(ptr %pframe) {{", mangled),
                         });
@@ -2319,33 +2416,77 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %pret = load ptr, ptr %pret_p".to_string(),
                         });
+                        // 按需 load 参数（仅当 ret_form 用到时；为简化全 load）
+                        for i in 0..n_args {
+                            let off = 16 + 8 * i as i64;
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!(
+                                    "  %parg{}_p = getelementptr i8, ptr %pframe, i64 {}",
+                                    i, off
+                                ),
+                            });
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  %parg{} = load i64, ptr %parg{}_p", i, i),
+                            });
+                        }
+                        // 算 result（i64）— 按 ret_form 形态分别 emit
+                        let result_expr: String = match ret_form {
+                            AsyncReturn::Literal(n) => format!("{}", n),
+                            AsyncReturn::Param(i) => {
+                                // load 已做，直接用
+                                format!("%parg{}", i)
+                            }
+                            AsyncReturn::ParamAddLit(i, n) => {
+                                self.add_instruction(IrInstruction::标签 {
+                                    name: format!(
+                                        "  %presult = add i64 %parg{}, {}",
+                                        i, n
+                                    ),
+                                });
+                                "%presult".to_string()
+                            }
+                            AsyncReturn::ParamMulLit(i, n) => {
+                                self.add_instruction(IrInstruction::标签 {
+                                    name: format!(
+                                        "  %presult = mul i64 %parg{}, {}",
+                                        i, n
+                                    ),
+                                });
+                                "%presult".to_string()
+                            }
+                        };
                         emit_raw(
                             self,
                             &format!(
                                 "  call void @qi_future_complete_i64(ptr %pret, i64 {})",
-                                literal_value
+                                result_expr
                             ),
                         );
                         emit_raw(
                             self,
-                            "  call void @qi_async_free_frame(ptr %pframe, i64 16)",
+                            &format!(
+                                "  call void @qi_async_free_frame(ptr %pframe, i64 {})",
+                                frame_size
+                            ),
                         );
                         emit_raw(self, "  ret void");
                         self.add_instruction(IrInstruction::标签 {
                             name: "}".to_string(),
                         });
 
-                        // 注册函数签名让 caller 找得到（无参，返回 ptr）
-                        self.function_param_types.insert(mangled.clone(), vec![]);
-                        self.function_parameters.insert(mangled.clone(), vec![]);
+                        // 注册函数签名 — caller 用原名调用，签名跟入口 fn 对齐
+                        let param_types: Vec<String> = (0..n_args)
+                            .map(|_| "i64".to_string())
+                            .collect();
+                        self.function_param_types.insert(mangled.clone(), param_types);
+                        self.function_parameters
+                            .insert(mangled.clone(), func_decl.parameters.clone());
                         self.function_return_types
                             .insert(mangled.clone(), "ptr".to_string());
                         self.function_future_inner_types
                             .insert(mangled.clone(), "i64".to_string());
                         self.defined_functions.insert(mangled.clone());
 
-                        // 老代码用 mangled 名，新代码用原名调用 — 加 alias
-                        // 跟其他函数一致（见 builder.rs: `alias` 处理）
                         return Ok(String::new());
                     }
                     // 非 MVP 形态，fall through 走旧路径（sync wrap with qi_future_ready_*）。
