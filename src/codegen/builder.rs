@@ -17,6 +17,36 @@ fn function_body_returns_closure(body: &[AstNode]) -> bool {
     }
     false
 }
+
+/// §4-3 状态机 MVP 形态识别：
+///   异步 函数 X(): 未来<整数> { 返回 整数字面量; }
+///
+/// 这是状态机 codegen 在本会话能稳交付的最窄子集 —— 零参数、单一返回、字面量值。
+/// 满足条件返回 Some(literal_value)，否则 None（fall through 到老路径 sync wrap）。
+///
+/// 下次会话扩展：
+/// - §4-4 加 等待 翻译（多 state） + 局部变量
+/// - 带参数（args 写入 frame，poll fn 从 frame 读）
+/// - 多个 返回 路径（每条都 complete + free）
+fn trivial_async_int_body(func: &crate::parser::ast::FunctionDeclaration) -> Option<i64> {
+    if !func.parameters.is_empty() {
+        return None;
+    }
+    if func.body.len() != 1 {
+        return None;
+    }
+    let crate::parser::ast::AstNode::返回语句(ret) = &func.body[0] else {
+        return None;
+    };
+    let value = ret.value.as_ref()?;
+    let crate::parser::ast::AstNode::字面量表达式(lit) = value.as_ref() else {
+        return None;
+    };
+    let crate::parser::ast::LiteralValue::整数(n) = &lit.value else {
+        return None;
+    };
+    Some(*n)
+}
 use super::module_registry::{ModuleRegistry, ModuleFunction};
 
 /// IR instruction
@@ -434,6 +464,16 @@ impl IrBuilder {
         self.external_functions.insert("qi_future_is_completed".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
         self.external_functions.insert("qi_future_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
         self.external_functions.insert("qi_string_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+
+        // §4-3 / §4-5 异步 状态机 FFI（runtime/async_runtime/state_machine.rs）
+        self.external_functions.insert("qi_async_alloc_frame".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_async_free_frame".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_async_spawn_poll".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_future_register_waker".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_future_is_ready".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_future_value_i64".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_future_complete_i64".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "void".to_string()));
+        self.external_functions.insert("qi_future_pending".to_string(), (vec![], "ptr".to_string()));
 
         // String utility functions
         self.external_functions.insert("strlen".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
@@ -2216,6 +2256,100 @@ impl IrBuilder {
                             ));
                         }
                     }
+
+                    // §4-3 状态机 codegen MVP — 仅支持「零参数 + 单一 返回 整数字面量」
+                    // 其他形态（带参数 / 多返回 / 等待 / 局部变量）下次会话扩
+                    if let Some(literal_value) = trivial_async_int_body(func_decl) {
+                        let mangled = if func_decl.name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&func_decl.name)
+                        } else {
+                            func_decl.name.clone()
+                        };
+                        // emit_label 行尾加 `;` 注释，绕开 IrInstruction::标签 emit 给非
+                        // instruction/label 行自动加冒号的逻辑（store/call void/ret 都没
+                        // ` = ` 也不以 `:`/`@` 结尾，否则会被加冒号变 `store ...:` 报错）。
+                        // LLVM IR `;` 起行尾注释，吃掉自动加的 `:`，行为等价于裸 IR。
+                        let emit_raw = |this: &mut Self, line: &str| {
+                            this.add_instruction(IrInstruction::标签 {
+                                name: format!("{} ;", line),
+                            });
+                        };
+                        // 入口 fn：alloc frame + pending future + spawn_poll + return future
+                        // frame layout: [state: i64@0, return_future: ptr@8] = 16 bytes
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("define ptr @{}() {{", mangled),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
+                        // 这些含 ` = `，走 instruction 分支不被加冒号
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %frame = call ptr @qi_async_alloc_frame(i64 16)".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %fut = call ptr @qi_future_pending()".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %ret_p = getelementptr i8, ptr %frame, i64 8".to_string(),
+                        });
+                        // 不含 ` = ` 的指令必须用 emit_raw（带 `;` 注释）
+                        emit_raw(self, "  store ptr %fut, ptr %ret_p");
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_async_spawn_poll(ptr @{}_poll, ptr %frame)",
+                                mangled
+                            ),
+                        );
+                        emit_raw(self, "  ret ptr %fut");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
+
+                        // poll fn：从 frame 读 return_future，complete with literal，free frame
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("define void @{}_poll(ptr %pframe) {{", mangled),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %pret_p = getelementptr i8, ptr %pframe, i64 8".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %pret = load ptr, ptr %pret_p".to_string(),
+                        });
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_future_complete_i64(ptr %pret, i64 {})",
+                                literal_value
+                            ),
+                        );
+                        emit_raw(
+                            self,
+                            "  call void @qi_async_free_frame(ptr %pframe, i64 16)",
+                        );
+                        emit_raw(self, "  ret void");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
+
+                        // 注册函数签名让 caller 找得到（无参，返回 ptr）
+                        self.function_param_types.insert(mangled.clone(), vec![]);
+                        self.function_parameters.insert(mangled.clone(), vec![]);
+                        self.function_return_types
+                            .insert(mangled.clone(), "ptr".to_string());
+                        self.function_future_inner_types
+                            .insert(mangled.clone(), "i64".to_string());
+                        self.defined_functions.insert(mangled.clone());
+
+                        // 老代码用 mangled 名，新代码用原名调用 — 加 alias
+                        // 跟其他函数一致（见 builder.rs: `alias` 处理）
+                        return Ok(String::new());
+                    }
+                    // 非 MVP 形态，fall through 走旧路径（sync wrap with qi_future_ready_*）。
+                    // 旧路径仍然 work，只是不是真状态机。下次会话扩 §4-4 后改。
                 }
 
                 // Handle special cases and apply name mangling for Chinese function names
