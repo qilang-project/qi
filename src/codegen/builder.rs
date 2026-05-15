@@ -18,40 +18,46 @@ fn function_body_returns_closure(body: &[AstNode]) -> bool {
     false
 }
 
-/// §4-4 单 await 返回表达式形态识别（在 awaited 值 NAME 上的简单表达式）：
-///   - 返回 NAME               AwaitReturn::Identity
-///   - 返回 NAME + 字面量      AwaitReturn::AddLit(n)
-///   - 返回 NAME * 字面量      AwaitReturn::MulLit(n)
-///   - 返回 字面量             AwaitReturn::Literal(n)  — 不用 NAME 也合法
+/// §4-4 单 await 返回表达式 — 泛化到三种 Operand 任意 + / * 组合：
+///   - Literal(n)   字面量整数
+///   - Awaited      局部变量 = 等待 X() 拿到的值
+///   - Param(idx)   外层第 idx 个参数
+/// AwaitReturn = Single(operand) | BinOp(op, left, right)
+#[derive(Debug, Clone, Copy)]
+enum AwaitOperand {
+    Literal(i64),
+    Awaited,
+    Param(usize),
+}
 #[derive(Debug, Clone, Copy)]
 enum AwaitReturn {
-    Identity,
-    AddLit(i64),
-    MulLit(i64),
-    Literal(i64),
+    Single(AwaitOperand),
+    BinOp(char, AwaitOperand, AwaitOperand),
 }
 
-/// §4-4 单 await 形态识别（最窄子集——证明 multi-state 切 BB 设计可行）：
-///   异步 函数 X(): 未来<整数> {
-///       变量 NAME: 整数 = 等待 IDENT(literal_args*);   // awaited 函数 + 字面量参数
-///       返回 EXPR;                                       // EXPR: 见 AwaitReturn
+/// §4-4 单 await 形态识别（泛化版）：
+///   异步 函数 X(args*: 整数): 未来<整数> {
+///       变量 NAME: 整数 = 等待 IDENT(literal_args*);
+///       返回 EXPR;     // EXPR 是 字面量 / NAME / 参数 / 任意二元 + / *
 ///   }
-///
-/// awaited args 仅支持整数字面量（带 identifier 或表达式参数留给下次扩 build_node 复用）
 ///
 /// 命中返回 (local_name, awaited_func_name, awaited_args, return_form)，否则 None。
 fn single_await_async_body(
     func: &crate::parser::ast::FunctionDeclaration,
 ) -> Option<(String, String, Vec<i64>, AwaitReturn)> {
     use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue};
-    if !func.parameters.is_empty() {
-        // 暂不支持外层带参数（需要 frame layout 联合 args + awaited + locals）
-        return None;
+    // 外层参数全 整数
+    for p in &func.parameters {
+        match &p.type_annotation {
+            Some(crate::parser::ast::TypeNode::基础类型(
+                crate::parser::ast::BasicType::整数,
+            )) => {}
+            _ => return None,
+        }
     }
     if func.body.len() != 2 {
         return None;
     }
-    // body[0]: 变量 NAME: 整数 = 等待 IDENT(literal_args*)
     let AstNode::变量声明(decl) = &func.body[0] else {
         return None;
     };
@@ -62,7 +68,7 @@ fn single_await_async_body(
     let AstNode::函数调用表达式(call) = await_expr.expression.as_ref() else {
         return None;
     };
-    // 提取所有 awaited args — 必须是整数字面量
+    // awaited args 全字面量
     let mut awaited_args: Vec<i64> = Vec::with_capacity(call.arguments.len());
     for arg in &call.arguments {
         match arg {
@@ -88,54 +94,41 @@ fn single_await_async_body(
     };
     let val = ret.value.as_ref()?;
 
-    // 形态分类
-    let form: AwaitReturn = match val.as_ref() {
-        // 返回 NAME（identity）
-        AstNode::标识符表达式(id) if id.name == decl.name => AwaitReturn::Identity,
-        // 返回 字面量（不用 NAME）
-        AstNode::字面量表达式(lit) => match &lit.value {
-            LiteralValue::整数(n) => AwaitReturn::Literal(*n),
-            _ => return None,
-        },
-        // 返回 NAME + lit / NAME * lit / lit + NAME / lit * NAME
-        AstNode::二元操作表达式(bin) => {
-            let op = match bin.operator {
-                BinaryOperator::加 => '+',
-                BinaryOperator::乘 => '*',
-                _ => return None,
-            };
-            let is_name = |n: &AstNode| -> bool {
-                matches!(n, AstNode::标识符表达式(id) if id.name == decl.name)
-            };
-            let lit_of = |n: &AstNode| -> Option<i64> {
-                if let AstNode::字面量表达式(l) = n {
-                    if let LiteralValue::整数(v) = &l.value {
-                        return Some(*v);
-                    }
-                }
-                None
-            };
-            // (NAME, lit)
-            if is_name(&bin.left) {
-                let n = lit_of(&bin.right)?;
-                if op == '+' {
-                    AwaitReturn::AddLit(n)
-                } else {
-                    AwaitReturn::MulLit(n)
-                }
-            // (lit, NAME)
-            } else if is_name(&bin.right) {
-                let n = lit_of(&bin.left)?;
-                if op == '+' {
-                    AwaitReturn::AddLit(n)
-                } else {
-                    AwaitReturn::MulLit(n)
-                }
-            } else {
-                return None;
+    // 通用 operand 识别
+    let to_operand = |n: &AstNode| -> Option<AwaitOperand> {
+        // 字面量
+        if let AstNode::字面量表达式(l) = n {
+            if let LiteralValue::整数(v) = &l.value {
+                return Some(AwaitOperand::Literal(*v));
             }
+            return None;
         }
-        _ => return None,
+        // identifier — awaited 局部 或 外层参数
+        if let AstNode::标识符表达式(id) = n {
+            if id.name == decl.name {
+                return Some(AwaitOperand::Awaited);
+            }
+            if let Some(idx) = func.parameters.iter().position(|p| p.name == id.name) {
+                return Some(AwaitOperand::Param(idx));
+            }
+            return None;
+        }
+        None
+    };
+
+    let form: AwaitReturn = if let Some(operand) = to_operand(val) {
+        AwaitReturn::Single(operand)
+    } else if let AstNode::二元操作表达式(bin) = val.as_ref() {
+        let op = match bin.operator {
+            BinaryOperator::加 => '+',
+            BinaryOperator::乘 => '*',
+            _ => return None,
+        };
+        let left = to_operand(&bin.left)?;
+        let right = to_operand(&bin.right)?;
+        AwaitReturn::BinOp(op, left, right)
+    } else {
+        return None;
     };
     Some((decl.name.clone(), call.callee.clone(), awaited_args, form))
 }
@@ -2482,186 +2475,221 @@ impl IrBuilder {
 
                         // frame layout：
                         //   state(i64@0) + return_future(ptr@8)
-                        //   + args(i64*N @16+) + awaited_future(ptr@16+8N)
-                        //   + local_a(i64@24+8N) — 这里没用到，预留对齐
-                        // 简化：固定 32 字节（state + ret + awaited + local_or_pad），
-                        //       N 必须是 0（参数支持下次扩；多 await 也下次扩）
-                        if !func_decl.parameters.is_empty() {
-                            // 暂不支持带参数 + 单 await（frame 布局会变长），fall through
-                        } else {
-                            let frame_size: i64 = 32;
-                            let awaited_off: i64 = 16;
+                        //   + args(i64*N @16..16+8N) + awaited_future(ptr@16+8N)
+                        let n_args = func_decl.parameters.len() as i64;
+                        let args_start: i64 = 16;
+                        let awaited_off: i64 = args_start + 8 * n_args;
+                        let frame_size: i64 = awaited_off + 8; // awaited 占 8 字节
+                        let frame_size = (frame_size + 7) & !7; // 8 字节对齐（已经对齐）
 
-                            // entry fn — 零参数版本
-                            self.add_instruction(IrInstruction::标签 {
-                                name: format!("define ptr @{}() {{", mangled),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "entry:".to_string(),
-                            });
+                        // entry fn — 含 N 个 i64 参数
+                        let param_decls: Vec<String> = (0..n_args)
+                            .map(|i| format!("i64 %a{}", i))
+                            .collect();
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "define ptr @{}({}) {{",
+                                mangled,
+                                param_decls.join(", ")
+                            ),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
+                                frame_size
+                            ),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %fut = call ptr @qi_future_pending()".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %ret_p = getelementptr i8, ptr %frame, i64 8".to_string(),
+                        });
+                        emit_raw(self, "  store ptr %fut, ptr %ret_p");
+                        // 把外层 args 写进 frame[16 + 8*i]
+                        for i in 0..n_args {
+                            let off = args_start + 8 * i;
                             self.add_instruction(IrInstruction::标签 {
                                 name: format!(
-                                    "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
-                                    frame_size
+                                    "  %arg{}_p = getelementptr i8, ptr %frame, i64 {}",
+                                    i, off
                                 ),
                             });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %fut = call ptr @qi_future_pending()".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %ret_p = getelementptr i8, ptr %frame, i64 8".to_string(),
-                            });
-                            emit_raw(self, "  store ptr %fut, ptr %ret_p");
-                            // state 已经是 0（alloc_frame zero-init），不需要显式 store
                             emit_raw(
                                 self,
-                                &format!(
-                                    "  call void @qi_async_spawn_poll(ptr @{}_poll, ptr %frame)",
-                                    mangled
-                                ),
+                                &format!("  store i64 %a{}, ptr %arg{}_p", i, i),
                             );
-                            emit_raw(self, "  ret ptr %fut");
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "}".to_string(),
-                            });
-
-                            // poll fn — 多状态：state 0 (call + suspend), state 1 (resume + complete)
-                            self.add_instruction(IrInstruction::标签 {
-                                name: format!(
-                                    "define void @{}_poll(ptr %pframe) {{",
-                                    mangled
-                                ),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "entry:".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %state_p = getelementptr i8, ptr %pframe, i64 0".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %state = load i64, ptr %state_p".to_string(),
-                            });
-                            // switch 是控制流，不是 instruction-with-= 也不是 label
-                            // 用 emit_raw（行尾 ;）但 switch 可以多行，分两行处理
-                            // 实际上 LLVM IR 允许 switch 紧跟一行 [...]
-                            emit_raw(
-                                self,
-                                "  switch i64 %state, label %s0 [ i64 0, label %s0 i64 1, label %s1 ]",
-                            );
-
-                            // state 0：call awaited fn → store + register waker → ret
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "s0:".to_string(),
-                            });
-                            // 调 awaited 函数，传字面量参数列表
-                            let awaited_args_str: String = awaited_args
-                                .iter()
-                                .map(|n| format!("i64 {}", n))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            self.add_instruction(IrInstruction::标签 {
-                                name: format!(
-                                    "  %fut1 = call ptr @{}({})",
-                                    awaited_mangled, awaited_args_str
-                                ),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: format!(
-                                    "  %await_p = getelementptr i8, ptr %pframe, i64 {}",
-                                    awaited_off
-                                ),
-                            });
-                            emit_raw(self, "  store ptr %fut1, ptr %await_p");
-                            // state ← 1
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %sp = getelementptr i8, ptr %pframe, i64 0".to_string(),
-                            });
-                            emit_raw(self, "  store i64 1, ptr %sp");
-                            // register waker — 这会立即触发 poll 重入如果 future 已 ready
-                            emit_raw(
-                                self,
-                                &format!(
-                                    "  call void @qi_future_register_waker(ptr %fut1, ptr @{}_poll, ptr %pframe)",
-                                    mangled
-                                ),
-                            );
-                            emit_raw(self, "  ret void");
-
-                            // state 1：load awaited，按 ret_form 算结果，complete return future，free
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "s1:".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: format!(
-                                    "  %await_p2 = getelementptr i8, ptr %pframe, i64 {}",
-                                    awaited_off
-                                ),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %fut2 = load ptr, ptr %await_p2".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %a_val = call i64 @qi_future_value_i64(ptr %fut2)".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %pret_p2 = getelementptr i8, ptr %pframe, i64 8".to_string(),
-                            });
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "  %pret2 = load ptr, ptr %pret_p2".to_string(),
-                            });
-                            // 按 ret_form 算 final_val
-                            let final_val: String = match ret_form {
-                                AwaitReturn::Identity => "%a_val".to_string(),
-                                AwaitReturn::Literal(n) => format!("{}", n),
-                                AwaitReturn::AddLit(n) => {
-                                    self.add_instruction(IrInstruction::标签 {
-                                        name: format!(
-                                            "  %final_val = add i64 %a_val, {}",
-                                            n
-                                        ),
-                                    });
-                                    "%final_val".to_string()
-                                }
-                                AwaitReturn::MulLit(n) => {
-                                    self.add_instruction(IrInstruction::标签 {
-                                        name: format!(
-                                            "  %final_val = mul i64 %a_val, {}",
-                                            n
-                                        ),
-                                    });
-                                    "%final_val".to_string()
-                                }
-                            };
-                            emit_raw(
-                                self,
-                                &format!(
-                                    "  call void @qi_future_complete_i64(ptr %pret2, i64 {})",
-                                    final_val
-                                ),
-                            );
-                            emit_raw(
-                                self,
-                                &format!(
-                                    "  call void @qi_async_free_frame(ptr %pframe, i64 {})",
-                                    frame_size
-                                ),
-                            );
-                            emit_raw(self, "  ret void");
-                            self.add_instruction(IrInstruction::标签 {
-                                name: "}".to_string(),
-                            });
-
-                            // 注册函数签名
-                            self.function_param_types.insert(mangled.clone(), vec![]);
-                            self.function_parameters.insert(mangled.clone(), vec![]);
-                            self.function_return_types
-                                .insert(mangled.clone(), "ptr".to_string());
-                            self.function_future_inner_types
-                                .insert(mangled.clone(), "i64".to_string());
-                            self.defined_functions.insert(mangled.clone());
-
-                            return Ok(String::new());
                         }
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_async_spawn_poll(ptr @{}_poll, ptr %frame)",
+                                mangled
+                            ),
+                        );
+                        emit_raw(self, "  ret ptr %fut");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
+
+                        // poll fn — multi-state with switch on frame[0]
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "define void @{}_poll(ptr %pframe) {{",
+                                mangled
+                            ),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %state_p = getelementptr i8, ptr %pframe, i64 0".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %state = load i64, ptr %state_p".to_string(),
+                        });
+                        emit_raw(
+                            self,
+                            "  switch i64 %state, label %s0 [ i64 0, label %s0 i64 1, label %s1 ]",
+                        );
+
+                        // state 0：call awaited，store + register waker → ret
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "s0:".to_string(),
+                        });
+                        let awaited_args_str: String = awaited_args
+                            .iter()
+                            .map(|n| format!("i64 {}", n))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  %fut1 = call ptr @{}({})",
+                                awaited_mangled, awaited_args_str
+                            ),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  %await_p = getelementptr i8, ptr %pframe, i64 {}",
+                                awaited_off
+                            ),
+                        });
+                        emit_raw(self, "  store ptr %fut1, ptr %await_p");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %sp = getelementptr i8, ptr %pframe, i64 0".to_string(),
+                        });
+                        emit_raw(self, "  store i64 1, ptr %sp");
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_future_register_waker(ptr %fut1, ptr @{}_poll, ptr %pframe)",
+                                mangled
+                            ),
+                        );
+                        emit_raw(self, "  ret void");
+
+                        // state 1：load awaited + 外层 args，按 ret_form 算结果
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "s1:".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  %await_p2 = getelementptr i8, ptr %pframe, i64 {}",
+                                awaited_off
+                            ),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %fut2 = load ptr, ptr %await_p2".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %a_val = call i64 @qi_future_value_i64(ptr %fut2)".to_string(),
+                        });
+                        // load 外层 args（按需）
+                        for i in 0..n_args {
+                            let off = args_start + 8 * i;
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!(
+                                    "  %parg{}_p = getelementptr i8, ptr %pframe, i64 {}",
+                                    i, off
+                                ),
+                            });
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  %parg{} = load i64, ptr %parg{}_p", i, i),
+                            });
+                        }
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %pret_p2 = getelementptr i8, ptr %pframe, i64 8".to_string(),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "  %pret2 = load ptr, ptr %pret_p2".to_string(),
+                        });
+
+                        // operand → IR 表示
+                        let operand_str = |op: AwaitOperand| -> String {
+                            match op {
+                                AwaitOperand::Literal(n) => format!("{}", n),
+                                AwaitOperand::Awaited => "%a_val".to_string(),
+                                AwaitOperand::Param(i) => format!("%parg{}", i),
+                            }
+                        };
+
+                        let final_val: String = match ret_form {
+                            AwaitReturn::Single(op) => operand_str(op),
+                            AwaitReturn::BinOp(op, l, r) => {
+                                let l_str = operand_str(l);
+                                let r_str = operand_str(r);
+                                let llvm_op = if op == '+' { "add" } else { "mul" };
+                                // 若两边都是字面量，常量折叠（避免 add i64 N, M 这种）
+                                if let (AwaitOperand::Literal(ln), AwaitOperand::Literal(rn)) = (l, r) {
+                                    let val = if op == '+' { ln + rn } else { ln * rn };
+                                    format!("{}", val)
+                                } else {
+                                    self.add_instruction(IrInstruction::标签 {
+                                        name: format!(
+                                            "  %final_val = {} i64 {}, {}",
+                                            llvm_op, l_str, r_str
+                                        ),
+                                    });
+                                    "%final_val".to_string()
+                                }
+                            }
+                        };
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_future_complete_i64(ptr %pret2, i64 {})",
+                                final_val
+                            ),
+                        );
+                        emit_raw(
+                            self,
+                            &format!(
+                                "  call void @qi_async_free_frame(ptr %pframe, i64 {})",
+                                frame_size
+                            ),
+                        );
+                        emit_raw(self, "  ret void");
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
+
+                        // 注册函数签名（外层参数 N 个 i64）
+                        let param_types: Vec<String> = (0..n_args)
+                            .map(|_| "i64".to_string())
+                            .collect();
+                        self.function_param_types.insert(mangled.clone(), param_types);
+                        self.function_parameters
+                            .insert(mangled.clone(), func_decl.parameters.clone());
+                        self.function_return_types
+                            .insert(mangled.clone(), "ptr".to_string());
+                        self.function_future_inner_types
+                            .insert(mangled.clone(), "i64".to_string());
+                        self.defined_functions.insert(mangled.clone());
+
+                        return Ok(String::new());
                     }
 
                     // §4-3 状态机 codegen MVP — 现支持
