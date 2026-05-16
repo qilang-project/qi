@@ -6,6 +6,17 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
+/// 返回一个空 C 字符串而不是 null。
+///
+/// 历史教训：本模块的字符串函数以前在错误路径返回 `null_mut()`，导致
+/// 下游 qi 代码 `字符串::替换(...) + "literal"` 拼接被吞成空串。统一
+/// 改成返回空字符串后，用户能用 `字符串::字节长度(...) == 0` 检测失
+/// 败，拼接结果也跟直觉一致。
+#[inline]
+fn empty_c_string() -> *mut c_char {
+    CString::new("").unwrap().into_raw()
+}
+
 /// Find the position of a substring in a string
 /// Returns -1 if not found, otherwise returns the byte position
 #[no_mangle]
@@ -76,13 +87,13 @@ pub extern "C" fn qi_string_substring(
     length: i64,
 ) -> *mut c_char {
     if text_ptr.is_null() || start < 0 || length < 0 {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let start = start as usize;
@@ -92,7 +103,7 @@ pub extern "C" fn qi_string_substring(
             // Return empty string
             return match CString::new("") {
                 Ok(s) => s.into_raw(),
-                Err(_) => std::ptr::null_mut(),
+                Err(_) => empty_c_string(),
             };
         }
 
@@ -101,7 +112,7 @@ pub extern "C" fn qi_string_substring(
 
         match CString::new(substring) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
@@ -114,13 +125,13 @@ pub extern "C" fn qi_string_substring_from(
     start: i64,
 ) -> *mut c_char {
     if text_ptr.is_null() || start < 0 {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let start = start as usize;
@@ -129,7 +140,7 @@ pub extern "C" fn qi_string_substring_from(
             // Return empty string
             return match CString::new("") {
                 Ok(s) => s.into_raw(),
-                Err(_) => std::ptr::null_mut(),
+                Err(_) => empty_c_string(),
             };
         }
 
@@ -137,7 +148,7 @@ pub extern "C" fn qi_string_substring_from(
 
         match CString::new(substring) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
@@ -181,30 +192,30 @@ pub extern "C" fn qi_string_replace(
     replace_ptr: *const c_char,
 ) -> *mut c_char {
     if text_ptr.is_null() || search_ptr.is_null() || replace_ptr.is_null() {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let search = match CStr::from_ptr(search_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let replace = match CStr::from_ptr(replace_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let result = text.replace(search, replace);
 
         match CString::new(result) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
@@ -214,20 +225,20 @@ pub extern "C" fn qi_string_replace(
 #[no_mangle]
 pub extern "C" fn qi_string_trim(text_ptr: *const c_char) -> *mut c_char {
     if text_ptr.is_null() {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let trimmed = text.trim();
 
         match CString::new(trimmed) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
@@ -237,20 +248,20 @@ pub extern "C" fn qi_string_trim(text_ptr: *const c_char) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn qi_string_to_upper(text_ptr: *const c_char) -> *mut c_char {
     if text_ptr.is_null() {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let upper = text.to_uppercase();
 
         match CString::new(upper) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
@@ -260,20 +271,20 @@ pub extern "C" fn qi_string_to_upper(text_ptr: *const c_char) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn qi_string_to_lower(text_ptr: *const c_char) -> *mut c_char {
     if text_ptr.is_null() {
-        return std::ptr::null_mut();
+        return empty_c_string();
     }
 
     unsafe {
         let text = match CStr::from_ptr(text_ptr).to_str() {
             Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => return empty_c_string(),
         };
 
         let lower = text.to_lowercase();
 
         match CString::new(lower) {
             Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+            Err(_) => empty_c_string(),
         }
     }
 }
