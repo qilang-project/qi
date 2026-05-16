@@ -809,6 +809,11 @@ impl IrBuilder {
         self.external_functions.insert("qi_llm_get_tool_call_name".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_llm_get_tool_call_arguments".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_llm_add_tool_result".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        // Parallel tool_calls 支持
+        self.external_functions.insert("qi_llm_get_tool_call_count".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_id_at".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_name_at".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_arguments_at".to_string(), (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()));
 
         // String module functions (标准库.文本)
         self.external_functions.insert("qi_string_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
@@ -7561,6 +7566,9 @@ impl IrBuilder {
         let mut other_instructions = Vec::new();
         let _temp_counter = self.temp_counter; // reserved for future use
         let mut current_function_ret_ty: Option<String> = None;
+        // Param SSA names injected into self.variable_types per-function during emission,
+        // so cross-function instructions don't lose param type info after codegen reset.
+        let mut injected_param_keys: Vec<String> = Vec::new();
 
         // Clone instructions to avoid borrow checker issues
         let instructions = self.instructions.clone();
@@ -9320,12 +9328,15 @@ impl IrBuilder {
                                 "qi_llm_chat" | "qi_llm_chat_async" | "qi_llm_stream_next" |
                                 "qi_llm_chat_with_tools" | "qi_llm_continue_with_tools" |
                                 "qi_llm_get_tool_call_id" | "qi_llm_get_tool_call_name" |
-                                "qi_llm_get_tool_call_arguments" => "ptr",  // Return LLM response string / Future<String>
+                                "qi_llm_get_tool_call_arguments" |
+                                "qi_llm_get_tool_call_id_at" | "qi_llm_get_tool_call_name_at" |
+                                "qi_llm_get_tool_call_arguments_at" => "ptr",  // Return LLM response string / Future<String>
                                 "qi_llm_create_session" | "qi_llm_set_config" | "qi_llm_clear_history" |
                                 "qi_llm_get_history_count" | "qi_llm_close_session" |
                                 "qi_llm_stream_chat" | "qi_llm_stream_close" |
                                 "qi_llm_register_tool" | "qi_llm_clear_tools" |
-                                "qi_llm_has_tool_call" | "qi_llm_add_tool_result" => "i64",  // Return i64
+                                "qi_llm_has_tool_call" | "qi_llm_add_tool_result" |
+                                "qi_llm_get_tool_call_count" => "i64",  // Return i64
                                 "qi_llm_free_string" => "void",  // Cleanup function
                                 _ => "i64"  // Default for unknown LLM functions
                             }
@@ -9500,11 +9511,36 @@ impl IrBuilder {
                         } else {
                             current_function_ret_ty = None;
                         }
+                        // Parse parameter SSA names + types from the define line and inject
+                        // back into variable_types. Codegen clears variable_types between
+                        // functions (builder.rs ~3322), but IR emission is a SINGLE pass over
+                        // all queued instructions. Without re-injecting params here, typed_args
+                        // lookup for a print/etc. arg referencing a param of the CURRENT
+                        // function falls back to the i64 default — which misroutes
+                        // qi_runtime_print -> qi_runtime_print_int and breaks IR linkage.
+                        injected_param_keys.clear();
+                        if let (Some(lparen), Some(rparen)) = (name.find('('), name.rfind(')')) {
+                            if rparen > lparen {
+                                let params_str = &name[lparen + 1..rparen];
+                                for part in params_str.split(',') {
+                                    let tokens: Vec<&str> = part.split_whitespace().collect();
+                                    if tokens.len() >= 2 && tokens[1].starts_with('%') {
+                                        let ty = tokens[0].to_string();
+                                        let var = tokens[1].trim_start_matches('%').to_string();
+                                        self.variable_types.insert(var.clone(), ty);
+                                        injected_param_keys.push(var);
+                                    }
+                                }
+                            }
+                        }
                         ir.push_str(&format!("{}\n", name));
                     } else if name == "}" {
                         ir.push_str("}\n");
                         // Reset current function return type at function end
                         current_function_ret_ty = None;
+                        for k in injected_param_keys.drain(..) {
+                            self.variable_types.remove(&k);
+                        }
                     } else if name.contains(" = ") {
                         // This is an instruction (like zext, add, etc.), not a label
                         // Output as-is without adding colon, but trim trailing colon if present

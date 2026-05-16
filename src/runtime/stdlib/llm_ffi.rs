@@ -615,17 +615,100 @@ pub extern "C" fn qi_llm_continue_with_tools(session_handle: i64) -> *mut c_char
 }
 
 fn 解析工具调用(assistant_message_json: *const c_char) -> Option<Value> {
+    解析工具调用按索引(assistant_message_json, 0)
+}
+
+/// 按 index 取 tool_calls[index]。支持 parallel tool_calls：模型一次返
+/// N 个工具调用时，harness 循环 0..N 各取一个 dispatch。
+fn 解析工具调用按索引(assistant_message_json: *const c_char, index: usize) -> Option<Value> {
     if assistant_message_json.is_null() {
         return None;
     }
-
     unsafe {
         let 文本 = CStr::from_ptr(assistant_message_json).to_string_lossy().to_string();
         let 消息: Value = serde_json::from_str(&文本).ok()?;
         消息.get("tool_calls")
-            .and_then(|calls| calls.get(0))
+            .and_then(|calls| calls.get(index))
             .cloned()
     }
+}
+
+/// 取 tool_calls 数组长度。模型一次返多个 parallel tool_calls 时用。
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_count(assistant_message_json: *const c_char) -> i64 {
+    if assistant_message_json.is_null() {
+        return 0;
+    }
+    unsafe {
+        let 文本 = CStr::from_ptr(assistant_message_json).to_string_lossy().to_string();
+        let 消息: Value = match serde_json::from_str(&文本) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        消息.get("tool_calls")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len() as i64)
+            .unwrap_or(0)
+    }
+}
+
+/// 按 index 取第 i 个工具调用的 ID
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_id_at(
+    assistant_message_json: *const c_char,
+    index: i64,
+) -> *mut c_char {
+    let 调用 = match 解析工具调用按索引(assistant_message_json, index as usize) {
+        Some(c) => c,
+        None => return std::ptr::null_mut(),
+    };
+    let id = 调用.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+    转为C字符串指针(id)
+}
+
+/// 按 index 取第 i 个工具调用的名称（中文化）
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_name_at(
+    session_handle: i64,
+    assistant_message_json: *const c_char,
+    index: i64,
+) -> *mut c_char {
+    let 调用 = match 解析工具调用按索引(assistant_message_json, index as usize) {
+        Some(c) => c,
+        None => return std::ptr::null_mut(),
+    };
+    let 安全名称 = 调用
+        .get("function")
+        .and_then(|f| f.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string();
+    let 会话池 = 获取会话池().lock().unwrap();
+    let 名称 = 会话池
+        .get(&session_handle)
+        .and_then(|s| s.工具名称映射.get(&安全名称))
+        .cloned()
+        .unwrap_or(安全名称);
+    转为C字符串指针(名称)
+}
+
+/// 按 index 取第 i 个工具调用的参数 JSON
+#[no_mangle]
+pub extern "C" fn qi_llm_get_tool_call_arguments_at(
+    assistant_message_json: *const c_char,
+    index: i64,
+) -> *mut c_char {
+    let 调用 = match 解析工具调用按索引(assistant_message_json, index as usize) {
+        Some(c) => c,
+        None => return std::ptr::null_mut(),
+    };
+    let 参数 = 调用.get("function").and_then(|f| f.get("arguments"));
+    let 文本 = match 参数 {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => v.to_string(),
+        None => String::new(),
+    };
+    转为C字符串指针(文本)
 }
 
 /// 判断 assistant message JSON 是否包含工具调用。

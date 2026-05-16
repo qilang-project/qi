@@ -1382,6 +1382,32 @@ impl ModuleRegistry {
             "字符串",
         ));
 
+        // ===== Parallel tool_calls 支持 — 按 index 访问 =====
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用数量",
+            "qi_llm_get_tool_call_count",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用ID索引",
+            "qi_llm_get_tool_call_id_at",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用名称索引",
+            "qi_llm_get_tool_call_name_at",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "工具调用参数索引",
+            "qi_llm_get_tool_call_arguments_at",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+
         // 添加工具结果
         llm_module.add_function(ModuleFunction::new(
             "添加工具结果",
