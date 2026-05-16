@@ -805,7 +805,10 @@ impl Cli {
                 }
                 Err(parse_error) => {
                     all_passed = false;
-                    eprintln!("  ✗ 语法错误: {:?} ({:?})", parse_error, file);
+                    // {} prints the friendly format (line/col + caret + hint);
+                    // {:?} dumps the inner Debug enum which is what end users see.
+                    eprintln!("文件: {}", file.display());
+                    eprintln!("{}", parse_error);
                 }
             }
         }
@@ -972,9 +975,9 @@ impl Cli {
                 program
             }
             Err(parse_error) => {
-                eprintln!("  ✗ 语法错误: {:?}", parse_error);
+                eprintln!("{}", parse_error);
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    format!("语法解析失败: {:?}", parse_error)
+                    "语法解析失败".to_string()
                 )));
             }
         };

@@ -21,11 +21,16 @@ pub extern "C" fn qi_io_init() {
     let _ = 获取文件模块();
 }
 
-/// 读取文件内容
+/// 读取文件内容。
+///
+/// 文件不存在或读取失败时返回空 C 字符串（而不是 null 指针），这样下游
+/// 字符串拼接 `读取(...) + "literal"` 不会被吞成空字符串。用户可以通过
+/// `字符串::字节长度(...) == 0` 检测失败。
 #[no_mangle]
 pub extern "C" fn qi_io_read_file(path: *const c_char) -> *mut c_char {
+    let empty = || CString::new("").unwrap().into_raw();
     if path.is_null() {
-        return std::ptr::null_mut();
+        return empty();
     }
 
     unsafe {
@@ -35,9 +40,9 @@ pub extern "C" fn qi_io_read_file(path: *const c_char) -> *mut c_char {
         let 模块 = 获取文件模块();
         match 模块.执行操作(文件操作::读取, &参数) {
             Ok(StdlibValue::String(内容)) => {
-                CString::new(内容).unwrap().into_raw()
+                CString::new(内容).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
             }
-            _ => std::ptr::null_mut(),
+            _ => empty(),
         }
     }
 }
