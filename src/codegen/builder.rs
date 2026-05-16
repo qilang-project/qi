@@ -789,6 +789,27 @@ impl IrBuilder {
         self.external_functions.insert("qi_crypto_base64_decode".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
         self.external_functions.insert("qi_crypto_hmac_sha256".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
 
+        // LLM module FFI — 跨包调用注册（qi-harness 等下游包用）
+        self.external_functions.insert("qi_llm_create_session".to_string(), (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_chat".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_set_config".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_clear_history".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_get_history_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_close_session".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_chat_async".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_stream_chat".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_stream_next".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_stream_close".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_register_tool".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_clear_tools".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_chat_with_tools".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_continue_with_tools".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_has_tool_call".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_id".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_name".to_string(), (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_get_tool_call_arguments".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert("qi_llm_add_tool_result".to_string(), (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()));
+
         // String module functions (标准库.文本)
         self.external_functions.insert("qi_string_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
         self.external_functions.insert("qi_string_concat".to_string(), (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()));
@@ -7837,28 +7858,9 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_websocket_unregister(i64)\n");
         ir.push_str("\n");
 
-        // LLM functions
+        // LLM functions — 仅 free_string 没在 external_functions（其他 19 个自动 declare）
         ir.push_str("; LLM (Large Language Model) functions\n");
-        ir.push_str("declare i64 @qi_llm_create_session(ptr, ptr, ptr)\n");
-        ir.push_str("declare ptr @qi_llm_chat(i64, ptr)\n");
-        ir.push_str("declare i64 @qi_llm_set_config(i64, ptr, ptr)\n");
-        ir.push_str("declare i64 @qi_llm_clear_history(i64)\n");
-        ir.push_str("declare i64 @qi_llm_get_history_count(i64)\n");
-        ir.push_str("declare i64 @qi_llm_close_session(i64)\n");
         ir.push_str("declare void @qi_llm_free_string(ptr)\n");
-        ir.push_str("declare ptr @qi_llm_chat_async(i64, ptr)\n");
-        ir.push_str("declare i64 @qi_llm_stream_chat(i64, ptr)\n");
-        ir.push_str("declare ptr @qi_llm_stream_next(i64)\n");
-        ir.push_str("declare i64 @qi_llm_stream_close(i64)\n");
-        ir.push_str("declare i64 @qi_llm_register_tool(i64, ptr, ptr, ptr)\n");
-        ir.push_str("declare i64 @qi_llm_clear_tools(i64)\n");
-        ir.push_str("declare ptr @qi_llm_chat_with_tools(i64, ptr)\n");
-        ir.push_str("declare ptr @qi_llm_continue_with_tools(i64)\n");
-        ir.push_str("declare i64 @qi_llm_has_tool_call(ptr)\n");
-        ir.push_str("declare ptr @qi_llm_get_tool_call_id(ptr)\n");
-        ir.push_str("declare ptr @qi_llm_get_tool_call_name(i64, ptr)\n");
-        ir.push_str("declare ptr @qi_llm_get_tool_call_arguments(ptr)\n");
-        ir.push_str("declare i64 @qi_llm_add_tool_result(i64, ptr, ptr, ptr)\n");
         ir.push_str("\n");
 
         // OS functions
