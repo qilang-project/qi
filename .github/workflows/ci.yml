@@ -58,24 +58,10 @@ jobs:
         # library tests cover the actual compiler / parser / codegen modules.
         run: cargo test --release --lib --verbose
 
-      - name: Smoke — basic examples
-        # Curated stable examples; no LLM/network/GUI requirements.
-        run: |
-          set -e
-          QI=./target/release/qi
-          for example in \
-            示例/基础/格式字符串.qi \
-            示例/基础/新功能演示.qi \
-            示例/标准库/路径处理/路径示例.qi \
-            示例/标准库/加密/加密.qi \
-            示例/标准库/正则表达式/正则示例.qi \
-          ; do
-            if [ -f "$example" ]; then
-              echo "::group::run $example"
-              $QI run "$example"
-              echo "::endgroup::"
-            fi
-          done
+      - name: Smoke — stable examples
+        # Curated stable examples; no LLM / network / GUI requirements.
+        # See scripts/run_examples.sh for the list.
+        run: bash scripts/run_examples.sh
 
   clippy:
     name: Clippy (lib)

@@ -30,14 +30,29 @@
 
 ### 安装
 
-```bash
-# 克隆仓库
-git clone https://github.com/你的用户名/qi.git
-cd qi
+**一键脚本**（macOS / Linux x64，从最新 GitHub Release 拉预编译二进制）：
 
-# 构建编译器
-cargo build --release
+```bash
+curl -fsSL https://raw.githubusercontent.com/qilang-project/qi-compiler/main/scripts/install.sh | bash
 ```
+
+装到自定义目录：
+
+```bash
+curl -fsSL .../install.sh | INSTALL_DIR=$HOME/bin bash
+```
+
+**从源码构建**（需要 LLVM 15）：
+
+```bash
+git clone https://github.com/qilang-project/qi-compiler.git
+cd qi-compiler
+cargo build --release
+# 二进制在 ./target/release/qi
+```
+
+Linux 装 LLVM 15：`wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 15`
+macOS：`brew install llvm@15 && export LLVM_SYS_150_PREFIX=$(brew --prefix llvm@15)`
 
 ### 第一个程序
 
