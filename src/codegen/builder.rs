@@ -1955,34 +1955,40 @@ impl IrBuilder {
         }
     }
     
-    /// Map Chinese function names to runtime function names
-    /// This bridges Qi language function names (Chinese/English aliases) to actual runtime C function names
+    /// Map Chinese function names to runtime function names.
+    ///
+    /// Bridges Qi language function names to runtime C function names. Only
+    /// **unambiguous** aliases are listed here — bare common verbs like `关闭`
+    /// / `打开` / `读取` / `写入` / `长度` / `连接` were removed because they
+    /// hijacked any user function with the same name. Use the qualified form
+    /// (`打开文件`, `字符串长度`) or module syntax (`字符串::字节长度`) for
+    /// clarity and to avoid collisions.
     fn map_to_runtime_function(&self, name: &str) -> Option<String> {
         let runtime_func = match name {
             // String operations
-            "字符串长度" | "长度" | "len" => Some("qi_runtime_string_length"),
-            "字符串连接" | "连接" | "concat" => Some("qi_runtime_string_concat"),
-            "字符串切片" | "切片" | "slice" => Some("qi_runtime_string_slice"),
-            "字符串比较" | "比较" | "compare" => Some("qi_runtime_string_compare"),
+            "字符串长度" => Some("qi_runtime_string_length"),
+            "字符串连接" => Some("qi_runtime_string_concat"),
+            "字符串切片" => Some("qi_runtime_string_slice"),
+            "字符串比较" => Some("qi_runtime_string_compare"),
 
-            // Math operations
-            "平方根" | "根号" | "求平方根" | "sqrt" => Some("qi_runtime_math_sqrt"),
-            "幂" | "次方" | "pow" => Some("qi_runtime_math_pow"),
+            // Math operations — bare 根号/绝对值/向下取整 removed (too common as
+            // user identifiers). Keep explicit 平方根/求平方根 + English forms.
+            "平方根" | "求平方根" | "sqrt" => Some("qi_runtime_math_sqrt"),
+            "幂" | "pow" => Some("qi_runtime_math_pow"),
             "正弦" | "sin" => Some("qi_runtime_math_sin"),
             "余弦" | "cos" => Some("qi_runtime_math_cos"),
             "正切" | "tan" => Some("qi_runtime_math_tan"),
-            "绝对值" | "求绝对值" | "abs" => Some("qi_runtime_math_abs_int"), // Default to int, could be smarter
+            "求绝对值" | "abs" => Some("qi_runtime_math_abs_int"),
             "向下取整" | "floor" => Some("qi_runtime_math_floor"),
             "向上取整" | "ceil" => Some("qi_runtime_math_ceil"),
             "四舍五入" | "round" => Some("qi_runtime_math_round"),
 
-            // File I/O operations
-            "打开文件" | "打开" | "open" => Some("qi_runtime_file_open"),
-            "读取文件" | "读取" | "read" => Some("qi_runtime_file_read_string"),
-            "写入文件" | "写入" | "write" => Some("qi_runtime_file_write_string"),
-            "关闭文件" | "关闭" | "close" => Some("qi_runtime_file_close"),
-            "读取文本" => Some("qi_runtime_file_read_string"),
-            "写入文本" => Some("qi_runtime_file_write_string"),
+            // File I/O operations — bare 打开/读取/写入/关闭 removed; user can
+            // define `函数 关闭(代理)` without it being hijacked into file close.
+            "打开文件" | "open" => Some("qi_runtime_file_open"),
+            "读取文件" | "读取文本" | "read" => Some("qi_runtime_file_read_string"),
+            "写入文件" | "写入文本" | "write" => Some("qi_runtime_file_write_string"),
+            "关闭文件" | "close" => Some("qi_runtime_file_close"),
 
             // Array operations
             "创建数组" | "create_array" => Some("qi_runtime_array_create"),

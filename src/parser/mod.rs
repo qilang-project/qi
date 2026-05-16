@@ -176,13 +176,13 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
     }
 
     const RESERVED_LANDMINES: &[&str] = &[
-        "结果", "类型", "尝试", "捕获", "抛出", "最终", "关闭",
+        "结果", "类型", "尝试", "捕获", "抛出", "最终",
         "继续", "跳出", "返回", "等待", "异步", "异步块",
         "新建", "解引用", "取地址", "在", "作为", "选择", "情况",
     ];
     if RESERVED_LANDMINES.contains(&tok) {
         return format!(
-            "\n  提示：`{tok}` 是 qi 的保留字，不能作为标识符名。常被误用的保留字：结果 / 类型 / 尝试 / 关闭 / 继续。换个别名（如 `{tok}值`）"
+            "\n  提示：`{tok}` 是 qi 的保留字，不能作为标识符名。常被误用的保留字：结果 / 类型 / 尝试 / 继续 / 返回。换个别名（如 `{tok}值`）"
         );
     }
 
