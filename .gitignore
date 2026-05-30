@@ -81,3 +81,5 @@ rustfmt.toml
 # LLVM intermediate files
 *.bc
 *.ll
+# Playwright MCP runtime artifacts
+.playwright-mcp/

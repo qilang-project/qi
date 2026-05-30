@@ -1,14 +1,17 @@
 //! MCP 客户端核心 FFI（标准库.MCP客户端）
 //!
 //! Rust 实现的 MCP 客户端，解决纯 Qi 实现的两个根本问题：
-//!   1. 大 SSE 响应（如 browser_evaluate）被截断 → 用 reqwest blocking 全量读取。
+//!   1. 大 SSE 响应（如 browser_evaluate）被截断 → 裸 TcpStream 读到 EOF 全量读取。
 //!   2. id 未关联 → 每条请求分配单调递增 id，在响应关联 map 中匹配。
 //!
 //! 传输：
 //!   - stdio：复用 subprocess_ffi 的子进程基础设施（spawn + 后台 reader），
 //!     在此层再加 id 关联，允许多并发请求（理论上；MCP stdio 通常串行）。
-//!   - HTTP：reqwest::blocking，每次 POST 读全部 body（.text() 即可），
+//!   - HTTP：裸 std::net::TcpStream 手写 HTTP/1.1 客户端，每次 POST 读全部 body，
 //!     对 `text/event-stream` 应答解析出第一条（也通常只有一条）`data:` 行。
+//!     （历史：曾用 reqwest::blocking，但在 qi-web 进程内发大 POST body 时，
+//!      reqwest 内部 tokio runtime 与外层 hyper server runtime 交互，导致
+//!      Playwright 返回 200 空 body / 会话失效。裸 TcpStream 无 runtime，彻底规避。）
 //!
 //! 连接描述符格式（Qi 侧字符串）：
 //!   "mcpc|<conn_id>"
@@ -24,7 +27,8 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::os::raw::c_char;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -47,13 +51,24 @@ struct StdioChild {
     eof: Arc<AtomicBool>,
 }
 
+/// HTTP(Streamable) MCP 连接状态。
+///
+/// ⚠️ 关键：Playwright MCP 把会话绑定在 TCP 连接上 —— 一旦某个请求带
+/// `Connection: close` 并断开，整条会话立刻失效（后续请求 404 Session not found）。
+/// 因此这里必须复用【同一条 keep-alive 连接】跑完整个会话，而不是每请求新建/关闭。
+struct HttpConn {
+    base_url: String,
+    session_id: String,
+    /// 持久 keep-alive 连接（懒建/断后重连）。须持锁串行化请求。
+    stream: Option<TcpStream>,
+}
+
 enum Transport {
     Stdio {
         child_state: Arc<Mutex<StdioChild>>,
     },
     Http {
-        base_url: String,
-        session_id: String,
+        http: Arc<Mutex<HttpConn>>,
     },
 }
 
@@ -148,68 +163,246 @@ fn parse_sse_body(body: &str) -> String {
 // HTTP MCP 请求辅助
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ⚠️ reqwest::blocking 内部自建 tokio runtime。若在已有 tokio runtime 上下文里
-// （如 qi-web 的请求处理线程）直接调用，流式 SSE body 的阻塞读取会被打断、
-// `.text()` 返回空 body（大/流式响应尤甚，小响应碰巧在首个缓冲块里能拿到）。
-// 解决：把整个阻塞 HTTP 调用放到一个独立 OS 线程上执行，确保它没有外层 async runtime。
-fn http_post_mcp(
-    base_url: &str,
-    session_id: &str,
-    body: &str,
-    timeout_secs: u64,
-) -> Result<String, String> {
-    let base_url = base_url.to_string();
-    let session_id = session_id.to_string();
-    let body = body.to_string();
-    std::thread::spawn(move || -> Result<String, String> {
-        use reqwest::blocking::Client;
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .build()
-            .map_err(|e| format!("reqwest build: {}", e))?;
-        let mut req = client
-            .post(&base_url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json, text/event-stream")
-            .body(body);
-        if !session_id.is_empty() {
-            req = req.header("Mcp-Session-Id", &session_id);
+// ⚠️ 两个历史/隐藏 bug，本实现一并解决：
+//   (1) reqwest::blocking 内部自建 tokio runtime。在 qi-web 进程内（已有外层
+//       hyper/tokio HTTP server）发大 POST body 时，行为异常（空 body/会话失效）。
+//       → 改用裸 std::net::TcpStream 手写 HTTP/1.1，无任何 async runtime。
+//   (2) Playwright MCP 把会话绑定在 TCP 连接上：任何带 `Connection: close` 的请求
+//       一旦断开，整条会话立即失效（后续 404 Session not found）。这才是「大请求空
+//       body」真正的根因 —— 大请求恰好更容易触发连接被关/复用断裂。
+//       → 复用同一条 keep-alive 连接跑完整个会话；按 Content-Length / chunked 精确
+//         读取每条响应，绝不主动关闭连接。
+// 仅支持 http://（localhost MCP 无需 TLS）。
+
+/// 解析 `http://host:port/path` → (host, port, path)。
+fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("仅支持 http:// 的 MCP 端点: {}", url))?;
+    // host[:port] 与 path 切分
+    let (authority, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match authority.rfind(':') {
+        Some(idx) => {
+            let h = &authority[..idx];
+            let p: u16 = authority[idx + 1..]
+                .parse()
+                .map_err(|_| format!("非法端口: {}", authority))?;
+            (h.to_string(), p)
         }
-        let resp = req.send().map_err(|e| format!("send: {}", e))?;
-        resp.text().map_err(|e| format!("read body: {}", e))
-    })
-    .join()
-    .unwrap_or_else(|_| Err("http thread panicked".to_string()))
+        None => (authority.to_string(), 80u16),
+    };
+    let path = if path.is_empty() { "/".to_string() } else { path.to_string() };
+    Ok((host, port, path))
 }
 
-fn http_extract_session(base_url: &str, body: &str) -> Result<(String, String), String> {
-    let base_url = base_url.to_string();
-    let body = body.to_string();
-    std::thread::spawn(move || -> Result<(String, String), String> {
-        use reqwest::blocking::Client;
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| format!("reqwest build: {}", e))?;
-        let resp = client
-            .post(&base_url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json, text/event-stream")
-            .body(body)
-            .send()
-            .map_err(|e| format!("send: {}", e))?;
-        let session_id = resp
-            .headers()
-            .get("mcp-session-id")
-            .or_else(|| resp.headers().get("Mcp-Session-Id"))
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let text = resp.text().map_err(|e| format!("read body: {}", e))?;
-        Ok((session_id, text))
-    })
-    .join()
-    .unwrap_or_else(|_| Err("http thread panicked".to_string()))
+/// 在响应头原文里大小写不敏感地查找 header 值。
+fn find_header_value(headers: &str, name: &str) -> Option<String> {
+    let name_lc = name.to_ascii_lowercase();
+    for line in headers.lines() {
+        if let Some(idx) = line.find(':') {
+            let (k, v) = line.split_at(idx);
+            if k.trim().to_ascii_lowercase() == name_lc {
+                return Some(v[1..].trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 在已建立的 keep-alive 连接上读取【恰好一条】HTTP 响应。
+/// 支持 Content-Length 与 chunked 两种 body 框架；不依赖 EOF / 连接关闭。
+/// 返回 (响应头原文, body 字符串)。
+fn read_one_http_response(stream: &mut TcpStream) -> Result<(String, String), String> {
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 8192];
+
+    // 1) 读到头部结束（\r\n\r\n）
+    let header_end = loop {
+        if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break p + 4;
+        }
+        let n = stream
+            .read(&mut chunk)
+            .map_err(|e| format!("read header 失败: {}", e))?;
+        if n == 0 {
+            return Err("连接在读取响应头时关闭（会话可能已失效）".to_string());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    };
+
+    let headers_text = String::from_utf8_lossy(&buf[..header_end - 4]).to_string();
+    let content_length: Option<usize> = find_header_value(&headers_text, "Content-Length")
+        .and_then(|v| v.trim().parse().ok());
+    let is_chunked = find_header_value(&headers_text, "Transfer-Encoding")
+        .map(|v| v.to_ascii_lowercase().contains("chunked"))
+        .unwrap_or(false);
+
+    // 已经读到的 body 部分
+    let mut body_raw: Vec<u8> = buf[header_end..].to_vec();
+
+    if is_chunked {
+        // 读到终止块 "0\r\n\r\n"
+        while !body_raw.windows(5).any(|w| w == b"0\r\n\r\n") {
+            let n = stream
+                .read(&mut chunk)
+                .map_err(|e| format!("read chunked 失败: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            body_raw.extend_from_slice(&chunk[..n]);
+        }
+        let decoded = decode_chunked(&body_raw);
+        Ok((headers_text, decoded))
+    } else if let Some(cl) = content_length {
+        while body_raw.len() < cl {
+            let n = stream
+                .read(&mut chunk)
+                .map_err(|e| format!("read body 失败: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            body_raw.extend_from_slice(&chunk[..n]);
+        }
+        body_raw.truncate(cl);
+        Ok((headers_text, String::from_utf8_lossy(&body_raw).to_string()))
+    } else {
+        // 无 Content-Length 且非 chunked（如 202 空体）：返回已读到的部分
+        Ok((headers_text, String::from_utf8_lossy(&body_raw).to_string()))
+    }
+}
+
+/// 解码 HTTP/1.1 chunked transfer-encoding body。
+fn decode_chunked(raw: &[u8]) -> String {
+    let mut out: Vec<u8> = Vec::with_capacity(raw.len());
+    let mut i = 0usize;
+    while i < raw.len() {
+        // 读块大小行
+        let line_end = match raw[i..].windows(2).position(|w| w == b"\r\n") {
+            Some(p) => i + p,
+            None => break,
+        };
+        let size_str = String::from_utf8_lossy(&raw[i..line_end]);
+        let size_hex = size_str.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_hex, 16).unwrap_or(0);
+        i = line_end + 2; // 跳过 \r\n
+        if size == 0 {
+            break;
+        }
+        let end = (i + size).min(raw.len());
+        out.extend_from_slice(&raw[i..end]);
+        i = end + 2; // 跳过块尾 \r\n
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 在【持久 keep-alive 连接】上发一条 POST，读回恰好一条响应。
+/// 断线时自动重连一次（连接可能被 server 空闲回收）。
+fn http_post_keepalive(
+    conn: &mut HttpConn,
+    body: &str,
+    timeout_secs: u64,
+) -> Result<(String, String), String> {
+    let (host, port, path) = parse_http_url(&conn.base_url)?;
+
+    // 组装请求（keep-alive：不发 Connection: close）
+    let mut req = String::new();
+    req.push_str(&format!("POST {} HTTP/1.1\r\n", path));
+    req.push_str(&format!("Host: {}:{}\r\n", host, port));
+    req.push_str("Content-Type: application/json\r\n");
+    req.push_str("Accept: application/json, text/event-stream\r\n");
+    if !conn.session_id.is_empty() {
+        req.push_str(&format!("Mcp-Session-Id: {}\r\n", conn.session_id));
+    }
+    req.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    req.push_str("\r\n");
+    let mut wire = req.into_bytes();
+    wire.extend_from_slice(body.as_bytes());
+
+    // 最多尝试两次：首次用现有连接，失败则重连后重试一次
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        if conn.stream.is_none() {
+            match TcpStream::connect((host.as_str(), port)) {
+                Ok(s) => {
+                    let t = Some(Duration::from_secs(timeout_secs));
+                    let _ = s.set_read_timeout(t);
+                    let _ = s.set_write_timeout(t);
+                    conn.stream = Some(s);
+                }
+                Err(e) => {
+                    last_err = format!("connect {}:{} 失败: {}", host, port, e);
+                    continue;
+                }
+            }
+        }
+
+        let stream = conn.stream.as_mut().unwrap();
+        // 每次刷新超时
+        let t = Some(Duration::from_secs(timeout_secs));
+        let _ = stream.set_read_timeout(t);
+        let _ = stream.set_write_timeout(t);
+
+        let write_ok = stream
+            .write_all(&wire)
+            .and_then(|_| stream.flush())
+            .is_ok();
+        if !write_ok {
+            // 连接坏了，丢弃后重连重试
+            conn.stream = None;
+            last_err = "写请求失败，重连重试".to_string();
+            continue;
+        }
+
+        match read_one_http_response(stream) {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                // 第一次失败：可能是 server 关闭了空闲连接 → 重连重试
+                conn.stream = None;
+                last_err = e;
+                if attempt == 0 {
+                    continue;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn http_extract_session(base_url: &str, body: &str) -> Result<(String, String, Option<TcpStream>), String> {
+    let mut conn = HttpConn {
+        base_url: base_url.to_string(),
+        session_id: String::new(),
+        stream: None,
+    };
+    let (headers, body_text) = http_post_keepalive(&mut conn, body, 30)?;
+    let session_id = find_header_value(&headers, "Mcp-Session-Id").unwrap_or_default();
+    // 复用这条已建立的连接给后续请求（保持会话存活的关键）
+    Ok((session_id, body_text, conn.stream.take()))
+}
+
+/// 在持久连接上发 DELETE 关闭会话（忽略失败）。
+fn http_delete_keepalive(conn: &mut HttpConn) -> Result<(), String> {
+    let (host, port, path) = parse_http_url(&conn.base_url)?;
+    if conn.stream.is_none() {
+        let s = TcpStream::connect((host.as_str(), port))
+            .map_err(|e| format!("connect 失败: {}", e))?;
+        let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+        let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
+        conn.stream = Some(s);
+    }
+    let stream = conn.stream.as_mut().unwrap();
+    let req = format!(
+        "DELETE {} HTTP/1.1\r\nHost: {}:{}\r\nMcp-Session-Id: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        path, host, port, conn.session_id
+    );
+    let _ = stream.write_all(req.as_bytes());
+    let _ = stream.flush();
+    let _ = read_one_http_response(stream);
+    conn.stream = None;
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -415,7 +608,7 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
     })
     .to_string();
 
-    let (session_id, init_body_text) = match http_extract_session(&url, &init_body) {
+    let (session_id, init_body_text, stream) = match http_extract_session(&url, &init_body) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[qi-mcpc] HTTP initialize 失败: {}", e);
@@ -435,17 +628,24 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
         return -1;
     }
 
-    // 发送 notifications/initialized
-    let notif = json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string();
-    // 忽略通知响应（202 或空体）
-    let _ = http_post_mcp(&url, &session_id, &notif, 10);
+    // 复用 initialize 时建立的 keep-alive 连接，保持会话存活
+    let http = Arc::new(Mutex::new(HttpConn {
+        base_url: url,
+        session_id,
+        stream,
+    }));
+
+    // 发送 notifications/initialized（同一条连接；忽略 202/空体）
+    {
+        let notif = json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string();
+        if let Ok(mut c) = http.lock() {
+            let _ = http_post_keepalive(&mut c, &notif, 10);
+        }
+    }
 
     let conn_id = next_conn_id();
     let conn = Arc::new(Connection {
-        transport: Transport::Http {
-            base_url: url,
-            session_id,
-        },
+        transport: Transport::Http { http },
         next_id: AtomicI64::new(2), // id=1 已用于 initialize
     });
 
@@ -533,10 +733,15 @@ pub extern "C" fn qi_mcpc_request(
             }
         }
 
-        Transport::Http { base_url, session_id } => {
-            // 完整读取响应 body（reqwest blocking .text() 读全部，修复大 SSE 截断 bug）
-            match http_post_mcp(base_url, session_id, &request_str, 60) {
-                Ok(body) => {
+        Transport::Http { http } => {
+            // 在【持久 keep-alive 连接】上发请求并精确读回一条响应。
+            // 复用连接是保持 Playwright 会话存活的关键（Connection: close 会杀会话）。
+            let mut c = match http.lock() {
+                Ok(g) => g,
+                Err(_) => return empty_cstr(),
+            };
+            match http_post_keepalive(&mut c, &request_str, 60) {
+                Ok((_headers, body)) => {
                     if body.is_empty() {
                         // 202 Accepted with empty body（通知响应）
                         return empty_cstr();
@@ -580,17 +785,11 @@ pub extern "C" fn qi_mcpc_close(conn_id: i64) -> i64 {
             }
             1
         }
-        Transport::Http { base_url, session_id } => {
-            if !session_id.is_empty() {
-                use reqwest::blocking::Client;
-                if let Ok(client) = Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    .build()
-                {
-                    let _ = client
-                        .delete(base_url)
-                        .header("Mcp-Session-Id", session_id.as_str())
-                        .send();
+        Transport::Http { http } => {
+            if let Ok(mut c) = http.lock() {
+                if !c.session_id.is_empty() {
+                    // 发 DELETE 关闭会话（忽略失败）
+                    let _ = http_delete_keepalive(&mut c);
                 }
             }
             1
@@ -619,6 +818,29 @@ pub extern "C" fn qi_mcpc_free_string(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_decode_chunked() {
+        // 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+        let raw = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        assert_eq!(decode_chunked(raw), "hello world");
+    }
+
+    #[test]
+    fn test_find_header_value_case_insensitive() {
+        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nMcp-Session-Id: abc123";
+        assert_eq!(find_header_value(headers, "mcp-session-id").as_deref(), Some("abc123"));
+        assert_eq!(find_header_value(headers, "Content-Length"), None);
+    }
+
+    #[test]
+    fn test_parse_http_url() {
+        assert_eq!(parse_http_url("http://localhost:43570/mcp").unwrap(),
+            ("localhost".to_string(), 43570u16, "/mcp".to_string()));
+        assert_eq!(parse_http_url("http://127.0.0.1:8/x/y").unwrap(),
+            ("127.0.0.1".to_string(), 8u16, "/x/y".to_string()));
+        assert!(parse_http_url("https://x/y").is_err());
+    }
 
     #[test]
     fn test_parse_sse_body_direct_json() {
