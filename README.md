@@ -1,22 +1,30 @@
-# Qi 编程语言编译器
+# 奇语 Qi — 编程语言编译器
 
-一个用于 Qi 编程语言的编译器，支持 100% 中文关键字。
+奇语（Qi）编译器，支持 100% 中文关键字，基于 LLVM 编译为原生可执行文件。
+
+🌐 官网：https://qilang-project.github.io/
 
 ## 项目状态
 
-🚧 **正在开发中** - 核心编译器和运行时已实现基础功能
+🚧 **正在开发中** — 核心编译器、运行时、标准库可用；编译器单元测试 348 个全绿。
 
 ## 特性
 
 - ✅ **100% 中文关键字支持** - 完全使用中文编程
-- ✅ **LLVM 代码生成** - 基于 LLVM 的高性能编译
+- ✅ **LLVM 代码生成** - 基于 LLVM 15 编译为原生可执行文件
 - ✅ **M:N 协程调度** - 类似 Go 的轻量级并发模型
 - ✅ **通道通信** - 支持带缓冲和无缓冲通道
 - ✅ **Select 多路复用** - 协程间通信的选择语句
-- ✅ **异步编程** - async/await 支持
-- ✅ **标准库** - 加密、文件IO、网络等核心模块
-- 🔧 **现代语言特性** - 结构体、枚举、方法（开发中）
-- 🧪 **示例覆盖** - 包含 40+ 个中文示例程序
+- ✅ **异步编程** - `未来<T>` / `等待` 异步运行时
+- ✅ **标准库** - 25+ 模块（加密、HTTP、JSON、网络、正则、数据库、大模型…）
+- ✅ **友好错误信息** - rustc 风格行列号 + 源码片段 + caret + 修复提示
+- 🔧 **现代语言特性** - 结构体、枚举、Go 风格方法
+
+## 一键安装（macOS / Linux）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qilang-project/qi/main/scripts/install.sh | bash
+```
 
 ## 文档
 
@@ -33,7 +41,7 @@
 **一键脚本**（macOS / Linux x64，从最新 GitHub Release 拉预编译二进制）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qilang-project/qi-compiler/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qilang-project/qi/main/scripts/install.sh | bash
 ```
 
 装到自定义目录：
@@ -45,8 +53,8 @@ curl -fsSL .../install.sh | INSTALL_DIR=$HOME/bin bash
 **从源码构建**（需要 LLVM 15）：
 
 ```bash
-git clone https://github.com/qilang-project/qi-compiler.git
-cd qi-compiler
+git clone https://github.com/qilang-project/qi.git
+cd qi
 cargo build --release
 # 二进制在 ./target/release/qi
 ```
