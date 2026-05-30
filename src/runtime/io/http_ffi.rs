@@ -238,6 +238,67 @@ pub extern "C" fn qi_http_options(url: *const c_char) -> *mut c_char {
     }
 }
 
+/// 通用 HTTP 请求：method, url, 头(JSON对象字符串 {"K":"V"}), body。
+/// 返回 JSON 字符串：{"status":200,"headers":{...小写键...},"body":"..."}。
+/// SSE/text 体原样放进 body，由调用方（Qi）自行解析 data: 行。
+#[no_mangle]
+pub extern "C" fn qi_http_request(
+    method: *const c_char,
+    url: *const c_char,
+    headers_json: *const c_char,
+    body: *const c_char,
+) -> *mut c_char {
+    if method.is_null() || url.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let 方法字符串 = CStr::from_ptr(method).to_string_lossy().to_uppercase();
+        let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
+        let 头文本 = if headers_json.is_null() { String::new() }
+            else { CStr::from_ptr(headers_json).to_string_lossy().to_string() };
+        let 体文本 = if body.is_null() { String::new() }
+            else { CStr::from_ptr(body).to_string_lossy().to_string() };
+
+        let 方法 = match reqwest::Method::from_bytes(方法字符串.as_bytes()) {
+            Ok(m) => m,
+            Err(_) => reqwest::Method::GET,
+        };
+        let 结果 = (|| -> Result<serde_json::Value, String> {
+            let 客户端 = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build().map_err(|e| e.to_string())?;
+            let mut 构建器 = 客户端.request(方法, &地址);
+            // 自定义头
+            if !头文本.is_empty() {
+                if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&头文本) {
+                    for (k, v) in m {
+                        if let Some(vs) = v.as_str() {
+                            构建器 = 构建器.header(k, vs);
+                        }
+                    }
+                }
+            }
+            if !体文本.is_empty() {
+                构建器 = 构建器.body(体文本);
+            }
+            let 响应 = 构建器.send().map_err(|e| e.to_string())?;
+            let 状态 = 响应.status().as_u16();
+            let mut 头对象 = serde_json::Map::new();
+            for (k, v) in 响应.headers().iter() {
+                头对象.insert(k.as_str().to_lowercase(),
+                    serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+            }
+            let 体 = 响应.text().map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({"status": 状态, "headers": 头对象, "body": 体}))
+        })();
+        let 输出 = match 结果 {
+            Ok(v) => v.to_string(),
+            Err(e) => serde_json::json!({"status":0,"headers":{},"body":format!("HTTP错误: {}", e)}).to_string(),
+        };
+        转为C字符串(输出)
+    }
+}
+
 /// 创建 HTTP 请求（返回请求句柄）
 #[no_mangle]
 pub extern "C" fn qi_http_request_create(method: *const c_char, url: *const c_char) -> i64 {

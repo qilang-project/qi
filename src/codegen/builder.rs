@@ -7834,6 +7834,7 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_http_init()\n");
         ir.push_str("declare ptr @qi_http_get(ptr)\n");
         ir.push_str("declare ptr @qi_http_post(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_http_request(ptr, ptr, ptr, ptr)\n");
         ir.push_str("declare ptr @qi_http_put(ptr, ptr)\n");
         ir.push_str("declare ptr @qi_http_delete(ptr)\n");
         ir.push_str("declare ptr @qi_http_head(ptr)\n");
@@ -9321,6 +9322,7 @@ impl IrBuilder {
                             match callee.as_str() {
                                 "qi_http_get" | "qi_http_post" | "qi_http_put" | "qi_http_delete" |
                                 "qi_http_head" | "qi_http_patch" | "qi_http_options" |
+                                "qi_http_request" |
                                 "qi_http_request_execute" | "qi_http_server_handle_request" | "qi_http_server_accept" => "ptr",  // Return response strings
                                 "qi_http_init" | "qi_http_request_create" | "qi_http_request_set_header" |
                                 "qi_http_request_set_body" | "qi_http_request_set_timeout" |

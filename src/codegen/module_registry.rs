@@ -981,6 +981,13 @@ impl ModuleRegistry {
             "字符串",  // 返回响应体
         ));
 
+        http_module.add_function(ModuleFunction::new(
+            "请求",
+            "qi_http_request",
+            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+
         // 高级请求构建器
         http_module.add_function(ModuleFunction::new(
             "创建请求",
