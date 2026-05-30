@@ -588,6 +588,11 @@ pub struct IrBuilder {
     /// the same identifier is used in multiple `try`/`catch` blocks within
     /// one function. Looked up by 标识符表达式 / 赋值表达式 before mangling.
     variable_alias: std::collections::HashMap<String, String>,
+    /// Set of LLVM local alloca names (without %) already emitted in the
+    /// current function. Used to uniquify 变量声明 allocas so that two
+    /// declarations of the same Qi name in different blocks of one function
+    /// don't collide ("multiple definition of local value"). Reset per function.
+    used_local_names: std::collections::HashSet<String>,
     /// Track constant variables (cannot be reassigned)
     constant_variables: std::collections::HashSet<String>,
     /// Track Future variable inner types (variable_name -> inner_type like "i64", "i1", "double")
@@ -678,6 +683,7 @@ impl IrBuilder {
             label_counter: 0,
             variable_types: std::collections::HashMap::new(),
             variable_alias: std::collections::HashMap::new(),
+            used_local_names: std::collections::HashSet::new(),
             constant_variables: std::collections::HashSet::new(),
             future_inner_types: std::collections::HashMap::new(),
             function_future_inner_types: std::collections::HashMap::new(),
@@ -1743,6 +1749,18 @@ impl IrBuilder {
 
     /// Mangle Chinese function names using UTF-8 + Hex encoding
     /// Prefix with _Z_ to avoid conflicts with C library symbols
+    /// 进入一个词法块前快照 variable_alias，块结束后用它还原。
+    /// 这样块内的同名局部变量唯一化（shadowing）不会泄漏到块外，
+    /// 块外对同一标识符的引用回退到外层 alloca。
+    /// 注意：只还原 alias，不还原 used_local_names —— 已用的 alloca 裸名
+    /// 必须在整个函数内保持唯一（含兄弟块），否则又会撞名。
+    fn snapshot_alias(&self) -> std::collections::HashMap<String, String> {
+        self.variable_alias.clone()
+    }
+    fn restore_alias(&mut self, snapshot: std::collections::HashMap<String, String>) {
+        self.variable_alias = snapshot;
+    }
+
     fn mangle_function_name(&self, name: &str) -> String {
         // ASCII names remain unchanged (except main function special case)
         if name.chars().all(|c| c.is_ascii()) {
@@ -2148,8 +2166,10 @@ impl IrBuilder {
                 Ok("main".to_string())
             }
             AstNode::变量声明(decl) => {
-                // Mangle variable names for Chinese characters
-                let var_name = if decl.name.chars().any(|c| !c.is_ascii()) {
+                // Mangle variable names for Chinese characters.
+                // NOTE: 这里先算出“裸名”(不带 %)，下面在局部声明时可能会因同函数内
+                // 跨块重名而追加后缀唯一化（见 used_local_names）。
+                let mut var_name = if decl.name.chars().any(|c| !c.is_ascii()) {
                     format!("%{}", self.mangle_function_name(&decl.name))
                 } else {
                     format!("%{}", decl.name)
@@ -2380,11 +2400,44 @@ impl IrBuilder {
                 };
 
                 // Record the variable type for later use (both original and mangled names)
-                let mangled_name = if decl.name.chars().any(|c| !c.is_ascii()) {
+                let mut mangled_name = if decl.name.chars().any(|c| !c.is_ascii()) {
                     format!("_Z_{}", self.mangle_function_name(&decl.name).trim_start_matches("_Z_"))
                 } else {
                     decl.name.clone()
                 };
+
+                // —— 同名局部变量跨块 alloca 撞名修复 ——
+                // 局部 `变量` 声明时，LLVM 的 alloca 名仅来源于（mangle 后的）变量名，
+                // 于是同一函数内两个块各声明一个同名变量会生成两条 `%X = alloca`，
+                // LLVM 报 "multiple definition of local value named 'X'"。
+                // 解决：每个函数维护一份“已用裸名集合”，碰撞时给本次声明追加 `_N`
+                // 后缀得到唯一裸名，并把它写进 variable_alias，让后续对该标识符的
+                // 加载/存储/赋值解析到正确的 alloca（参考路径会先查 variable_alias）。
+                // 初始化表达式在此之前已经 build 过（见上面各分支的 pre_evaluated_init），
+                // 所以自引用初始化（如 `变量 值 = 值 + 1` 引用外层 值）仍解析到旧 alloca。
+                // 注意：alias 值是纯 ASCII 的唯一裸名，参考路径不会再 mangle 它。
+                if self.current_function_name.is_some() {
+                    let bare = var_name.trim_start_matches('%').to_string();
+                    if self.used_local_names.contains(&bare) {
+                        let mut n = 1usize;
+                        let mut unique = format!("{}_{}", bare, n);
+                        while self.used_local_names.contains(&unique) {
+                            n += 1;
+                            unique = format!("{}_{}", bare, n);
+                        }
+                        self.used_local_names.insert(unique.clone());
+                        var_name = format!("%{}", unique);
+                        mangled_name = unique.clone();
+                        // 用户标识符 → 唯一内部裸名（ASCII，不会被再次 mangle）
+                        self.variable_alias.insert(decl.name.clone(), unique);
+                    } else {
+                        self.used_local_names.insert(bare);
+                        // 该名字未撞名：清掉可能残留的旧 alias（外层同名 alias 失效），
+                        // 让标识符解析回退到直接 mangle，对应本次的 alloca。
+                        self.variable_alias.remove(&decl.name);
+                    }
+                }
+
                 self.variable_types.insert(decl.name.clone(), type_name.to_string());
                 self.variable_types.insert(mangled_name.clone(), type_name.to_string());
                 self.record_function_pointer_signature(&decl.name, &decl.type_annotation);
@@ -3482,6 +3535,8 @@ impl IrBuilder {
 
                 // Set current function name for return statement processing
                 self.current_function_name = Some(func_name.clone());
+                // 新函数体：清空“已用局部 alloca 名”集合，避免跨函数误判撞名
+                self.used_local_names.clear();
 
                 // Set AST return type for Future wrapping detection
                 self.current_function_ast_return_type = func_decl.return_type.clone();
@@ -3725,9 +3780,11 @@ impl IrBuilder {
                 // Then branch
                 self.add_instruction(IrInstruction::标签 { name: then_label.clone() });
                 let then_has_return = self.contains_return(&if_stmt.then_branch);
+                let then_alias_snap = self.snapshot_alias();
                 for stmt in &if_stmt.then_branch {
                     self.build_node(stmt)?;
                 }
+                self.restore_alias(then_alias_snap);
                 // Only add jump if there's no return
                 if !then_has_return {
                     self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
@@ -3737,7 +3794,9 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 { name: else_label.clone() });
                 let else_has_return = if let Some(else_branch) = &if_stmt.else_branch {
                     let has_ret = self.node_contains_return(else_branch);
+                    let else_alias_snap = self.snapshot_alias();
                     self.build_node(else_branch)?;
+                    self.restore_alias(else_alias_snap);
                     has_ret
                 } else {
                     false
@@ -3785,9 +3844,11 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
 
                 // Body
+                let while_alias_snap = self.snapshot_alias();
                 for stmt in &while_stmt.body {
                     self.build_node(stmt)?;
                 }
+                self.restore_alias(while_alias_snap);
 
                 // Jump back to start to check condition again
                 self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
@@ -3817,9 +3878,11 @@ impl IrBuilder {
                 self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
 
                 // Body
+                let loop_alias_snap = self.snapshot_alias();
                 for stmt in &loop_stmt.body {
                     self.build_node(stmt)?;
                 }
+                self.restore_alias(loop_alias_snap);
 
                 // Jump back to start (infinite loop)
                 self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
@@ -4362,10 +4425,15 @@ impl IrBuilder {
                             return Err(format!("常量 '{}' 不能重新赋值", ident.name));
                         }
 
-                        let bare_mangled = if ident.name.chars().any(|c| !c.is_ascii()) {
-                            self.mangle_function_name(&ident.name)
+                        // 先经 variable_alias 把用户标识符解析到唯一内部名
+                        // （同名局部跨块唯一化 / catch error 变量），再 mangle。
+                        let resolved_name = self.variable_alias.get(&ident.name)
+                            .cloned()
+                            .unwrap_or_else(|| ident.name.clone());
+                        let bare_mangled = if resolved_name.chars().any(|c| !c.is_ascii()) {
+                            self.mangle_function_name(&resolved_name)
                         } else {
-                            ident.name.clone()
+                            resolved_name.clone()
                         };
 
                         let is_global = self.global_variables.contains(&ident.name) ||
@@ -5979,10 +6047,13 @@ impl IrBuilder {
                 }
             }
             AstNode::块语句(block_stmt) => {
-                // Process all statements in the block
+                // Process all statements in the block.
+                // 块作用域内同名局部变量的唯一化别名不应泄漏到块外。
+                let alias_snap = self.snapshot_alias();
                 for stmt in &block_stmt.statements {
                     self.build_node(stmt)?;
                 }
+                self.restore_alias(alias_snap);
                 Ok("block".to_string())
             }
             AstNode::方法声明(method_decl) => {
@@ -6078,6 +6149,7 @@ impl IrBuilder {
                 // Set current function name so local variable declarations inside
                 // the method body are treated as local (not global) variables
                 self.current_function_name = Some(func_name.clone());
+                self.used_local_names.clear();
                 self.current_function_ast_return_type = method_decl.return_type.clone();
 
                 // Process method body
