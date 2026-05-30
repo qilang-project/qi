@@ -82,7 +82,11 @@ impl Default for IoTimeout {
 impl IoTimeout {
     /// Create new timeout configuration
     pub fn new(timeout_ms: u64) -> Self {
-        Self { timeout_ms, read_timeout: true, write_timeout: true }
+        Self {
+            timeout_ms,
+            read_timeout: true,
+            write_timeout: true,
+        }
     }
 
     /// Get timeout as Duration

@@ -20,7 +20,9 @@ impl Backtrace {
 
     fn frames(&self) -> Vec<BacktraceFrame> {
         // Return a placeholder frame for testing
-        vec![BacktraceFrame { ip: std::ptr::null_mut() }]
+        vec![BacktraceFrame {
+            ip: std::ptr::null_mut(),
+        }]
     }
 }
 
@@ -251,7 +253,12 @@ impl StackTraceCollector {
                 None, // Column info not available in backtrace crate
             )
         } else {
-            (format!("frame_{}", index), "unknown".to_string(), None, None)
+            (
+                format!("frame_{}", index),
+                "unknown".to_string(),
+                None,
+                None,
+            )
         };
 
         let basic_frame = crate::runtime::error::StackFrame::new(&function_name, &file_name)
@@ -340,7 +347,12 @@ impl StackTraceCollector {
                 FrameType::Unknown => "未知",
             };
 
-            result.push_str(&format!("  {}. [{}] {}\n", i, frame_type_str, frame.frame.format()));
+            result.push_str(&format!(
+                "  {}. [{}] {}\n",
+                i,
+                frame_type_str,
+                frame.frame.format()
+            ));
 
             if let Some(ref module) = frame.module {
                 result.push_str(&format!("     模块: {}\n", module));
@@ -531,7 +543,10 @@ mod tests {
             lineno: None,
         });
 
-        assert_eq!(collector.classify_frame_type(&runtime_symbol), FrameType::RuntimeCode);
+        assert_eq!(
+            collector.classify_frame_type(&runtime_symbol),
+            FrameType::RuntimeCode
+        );
 
         let system_symbol = Some(BacktraceSymbol {
             name: Some("std::collections::test".to_string()),
@@ -539,7 +554,10 @@ mod tests {
             lineno: None,
         });
 
-        assert_eq!(collector.classify_frame_type(&system_symbol), FrameType::SystemCode);
+        assert_eq!(
+            collector.classify_frame_type(&system_symbol),
+            FrameType::SystemCode
+        );
     }
 
     #[test]

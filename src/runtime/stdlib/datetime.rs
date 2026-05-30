@@ -879,8 +879,14 @@ mod tests {
         let timestamp = 1704556800; // 2024-01-06 16:00:00 UTC
 
         // Test is_between
-        assert_eq!(qi_datetime_is_between(timestamp, timestamp - 100, timestamp + 100), 1);
-        assert_eq!(qi_datetime_is_between(timestamp, timestamp + 100, timestamp + 200), 0);
+        assert_eq!(
+            qi_datetime_is_between(timestamp, timestamp - 100, timestamp + 100),
+            1
+        );
+        assert_eq!(
+            qi_datetime_is_between(timestamp, timestamp + 100, timestamp + 200),
+            0
+        );
 
         // Test weekend/weekday
         assert_eq!(qi_datetime_is_weekend(timestamp), 1); // Saturday

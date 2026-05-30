@@ -91,7 +91,10 @@ impl GenericEventLoop {
         let mut events = Vec::new();
         for (&fd, event_types) in &self.registrations {
             for event in event_types {
-                events.push(EpollEvent { fd, event_type: *event });
+                events.push(EpollEvent {
+                    fd,
+                    event_type: *event,
+                });
             }
         }
         Ok(events)
@@ -113,7 +116,9 @@ pub struct LinuxEpoll {
 #[cfg(target_os = "linux")]
 impl LinuxEpoll {
     pub fn new() -> Self {
-        Self { inner: GenericEventLoop::new() }
+        Self {
+            inner: GenericEventLoop::new(),
+        }
     }
 
     pub fn initialize(&mut self) -> SyscallResult<()> {
@@ -146,7 +151,9 @@ pub struct MacOsKqueue {
 #[cfg(target_os = "macos")]
 impl MacOsKqueue {
     pub fn new() -> Self {
-        Self { inner: GenericEventLoop::new() }
+        Self {
+            inner: GenericEventLoop::new(),
+        }
     }
 
     pub fn initialize(&mut self) -> SyscallResult<()> {
@@ -179,7 +186,9 @@ pub struct WindowsIocp {
 #[cfg(target_os = "windows")]
 impl WindowsIocp {
     pub fn new() -> Self {
-        Self { inner: GenericEventLoop::new() }
+        Self {
+            inner: GenericEventLoop::new(),
+        }
     }
 
     pub fn initialize(&mut self) -> SyscallResult<()> {

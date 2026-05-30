@@ -83,7 +83,10 @@ pub extern "C" fn qi_test_assert_eq_string(
             String::new()
         };
 
-        eprintln!("❌ 断言失败: 期望 '{}', 实际 '{}'", expected_str, actual_str);
+        eprintln!(
+            "❌ 断言失败: 期望 '{}', 实际 '{}'",
+            expected_str, actual_str
+        );
         if !msg.is_empty() {
             eprintln!("   消息: {}", msg);
         }

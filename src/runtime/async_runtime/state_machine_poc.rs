@@ -85,8 +85,10 @@ extern "C" fn poll_加一异步(frame_ptr: *mut u8) {
 
                 // pending —— transition 到 state 1，注册 waker
                 frame.state = 1;
-                let waker =
-                    StateMachineWaker { poll_fn: poll_加一异步, frame: frame_ptr as usize };
+                let waker = StateMachineWaker {
+                    poll_fn: poll_加一异步,
+                    frame: frame_ptr as usize,
+                };
                 unsafe {
                     (*fut).register_sm_waker(waker);
                 }

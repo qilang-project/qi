@@ -58,7 +58,11 @@ pub struct SymbolTable {
 pub enum ScopeError {
     /// Name conflict
     #[error("名称冲突: {name} 已在作用域中定义")]
-    NameConflict { name: String, existing_span: Span, new_span: Span },
+    NameConflict {
+        name: String,
+        existing_span: Span,
+        new_span: Span,
+    },
 
     /// Undefined symbol
     #[error("未定义的符号: {name}")]

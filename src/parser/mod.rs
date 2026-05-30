@@ -49,7 +49,10 @@ where
                 "语法错误：源码意外结束\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  期望：{exp}"
             )
         }
-        LE::UnrecognizedToken { token: (start, tok, end), expected } => {
+        LE::UnrecognizedToken {
+            token: (start, tok, end),
+            expected,
+        } => {
             let lo: usize = (*start).into();
             let hi: usize = (*end).into();
             let len = hi.saturating_sub(lo).max(1);
@@ -62,7 +65,9 @@ where
                 "语法错误：意外的标记 `{tok}`\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  期望：{exp_summary}{hint}"
             )
         }
-        LE::ExtraToken { token: (start, tok, end) } => {
+        LE::ExtraToken {
+            token: (start, tok, end),
+        } => {
             let lo: usize = (*start).into();
             let hi: usize = (*end).into();
             let len = hi.saturating_sub(lo).max(1);
@@ -249,7 +254,10 @@ mod error_format_tests {
         // Either the full list is short, or we see the truncation hint
         let truncated = msg.contains("以及") && msg.contains("个其他选项");
         let short = msg.matches(" / ").count() <= 8;
-        assert!(truncated || short, "expected truncation or short list: {msg}");
+        assert!(
+            truncated || short,
+            "expected truncation or short list: {msg}"
+        );
     }
 
     #[test]

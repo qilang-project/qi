@@ -115,22 +115,22 @@ impl LlvmCodeGenerator {
                     .i8_type()
                     .ptr_type(inkwell::AddressSpace::default())
                     .as_basic_type_enum()),
-                BasicType::空 => {
-                    Err(LlvmError::IrGeneration("空类型无法转换为 LLVM 类型".to_string()))
-                }
+                BasicType::空 => Err(LlvmError::IrGeneration(
+                    "空类型无法转换为 LLVM 类型".to_string(),
+                )),
             },
-            TypeNode::函数类型(_) => {
-                Err(LlvmError::IrGeneration("函数类型作为参数暂不支持".to_string()))
-            }
-            TypeNode::数组类型(_) => {
-                Err(LlvmError::IrGeneration("数组类型作为参数暂不支持".to_string()))
-            }
-            TypeNode::结构体类型(_) => {
-                Err(LlvmError::IrGeneration("结构体类型作为参数暂不支持".to_string()))
-            }
-            TypeNode::枚举类型(_) => {
-                Err(LlvmError::IrGeneration("枚举类型作为参数暂不支持".to_string()))
-            }
+            TypeNode::函数类型(_) => Err(LlvmError::IrGeneration(
+                "函数类型作为参数暂不支持".to_string(),
+            )),
+            TypeNode::数组类型(_) => Err(LlvmError::IrGeneration(
+                "数组类型作为参数暂不支持".to_string(),
+            )),
+            TypeNode::结构体类型(_) => Err(LlvmError::IrGeneration(
+                "结构体类型作为参数暂不支持".to_string(),
+            )),
+            TypeNode::枚举类型(_) => Err(LlvmError::IrGeneration(
+                "枚举类型作为参数暂不支持".to_string(),
+            )),
         }
     }
 
@@ -245,7 +245,10 @@ impl LlvmCodeGenerator {
         if let Some(param_alloca) = self.parameter_values.get(param_name) {
             Ok(self.builder.build_load(*param_alloca, param_name))
         } else {
-            Err(LlvmError::IrGeneration(format!("参数 '{}' 未找到", param_name)))
+            Err(LlvmError::IrGeneration(format!(
+                "参数 '{}' 未找到",
+                param_name
+            )))
         }
     }
 
@@ -334,7 +337,10 @@ impl LlvmCodeGenerator {
             AstNode::标识符表达式(identifier) => self.generate_identifier(identifier),
             AstNode::二元操作表达式(binary) => self.generate_binary_expression(binary),
             AstNode::函数调用表达式(call) => self.generate_function_call_expr(call),
-            _ => Err(LlvmError::IrGeneration(format!("不支持的表达式类型: {:?}", expr))),
+            _ => Err(LlvmError::IrGeneration(format!(
+                "不支持的表达式类型: {:?}",
+                expr
+            ))),
         }
     }
 
@@ -364,9 +370,9 @@ impl LlvmCodeGenerator {
                 .i8_type()
                 .const_int(*value as u64, false)
                 .as_basic_value_enum()),
-            crate::parser::ast::LiteralValue::字符串(_) => {
-                Err(LlvmError::IrGeneration("字符串字面量生成暂未实现".to_string()))
-            }
+            crate::parser::ast::LiteralValue::字符串(_) => Err(LlvmError::IrGeneration(
+                "字符串字面量生成暂未实现".to_string(),
+            )),
         }
     }
 
@@ -381,7 +387,10 @@ impl LlvmCodeGenerator {
         }
 
         // TODO: Look up in variable symbol table
-        Err(LlvmError::IrGeneration(format!("标识符 '{}' 未找到", identifier.name)))
+        Err(LlvmError::IrGeneration(format!(
+            "标识符 '{}' 未找到",
+            identifier.name
+        )))
     }
 
     /// Generate binary expression
@@ -469,7 +478,10 @@ impl LlvmCodeGenerator {
                     Err(LlvmError::IrGeneration("除法操作类型不匹配".to_string()))
                 }
             }
-            _ => Err(LlvmError::IrGeneration(format!("不支持的操作符: {:?}", binary.operator))),
+            _ => Err(LlvmError::IrGeneration(format!(
+                "不支持的操作符: {:?}",
+                binary.operator
+            ))),
         }
     }
 
@@ -523,15 +535,21 @@ impl LlvmCodeGenerator {
 #[cfg(not(feature = "llvm"))]
 impl LlvmCodeGenerator {
     pub fn generate_ir(&mut self, _ir: &str) -> Result<String, LlvmError> {
-        Err(LlvmError::UnsupportedTarget(crate::config::CompilationTarget::Linux))
+        Err(LlvmError::UnsupportedTarget(
+            crate::config::CompilationTarget::Linux,
+        ))
     }
 
     pub fn optimize(&mut self, _level: crate::config::OptimizationLevel) -> Result<(), LlvmError> {
-        Err(LlvmError::UnsupportedTarget(crate::config::CompilationTarget::Linux))
+        Err(LlvmError::UnsupportedTarget(
+            crate::config::CompilationTarget::Linux,
+        ))
     }
 
     pub fn write_object_file(&self, _path: &str) -> Result<(), LlvmError> {
-        Err(LlvmError::UnsupportedTarget(crate::config::CompilationTarget::Linux))
+        Err(LlvmError::UnsupportedTarget(
+            crate::config::CompilationTarget::Linux,
+        ))
     }
 
     pub fn get_module(&self) -> &() {

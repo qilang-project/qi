@@ -383,8 +383,10 @@ impl Profiler {
             }
         }
 
-        self.debug_module
-            .info(&format!("性能分析会话完成: {} (耗时: {}μs)", name, total_duration))?;
+        self.debug_module.info(&format!(
+            "性能分析会话完成: {} (耗时: {}μs)",
+            name, total_duration
+        ))?;
         Ok(profile_data)
     }
 

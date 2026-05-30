@@ -60,8 +60,12 @@ pub extern "C" fn qi_vector_dot(
         let v1 = std::slice::from_raw_parts(v1_data, v1_len as usize);
         let v2 = std::slice::from_raw_parts(v2_data, v2_len as usize);
 
-        let 向量1 = 向量 { 元素: v1.to_vec() };
-        let 向量2 = 向量 { 元素: v2.to_vec() };
+        let 向量1 = 向量 {
+            元素: v1.to_vec()
+        };
+        let 向量2 = 向量 {
+            元素: v2.to_vec()
+        };
 
         match 向量1.点积(&向量2) {
             Ok(点积结果) => {
@@ -97,8 +101,12 @@ pub extern "C" fn qi_vector_add(
         let v1 = std::slice::from_raw_parts(v1_data, v1_len as usize);
         let v2 = std::slice::from_raw_parts(v2_data, v2_len as usize);
 
-        let 向量1 = 向量 { 元素: v1.to_vec() };
-        let 向量2 = 向量 { 元素: v2.to_vec() };
+        let 向量1 = 向量 {
+            元素: v1.to_vec()
+        };
+        let 向量2 = 向量 {
+            元素: v2.to_vec()
+        };
 
         match 向量1.加(&向量2) {
             Ok(结果向量) => {
@@ -122,7 +130,9 @@ pub extern "C" fn qi_vector_magnitude(data: *const f64, length: i64, result: *mu
 
     unsafe {
         let 数据切片 = std::slice::from_raw_parts(data, length as usize);
-        let 向量 = 向量 { 元素: 数据切片.to_vec() };
+        let 向量 = 向量 {
+            元素: 数据切片.to_vec(),
+        };
 
         *result = 向量.长度();
         0
@@ -144,7 +154,9 @@ pub extern "C" fn qi_vector_normalize(
 
     unsafe {
         let 输入 = std::slice::from_raw_parts(input_data, length as usize);
-        let 向量 = 向量 { 元素: 输入.to_vec() };
+        let 向量 = 向量 {
+            元素: 输入.to_vec(),
+        };
 
         match 向量.归一化() {
             Ok(结果) => {
@@ -180,8 +192,12 @@ pub extern "C" fn qi_vector_cosine_similarity(
         let v1 = std::slice::from_raw_parts(v1_data, v1_len as usize);
         let v2 = std::slice::from_raw_parts(v2_data, v2_len as usize);
 
-        let 向量1 = 向量 { 元素: v1.to_vec() };
-        let 向量2 = 向量 { 元素: v2.to_vec() };
+        let 向量1 = 向量 {
+            元素: v1.to_vec()
+        };
+        let 向量2 = 向量 {
+            元素: v2.to_vec()
+        };
 
         // 余弦相似度 = 点积 / (模1 * 模2)
         match 向量1.点积(&向量2) {
@@ -215,7 +231,9 @@ pub extern "C" fn qi_vector_scale(
 
     unsafe {
         let 输入 = std::slice::from_raw_parts(input_data, length as usize);
-        let 向量 = 向量 { 元素: 输入.to_vec() };
+        let 向量 = 向量 {
+            元素: 输入.to_vec(),
+        };
 
         let 结果 = 向量.数乘(scalar);
         let output_slice = std::slice::from_raw_parts_mut(output_data, length as usize);
@@ -234,8 +252,13 @@ mod tests {
         let v2 = vec![4.0, 5.0, 6.0];
         let mut result: f64 = 0.0;
 
-        let ret =
-            qi_vector_dot(v1.as_ptr(), v1.len() as i64, v2.as_ptr(), v2.len() as i64, &mut result);
+        let ret = qi_vector_dot(
+            v1.as_ptr(),
+            v1.len() as i64,
+            v2.as_ptr(),
+            v2.len() as i64,
+            &mut result,
+        );
 
         assert_eq!(ret, 0);
         assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32

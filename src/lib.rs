@@ -80,7 +80,9 @@ pub struct QiCompiler {
 impl QiCompiler {
     /// Create a new compiler instance with default configuration
     pub fn new() -> Self {
-        Self { config: config::CompilerConfig::default() }
+        Self {
+            config: config::CompilerConfig::default(),
+        }
     }
 
     /// Create a new compiler instance with custom configuration
@@ -430,7 +432,10 @@ impl QiCompiler {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CompilerError::Codegen(format!("LLVM IR 编译为目标文件失败: {}", error)));
+            return Err(CompilerError::Codegen(format!(
+                "LLVM IR 编译为目标文件失败: {}",
+                error
+            )));
         }
 
         Ok(obj_path)

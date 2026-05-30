@@ -64,7 +64,7 @@ if [ $fail -gt 0 ]; then
     echo "失败详情："
     for f in "${failed_files[@]}"; do
         echo "  $QI_BIN run $f"
-        "$QI_BIN" run "$f" 2>&1 | tail -3 | sed 's/^/    /'
+        "$QI_BIN" run "$f" 2>&1 | tail -40 | sed 's/^/    /'
     done
     exit 1
 fi

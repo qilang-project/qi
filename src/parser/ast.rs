@@ -631,9 +631,15 @@ pub struct DereferenceExpression {
 #[derive(Debug, Clone)]
 pub enum SelectCaseKind {
     /// Channel receive case: case <-channel:
-    通道接收 { channel: Box<AstNode>, variable: Option<String> },
+    通道接收 {
+        channel: Box<AstNode>,
+        variable: Option<String>,
+    },
     /// Channel send case: case channel <- value:
-    通道发送 { channel: Box<AstNode>, value: Box<AstNode> },
+    通道发送 {
+        channel: Box<AstNode>,
+        value: Box<AstNode>,
+    },
     /// Default case: 默认:
     默认,
     /// Timeout case: 情况 超时(毫秒):
@@ -704,7 +710,10 @@ pub enum MatchPattern {
     /// Wildcard pattern: _
     通配符,
     /// Struct pattern: Point { x, y }
-    结构体模式 { struct_name: String, fields: Vec<(String, MatchPattern)> },
+    结构体模式 {
+        struct_name: String,
+        fields: Vec<(String, MatchPattern)>,
+    },
     /// Enum variant pattern: Some(x), None
     枚举变体模式 {
         enum_name: Option<String>,
@@ -763,7 +772,10 @@ pub enum FormatStringPart {
     /// Literal string text
     文本(String),
     /// Interpolated expression with optional format specifier
-    表达式 { expr: Box<AstNode>, format: Option<String> },
+    表达式 {
+        expr: Box<AstNode>,
+        format: Option<String>,
+    },
 }
 
 // ===== 泛型支持 | Generic Support =====
@@ -888,7 +900,10 @@ pub fn parse_format_string(content: &str) -> AstNode {
                     span: Default::default(),
                 });
 
-                parts.push(FormatStringPart::表达式 { expr: Box::new(expr), format: None });
+                parts.push(FormatStringPart::表达式 {
+                    expr: Box::new(expr),
+                    format: None,
+                });
                 i += 1;
             }
             continue;
@@ -903,5 +918,8 @@ pub fn parse_format_string(content: &str) -> AstNode {
         parts.push(FormatStringPart::文本(current_text));
     }
 
-    AstNode::格式字符串表达式(FormatStringExpression { parts, span: Default::default() })
+    AstNode::格式字符串表达式(FormatStringExpression {
+        parts,
+        span: Default::default(),
+    })
 }

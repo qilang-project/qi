@@ -529,7 +529,10 @@ impl SemanticAnalyzer {
         if !self.is_string_type(&left_type) && !self.is_string_type(&right_type) {
             return Err(SemanticError::TypeMismatch(
                 "字符串连接至少需要一个操作数是字符串类型".to_string(),
-                format!("左操作数类型: {:?}, 右操作数类型: {:?}", left_type, right_type),
+                format!(
+                    "左操作数类型: {:?}, 右操作数类型: {:?}",
+                    left_type, right_type
+                ),
             ));
         }
 
@@ -742,7 +745,10 @@ impl SemanticAnalyzer {
 
                 if !field_exists {
                     return Err(SemanticError::TypeMismatch(
-                        format!("结构体 '{}' 没有字段 '{}'", struct_type.name, field_access.field),
+                        format!(
+                            "结构体 '{}' 没有字段 '{}'",
+                            struct_type.name, field_access.field
+                        ),
                         "".to_string(),
                     ));
                 }
@@ -765,7 +771,10 @@ impl SemanticAnalyzer {
     /// 报告未定义变量错误及详细上下文
     #[allow(dead_code)]
     fn report_undefined_variable_error(&mut self, var_name: &str, span: Span) {
-        let suggestion = format!("检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量", var_name);
+        let suggestion = format!(
+            "检查变量名 '{}' 是否正确拼写，或者在使用前先声明变量",
+            var_name
+        );
         self.diagnostics
             .undefined_variable_error(span, var_name, Some(&suggestion));
     }
@@ -783,13 +792,22 @@ impl SemanticAnalyzer {
         let suggestion = match context {
             "assignment" => format!("确保赋值的表达式类型与变量声明类型 '{}' 匹配", expected),
             "function_call" => {
-                format!("检查函数调用参数类型，期望 '{}', 实际 '{}'", expected, found)
+                format!(
+                    "检查函数调用参数类型，期望 '{}', 实际 '{}'",
+                    expected, found
+                )
             }
             "return" => format!("确保返回值类型与函数声明类型 '{}' 匹配", expected),
             "operation" => {
-                format!("检查操作数类型是否支持此操作，期望 '{}', 实际 '{}'", expected, found)
+                format!(
+                    "检查操作数类型是否支持此操作，期望 '{}', 实际 '{}'",
+                    expected, found
+                )
             }
-            _ => format!("类型不匹配，期望 '{}', 实际 '{}', 请检查类型转换", expected, found),
+            _ => format!(
+                "类型不匹配，期望 '{}', 实际 '{}', 请检查类型转换",
+                expected, found
+            ),
         };
 
         self.diagnostics
@@ -916,7 +934,10 @@ impl SemanticAnalyzer {
     /// Get error summary statistics
     /// 获取错误摘要统计
     pub fn get_error_summary(&self) -> (usize, usize) {
-        (self.diagnostics.error_count(), self.diagnostics.warning_count())
+        (
+            self.diagnostics.error_count(),
+            self.diagnostics.warning_count(),
+        )
     }
 
     /// Check if any critical errors occurred

@@ -30,7 +30,9 @@ pub struct StateManager {
 impl StateManager {
     /// Create a new state manager
     pub fn new() -> Self {
-        Self { state: AtomicU8::new(AsyncState::Idle as u8) }
+        Self {
+            state: AtomicU8::new(AsyncState::Idle as u8),
+        }
     }
 
     /// Get the current state

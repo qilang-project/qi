@@ -46,7 +46,10 @@ impl MemoryManager {
     /// Create a new memory manager
     pub fn new(max_memory_mb: usize, gc_threshold: f64) -> MemoryResult<Self> {
         if max_memory_mb == 0 {
-            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
+            return Err(MemoryError::AllocationFailed {
+                requested: 0,
+                available: 0,
+            });
         }
 
         let max_memory_bytes = max_memory_mb * 1024 * 1024;
@@ -95,7 +98,11 @@ impl MemoryManager {
         let align = 8;
         let ptr = unsafe { self.allocate_raw(size, align)? };
 
-        let info = AllocationInfo { size, align, allocator_type };
+        let info = AllocationInfo {
+            size,
+            align,
+            allocator_type,
+        };
 
         self.allocations.insert(ptr as *const u8, info);
         self.gc.add_root(ptr as *const u8)?;
@@ -121,7 +128,9 @@ impl MemoryManager {
             .allocations
             .remove(&(ptr as *const u8))
             .map(|(_, v)| v)
-            .ok_or(MemoryError::DeallocationFailed { address: ptr as *const u8 })?;
+            .ok_or(MemoryError::DeallocationFailed {
+                address: ptr as *const u8,
+            })?;
 
         unsafe { self.deallocate_raw_with_layout(ptr, info.size, info.align)? };
         self.gc.forget_object(ptr as *const u8)?;
@@ -325,7 +334,10 @@ mod tests {
         manager.initialize().unwrap();
 
         let result = manager.allocate(2 * 1024 * 1024, None);
-        assert!(matches!(result.unwrap_err(), MemoryError::OutOfMemory { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            MemoryError::OutOfMemory { .. }
+        ));
     }
 
     #[test]

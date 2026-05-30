@@ -542,7 +542,10 @@ fn handle_server_request(
                     },
                     None => Err((-32603, "采样处理器调用失败".to_string())),
                 },
-                None => Err((-32601, "client 未注册采样处理器（无 sampling 能力）".to_string())),
+                None => Err((
+                    -32601,
+                    "client 未注册采样处理器（无 sampling 能力）".to_string(),
+                )),
             }
         }
         "roots/list" => {
@@ -700,7 +703,9 @@ pub extern "C" fn qi_mcpc_connect_stdio(cmd: *const c_char, args_json: *const c_
     });
 
     let conn = Arc::new(Connection {
-        transport: Transport::Stdio { child_state: child_state.clone() },
+        transport: Transport::Stdio {
+            child_state: child_state.clone(),
+        },
         next_id: AtomicI64::new(1),
     });
 
@@ -803,7 +808,11 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
     }
 
     // 复用 initialize 时建立的 keep-alive 连接，保持会话存活
-    let http = Arc::new(Mutex::new(HttpConn { base_url: url, session_id, stream }));
+    let http = Arc::new(Mutex::new(HttpConn {
+        base_url: url,
+        session_id,
+        stream,
+    }));
 
     // 发送 notifications/initialized（同一条连接；忽略 202/空体）
     {
@@ -1098,7 +1107,10 @@ mod tests {
     fn test_find_header_value_case_insensitive() {
         let headers =
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nMcp-Session-Id: abc123";
-        assert_eq!(find_header_value(headers, "mcp-session-id").as_deref(), Some("abc123"));
+        assert_eq!(
+            find_header_value(headers, "mcp-session-id").as_deref(),
+            Some("abc123")
+        );
         assert_eq!(find_header_value(headers, "Content-Length"), None);
     }
 
@@ -1236,7 +1248,11 @@ mod tests {
 
         // tool 必须完成并返回 result（证明双向往返成功）
         assert!(!res.is_empty(), "sampling 工具无响应（双向往返失败/挂起）");
-        assert!(res.contains("result"), "sampling 工具返回了 error 而非 result: {}", res);
+        assert!(
+            res.contains("result"),
+            "sampling 工具返回了 error 而非 result: {}",
+            res
+        );
         // server 把我们桩返回的文本回显在 "LLM sampling result" 里
         assert!(
             res.contains("stubbed") || res.contains("LLM sampling result"),
@@ -1275,7 +1291,11 @@ mod tests {
             unsafe { CStr::from_ptr(r).to_string_lossy().into_owned() }
         };
         let nav = call(r#"{"name":"browser_navigate","arguments":{"url":"https://example.com/"}}"#);
-        eprintln!("[dbg] navigate len={} head={}", nav.len(), &nav[..nav.len().min(80)]);
+        eprintln!(
+            "[dbg] navigate len={} head={}",
+            nav.len(),
+            &nav[..nav.len().min(80)]
+        );
         // 真实失败的那段大函数（~1.5KB），用 serde 正确转义构造 params
         let func = r##"() => {
   const title = document.title;
@@ -1303,9 +1323,17 @@ mod tests {
             .to_string();
         eprintln!("[dbg] big params bytes={}", big.len());
         let res = call(&big);
-        eprintln!("[dbg] BIG EVAL RESULT len={} : {}", res.len(), &res[..res.len().min(400)]);
+        eprintln!(
+            "[dbg] BIG EVAL RESULT len={} : {}",
+            res.len(),
+            &res[..res.len().min(400)]
+        );
         // 看是否还能用（session 是否被搞坏）
         let snap = call(r#"{"name":"browser_snapshot","arguments":{}}"#);
-        eprintln!("[dbg] snapshot-after len={} head={}", snap.len(), &snap[..snap.len().min(80)]);
+        eprintln!(
+            "[dbg] snapshot-after len={} head={}",
+            snap.len(),
+            &snap[..snap.len().min(80)]
+        );
     }
 }

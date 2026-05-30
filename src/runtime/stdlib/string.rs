@@ -610,7 +610,10 @@ mod tests {
 
         let result = module.concat(&args);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StdlibValue::String("Hello World!".to_string()));
+        assert_eq!(
+            result.unwrap(),
+            StdlibValue::String("Hello World!".to_string())
+        );
     }
 
     #[test]
@@ -665,7 +668,10 @@ mod tests {
 
         let result = module.replace(&args);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StdlibValue::String("Hello Rust".to_string()));
+        assert_eq!(
+            result.unwrap(),
+            StdlibValue::String("Hello Rust".to_string())
+        );
     }
 
     #[test]

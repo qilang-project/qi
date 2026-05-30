@@ -26,7 +26,9 @@ pub struct MethodSystem {
 impl MethodSystem {
     /// Create a new method system
     pub fn new() -> Self {
-        Self { methods: HashMap::new() }
+        Self {
+            methods: HashMap::new(),
+        }
     }
 
     /// Register a method for a type

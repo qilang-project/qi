@@ -117,7 +117,13 @@ impl Runtime {
 
         let state_manager = Arc::new(StateManager::new());
 
-        Ok(Self { config, executor, scheduler, pool, state_manager })
+        Ok(Self {
+            config,
+            executor,
+            scheduler,
+            pool,
+            state_manager,
+        })
     }
 
     /// Spawn a new async task

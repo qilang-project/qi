@@ -393,7 +393,11 @@ fn test_parse_default_and_variadic_parameters() {
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
-    assert!(result.is_ok(), "default/variadic parameters should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "default/variadic parameters should parse: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 2);
 }
@@ -411,7 +415,11 @@ fn test_parse_parenthesized_for_loop() {
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
-    assert!(result.is_ok(), "parenthesized for loop should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "parenthesized for loop should parse: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 1);
 }
@@ -427,7 +435,11 @@ fn test_parse_export_statement() {
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
-    assert!(result.is_ok(), "export statements should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "export statements should parse: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 2);
 }
@@ -444,7 +456,11 @@ fn test_parse_length_as_identifier() {
     let parser = Parser::new();
     let result = parser.parse_source(source);
 
-    assert!(result.is_ok(), "长度 should be usable as an identifier: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "长度 should be usable as an identifier: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.statements.len(), 1);
 }

@@ -74,12 +74,18 @@ fn test_parser_chinese_keywords() {
 
     match result {
         Ok(program) => {
-            println!("Direct source parsing succeeded! Statements: {}", program.statements.len());
+            println!(
+                "Direct source parsing succeeded! Statements: {}",
+                program.statements.len()
+            );
             assert_eq!(program.statements.len(), 2);
         }
         Err(e) => {
             println!("Direct source parsing failed: {}", e);
-            panic!("Direct source parsing should have succeeded but failed with: {}", e);
+            panic!(
+                "Direct source parsing should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 
@@ -87,7 +93,10 @@ fn test_parser_chinese_keywords() {
     let token_result = parser.parse(tokens);
     match token_result {
         Ok(program) => {
-            println!("Token parsing succeeded! Statements: {}", program.statements.len());
+            println!(
+                "Token parsing succeeded! Statements: {}",
+                program.statements.len()
+            );
         }
         Err(e) => {
             println!("Token parsing failed: {}", e);
@@ -128,13 +137,20 @@ fn test_basic_compilation_pipeline() {
     let compiler = qi_compiler::QiCompiler::new();
     let result = compiler.compile(source_file.clone());
 
-    assert!(result.is_ok(), "Compilation should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Compilation should succeed: {:?}",
+        result.err()
+    );
 
     let compilation_result = result.unwrap();
     assert!(compilation_result.executable_path.exists());
 
     // Check that executable was generated
-    println!("Generated executable: {:?}", compilation_result.executable_path);
+    println!(
+        "Generated executable: {:?}",
+        compilation_result.executable_path
+    );
     assert!(compilation_result.executable_path.is_file());
 }
 
@@ -349,7 +365,10 @@ fn test_lalrpop_cli_directly() {
         }
         Err(e) => {
             println!("LALRPOP compilation failed: {}", e);
-            panic!("LALRPOP compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "LALRPOP compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -389,7 +408,10 @@ fn test_binary_expressions() {
         }
         Err(e) => {
             println!("Binary expression compilation failed: {}", e);
-            panic!("Binary expression compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Binary expression compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -407,7 +429,10 @@ fn test_function_declarations() {
     let source_code = "函数 main() {\n    返回 42;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing function declarations with content: {}", source_code);
+    println!(
+        "Testing function declarations with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -429,7 +454,10 @@ fn test_function_declarations() {
         }
         Err(e) => {
             println!("Function declaration compilation failed: {}", e);
-            panic!("Function declaration compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Function declaration compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -468,7 +496,10 @@ fn test_if_statements() {
         }
         Err(e) => {
             println!("If statement compilation failed: {}", e);
-            panic!("If statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "If statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -507,7 +538,10 @@ fn test_if_else_statements() {
         }
         Err(e) => {
             println!("If-else statement compilation failed: {}", e);
-            panic!("If-else statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "If-else statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -546,7 +580,10 @@ fn test_while_statements() {
         }
         Err(e) => {
             println!("While statement compilation failed: {}", e);
-            panic!("While statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "While statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -585,7 +622,10 @@ fn test_for_statements() {
         }
         Err(e) => {
             println!("For statement compilation failed: {}", e);
-            panic!("For statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "For statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -603,7 +643,10 @@ fn test_simple_function_calls() {
     let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 入口() {\n    变量 result: 整数 = test();\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing simple function calls with content: {}", source_code);
+    println!(
+        "Testing simple function calls with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -625,7 +668,10 @@ fn test_simple_function_calls() {
         }
         Err(e) => {
             println!("Simple function call compilation failed: {}", e);
-            panic!("Simple function call compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Simple function call compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -643,7 +689,10 @@ fn test_multiple_function_calls() {
     let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 hello() : 整数 {\n    返回 10;\n}\n函数 入口() {\n    变量 a: 整数 = test();\n    变量 b: 整数 = hello();\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing multiple function calls with content: {}", source_code);
+    println!(
+        "Testing multiple function calls with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -687,7 +736,10 @@ fn test_function_calls_expressions() {
     let source_code = "函数 test() : 整数 {\n    返回 42;\n}\n函数 hello() : 整数 {\n    返回 10;\n}\n函数 入口() {\n    变量 c: 整数 = test() + hello();\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing function calls in expressions with content: {}", source_code);
+    println!(
+        "Testing function calls in expressions with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -731,7 +783,10 @@ fn test_boolean_expressions_in_if() {
     let source_code = "函数 入口() {\n    变量 x: 整数 = 10;\n    变量 y: 整数 = 5;\n    如果 (x > y) {\n        变量 result: 整数 = 1;\n    } 否则 {\n        变量 result_false: 整数 = 0;\n    }\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing boolean expressions in if statements with content: {}", source_code);
+    println!(
+        "Testing boolean expressions in if statements with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -753,7 +808,10 @@ fn test_boolean_expressions_in_if() {
         }
         Err(e) => {
             println!("Boolean if statement compilation failed: {}", e);
-            panic!("Boolean if statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Boolean if statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -771,7 +829,10 @@ fn test_all_comparison_operators() {
     let source_code = "函数 入口() {\n    变量 a: 整数 = 10;\n    变量 b: 整数 = 20;\n    如果 (a < b) {\n        变量 less_result: 整数 = 1;\n    }\n    如果 (a > b) {\n        变量 greater_result: 整数 = 0;\n    }\n    如果 (a == b) {\n        变量 equal_result: 整数 = 0;\n    }\n    如果 (a != b) {\n        变量 not_equal_result: 整数 = 1;\n    }\n    如果 (a >= b) {\n        变量 greater_equal_result: 整数 = 0;\n    }\n    如果 (a <= b) {\n        变量 less_equal_result: 整数 = 1;\n    }\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing all comparison operators with content: {}", source_code);
+    println!(
+        "Testing all comparison operators with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -819,7 +880,10 @@ fn test_boolean_expressions_in_while() {
     let source_code = "函数 入口() {\n    变量 i: 整数 = 0;\n    变量 limit: 整数 = 10;\n    当 (i < limit) {\n        i = i + 1;\n    }\n    返回;\n}";
     fs::write(&source_file, source_code).expect("Failed to write source file");
 
-    println!("Testing boolean expressions in while statements with content: {}", source_code);
+    println!(
+        "Testing boolean expressions in while statements with content: {}",
+        source_code
+    );
 
     // Test compilation using the same pipeline as CLI
     let compiler = qi_compiler::QiCompiler::new();
@@ -956,7 +1020,11 @@ fn test_default_and_variadic_parameter_compilation() {
     let compiler = qi_compiler::QiCompiler::new();
     let result = compiler.compile(source_file);
 
-    assert!(result.is_ok(), "default/variadic program should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "default/variadic program should compile: {:?}",
+        result.err()
+    );
     let compilation_result = result.unwrap();
     assert!(compilation_result.executable_path.exists());
 }

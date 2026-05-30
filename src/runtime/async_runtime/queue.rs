@@ -17,7 +17,9 @@ pub struct TaskQueue {
 impl TaskQueue {
     /// Create a new empty queue
     pub fn new() -> QueueHandle {
-        Arc::new(Self { inner: Mutex::new(VecDeque::new()) })
+        Arc::new(Self {
+            inner: Mutex::new(VecDeque::new()),
+        })
     }
 
     /// Push a task into the queue

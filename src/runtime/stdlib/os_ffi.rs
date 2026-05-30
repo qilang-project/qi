@@ -456,8 +456,10 @@ mod tests {
             let rust_str = c_str.to_string_lossy();
 
             // 应该返回一个有效的操作系统类型
-            assert!(["windows", "linux", "macos", "freebsd", "openbsd", "unknown"]
-                .contains(&rust_str.as_ref()));
+            assert!(
+                ["windows", "linux", "macos", "freebsd", "openbsd", "unknown"]
+                    .contains(&rust_str.as_ref())
+            );
 
             qi_os_free_string(os_type);
         }

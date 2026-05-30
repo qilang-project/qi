@@ -688,9 +688,10 @@ pub extern "C" fn qi_runtime_file_write_string(
     }
 
     unsafe {
-        if let (Ok(path_str), Ok(content_str)) =
-            (CStr::from_ptr(path).to_str(), CStr::from_ptr(content).to_str())
-        {
+        if let (Ok(path_str), Ok(content_str)) = (
+            CStr::from_ptr(path).to_str(),
+            CStr::from_ptr(content).to_str(),
+        ) {
             // Use standard library to write file
             match std::fs::write(path_str, content_str) {
                 Ok(_) => 0,
@@ -1071,7 +1072,9 @@ pub extern "C" fn qi_runtime_waitgroup_destroy(wg: *mut QiWaitGroup) -> i32 {
 /// Create a new mutex
 #[no_mangle]
 pub extern "C" fn qi_runtime_mutex_create() -> *mut QiMutex {
-    let mutex = Box::new(QiMutex { inner: Arc::new(Mutex::new(())) });
+    let mutex = Box::new(QiMutex {
+        inner: Arc::new(Mutex::new(())),
+    });
     Box::into_raw(mutex)
 }
 

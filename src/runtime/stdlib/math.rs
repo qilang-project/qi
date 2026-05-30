@@ -174,7 +174,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value < 0.0 {
-            return Err(RuntimeError::internal_error("负数平方根错误", "负数平方根错误"));
+            return Err(RuntimeError::internal_error(
+                "负数平方根错误",
+                "负数平方根错误",
+            ));
         }
 
         let result = value.sqrt();
@@ -226,7 +229,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value <= 0.0 {
-            return Err(RuntimeError::internal_error("对数定义域错误", "对数定义域错误"));
+            return Err(RuntimeError::internal_error(
+                "对数定义域错误",
+                "对数定义域错误",
+            ));
         }
 
         let result = value.ln();
@@ -238,7 +244,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value <= 0.0 {
-            return Err(RuntimeError::internal_error("对数定义域错误", "对数定义域错误"));
+            return Err(RuntimeError::internal_error(
+                "对数定义域错误",
+                "对数定义域错误",
+            ));
         }
 
         let result = value.log10();
@@ -250,7 +259,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value <= 0.0 {
-            return Err(RuntimeError::internal_error("对数定义域错误", "对数定义域错误"));
+            return Err(RuntimeError::internal_error(
+                "对数定义域错误",
+                "对数定义域错误",
+            ));
         }
 
         let result = value.log2();
@@ -311,7 +323,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value < -1.0 || value > 1.0 {
-            return Err(RuntimeError::internal_error("反正弦定义域错误", "反正弦定义域错误"));
+            return Err(RuntimeError::internal_error(
+                "反正弦定义域错误",
+                "反正弦定义域错误",
+            ));
         }
 
         let result = value.asin();
@@ -328,7 +343,10 @@ impl MathModule {
         self.check_bounds(value)?;
 
         if value < -1.0 || value > 1.0 {
-            return Err(RuntimeError::internal_error("反余弦定义域错误", "反余弦定义域错误"));
+            return Err(RuntimeError::internal_error(
+                "反余弦定义域错误",
+                "反余弦定义域错误",
+            ));
         }
 
         let result = value.acos();
@@ -466,8 +484,10 @@ impl MathModule {
             if num % 10000 != 0 {
                 let segment_result = self.convert_four_digits(num % 10000);
                 if !result.is_empty() && large_unit_index > 0 {
-                    result =
-                        format!("{}{}{}", segment_result, large_units[large_unit_index], result);
+                    result = format!(
+                        "{}{}{}",
+                        segment_result, large_units[large_unit_index], result
+                    );
                 } else {
                     result = format!("{}{}", segment_result, result);
                 }
@@ -500,7 +520,10 @@ impl MathModule {
                     result = format!("{}零", result);
                     need_zero = false;
                 }
-                result = format!("{}{}{}", self.chinese_digits[digit as usize], units[i], result);
+                result = format!(
+                    "{}{}{}",
+                    self.chinese_digits[digit as usize], units[i], result
+                );
             } else if !result.is_empty() {
                 need_zero = true;
             }
@@ -519,13 +542,19 @@ impl MathModule {
     fn check_bounds(&self, value: f64) -> RuntimeResult<()> {
         if let Some(max) = self.config.max_value {
             if value > max {
-                return Err(RuntimeError::internal_error("数值超出最大范围", "数值超出最大范围"));
+                return Err(RuntimeError::internal_error(
+                    "数值超出最大范围",
+                    "数值超出最大范围",
+                ));
             }
         }
 
         if let Some(min) = self.config.min_value {
             if value < min {
-                return Err(RuntimeError::internal_error("数值超出最小范围", "数值超出最小范围"));
+                return Err(RuntimeError::internal_error(
+                    "数值超出最小范围",
+                    "数值超出最小范围",
+                ));
             }
         }
 

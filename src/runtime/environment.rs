@@ -244,7 +244,10 @@ impl RuntimeEnvironment {
         use std::sync::atomic::Ordering::Relaxed;
         if self.state != RuntimeState::Ready {
             return Err(RuntimeError::program_execution_error(
-                format!("运行时状态不正确，当前状态: {:?}，期望状态: Ready", self.state),
+                format!(
+                    "运行时状态不正确，当前状态: {:?}，期望状态: Ready",
+                    self.state
+                ),
                 "程序执行错误".to_string(),
             ));
         }

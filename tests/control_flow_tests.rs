@@ -288,7 +288,11 @@ fn test_control_flow_keywords_tokenization() {
         let mut lexer = Lexer::new(keyword.to_string());
         let tokens = lexer.tokenize().unwrap();
 
-        assert!(!tokens.is_empty(), "Failed to tokenize keyword: {}", keyword);
+        assert!(
+            !tokens.is_empty(),
+            "Failed to tokenize keyword: {}",
+            keyword
+        );
 
         // Check that the keyword is properly recognized
         let token_str = format!("{:?}", tokens[0]);

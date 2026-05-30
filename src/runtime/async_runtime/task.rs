@@ -175,9 +175,10 @@ impl TaskHandle {
             // Already awaited; return current status
             match self.inner.status() {
                 TaskStatus::Completed => Ok(()),
-                TaskStatus::Cancelled => {
-                    Err(RuntimeError::task_error("任务已取消".to_string(), "任务取消".to_string()))
-                }
+                TaskStatus::Cancelled => Err(RuntimeError::task_error(
+                    "任务已取消".to_string(),
+                    "任务取消".to_string(),
+                )),
                 TaskStatus::Failed => Err(RuntimeError::task_error(
                     "任务执行失败".to_string(),
                     "任务失败".to_string(),

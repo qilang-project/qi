@@ -68,7 +68,11 @@ pub struct WebSocketConnection {
 impl WebSocketConnection {
     /// 从已升级的 TCP 连接创建 WebSocket 连接
     pub fn from_upgraded_stream(stream: TcpStream, is_server: bool) -> Self {
-        WebSocketConnection { stream, is_server, is_connected: true }
+        WebSocketConnection {
+            stream,
+            is_server,
+            is_connected: true,
+        }
     }
 
     /// 发送 WebSocket 帧
@@ -159,7 +163,11 @@ impl WebSocketConnection {
             }
         }
 
-        Ok(WebSocketFrame { fin, opcode, payload })
+        Ok(WebSocketFrame {
+            fin,
+            opcode,
+            payload,
+        })
     }
 
     /// 发送文本消息

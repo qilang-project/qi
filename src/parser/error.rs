@@ -14,7 +14,12 @@ pub enum ParseError {
 
     /// Expected token
     #[error("期望标记 {0:?} 但找到 {1:?} 在第 {2} 行第 {3} 列")]
-    ExpectedToken(crate::lexer::TokenKind, crate::lexer::TokenKind, usize, usize),
+    ExpectedToken(
+        crate::lexer::TokenKind,
+        crate::lexer::TokenKind,
+        usize,
+        usize,
+    ),
 
     /// Invalid syntax
     #[error("语法错误: {0} 在第 {1} 行第 {2} 列")]
@@ -323,7 +328,10 @@ impl ParserErrorRecovery {
         let (code, message, english_message, suggestion) = match context.context.as_str() {
             "function_declaration" => (
                 "E008".to_string(),
-                format!("函数声明语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
+                format!(
+                    "函数声明语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
                 format!(
                     "Function declaration syntax error: expected {}, found {}",
                     expected_str, actual_str
@@ -332,7 +340,10 @@ impl ParserErrorRecovery {
             ),
             "variable_declaration" => (
                 "E009".to_string(),
-                format!("变量声明语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
+                format!(
+                    "变量声明语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
                 format!(
                     "Variable declaration syntax error: expected {}, found {}",
                     expected_str, actual_str
@@ -342,18 +353,27 @@ impl ParserErrorRecovery {
             "expression" => (
                 "E010".to_string(),
                 format!("表达式语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Expression syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Expression syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查表达式语法是否正确，确保操作符和操作数匹配".to_string(),
             ),
             "statement" => (
                 "E011".to_string(),
                 format!("语句语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Statement syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Statement syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查语句语法是否正确，语句通常以分号或右大括号结束".to_string(),
             ),
             "type_annotation" => (
                 "E012".to_string(),
-                format!("类型注解语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
+                format!(
+                    "类型注解语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
                 format!(
                     "Type annotation syntax error: expected {}, found {}",
                     expected_str, actual_str
@@ -362,7 +382,10 @@ impl ParserErrorRecovery {
             ),
             "function_call" => (
                 "E013".to_string(),
-                format!("函数调用语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
+                format!(
+                    "函数调用语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
                 format!(
                     "Function call syntax error: expected {}, found {}",
                     expected_str, actual_str
@@ -380,7 +403,10 @@ impl ParserErrorRecovery {
             ),
             "if_statement" => (
                 "E015".to_string(),
-                format!("如果语句语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
+                format!(
+                    "如果语句语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
                 format!(
                     "If statement syntax error: expected {}, found {}",
                     expected_str, actual_str
@@ -390,19 +416,31 @@ impl ParserErrorRecovery {
             "while_loop" => (
                 "E016".to_string(),
                 format!("当循环语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("While loop syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "While loop syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查当循环语法: 当 (条件) { 循环体 }".to_string(),
             ),
             "for_loop" => (
                 "E017".to_string(),
-                format!("对于循环语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("For loop syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "对于循环语法错误: 期望 {}, 找到 {}",
+                    expected_str, actual_str
+                ),
+                format!(
+                    "For loop syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查对于循环语法: 对于 (初始化; 条件; 更新) { 循环体 }".to_string(),
             ),
             _ => (
                 "E018".to_string(),
                 format!("语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查语法是否正确，参考Qi语言语法规范".to_string(),
             ),
         };
@@ -717,7 +755,10 @@ impl ParserErrorRecovery {
     /// Get error summary statistics
     /// 获取错误摘要统计
     pub fn get_error_summary(&self) -> (usize, usize) {
-        (self.diagnostics.error_count(), self.diagnostics.warning_count())
+        (
+            self.diagnostics.error_count(),
+            self.diagnostics.warning_count(),
+        )
     }
 
     /// Check if any critical errors occurred

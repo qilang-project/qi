@@ -134,7 +134,10 @@ impl PackageId {
         Self {
             name: PackageName::parse(name),
             version: None,
-            source: PackageSource { kind: PackageSourceKind::Anonymous, path: None },
+            source: PackageSource {
+                kind: PackageSourceKind::Anonymous,
+                path: None,
+            },
         }
     }
 }
@@ -197,7 +200,11 @@ impl ResolvedPackageManifest {
                     .map_err(|e| format!("解析 qi.toml 失败 {}: {}", manifest_path.display(), e))?;
                 let root_dir = current.canonicalize().unwrap_or(current.clone());
                 let manifest_path = manifest_path.canonicalize().unwrap_or(manifest_path);
-                return Ok(Some(Self { manifest_path, root_dir, manifest }));
+                return Ok(Some(Self {
+                    manifest_path,
+                    root_dir,
+                    manifest,
+                }));
             }
 
             if !current.pop() {
@@ -224,7 +231,10 @@ impl ResolvedPackageManifest {
                 .package
                 .as_ref()
                 .and_then(|pkg| pkg.version.clone()),
-            source: PackageSource { kind: source_kind, path: Some(self.root_dir.clone()) },
+            source: PackageSource {
+                kind: source_kind,
+                path: Some(self.root_dir.clone()),
+            },
         })
     }
 
@@ -319,7 +329,11 @@ impl ResolvedPackageManifest {
             .canonicalize()
             .unwrap_or_else(|_| self.root_dir.join(rel_path));
         let manifest = Self::discover(&root_dir).ok().flatten();
-        Some(ResolvedDependency { alias: alias.to_string(), root_dir, manifest })
+        Some(ResolvedDependency {
+            alias: alias.to_string(),
+            root_dir,
+            manifest,
+        })
     }
 
     pub fn write_lock_file_for_entry(entry_file: &Path) -> Result<Option<PathBuf>, String> {
@@ -342,7 +356,11 @@ fn build_lock_file(root_manifest: &ResolvedPackageManifest) -> Result<LockFile, 
     let mut packages = Vec::new();
     let root_package = collect_lock_package(root_manifest, true, &mut visited, &mut packages)?;
     packages.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
-    Ok(LockFile { format_version: 1, root_package, packages })
+    Ok(LockFile {
+        format_version: 1,
+        root_package,
+        packages,
+    })
 }
 
 fn collect_lock_package(
@@ -380,7 +398,12 @@ fn collect_lock_package(
             let dep_path = dep
                 .path()
                 .map(|path| manifest.root_dir.join(path).display().to_string());
-            (alias.clone(), dep.version().map(|v| v.to_string()), dep_path, None)
+            (
+                alias.clone(),
+                dep.version().map(|v| v.to_string()),
+                dep_path,
+                None,
+            )
         };
 
         dependencies.push(LockDependencyEntry {

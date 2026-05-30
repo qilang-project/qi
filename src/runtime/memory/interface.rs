@@ -82,7 +82,10 @@ impl MemoryInterface {
             if size > limits.max_allocation_size {
                 return Err(RuntimeError::memory_error(
                     "内存分配错误",
-                    &format!("请求的内存大小 {} 超过最大限制 {}", size, limits.max_allocation_size),
+                    &format!(
+                        "请求的内存大小 {} 超过最大限制 {}",
+                        size, limits.max_allocation_size
+                    ),
                 ));
             }
         }
@@ -383,7 +386,11 @@ impl MemoryStats {
     /// Reset all statistics
     pub fn reset(&mut self) {
         let now = std::time::Instant::now();
-        *self = Self { start_time: now, last_update: now, ..Default::default() };
+        *self = Self {
+            start_time: now,
+            last_update: now,
+            ..Default::default()
+        };
     }
 }
 

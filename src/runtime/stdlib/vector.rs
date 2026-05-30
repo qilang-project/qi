@@ -41,12 +41,16 @@ impl 向量 {
 
     /// 从数组创建
     pub fn 从数组(arr: &[f64]) -> Self {
-        Self { 元素: arr.to_vec() }
+        Self {
+            元素: arr.to_vec()
+        }
     }
 
     /// 零向量
     pub fn 零向量(维度: usize) -> Self {
-        Self { 元素: vec![0.0; 维度] }
+        Self {
+            元素: vec![0.0; 维度],
+        }
     }
 
     /// 单位向量
@@ -73,9 +77,13 @@ impl 向量 {
     pub fn 归一化(&self) -> VectorResult<Self> {
         let 长度 = self.长度();
         if 长度 == 0.0 {
-            return Err(VectorError::InvalidOperation("零向量无法归一化".to_string()));
+            return Err(VectorError::InvalidOperation(
+                "零向量无法归一化".to_string(),
+            ));
         }
-        Ok(Self { 元素: self.元素.iter().map(|x| x / 长度).collect() })
+        Ok(Self {
+            元素: self.元素.iter().map(|x| x / 长度).collect(),
+        })
     }
 
     /// 向量加法
@@ -110,7 +118,9 @@ impl 向量 {
 
     /// 数量乘法
     pub fn 数乘(&self, 标量: f64) -> Self {
-        Self { 元素: self.元素.iter().map(|x| x * 标量).collect() }
+        Self {
+            元素: self.元素.iter().map(|x| x * 标量).collect(),
+        }
     }
 
     /// 点积
@@ -129,7 +139,9 @@ impl 向量 {
     /// 叉积 (仅适用于3维向量)
     pub fn 叉积(&self, 其他: &向量) -> VectorResult<Self> {
         if self.维度() != 3 || 其他.维度() != 3 {
-            return Err(VectorError::InvalidOperation("叉积仅支持3维向量".to_string()));
+            return Err(VectorError::InvalidOperation(
+                "叉积仅支持3维向量".to_string(),
+            ));
         }
         let a = &self.元素;
         let b = &其他.元素;
@@ -182,7 +194,9 @@ impl 向量 {
         let 点积 = self.点积(其他)?;
         let 长度平方 = 其他.元素.iter().map(|x| x * x).sum::<f64>();
         if 长度平方 == 0.0 {
-            return Err(VectorError::InvalidOperation("无法投影到零向量".to_string()));
+            return Err(VectorError::InvalidOperation(
+                "无法投影到零向量".to_string(),
+            ));
         }
         Ok(其他.数乘(点积 / 长度平方))
     }
@@ -213,7 +227,9 @@ pub struct 向量模块 {
 impl 向量模块 {
     /// 创建新模块
     pub fn 创建() -> Self {
-        let mut 模块 = Self { 常用向量: HashMap::new() };
+        let mut 模块 = Self {
+            常用向量: HashMap::new(),
+        };
         模块.初始化常用向量();
         模块
     }
@@ -250,7 +266,9 @@ impl 向量模块 {
         let mut 结果 = Vec::with_capacity(数据.len());
         for &值 in 数据 {
             if 值 < 0.0 {
-                return Err(VectorError::InvalidOperation("负数没有实数平方根".to_string()));
+                return Err(VectorError::InvalidOperation(
+                    "负数没有实数平方根".to_string(),
+                ));
             }
             结果.push(值.sqrt());
         }
@@ -277,7 +295,9 @@ impl 向量模块 {
         let mut 结果 = Vec::with_capacity(数据.len());
         for &值 in 数据 {
             if 值 <= 0.0 {
-                return Err(VectorError::InvalidOperation("对数函数的参数必须为正数".to_string()));
+                return Err(VectorError::InvalidOperation(
+                    "对数函数的参数必须为正数".to_string(),
+                ));
             }
             结果.push(值.ln());
         }
@@ -307,7 +327,9 @@ impl 向量模块 {
     /// 聚合函数 - 平均值
     pub fn 平均值(&self, 数据: &[f64]) -> VectorResult<f64> {
         if 数据.is_empty() {
-            return Err(VectorError::InvalidOperation("空数组没有平均值".to_string()));
+            return Err(VectorError::InvalidOperation(
+                "空数组没有平均值".to_string(),
+            ));
         }
         Ok(self.求和(数据) / 数据.len() as f64)
     }

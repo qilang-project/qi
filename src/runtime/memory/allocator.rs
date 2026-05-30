@@ -37,16 +37,25 @@ impl BumpAllocator {
     /// Create a new bump allocator with specified capacity
     pub fn new(capacity: usize) -> MemoryResult<Self> {
         if capacity == 0 {
-            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
+            return Err(MemoryError::AllocationFailed {
+                requested: 0,
+                available: 0,
+            });
         }
 
         unsafe {
             let layout = std::alloc::Layout::from_size_align(capacity, std::mem::align_of::<u8>())
-                .map_err(|_| MemoryError::AllocationFailed { requested: capacity, available: 0 })?;
+                .map_err(|_| MemoryError::AllocationFailed {
+                    requested: capacity,
+                    available: 0,
+                })?;
 
             let start = std::alloc::alloc(layout);
             if start.is_null() {
-                return Err(MemoryError::AllocationFailed { requested: capacity, available: 0 });
+                return Err(MemoryError::AllocationFailed {
+                    requested: capacity,
+                    available: 0,
+                });
             }
 
             Ok(Self {
@@ -137,7 +146,10 @@ pub struct ArenaAllocator {
 impl ArenaAllocator {
     /// Create a new arena allocator
     pub fn new() -> Self {
-        Self { storage: Vec::new(), allocations: Vec::new() }
+        Self {
+            storage: Vec::new(),
+            allocations: Vec::new(),
+        }
     }
 
     /// Create a new arena allocator with initial capacity
@@ -158,7 +170,10 @@ impl Default for ArenaAllocator {
 impl AllocationStrategy for ArenaAllocator {
     fn allocate(&mut self, size: usize) -> MemoryResult<*mut u8> {
         if size == 0 {
-            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
+            return Err(MemoryError::AllocationFailed {
+                requested: 0,
+                available: 0,
+            });
         }
 
         // Reserve space if needed
@@ -209,7 +224,10 @@ impl HybridAllocator {
     /// Create a new hybrid allocator
     pub fn new(bump_capacity: usize, threshold: usize) -> MemoryResult<Self> {
         if bump_capacity == 0 || threshold == 0 {
-            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
+            return Err(MemoryError::AllocationFailed {
+                requested: 0,
+                available: 0,
+            });
         }
 
         let bump = BumpAllocator::new(bump_capacity)?;
@@ -226,7 +244,10 @@ impl HybridAllocator {
 impl AllocationStrategy for HybridAllocator {
     fn allocate(&mut self, size: usize) -> MemoryResult<*mut u8> {
         if size == 0 {
-            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
+            return Err(MemoryError::AllocationFailed {
+                requested: 0,
+                available: 0,
+            });
         }
 
         let ptr = if size <= self.threshold {
@@ -371,7 +392,10 @@ mod tests {
         // This should fail - not enough space
         let result = allocator.allocate(100);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), MemoryError::AllocationFailed { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            MemoryError::AllocationFailed { .. }
+        ));
     }
 
     #[test]

@@ -84,13 +84,22 @@ pub enum Error {
     },
 
     /// Lock/synchronization errors
-    LockError { message: String, chinese_message: String },
+    LockError {
+        message: String,
+        chinese_message: String,
+    },
 
     /// Configuration errors
-    ConfigurationError { message: String, chinese_message: String },
+    ConfigurationError {
+        message: String,
+        chinese_message: String,
+    },
 
     /// General runtime errors
-    RuntimeError { message: String, chinese_message: String },
+    RuntimeError {
+        message: String,
+        chinese_message: String,
+    },
 }
 
 impl Error {
@@ -115,18 +124,42 @@ impl Error {
     /// Get the Chinese error message
     pub fn chinese_message(&self) -> &str {
         match self {
-            Error::InitializationFailed { chinese_message, .. } => chinese_message,
-            Error::MemoryError { chinese_message, .. } => chinese_message,
-            Error::IoError { chinese_message, .. } => chinese_message,
-            Error::NetworkError { chinese_message, .. } => chinese_message,
-            Error::SystemError { chinese_message, .. } => chinese_message,
-            Error::UserError { chinese_message, .. } => chinese_message,
-            Error::InternalError { chinese_message, .. } => chinese_message,
-            Error::TaskError { chinese_message, .. } => chinese_message,
-            Error::ThreadError { chinese_message, .. } => chinese_message,
-            Error::LockError { chinese_message, .. } => chinese_message,
-            Error::ConfigurationError { chinese_message, .. } => chinese_message,
-            Error::RuntimeError { chinese_message, .. } => chinese_message,
+            Error::InitializationFailed {
+                chinese_message, ..
+            } => chinese_message,
+            Error::MemoryError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::IoError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::NetworkError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::SystemError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::UserError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::InternalError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::TaskError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::ThreadError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::LockError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::ConfigurationError {
+                chinese_message, ..
+            } => chinese_message,
+            Error::RuntimeError {
+                chinese_message, ..
+            } => chinese_message,
         }
     }
 
@@ -434,7 +467,12 @@ impl StackFrame {
 
     /// Format stack frame as string
     pub fn format(&self) -> String {
-        let mut result = format!("{} ({}:{}", self.function, self.file, self.line.unwrap_or(0));
+        let mut result = format!(
+            "{} ({}:{}",
+            self.function,
+            self.file,
+            self.line.unwrap_or(0)
+        );
         if let Some(col) = self.column {
             result.push_str(&format!(":{}", col));
         }

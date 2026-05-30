@@ -52,7 +52,9 @@ pub extern "C" fn qi_cli_create_app(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let app = QiCliApp { command: Command::new(name_static) };
+        let app = QiCliApp {
+            command: Command::new(name_static),
+        };
 
         let id = next_id();
         APPS.lock().unwrap().insert(id, app);
@@ -203,7 +205,9 @@ pub extern "C" fn qi_cli_create_arg(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let arg = QiCliArg { arg: Arg::new(name_static) };
+        let arg = QiCliArg {
+            arg: Arg::new(name_static),
+        };
 
         let id = next_id();
         ARGS.lock().unwrap().insert(id, arg);
@@ -387,9 +391,10 @@ pub extern "C" fn qi_cli_app_add_arg(app_id: i64, arg_id: i64) -> i64 {
     let args = ARGS.lock().unwrap();
     let mut apps = APPS.lock().unwrap();
 
-    if let (Some(app), Some(arg_wrapper)) =
-        (apps.get_mut(&(app_id as usize)), args.get(&(arg_id as usize)))
-    {
+    if let (Some(app), Some(arg_wrapper)) = (
+        apps.get_mut(&(app_id as usize)),
+        args.get(&(arg_id as usize)),
+    ) {
         app.command =
             std::mem::replace(&mut app.command, Command::new("")).arg(arg_wrapper.arg.clone());
         1
@@ -410,7 +415,9 @@ pub extern "C" fn qi_cli_create_subcommand(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let app = QiCliApp { command: Command::new(name_static) };
+        let app = QiCliApp {
+            command: Command::new(name_static),
+        };
 
         let id = next_id();
         APPS.lock().unwrap().insert(id, app);
@@ -621,7 +628,9 @@ pub extern "C" fn qi_cli_get_subcommand(matches_id: i64, name: *const c_char) ->
 
         if let Some(m) = matches.get(&(matches_id as usize)) {
             if let Some(sub_matches) = m.matches.subcommand_matches(&name_str) {
-                let sub_wrapper = QiCliMatches { matches: sub_matches.clone() };
+                let sub_wrapper = QiCliMatches {
+                    matches: sub_matches.clone(),
+                };
                 let id = next_id();
                 drop(matches); // 释放锁
                 MATCHES.lock().unwrap().insert(id, sub_wrapper);

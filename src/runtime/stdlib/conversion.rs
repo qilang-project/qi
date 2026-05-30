@@ -231,7 +231,10 @@ impl ConversionModule {
             Ok(value) => Ok(value),
             Err(_) if !self.config.strict_parsing => Ok(0),
             Err(e) => Err(RuntimeError::conversion_error(
-                format!("无法将字符串 '{}' 以 {} 进制转换为整数: {}", processed_input, base, e),
+                format!(
+                    "无法将字符串 '{}' 以 {} 进制转换为整数: {}",
+                    processed_input, base, e
+                ),
                 "进制转换失败".to_string(),
             )),
         }

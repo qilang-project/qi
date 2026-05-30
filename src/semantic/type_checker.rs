@@ -14,11 +14,18 @@ pub struct TypeChecker {
 pub enum TypeError {
     /// Type mismatch
     #[error("类型不匹配: 期望 {expected}, 实际 {actual}")]
-    TypeMismatch { expected: String, actual: String, span: crate::lexer::Span },
+    TypeMismatch {
+        expected: String,
+        actual: String,
+        span: crate::lexer::Span,
+    },
 
     /// Undefined variable
     #[error("未定义的变量: {name}")]
-    UndefinedVariable { name: String, span: crate::lexer::Span },
+    UndefinedVariable {
+        name: String,
+        span: crate::lexer::Span,
+    },
 
     /// Invalid operation
     #[error("无效的操作: {operation} 对于类型 {type_name}")]
@@ -30,20 +37,32 @@ pub enum TypeError {
 
     /// Function call error
     #[error("函数调用错误: {message}")]
-    FunctionCallError { message: String, span: crate::lexer::Span },
+    FunctionCallError {
+        message: String,
+        span: crate::lexer::Span,
+    },
 
     /// Generic type error
     #[error("类型错误: {message}")]
-    General { message: String, span: crate::lexer::Span },
+    General {
+        message: String,
+        span: crate::lexer::Span,
+    },
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
-        Self { symbol_table: SymbolTable::new(), errors: Vec::new() }
+        Self {
+            symbol_table: SymbolTable::new(),
+            errors: Vec::new(),
+        }
     }
 
     pub fn with_symbol_table(symbol_table: SymbolTable) -> Self {
-        Self { symbol_table, errors: Vec::new() }
+        Self {
+            symbol_table,
+            errors: Vec::new(),
+        }
     }
 
     pub fn check(&mut self, ast: &AstNode) -> Result<TypeNode, TypeError> {
@@ -120,9 +139,9 @@ impl TypeChecker {
                 Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
             }
             // Format string expression returns a string type
-            AstNode::格式字符串表达式(_) => {
-                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::字符串))
-            }
+            AstNode::格式字符串表达式(_) => Ok(TypeNode::基础类型(
+                crate::parser::ast::BasicType::字符串,
+            )),
         }
     }
 

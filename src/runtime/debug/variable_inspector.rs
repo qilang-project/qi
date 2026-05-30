@@ -86,15 +86,36 @@ pub struct VariableInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VariableMetadata {
     /// Integer metadata
-    Integer { signed: bool, bits: u8, min: Option<i64>, max: Option<u64> },
+    Integer {
+        signed: bool,
+        bits: u8,
+        min: Option<i64>,
+        max: Option<u64>,
+    },
     /// Float metadata
-    Float { bits: u8, precision: u8, min: Option<f64>, max: Option<f64> },
+    Float {
+        bits: u8,
+        precision: u8,
+        min: Option<f64>,
+        max: Option<f64>,
+    },
     /// String metadata
-    String { length: usize, encoding: String, is_utf8: bool },
+    String {
+        length: usize,
+        encoding: String,
+        is_utf8: bool,
+    },
     /// Array metadata
-    Array { element_type: String, length: usize, capacity: usize },
+    Array {
+        element_type: String,
+        length: usize,
+        capacity: usize,
+    },
     /// Struct metadata
-    Struct { fields: Vec<String>, field_types: HashMap<String, String> },
+    Struct {
+        fields: Vec<String>,
+        field_types: HashMap<String, String>,
+    },
     /// Function metadata
     Function {
         parameters: Vec<String>,
@@ -177,11 +198,17 @@ pub enum TypeDetails {
     /// Primitive details
     Primitive { signed: bool, bits: u8 },
     /// Array details
-    Array { element_type: String, fixed_length: Option<usize> },
+    Array {
+        element_type: String,
+        fixed_length: Option<usize>,
+    },
     /// Struct details
     Struct { fields: HashMap<String, String> },
     /// Function details
-    Function { parameters: Vec<String>, return_type: String },
+    Function {
+        parameters: Vec<String>,
+        return_type: String,
+    },
     /// No specific details
     None,
 }
@@ -439,7 +466,10 @@ impl VariableInspector {
             result.push_str(&format!(": {}", variable.var_type));
         }
 
-        result.push_str(&format!(" = {}", self.format_value(&variable.value, &variable.metadata)));
+        result.push_str(&format!(
+            " = {}",
+            self.format_value(&variable.value, &variable.metadata)
+        ));
 
         if self.config.include_memory_addresses {
             if let Some(addr) = variable.address {
@@ -459,12 +489,19 @@ impl VariableInspector {
         match metadata {
             VariableMetadata::String { length, .. } => {
                 if *length > self.config.max_string_length {
-                    format!("\"{}...\"", &value[..self.config.max_string_length.min(value.len())])
+                    format!(
+                        "\"{}...\"",
+                        &value[..self.config.max_string_length.min(value.len())]
+                    )
                 } else {
                     format!("\"{}\"", value)
                 }
             }
-            VariableMetadata::Array { element_type, length, .. } => {
+            VariableMetadata::Array {
+                element_type,
+                length,
+                ..
+            } => {
                 if *length > self.config.max_array_elements {
                     format!("[{}; {} elements...]", element_type, length)
                 } else {
@@ -517,7 +554,11 @@ impl VariableInspector {
                     nested.insert(field.clone(), placeholder);
                 }
             }
-            VariableMetadata::Array { element_type, length, .. } => {
+            VariableMetadata::Array {
+                element_type,
+                length,
+                ..
+            } => {
                 // TODO: Implement array element inspection
                 for i in 0..(*length).min(self.config.max_array_elements) {
                     let element_name = format!("[{}]", i);
@@ -782,7 +823,10 @@ mod tests {
         let result = inspector.inspect_value("test_array", &value).unwrap();
 
         assert_eq!(result.variable.var_type, "Vec<String>");
-        assert!(matches!(result.variable.metadata, VariableMetadata::Array { .. }));
+        assert!(matches!(
+            result.variable.metadata,
+            VariableMetadata::Array { .. }
+        ));
     }
 
     #[test]

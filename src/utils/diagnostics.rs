@@ -32,7 +32,11 @@ pub struct DiagnosticManager {
 
 impl DiagnosticManager {
     pub fn new() -> Self {
-        Self { diagnostics: Vec::new(), max_errors: 100, max_warnings: 100 }
+        Self {
+            diagnostics: Vec::new(),
+            max_errors: 100,
+            max_warnings: 100,
+        }
     }
 
     /// Add syntax error with code and suggestion
@@ -125,7 +129,10 @@ impl DiagnosticManager {
             level: DiagnosticLevel::错误,
             code: "E005".to_string(),
             message: format!("无效操作: '{}' 对于类型 '{}'", operation, type_name),
-            english_message: format!("Invalid operation: '{}' for type '{}'", operation, type_name),
+            english_message: format!(
+                "Invalid operation: '{}' for type '{}'",
+                operation, type_name
+            ),
             file_path: None,
             span: Some(span),
             suggestion: suggestion.map(|s| s.to_string()),
@@ -520,7 +527,10 @@ impl DiagnosticManager {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E023".to_string(),
-            message: format!("{} 条件必须是布尔类型, 实际是 '{}'", context, condition_type),
+            message: format!(
+                "{} 条件必须是布尔类型, 实际是 '{}'",
+                context, condition_type
+            ),
             english_message: format!(
                 "{} condition must be boolean, actual type is '{}'",
                 context, condition_type

@@ -191,7 +191,10 @@ pub struct SourceManager {
 
 impl SourceManager {
     pub fn new() -> Self {
-        Self { files: Vec::new(), max_files: 1000 }
+        Self {
+            files: Vec::new(),
+            max_files: 1000,
+        }
     }
 
     pub fn load_file(&mut self, path: PathBuf) -> Result<&SourceFile, SourceError> {

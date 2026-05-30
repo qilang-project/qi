@@ -351,7 +351,11 @@ pub enum IrInstruction {
     },
 
     /// Store a value
-    存储 { target: String, value: String, value_type: Option<String> },
+    存储 {
+        target: String,
+        value: String,
+        value_type: Option<String>,
+    },
 
     /// Load a value
     加载 {
@@ -370,7 +374,11 @@ pub enum IrInstruction {
     },
 
     /// Function call
-    函数调用 { dest: Option<String>, callee: String, arguments: Vec<String> },
+    函数调用 {
+        dest: Option<String>,
+        callee: String,
+        arguments: Vec<String>,
+    },
 
     /// Return from function
     返回 { value: Option<String> },
@@ -379,7 +387,11 @@ pub enum IrInstruction {
     跳转 { label: String },
 
     /// Conditional jump
-    条件跳转 { condition: String, true_label: String, false_label: String },
+    条件跳转 {
+        condition: String,
+        true_label: String,
+        false_label: String,
+    },
 
     /// String constant
     字符串常量 { name: String },
@@ -400,7 +412,11 @@ pub enum IrInstruction {
     标签 { name: String },
 
     /// Array access (getelementptr)
-    数组访问 { dest: String, array: String, index: String },
+    数组访问 {
+        dest: String,
+        array: String,
+        index: String,
+    },
 
     /// Array allocation
     数组分配 {
@@ -418,10 +434,18 @@ pub enum IrInstruction {
     },
 
     /// String concatenation
-    字符串连接 { dest: String, left: String, right: String },
+    字符串连接 {
+        dest: String,
+        left: String,
+        right: String,
+    },
 
     /// XOR operation (for logical not)
-    异或 { dest: String, left: String, right: String },
+    异或 {
+        dest: String,
+        left: String,
+        right: String,
+    },
 
     /// Type conversion/casting
     类型转换 {
@@ -447,10 +471,17 @@ pub enum IrInstruction {
     等待表达式 { dest: String, future: String },
 
     /// Create async task
-    创建异步任务 { dest: String, function: String, arguments: Vec<String> },
+    创建异步任务 {
+        dest: String,
+        function: String,
+        arguments: Vec<String>,
+    },
 
     /// Spawn goroutine
-    协程启动 { function: String, arguments: Vec<String> },
+    协程启动 {
+        function: String,
+        arguments: Vec<String>,
+    },
 
     /// Create channel
     创建通道 {
@@ -466,7 +497,10 @@ pub enum IrInstruction {
     通道接收 { dest: String, channel: String },
 
     /// Select statement
-    选择语句 { cases: Vec<SelectCase>, default_case: Option<String> },
+    选择语句 {
+        cases: Vec<SelectCase>,
+        default_case: Option<String>,
+    },
 }
 
 /// Select case for channel operations
@@ -712,7 +746,10 @@ impl IrBuilder {
         // Future type functions - string
         self.external_functions.insert(
             "qi_future_ready_string".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_future_await_string".to_string(),
@@ -732,16 +769,23 @@ impl IrBuilder {
         // Future type functions - common
         self.external_functions.insert(
             "qi_future_failed".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_future_is_completed".to_string(),
             (vec!["ptr".to_string()], "i32".to_string()),
         );
-        self.external_functions
-            .insert("qi_future_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
-        self.external_functions
-            .insert("qi_string_free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert(
+            "qi_future_free".to_string(),
+            (vec!["ptr".to_string()], "void".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_string_free".to_string(),
+            (vec!["ptr".to_string()], "void".to_string()),
+        );
 
         // §4-3 / §4-5 异步 状态机 FFI（runtime/async_runtime/state_machine.rs）
         self.external_functions.insert(
@@ -750,11 +794,17 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_async_free_frame".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "void".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "void".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_async_spawn_poll".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "void".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "void".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_future_register_waker".to_string(),
@@ -763,48 +813,74 @@ impl IrBuilder {
                 "void".to_string(),
             ),
         );
-        self.external_functions
-            .insert("qi_future_is_ready".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert(
+            "qi_future_is_ready".to_string(),
+            (vec!["ptr".to_string()], "i32".to_string()),
+        );
         self.external_functions.insert(
             "qi_future_value_i64".to_string(),
             (vec!["ptr".to_string()], "i64".to_string()),
         );
         self.external_functions.insert(
             "qi_future_complete_i64".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "void".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "void".to_string(),
+            ),
         );
         self.external_functions
             .insert("qi_future_pending".to_string(), (vec![], "ptr".to_string()));
 
         // String utility functions
-        self.external_functions
-            .insert("strlen".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "strlen".to_string(),
+            (vec!["ptr".to_string()], "i64".to_string()),
+        );
 
         // Memory allocation functions
-        self.external_functions
-            .insert("malloc".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("free".to_string(), (vec!["ptr".to_string()], "void".to_string()));
-        self.external_functions
-            .insert("qi_runtime_alloc".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "malloc".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "free".to_string(),
+            (vec!["ptr".to_string()], "void".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_runtime_alloc".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_runtime_dealloc".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "i32".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "i32".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_runtime_gc_should_collect".to_string(), (vec![], "i64".to_string()));
-        self.external_functions
-            .insert("qi_runtime_gc_collect".to_string(), (vec![], "void".to_string()));
+        self.external_functions.insert(
+            "qi_runtime_gc_should_collect".to_string(),
+            (vec![], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_runtime_gc_collect".to_string(),
+            (vec![], "void".to_string()),
+        );
 
         // Crypto module FFI — 跨包调用时需要这些签名才能正确推类型
         // （之前只在 declare 段写了，没注册到 external_functions，导致 qi-web 等
         //  下游包调 加密.HMAC_SHA256 时 codegen 把 ptr 参数误判 i64）
-        self.external_functions
-            .insert("qi_crypto_md5".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_crypto_sha256".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_crypto_sha512".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_crypto_md5".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_crypto_sha256".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_crypto_sha512".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_crypto_base64_encode".to_string(),
             (vec!["ptr".to_string()], "ptr".to_string()),
@@ -815,21 +891,33 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_crypto_hmac_sha256".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
 
         // LLM module FFI — 跨包调用注册（qi-harness 等下游包用）
         self.external_functions.insert(
             "qi_llm_create_session".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_chat".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_set_config".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_clear_history".to_string(),
@@ -845,14 +933,22 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_llm_chat_async".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_stream_chat".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_llm_stream_next".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_llm_stream_next".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_llm_stream_close".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
@@ -869,11 +965,16 @@ impl IrBuilder {
                 "i64".to_string(),
             ),
         );
-        self.external_functions
-            .insert("qi_llm_clear_tools".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_llm_clear_tools".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_llm_chat_with_tools".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_continue_with_tools".to_string(),
@@ -889,7 +990,10 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_llm_get_tool_call_name".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_get_tool_call_arguments".to_string(),
@@ -914,61 +1018,105 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_llm_get_tool_call_id_at".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_get_tool_call_name_at".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_llm_get_tool_call_arguments_at".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
 
         // String module functions (标准库.文本)
-        self.external_functions
-            .insert("qi_string_length".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_string_length".to_string(),
+            (vec!["ptr".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_string_concat".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_substring".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_contains".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_starts_with".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_ends_with".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_find".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_replace".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_string_trim".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_string_to_upper".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_string_to_lower".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_string_trim".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_string_to_upper".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_string_to_lower".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_string_compare".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i32".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i32".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_equals".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_byte_length".to_string(),
@@ -980,15 +1128,24 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_string_find_from".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_substring_from".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_string_split".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
 
         // Other runtime functions can be added here if needed
@@ -1002,7 +1159,10 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_runtime_gc_add_reference".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_runtime_gc_clear_references".to_string(),
@@ -1010,21 +1170,35 @@ impl IrBuilder {
         );
 
         // JSON module functions
-        self.external_functions
-            .insert("qi_json_encode".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_json_decode".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_json_create_object".to_string(), (vec![], "i64".to_string()));
-        self.external_functions
-            .insert("qi_json_create_array".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_json_encode".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_json_decode".to_string(),
+            (vec!["ptr".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_json_create_object".to_string(),
+            (vec![], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_json_create_array".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_json_set_string".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_set_int".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_set_float".to_string(),
@@ -1035,58 +1209,99 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_json_set_bool".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_set_object".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_set_array".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_string".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_int".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_float".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "double".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "double".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_bool".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_object".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_get_array".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_array_push_string".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_array_push_int".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_array_push_float".to_string(),
-            (vec!["i64".to_string(), "double".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "double".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_json_array_push_bool".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_json_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_json_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
 
         // Conversion runtime functions
         self.external_functions.insert(
@@ -1149,105 +1364,181 @@ impl IrBuilder {
         );
 
         // List module functions
-        self.external_functions
-            .insert("qi_list_int_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_int_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_list_int_push".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_int_get".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_int_set".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_list_int_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_list_int_pop".to_string(), (vec!["i64".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_list_int_clear".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_int_size".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_list_int_pop".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_list_int_clear".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_list_int_remove".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_int_insert".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_int_contains".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_int_index_of".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_list_float_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_float_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_list_float_push".to_string(),
-            (vec!["i64".to_string(), "double".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "double".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_float_get".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "double".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "double".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_list_float_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_list_string_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_float_size".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_list_string_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_list_string_push".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_string_get".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_string_size".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_list_ptr_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_ptr_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_list_ptr_push".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_ptr_get".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_list_ptr_set".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_list_ptr_size".to_string(), (vec!["i64".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_list_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_list_ptr_size".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_list_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
 
         // Hashmap module functions
-        self.external_functions
-            .insert("qi_hashmap_int_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_hashmap_int_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_hashmap_int_set".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_int_get".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_int_contains".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_int_remove".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_int_size".to_string(),
@@ -1257,8 +1548,10 @@ impl IrBuilder {
             "qi_hashmap_int_clear".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_hashmap_float_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_hashmap_float_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_hashmap_float_set".to_string(),
             (
@@ -1268,64 +1561,98 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_hashmap_float_get".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "double".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "double".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_float_size".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_hashmap_string_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_hashmap_string_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_hashmap_string_set".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_string_get".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_hashmap_string_size".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_hashmap_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_hashmap_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
 
         // Random module functions
         self.external_functions.insert(
             "qi_random_int".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_random_float".to_string(),
-            (vec!["double".to_string(), "double".to_string()], "double".to_string()),
+            (
+                vec!["double".to_string(), "double".to_string()],
+                "double".to_string(),
+            ),
         );
         self.external_functions
             .insert("qi_random_bool".to_string(), (vec![], "i32".to_string()));
-        self.external_functions
-            .insert("qi_random_string".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_random_string".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
         self.external_functions
             .insert("qi_random_uuid".to_string(), (vec![], "ptr".to_string()));
 
         // Web runtime helper
         self.external_functions.insert(
             "qi_web_call_handler_safe".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_web_safe_process_request".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "ptr".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_web_panic_for_test".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_web_panic_for_test".to_string(),
+            (vec![], "i64".to_string()),
+        );
 
         // TLS module functions
         self.external_functions.insert(
             "qi_tls_create_config".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_tls_free_config".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_tls_free_config".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_tls_listen".to_string(),
             (
@@ -1338,18 +1665,28 @@ impl IrBuilder {
                 "i64".to_string(),
             ),
         );
-        self.external_functions
-            .insert("qi_tls_accept".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_tls_accept".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_tls_read_string".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_tls_write_string".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_tls_close".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_tls_close".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_tls_server_close".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
@@ -1384,71 +1721,118 @@ impl IrBuilder {
             "qi_bytes_from_string".to_string(),
             (vec!["ptr".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_bytes_to_string".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_bytes_length".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_bytes_to_string".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_bytes_length".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_bytes_get".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_set".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_push".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_push_string".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_extend".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_slice".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_compare".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_bytes_find".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_bytes_to_hex".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
-        self.external_functions
-            .insert("qi_bytes_from_hex".to_string(), (vec!["ptr".to_string()], "i64".to_string()));
-        self.external_functions
-            .insert("qi_bytes_to_base64".to_string(), (vec!["i64".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_bytes_to_hex".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_bytes_from_hex".to_string(),
+            (vec!["ptr".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_bytes_to_base64".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_bytes_from_base64".to_string(),
             (vec!["ptr".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_bytes_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_bytes_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_bytes_free_string".to_string(),
             (vec!["ptr".to_string()], "void".to_string()),
         );
         self.external_functions.insert(
             "qi_closure_create".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_closure_get_fn".to_string(), (vec!["ptr".to_string()], "ptr".to_string()));
+        self.external_functions.insert(
+            "qi_closure_get_fn".to_string(),
+            (vec!["ptr".to_string()], "ptr".to_string()),
+        );
         self.external_functions.insert(
             "qi_closure_get_int".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_closure_get_ptr".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_closure_set_int".to_string(),
@@ -1465,14 +1849,20 @@ impl IrBuilder {
             ),
         );
 
-        self.external_functions
-            .insert("qi_exc_alloc_frame".to_string(), (vec![], "ptr".to_string()));
-        self.external_functions
-            .insert("setjmp".to_string(), (vec!["ptr".to_string()], "i32".to_string()));
+        self.external_functions.insert(
+            "qi_exc_alloc_frame".to_string(),
+            (vec![], "ptr".to_string()),
+        );
+        self.external_functions.insert(
+            "setjmp".to_string(),
+            (vec!["ptr".to_string()], "i32".to_string()),
+        );
         self.external_functions
             .insert("qi_exc_pop".to_string(), (vec![], "void".to_string()));
-        self.external_functions
-            .insert("qi_exc_throw".to_string(), (vec!["ptr".to_string()], "void".to_string()));
+        self.external_functions.insert(
+            "qi_exc_throw".to_string(),
+            (vec!["ptr".to_string()], "void".to_string()),
+        );
         self.external_functions
             .insert("qi_exc_message".to_string(), (vec![], "ptr".to_string()));
         self.external_functions
@@ -1481,35 +1871,57 @@ impl IrBuilder {
             "qi_exc_free_message".to_string(),
             (vec!["ptr".to_string()], "void".to_string()),
         );
-        self.external_functions
-            .insert("qi_signal_install_shutdown".to_string(), (vec![], "i64".to_string()));
-        self.external_functions
-            .insert("qi_signal_should_shutdown".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_signal_install_shutdown".to_string(),
+            (vec![], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_signal_should_shutdown".to_string(),
+            (vec![], "i64".to_string()),
+        );
         self.external_functions
             .insert("qi_signal_reset".to_string(), (vec![], "i64".to_string()));
         self.external_functions.insert(
             "qi_network_tcp_listener_set_nonblocking".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_tcp_read_bytes".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_tcp_write_bytes".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_async_tcp_connect".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_async_tcp_read_bytes".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_async_tcp_write_bytes".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_async_tcp_close".to_string(),
@@ -1517,7 +1929,10 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_network_async_tcp_listen".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_network_async_tcp_accept".to_string(),
@@ -1537,7 +1952,10 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_runtime_async_serve".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_runtime_serialize_http_response".to_string(),
@@ -1602,11 +2020,17 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_web_router_register".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_web_router_match".to_string(),
-            (vec!["ptr".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["ptr".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_web_match_handler".to_string(),
@@ -1624,40 +2048,64 @@ impl IrBuilder {
             "qi_web_match_method_mask".to_string(),
             (vec!["i64".to_string()], "i64".to_string()),
         );
-        self.external_functions
-            .insert("qi_web_match_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_web_match_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_web_build_request_id".to_string(),
-            (vec!["ptr".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["ptr".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_multipart_parse".to_string(),
-            (vec!["i64".to_string(), "ptr".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_multipart_extract_boundary".to_string(),
             (vec!["ptr".to_string()], "ptr".to_string()),
         );
-        self.external_functions
-            .insert("qi_multipart_count".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_multipart_count".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
         self.external_functions.insert(
             "qi_multipart_name".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_multipart_filename".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_multipart_content_type".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "ptr".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "ptr".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_multipart_body".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
-        self.external_functions
-            .insert("qi_multipart_free".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_multipart_free".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
 
         // DateTime sleep functions
         self.external_functions.insert(
@@ -1680,14 +2128,20 @@ impl IrBuilder {
             "qi_datetime_sleep_micros".to_string(),
             (vec!["i64".to_string()], "void".to_string()),
         );
-        self.external_functions
-            .insert("qi_datetime_now_millis".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert(
+            "qi_datetime_now_millis".to_string(),
+            (vec![], "i64".to_string()),
+        );
 
         // 同步原语 (标准库.同步) — 互斥锁
-        self.external_functions
-            .insert("qi_sync_mutex_create".to_string(), (vec![], "i64".to_string()));
-        self.external_functions
-            .insert("qi_sync_mutex_lock".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert(
+            "qi_sync_mutex_create".to_string(),
+            (vec![], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_sync_mutex_lock".to_string(),
+            (vec!["i64".to_string()], "i32".to_string()),
+        );
         self.external_functions.insert(
             "qi_sync_mutex_unlock".to_string(),
             (vec!["i64".to_string()], "i32".to_string()),
@@ -1711,15 +2165,24 @@ impl IrBuilder {
         );
         self.external_functions.insert(
             "qi_sync_atomic_store".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i32".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i32".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_sync_atomic_add".to_string(),
-            (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string()],
+                "i64".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_sync_atomic_cas".to_string(),
-            (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i32".to_string()),
+            (
+                vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+                "i32".to_string(),
+            ),
         );
         self.external_functions.insert(
             "qi_sync_atomic_destroy".to_string(),
@@ -1795,7 +2258,11 @@ impl IrBuilder {
                 trampoline_name,
                 params_ir.join(", ")
             ));
-            def.push_str(&format!("  call void @{}({})\n", fn_name, call_args.join(", ")));
+            def.push_str(&format!(
+                "  call void @{}({})\n",
+                fn_name,
+                call_args.join(", ")
+            ));
             def.push_str("  ret void\n}\n");
         } else {
             def.push_str(&format!(
@@ -2435,7 +2902,10 @@ impl IrBuilder {
     ) -> Result<&ModuleFunction, String> {
         // Resolve the module name (could be an alias)
         let module_path = self.import_aliases.get(module_name).ok_or_else(|| {
-            format!("模块 '{}' 未导入。请先使用 '导入 标准库.{};'", module_name, module_name)
+            format!(
+                "模块 '{}' 未导入。请先使用 '导入 标准库.{};'",
+                module_name, module_name
+            )
         })?;
 
         // Get the function from the module
@@ -3569,7 +4039,9 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define ptr @{}({}) {{", mangled, param_decls.join(", ")),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: format!(
                                 "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
@@ -3601,13 +4073,17 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret ptr %fut");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // poll fn — K+1 个 state（0..K）
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define void @{}_poll(ptr %pframe) {{", mangled),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %state_p = getelementptr i8, ptr %pframe, i64 0".to_string(),
                         });
@@ -3695,7 +4171,9 @@ impl IrBuilder {
                         }
 
                         // state K：所有 await 完成，先把最后一个 slot 转值，然后 load 全部，算 EXPR
-                        self.add_instruction(IrInstruction::标签 { name: format!("s{}:", k) });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("s{}:", k),
+                        });
                         // 把 slot_{K-1} 从 future 转 i64
                         let last_slot_off = slots_start + 8 * (k as i64 - 1);
                         self.add_instruction(IrInstruction::标签 {
@@ -3792,7 +4270,9 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret void");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // 注册签名
                         let param_types: Vec<String> =
@@ -3845,7 +4325,9 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define ptr @{}({}) {{", mangled, param_decls.join(", ")),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: format!(
                                 "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
@@ -3878,13 +4360,17 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret ptr %fut");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // poll fn — multi-state with switch on frame[0]
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define void @{}_poll(ptr %pframe) {{", mangled),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %state_p = getelementptr i8, ptr %pframe, i64 0".to_string(),
                         });
@@ -3897,7 +4383,9 @@ impl IrBuilder {
                         );
 
                         // state 0：call awaited，store + register waker → ret
-                        self.add_instruction(IrInstruction::标签 { name: "s0:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "s0:".to_string(),
+                        });
                         let awaited_args_str: String = awaited_args
                             .iter()
                             .map(|n| format!("i64 {}", n))
@@ -3930,7 +4418,9 @@ impl IrBuilder {
                         emit_raw(self, "  ret void");
 
                         // state 1：load awaited + 外层 args，按 ret_form 算结果
-                        self.add_instruction(IrInstruction::标签 { name: "s1:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "s1:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: format!(
                                 "  %await_p2 = getelementptr i8, ptr %pframe, i64 {}",
@@ -4011,7 +4501,9 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret void");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // 注册函数签名（外层参数 N 个 i64）
                         let param_types: Vec<String> =
@@ -4061,7 +4553,9 @@ impl IrBuilder {
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define ptr @{}({}) {{", mangled, param_decls_str),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: format!(
                                 "  %frame = call ptr @qi_async_alloc_frame(i64 {})",
@@ -4094,13 +4588,17 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret ptr %fut");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // poll fn：从 frame 读 return_future + 各参数，按 ret_form 计算结果
                         self.add_instruction(IrInstruction::标签 {
                             name: format!("define void @{}_poll(ptr %pframe) {{", mangled),
                         });
-                        self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "entry:".to_string(),
+                        });
                         self.add_instruction(IrInstruction::标签 {
                             name: "  %pret_p = getelementptr i8, ptr %pframe, i64 8".to_string(),
                         });
@@ -4155,7 +4653,9 @@ impl IrBuilder {
                             ),
                         );
                         emit_raw(self, "  ret void");
-                        self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: "}".to_string(),
+                        });
 
                         // 注册函数签名 — caller 用原名调用，签名跟入口 fn 对齐
                         let param_types: Vec<String> =
@@ -4400,7 +4900,9 @@ impl IrBuilder {
                 });
 
                 // Add entry block
-                self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: "entry:".to_string(),
+                });
 
                 // If this is main, initialize the runtime
                 if is_main {
@@ -4468,7 +4970,9 @@ impl IrBuilder {
                 }
 
                 // // Function is already properly closed by function body processing
-                self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: "}".to_string(),
+                });
 
                 // Clear current function name and return type after function ends
                 self.current_function_name = None;
@@ -4606,7 +5110,9 @@ impl IrBuilder {
             AstNode::跳出语句(_) => {
                 // Break: jump to the end label of the innermost loop
                 if let Some((_, end_label)) = self.loop_stack.last() {
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_label.clone(),
+                    });
                     Ok("break".to_string())
                 } else {
                     Err("跳出语句必须在循环内使用".to_string())
@@ -4615,7 +5121,9 @@ impl IrBuilder {
             AstNode::继续语句(_) => {
                 // Continue: jump to the start label of the innermost loop
                 if let Some((start_label, _)) = self.loop_stack.last() {
-                    self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: start_label.clone(),
+                    });
                     Ok("continue".to_string())
                 } else {
                     Err("继续语句必须在循环内使用".to_string())
@@ -4640,7 +5148,9 @@ impl IrBuilder {
                 });
 
                 // Then branch
-                self.add_instruction(IrInstruction::标签 { name: then_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: then_label.clone(),
+                });
                 let then_has_return = self.contains_return(&if_stmt.then_branch);
                 let then_alias_snap = self.snapshot_alias();
                 for stmt in &if_stmt.then_branch {
@@ -4649,11 +5159,15 @@ impl IrBuilder {
                 self.restore_alias(then_alias_snap);
                 // Only add jump if there's no return
                 if !then_has_return {
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_label.clone(),
+                    });
                 }
 
                 // Else branch (if exists)
-                self.add_instruction(IrInstruction::标签 { name: else_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: else_label.clone(),
+                });
                 let else_has_return = if let Some(else_branch) = &if_stmt.else_branch {
                     let has_ret = self.node_contains_return(else_branch);
                     let else_alias_snap = self.snapshot_alias();
@@ -4666,12 +5180,16 @@ impl IrBuilder {
 
                 // Only add jump if there's no return
                 if !else_has_return {
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_label.clone(),
+                    });
                 }
 
                 // Only add end label if at least one branch doesn't return
                 if !then_has_return || !else_has_return {
-                    self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                    self.add_instruction(IrInstruction::标签 {
+                        name: end_label.clone(),
+                    });
                 }
 
                 Ok("if".to_string())
@@ -4687,10 +5205,14 @@ impl IrBuilder {
                     .push((start_label.clone(), end_label.clone()));
 
                 // Jump to start label (condition check)
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: start_label.clone(),
+                });
 
                 // Start label (condition check)
-                self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: start_label.clone(),
+                });
 
                 // Build condition - this should already generate a comparison (i1 result)
                 let condition = self.build_node(&while_stmt.condition)?;
@@ -4704,7 +5226,9 @@ impl IrBuilder {
                 });
 
                 // Body label
-                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: body_label.clone(),
+                });
 
                 // Body
                 let while_alias_snap = self.snapshot_alias();
@@ -4714,10 +5238,14 @@ impl IrBuilder {
                 self.restore_alias(while_alias_snap);
 
                 // Jump back to start to check condition again
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: start_label.clone(),
+                });
 
                 // End label
-                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: end_label.clone(),
+                });
 
                 // Check if this might be an infinite loop (condition is literal true)
                 // In that case, add an unreachable instruction so the label has valid IR
@@ -4738,7 +5266,9 @@ impl IrBuilder {
                 let end_label = self.generate_label();
 
                 // Start label
-                self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: start_label.clone(),
+                });
 
                 // Body
                 let loop_alias_snap = self.snapshot_alias();
@@ -4748,10 +5278,14 @@ impl IrBuilder {
                 self.restore_alias(loop_alias_snap);
 
                 // Jump back to start (infinite loop)
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: start_label.clone(),
+                });
 
                 // End label (unreachable in current implementation)
-                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: end_label.clone(),
+                });
 
                 Ok("loop".to_string())
             }
@@ -4825,10 +5359,14 @@ impl IrBuilder {
                 });
 
                 // Jump to condition check
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: start_label.clone(),
+                });
 
                 // Start label (condition check)
-                self.add_instruction(IrInstruction::标签 { name: start_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: start_label.clone(),
+                });
 
                 // Load counter
                 let counter_val = self.generate_temp();
@@ -4856,7 +5394,9 @@ impl IrBuilder {
                 });
 
                 // Body label
-                self.add_instruction(IrInstruction::标签 { name: body_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: body_label.clone(),
+                });
 
                 // Load current counter value
                 let curr_idx = self.generate_temp();
@@ -4920,10 +5460,14 @@ impl IrBuilder {
                 });
 
                 // Jump back to condition
-                self.add_instruction(IrInstruction::跳转 { label: start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: start_label.clone(),
+                });
 
                 // End label
-                self.add_instruction(IrInstruction::标签 { name: end_label.clone() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: end_label.clone(),
+                });
 
                 Ok("for".to_string())
             }
@@ -5179,8 +5723,10 @@ impl IrBuilder {
                 let temp = self.generate_temp();
 
                 // Record the type of this temporary variable
-                self.variable_types
-                    .insert(temp.trim_start_matches('%').to_string(), result_type.clone());
+                self.variable_types.insert(
+                    temp.trim_start_matches('%').to_string(),
+                    result_type.clone(),
+                );
 
                 self.add_instruction(IrInstruction::二元操作 {
                     dest: temp.clone(),
@@ -5272,8 +5818,10 @@ impl IrBuilder {
 
                 // Generate appropriate LLVM cast instruction based on source and target types
                 let temp = self.generate_temp();
-                self.variable_types
-                    .insert(temp.trim_start_matches('%').to_string(), target_type.clone());
+                self.variable_types.insert(
+                    temp.trim_start_matches('%').to_string(),
+                    target_type.clone(),
+                );
 
                 match (source_type.as_str(), target_type.as_str()) {
                     // Integer to float
@@ -5485,7 +6033,10 @@ impl IrBuilder {
                         }
                         Ok(array)
                     }
-                    _ => Err(format!("Invalid assignment target: {:?}", assign_expr.target)),
+                    _ => Err(format!(
+                        "Invalid assignment target: {:?}",
+                        assign_expr.target
+                    )),
                 }
             }
             AstNode::函数调用表达式(call_expr) => {
@@ -5872,8 +6423,10 @@ impl IrBuilder {
                         callee: "qi_closure_get_fn".to_string(),
                         arguments: vec![obj_ref.clone()],
                     });
-                    self.variable_types
-                        .insert(fn_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
+                    self.variable_types.insert(
+                        fn_tmp.trim_start_matches('%').to_string(),
+                        "ptr".to_string(),
+                    );
 
                     // 调用：fn_tmp(obj, 用户参数...)
                     let mut full_args = vec![obj_ref.clone()];
@@ -5893,8 +6446,10 @@ impl IrBuilder {
                         return Ok(String::new());
                     }
                     let temp = self.generate_temp();
-                    self.variable_types
-                        .insert(temp.trim_start_matches('%').to_string(), return_type.clone());
+                    self.variable_types.insert(
+                        temp.trim_start_matches('%').to_string(),
+                        return_type.clone(),
+                    );
                     self.function_return_types
                         .insert(fn_tmp.clone(), return_type);
                     self.add_instruction(IrInstruction::函数调用 {
@@ -5935,8 +6490,10 @@ impl IrBuilder {
                             source,
                             load_type: Some("ptr".to_string()),
                         });
-                        self.variable_types
-                            .insert(loaded.trim_start_matches('%').to_string(), "ptr".to_string());
+                        self.variable_types.insert(
+                            loaded.trim_start_matches('%').to_string(),
+                            "ptr".to_string(),
+                        );
                         loaded
                     };
 
@@ -5953,8 +6510,10 @@ impl IrBuilder {
                     }
 
                     let temp = self.generate_temp();
-                    self.variable_types
-                        .insert(temp.trim_start_matches('%').to_string(), return_type.clone());
+                    self.variable_types.insert(
+                        temp.trim_start_matches('%').to_string(),
+                        return_type.clone(),
+                    );
                     self.function_return_types
                         .insert(callee_ref.clone(), return_type);
                     self.add_instruction(IrInstruction::函数调用 {
@@ -6118,8 +6677,10 @@ impl IrBuilder {
                     });
 
                     // The task creation returns a future handle (ptr)
-                    self.variable_types
-                        .insert(task_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                    self.variable_types.insert(
+                        task_temp.trim_start_matches('%').to_string(),
+                        "ptr".to_string(),
+                    );
 
                     Ok(task_temp)
                 } else if is_async_function && self.in_async_context {
@@ -6598,7 +7159,10 @@ impl IrBuilder {
                     // Local or Global
                     // Load the value
                     if self.verbose {
-                        eprintln!("[DEBUG] Loading variable from source: {}", llvm_var_ref_name);
+                        eprintln!(
+                            "[DEBUG] Loading variable from source: {}",
+                            llvm_var_ref_name
+                        );
                     }
                     self.add_instruction(IrInstruction::加载 {
                         dest: temp.clone(),
@@ -7012,8 +7576,10 @@ impl IrBuilder {
                             self.infer_ir_value_type(&field_value)
                                 .unwrap_or_else(|| "i64".to_string())
                         });
-                    self.variable_types
-                        .insert(field_ptr.trim_start_matches('%').to_string(), field_type.clone());
+                    self.variable_types.insert(
+                        field_ptr.trim_start_matches('%').to_string(),
+                        field_type.clone(),
+                    );
 
                     // Store the field value
                     self.add_instruction(IrInstruction::存储 {
@@ -7313,7 +7879,9 @@ impl IrBuilder {
                 });
 
                 // Add entry label
-                self.add_instruction(IrInstruction::标签 { name: "entry:".to_string() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: "entry:".to_string(),
+                });
 
                 // Track parameter types for use in function body
                 // Receiver parameter
@@ -7334,12 +7902,16 @@ impl IrBuilder {
                     format!("param_{}", method_decl.receiver_name),
                     receiver_type.to_string(),
                 );
-                self.variable_types
-                    .insert(format!("param_{}", receiver_mangled), receiver_type.to_string());
+                self.variable_types.insert(
+                    format!("param_{}", receiver_mangled),
+                    receiver_type.to_string(),
+                );
 
                 // Track receiver struct type for field access
-                self.variable_struct_types
-                    .insert(method_decl.receiver_name.clone(), method_decl.receiver_type.clone());
+                self.variable_struct_types.insert(
+                    method_decl.receiver_name.clone(),
+                    method_decl.receiver_type.clone(),
+                );
                 self.variable_struct_types
                     .insert(receiver_mangled.clone(), method_decl.receiver_type.clone());
 
@@ -7400,7 +7972,9 @@ impl IrBuilder {
                 }
 
                 // Close function
-                self.add_instruction(IrInstruction::标签 { name: "}".to_string() });
+                self.add_instruction(IrInstruction::标签 {
+                    name: "}".to_string(),
+                });
 
                 // Clear current function context
                 self.current_function_name = None;
@@ -8269,8 +8843,12 @@ impl IrBuilder {
                     };
 
                 // 进入轮询循环
-                self.add_instruction(IrInstruction::跳转 { label: poll_lbl.clone() });
-                self.add_instruction(IrInstruction::标签 { name: poll_lbl.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: poll_lbl.clone(),
+                });
+                self.add_instruction(IrInstruction::标签 {
+                    name: poll_lbl.clone(),
+                });
                 // poll 块需要显式终结符跳到第一个 try 块（LLVM 不允许 fall-through）
                 let first_try = if let Some(pc0) = prepared.first() {
                     pc0.try_lbl.clone()
@@ -8321,11 +8899,15 @@ impl IrBuilder {
                 }
                 // 如果没有任何 case（理论上不会），直接跳到 notready
                 if prepared.is_empty() {
-                    self.add_instruction(IrInstruction::跳转 { label: notready_lbl.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: notready_lbl.clone(),
+                    });
                 }
 
                 // notready：决定 默认 / 超时 / backoff
-                self.add_instruction(IrInstruction::标签 { name: format!("{}:", notready_lbl) });
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", notready_lbl),
+                });
                 if let Some(_db) = default_body {
                     // 有默认分支 —— 首轮没就绪立即走默认
                     self.add_instruction(IrInstruction::跳转 {
@@ -8347,16 +8929,22 @@ impl IrBuilder {
                     });
                 } else {
                     // 既无默认也无超时 —— 退化为无限轮询（仍非阻塞，靠 backoff 让出 CPU）
-                    self.add_instruction(IrInstruction::跳转 { label: backoff_lbl.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: backoff_lbl.clone(),
+                    });
                 }
 
                 // backoff：sleep ~1ms 后回到 poll
-                self.add_instruction(IrInstruction::标签 { name: format!("{}:", backoff_lbl) });
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", backoff_lbl),
+                });
                 self.add_instruction(IrInstruction::标签 {
                     // 末尾加 " ;" —— emit 时若给非 "= " 行补 ':'，会落在注释里，避免被当成 label
                     name: "  call void @qi_runtime_select_backoff() ;".to_string(),
                 });
-                self.add_instruction(IrInstruction::跳转 { label: poll_lbl.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: poll_lbl.clone(),
+                });
 
                 // 各 case body 基本块
                 for pc in &prepared {
@@ -8383,7 +8971,9 @@ impl IrBuilder {
                     for stmt in &pc.body {
                         self.build_node(stmt)?;
                     }
-                    self.add_instruction(IrInstruction::跳转 { label: end_lbl.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
                 }
 
                 // 默认 body
@@ -8394,7 +8984,9 @@ impl IrBuilder {
                     for stmt in db {
                         self.build_node(stmt)?;
                     }
-                    self.add_instruction(IrInstruction::跳转 { label: end_lbl.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
                 }
 
                 // 超时 body
@@ -8405,11 +8997,15 @@ impl IrBuilder {
                     for stmt in *tb {
                         self.build_node(stmt)?;
                     }
-                    self.add_instruction(IrInstruction::跳转 { label: end_lbl.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
                 }
 
                 // end
-                self.add_instruction(IrInstruction::标签 { name: format!("{}:", end_lbl) });
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", end_lbl),
+                });
 
                 Ok("select".to_string())
             }
@@ -8525,8 +9121,10 @@ impl IrBuilder {
                     callee: "qi_exc_alloc_frame".to_string(),
                     arguments: vec![],
                 });
-                self.variable_types
-                    .insert(buf_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
+                self.variable_types.insert(
+                    buf_tmp.trim_start_matches('%').to_string(),
+                    "ptr".to_string(),
+                );
 
                 // 2. 调用 setjmp — 必须在 caller 栈帧执行，所以直接调 libc
                 let setjmp_tmp = self.generate_temp();
@@ -8535,8 +9133,10 @@ impl IrBuilder {
                     callee: "setjmp".to_string(),
                     arguments: vec![buf_tmp.clone()],
                 });
-                self.variable_types
-                    .insert(setjmp_tmp.trim_start_matches('%').to_string(), "i32".to_string());
+                self.variable_types.insert(
+                    setjmp_tmp.trim_start_matches('%').to_string(),
+                    "i32".to_string(),
+                );
 
                 // 3. 比较 setjmp 结果：0 → 进 try body；非 0 → 进 catch
                 let cmp_tmp = self.generate_temp();
@@ -8564,7 +9164,9 @@ impl IrBuilder {
                     callee: "qi_exc_pop".to_string(),
                     arguments: vec![],
                 });
-                self.add_instruction(IrInstruction::跳转 { label: after_catch_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: after_catch_label.clone(),
+                });
 
                 // 5. catch entry
                 self.add_instruction(IrInstruction::标签 { name: catch_label });
@@ -8604,13 +9206,17 @@ impl IrBuilder {
                     self.add_instruction(IrInstruction::不可达);
 
                     // try 正常退出路径走的 after_catch_label —— 给它一个"跑 finally → end"的实现
-                    self.add_instruction(IrInstruction::标签 { name: after_catch_label });
+                    self.add_instruction(IrInstruction::标签 {
+                        name: after_catch_label,
+                    });
                     if let Some(finally_body) = &try_stmt.finally_body {
                         for stmt in finally_body {
                             self.build_node(stmt)?;
                         }
                     }
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_label.clone(),
+                    });
                     self.add_instruction(IrInstruction::标签 { name: end_label });
                     return Ok(String::new());
                 }
@@ -8622,8 +9228,10 @@ impl IrBuilder {
                     callee: "qi_exc_message".to_string(),
                     arguments: vec![],
                 });
-                self.variable_types
-                    .insert(err_msg_tmp.trim_start_matches('%').to_string(), "ptr".to_string());
+                self.variable_types.insert(
+                    err_msg_tmp.trim_start_matches('%').to_string(),
+                    "ptr".to_string(),
+                );
 
                 // 走每个 catch 子句（目前只支持第一个匹配 — 没有类型 dispatch）
                 for catch_clause in &try_stmt.catch_clauses {
@@ -8685,16 +9293,22 @@ impl IrBuilder {
                     arguments: vec![],
                 });
 
-                self.add_instruction(IrInstruction::跳转 { label: after_catch_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: after_catch_label.clone(),
+                });
 
                 // 6. catch 之后：finally（如果有），否则 end
-                self.add_instruction(IrInstruction::标签 { name: after_catch_label });
+                self.add_instruction(IrInstruction::标签 {
+                    name: after_catch_label,
+                });
                 if let Some(finally_body) = &try_stmt.finally_body {
                     for stmt in finally_body {
                         self.build_node(stmt)?;
                     }
                 }
-                self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: end_label.clone(),
+                });
 
                 // 7. end
                 self.add_instruction(IrInstruction::标签 { name: end_label });
@@ -8853,10 +9467,14 @@ impl IrBuilder {
                 });
 
                 // Jump to the first match arm (required terminator before label)
-                self.add_instruction(IrInstruction::跳转 { label: match_start_label.clone() });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: match_start_label.clone(),
+                });
 
                 // Start of match arms
-                self.add_instruction(IrInstruction::标签 { name: match_start_label });
+                self.add_instruction(IrInstruction::标签 {
+                    name: match_start_label,
+                });
 
                 // Generate code for each arm
                 let num_arms = match_expr.arms.len();
@@ -8873,7 +9491,9 @@ impl IrBuilder {
                     // For the first arm, we're already at the start label, so just continue
                     // For subsequent arms, we need the label
                     if i > 0 {
-                        self.add_instruction(IrInstruction::标签 { name: arm_label.clone() });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: arm_label.clone(),
+                        });
                     }
 
                     // Generate pattern match condition and branching
@@ -8950,7 +9570,9 @@ impl IrBuilder {
                     }
 
                     // Arm body label
-                    self.add_instruction(IrInstruction::标签 { name: arm_body_label });
+                    self.add_instruction(IrInstruction::标签 {
+                        name: arm_body_label,
+                    });
 
                     // Build arm body
                     for stmt in &arm.body {
@@ -8958,7 +9580,9 @@ impl IrBuilder {
                     }
 
                     // Jump to end after arm body
-                    self.add_instruction(IrInstruction::跳转 { label: end_label.clone() });
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_label.clone(),
+                    });
                 }
 
                 // End label
@@ -9287,8 +9911,18 @@ impl IrBuilder {
         // Add module header
         ir.push_str("; Generated by Qi Language Compiler\n");
         ir.push_str("; Module ID = 'qi_program'\n");
-        ir.push_str("target datalayout = \"e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32\"\n");
-        ir.push_str("target triple = \"arm64-apple-macosx26.0.0\"\n\n");
+        // 目标三元组/datalayout 按宿主平台来：qi 编译/运行本机可执行文件。
+        // 之前写死 macOS，导致在 Linux 上 clang 编译 .ll 直接报错（每个示例都失败）。
+        // macOS 保持原样；其它平台不写死，交给 clang 用宿主默认（Linux/Windows 自动正确）。
+        #[cfg(target_os = "macos")]
+        {
+            ir.push_str("target datalayout = \"e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32\"\n");
+            ir.push_str("target triple = \"arm64-apple-macosx26.0.0\"\n\n");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            ir.push_str("\n");
+        }
 
         // Add struct type definitions
         if !self.struct_definitions.is_empty() {
@@ -10501,7 +11135,12 @@ impl IrBuilder {
         // Process all instructions in order
         for instruction in all_instructions {
             match instruction {
-                IrInstruction::全局变量声明 { name, type_name, initializer, is_constant } => {
+                IrInstruction::全局变量声明 {
+                    name,
+                    type_name,
+                    initializer,
+                    is_constant,
+                } => {
                     let linkage = if *is_constant { "constant" } else { "global" };
                     let align = self.get_type_alignment(type_name);
                     let init_val = initializer
@@ -10542,7 +11181,11 @@ impl IrBuilder {
                         // if type_size > 1024 { /* use heap */ }
                     }
                 }
-                IrInstruction::存储 { target, value, value_type } => {
+                IrInstruction::存储 {
+                    target,
+                    value,
+                    value_type,
+                } => {
                     // Determine target type by looking up the target variable
                     let target_var_name = target.trim_start_matches('%').trim_start_matches('_');
                     let target_type = self
@@ -10638,7 +11281,11 @@ impl IrBuilder {
                 IrInstruction::浮点数常量 { dest, value } => {
                     ir.push_str(&format!("{} = fadd double 0.0, {}\n", dest, value));
                 }
-                IrInstruction::加载 { dest, source, load_type } => {
+                IrInstruction::加载 {
+                    dest,
+                    source,
+                    load_type,
+                } => {
                     // Use explicit load type if provided, otherwise infer
                     let inferred_type: String = if let Some(ref lt) = load_type {
                         lt.clone()
@@ -10660,7 +11307,10 @@ impl IrBuilder {
                     } else {
                         "i64".to_string()
                     };
-                    ir.push_str(&format!("{} = load {}, ptr {}\n", dest, inferred_type, source));
+                    ir.push_str(&format!(
+                        "{} = load {}, ptr {}\n",
+                        dest, inferred_type, source
+                    ));
                     // Update dest type in variable_types so subsequent uses have the correct type
                     let dest_var = dest.trim_start_matches('%');
                     self.variable_types
@@ -10673,7 +11323,13 @@ impl IrBuilder {
                         }
                     }
                 }
-                IrInstruction::二元操作 { dest, left, operator, right, operand_type } => {
+                IrInstruction::二元操作 {
+                    dest,
+                    left,
+                    operator,
+                    right,
+                    operand_type,
+                } => {
                     // Use the operand_type that was determined when creating the instruction
                     let is_float =
                         operand_type.contains("double") || operand_type.contains("float");
@@ -10755,7 +11411,11 @@ impl IrBuilder {
                         dest, op_str, type_for_instruction, normalized_left, normalized_right
                     ));
                 }
-                IrInstruction::函数调用 { dest, callee, arguments } => {
+                IrInstruction::函数调用 {
+                    dest,
+                    callee,
+                    arguments,
+                } => {
                     if callee == "printf" && !arguments.is_empty() {
                         // Handle printf calls - arguments are now in "type:value" format
                         let mut processed_args = Vec::new();
@@ -11826,7 +12486,11 @@ impl IrBuilder {
                 IrInstruction::跳转 { label } => {
                     ir.push_str(&format!("br label %{}\n", label));
                 }
-                IrInstruction::条件跳转 { condition, true_label, false_label } => {
+                IrInstruction::条件跳转 {
+                    condition,
+                    true_label,
+                    false_label,
+                } => {
                     ir.push_str(&format!(
                         "br i1 {}, label %{}, label %{}\n",
                         condition, true_label, false_label
@@ -11847,7 +12511,11 @@ impl IrBuilder {
                         ));
                     }
                 }
-                IrInstruction::数组分配 { dest, size, element_type } => {
+                IrInstruction::数组分配 {
+                    dest,
+                    size,
+                    element_type,
+                } => {
                     // Smart array allocation: small arrays on stack, large arrays on heap
                     let array_size: usize = size.parse().unwrap_or(10);
                     const SMALL_ARRAY_THRESHOLD: usize = 64; // Arrays <= 64 elements use stack
@@ -11898,7 +12566,12 @@ impl IrBuilder {
                         ));
                     }
                 }
-                IrInstruction::数组存储 { array, index, value, element_type } => {
+                IrInstruction::数组存储 {
+                    array,
+                    index,
+                    value,
+                    element_type,
+                } => {
                     // Generate unique temp name for address
                     let hash = format!(
                         "{}{}",
@@ -11929,14 +12602,25 @@ impl IrBuilder {
                     // Unreachable instruction for dead code paths
                     ir.push_str("unreachable\n");
                 }
-                IrInstruction::类型转换 { dest, value, from_type, to_type, cast_type } => {
+                IrInstruction::类型转换 {
+                    dest,
+                    value,
+                    from_type,
+                    to_type,
+                    cast_type,
+                } => {
                     // Type conversion using appropriate LLVM cast instruction
                     ir.push_str(&format!(
                         "  {} = {} {} {} to {}\n",
                         dest, cast_type, from_type, value, to_type
                     ));
                 }
-                IrInstruction::字段访问 { dest, object, field, struct_type } => {
+                IrInstruction::字段访问 {
+                    dest,
+                    object,
+                    field,
+                    struct_type,
+                } => {
                     // Get field index from struct field names
                     let field_index =
                         if let Some(field_names) = self.struct_field_names.get(struct_type) {
@@ -12023,7 +12707,11 @@ impl IrBuilder {
                         ));
                     }
                 }
-                IrInstruction::创建异步任务 { dest, function, arguments } => {
+                IrInstruction::创建异步任务 {
+                    dest,
+                    function,
+                    arguments,
+                } => {
                     // Create async task - pass function pointer and argument count
                     // Note: This is a simplified implementation. In a real async runtime,
                     // we would need to handle argument passing more carefully.
@@ -12037,7 +12725,10 @@ impl IrBuilder {
                     // Spawn the task to start execution
                     ir.push_str(&format!("call i32 @qi_runtime_spawn_task(ptr {})\n", dest));
                 }
-                IrInstruction::协程启动 { function, arguments } => {
+                IrInstruction::协程启动 {
+                    function,
+                    arguments,
+                } => {
                     // For functions with arguments, generate a wrapper function and use generic spawn
                     if arguments.is_empty() {
                         // No arguments - use simple spawn
@@ -12175,7 +12866,11 @@ impl IrBuilder {
                             wrapper_ptr2, args_array, arguments.len()));
                     }
                 }
-                IrInstruction::创建通道 { dest, channel_type, buffer_size } => {
+                IrInstruction::创建通道 {
+                    dest,
+                    channel_type,
+                    buffer_size,
+                } => {
                     // Create channel - generate runtime call
                     let size = buffer_size.as_ref().unwrap_or(&"0".to_string()).clone();
                     ir.push_str(&format!(
@@ -12214,10 +12909,16 @@ impl IrBuilder {
                         "{} = call i32 @qi_runtime_channel_receive(ptr {}, ptr {})\n",
                         status_temp, channel, received_ptr
                     ));
-                    ir.push_str(&format!("{} = load ptr, ptr {}\n", value_ptr_temp, received_ptr));
+                    ir.push_str(&format!(
+                        "{} = load ptr, ptr {}\n",
+                        value_ptr_temp, received_ptr
+                    ));
                     ir.push_str(&format!("{} = load i64, ptr {}\n", dest, value_ptr_temp));
                 }
-                IrInstruction::选择语句 { cases, default_case } => {
+                IrInstruction::选择语句 {
+                    cases,
+                    default_case,
+                } => {
                     // Generate select statement using runtime
                     ir.push_str("; Select statement - runtime implementation\n");
 
@@ -12400,12 +13101,18 @@ impl IrBuilder {
         let mut ir = String::new();
 
         // Call qi_runtime_alloc to get raw pointer
-        ir.push_str(&format!("  {} = call ptr @qi_runtime_alloc(i64 {})\n", dest, size));
+        ir.push_str(&format!(
+            "  {} = call ptr @qi_runtime_alloc(i64 {})\n",
+            dest, size
+        ));
 
         // Optionally bitcast to specific type if needed
         if type_name != "ptr" && type_name != "i8" {
             let typed_ptr = self.generate_temp();
-            ir.push_str(&format!("  {} = bitcast ptr {} to {}*\n", typed_ptr, dest, type_name));
+            ir.push_str(&format!(
+                "  {} = bitcast ptr {} to {}*\n",
+                typed_ptr, dest, type_name
+            ));
             ir
         } else {
             ir
@@ -12430,7 +13137,10 @@ impl IrBuilder {
             let skip_gc_label = self.generate_label();
 
             // Check if GC should collect
-            ir.push_str(&format!("  {} = call i64 @qi_runtime_gc_should_collect()\n", should_gc));
+            ir.push_str(&format!(
+                "  {} = call i64 @qi_runtime_gc_should_collect()\n",
+                should_gc
+            ));
             ir.push_str(&format!("  {} = icmp ne i64 {}, 0\n", need_gc, should_gc));
             ir.push_str(&format!(
                 "  br i1 {}, label %{}, label %{}\n",
@@ -12448,7 +13158,10 @@ impl IrBuilder {
 
         // Perform allocation
         let alloc_ptr = self.generate_temp();
-        ir.push_str(&format!("  {} = call ptr @qi_runtime_alloc(i64 {})\n", alloc_ptr, size));
+        ir.push_str(&format!(
+            "  {} = call ptr @qi_runtime_alloc(i64 {})\n",
+            alloc_ptr, size
+        ));
 
         // Bitcast if needed
         let result_ptr = if type_name != "ptr" && type_name != "i8" {

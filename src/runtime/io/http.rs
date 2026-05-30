@@ -260,7 +260,11 @@ impl TcpConnection {
 
         // Wait for connection with timeout
         let fd = stream.as_raw_fd();
-        let mut pollfds = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+        let mut pollfds = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
 
         let timeout_ms = timeout.as_millis() as i32;
         let result = unsafe { libc::poll(&mut pollfds, 1, timeout_ms) };
@@ -273,7 +277,9 @@ impl TcpConnection {
         }
 
         if result == 0 {
-            return Err(IoError::Timeout { timeout_ms: timeout.as_millis() as u64 });
+            return Err(IoError::Timeout {
+                timeout_ms: timeout.as_millis() as u64,
+            });
         }
 
         if pollfds.revents & libc::POLLERR != 0 || pollfds.revents & libc::POLLHUP != 0 {

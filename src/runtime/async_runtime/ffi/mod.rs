@@ -43,7 +43,10 @@ pub(crate) fn 全局异步运行时() -> &'static tokio::runtime::Runtime {
             .filter(|n| *n > 0)
             .unwrap_or(2048);
         if debug_enabled() {
-            eprintln!("DEBUG: tokio runtime: {} workers, {} max blocking", workers, max_blocking);
+            eprintln!(
+                "DEBUG: tokio runtime: {} workers, {} max blocking",
+                workers, max_blocking
+            );
         }
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -248,7 +251,10 @@ pub extern "C" fn qi_runtime_spawn_task(task: TaskHandle) -> i32 {
 pub extern "C" fn qi_runtime_spawn_goroutine(function_ptr: *const c_void) {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: spawn_goroutine called with function pointer {:?}", function_ptr);
+        eprintln!(
+            "DEBUG: spawn_goroutine called with function pointer {:?}",
+            function_ptr
+        );
     }
 
     let func_addr = function_ptr as usize;
@@ -356,7 +362,10 @@ unsafe impl Sync for TimerInstance {}
 pub extern "C" fn qi_runtime_create_channel(buffer_size: i64) -> *mut c_void {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: create_channel called with buffer_size {}", buffer_size);
+        eprintln!(
+            "DEBUG: create_channel called with buffer_size {}",
+            buffer_size
+        );
     }
 
     let (sender, receiver) = mpsc::channel();
@@ -390,7 +399,10 @@ pub extern "C" fn qi_runtime_create_channel(buffer_size: i64) -> *mut c_void {
 pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i32 {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: channel_send called with channel {:?}, value {}", channel, value);
+        eprintln!(
+            "DEBUG: channel_send called with channel {:?}, value {}",
+            channel, value
+        );
     }
 
     let channel_id = channel as u64;
@@ -663,7 +675,10 @@ pub extern "C" fn qi_runtime_set_timeout(timeout_ms: i64) -> i64 {
 pub extern "C" fn qi_runtime_timer_create(deadline_ms: i64) -> *mut c_void {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: timer_create called with deadline_ms {}", deadline_ms);
+        eprintln!(
+            "DEBUG: timer_create called with deadline_ms {}",
+            deadline_ms
+        );
     }
 
     if deadline_ms < 0 {
@@ -674,8 +689,10 @@ pub extern "C" fn qi_runtime_timer_create(deadline_ms: i64) -> *mut c_void {
     let current_time_ms = qi_runtime_get_time_ms();
     let absolute_deadline = current_time_ms + deadline_ms;
 
-    let timer =
-        Arc::new(Mutex::new(TimerInstance { deadline_ms: absolute_deadline, stopped: false }));
+    let timer = Arc::new(Mutex::new(TimerInstance {
+        deadline_ms: absolute_deadline,
+        stopped: false,
+    }));
 
     let timer_id = unsafe {
         let id = NEXT_TIMER_ID;

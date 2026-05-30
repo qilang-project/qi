@@ -49,7 +49,10 @@ fn 发送stdio通知(notification: &JsonValue) -> bool {
     if let Some(w) = guard.as_mut() {
         if writeln!(w, "{}", line).is_ok() {
             let _ = w.flush();
-            eprintln!("[qi-mcp-notify] stdio 通知已发送: {}", &line[..line.len().min(120)]);
+            eprintln!(
+                "[qi-mcp-notify] stdio 通知已发送: {}",
+                &line[..line.len().min(120)]
+            );
             return true;
         }
     }
@@ -117,7 +120,10 @@ pub extern "C" fn qi_mcp_create_server(
         };
 
         let 配置 = MCP服务器配置 {
-            名称, 版本, 描述, 协议版本: "2025-06-18".to_string()
+            名称,
+            版本,
+            描述,
+            协议版本: "2025-06-18".to_string(),
         };
 
         let 模块 = MCP服务器模块::创建();
@@ -1122,7 +1128,10 @@ fn handle_http_connection(
             .map(|s| s.to_string())
             .unwrap_or_else(|| 生成会话id());
 
-        eprintln!("[qi-mcp-http] GET /mcp SSE 推送通道已开启, session={}", session_id_get);
+        eprintln!(
+            "[qi-mcp-http] GET /mcp SSE 推送通道已开启, session={}",
+            session_id_get
+        );
 
         // 发送 SSE 头（不含 Content-Length，chunked / keep-alive）
         let sse_header = format!(
@@ -1553,7 +1562,11 @@ fn handle_request(
 
         _ => {
             eprintln!("[qi-mcp] 未知方法: {}", method);
-            Some(error_response(id_val, -32601, &format!("Method not found: {}", method)))
+            Some(error_response(
+                id_val,
+                -32601,
+                &format!("Method not found: {}", method),
+            ))
         }
     }
 }

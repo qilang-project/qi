@@ -47,7 +47,10 @@ pub struct Module {
 impl Module {
     /// Create a new module
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), functions: HashMap::new() }
+        Self {
+            name: name.into(),
+            functions: HashMap::new(),
+        }
     }
 
     /// Add a function to this module
@@ -82,7 +85,9 @@ pub struct ModuleRegistry {
 impl ModuleRegistry {
     /// Create a new module registry
     pub fn new() -> Self {
-        let mut registry = Self { modules: HashMap::new() };
+        let mut registry = Self {
+            modules: HashMap::new(),
+        };
         registry.register_stdlib_modules();
         registry
     }
@@ -220,7 +225,12 @@ impl ModuleRegistry {
         self.modules.insert("标准库.HTTP2".to_string(), h2_module);
 
         let mut bytes_module = Module::new("字节切片");
-        bytes_module.add_function(ModuleFunction::new("创建", "qi_bytes_create", vec![], "整数"));
+        bytes_module.add_function(ModuleFunction::new(
+            "创建",
+            "qi_bytes_create",
+            vec![],
+            "整数",
+        ));
         bytes_module.add_function(ModuleFunction::new(
             "创建带容量",
             "qi_bytes_with_capacity",
@@ -342,7 +352,12 @@ impl ModuleRegistry {
             vec![],
             "整数",
         ));
-        signal_module.add_function(ModuleFunction::new("重置", "qi_signal_reset", vec![], "整数"));
+        signal_module.add_function(ModuleFunction::new(
+            "重置",
+            "qi_signal_reset",
+            vec![],
+            "整数",
+        ));
         self.modules
             .insert("信号".to_string(), signal_module.clone());
         self.modules
@@ -2014,7 +2029,12 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new("运行", "qi_gui_run", vec![], "void"));
 
         // 获取版本
-        gui_module.add_function(ModuleFunction::new("版本", "qi_gui_version", vec![], "字符串"));
+        gui_module.add_function(ModuleFunction::new(
+            "版本",
+            "qi_gui_version",
+            vec![],
+            "字符串",
+        ));
 
         // 释放字符串
         gui_module.add_function(ModuleFunction::new(
@@ -3158,7 +3178,12 @@ impl ModuleRegistry {
         let mut dt_module = Module::new("时间");
 
         // 当前时间
-        dt_module.add_function(ModuleFunction::new("现在", "qi_datetime_now", vec![], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "现在",
+            "qi_datetime_now",
+            vec![],
+            "整数",
+        ));
         dt_module.add_function(ModuleFunction::new(
             "现在毫秒",
             "qi_datetime_now_millis",
@@ -3940,7 +3965,12 @@ impl ModuleRegistry {
             "i32",
         ));
 
-        env_module.add_function(ModuleFunction::new("主目录", "qi_env_home_dir", vec![], "ptr"));
+        env_module.add_function(ModuleFunction::new(
+            "主目录",
+            "qi_env_home_dir",
+            vec![],
+            "ptr",
+        ));
 
         env_module.add_function(ModuleFunction::new("全部", "qi_env_all", vec![], "ptr"));
 
@@ -4249,7 +4279,12 @@ impl ModuleRegistry {
         let mut m = Module::new("同步");
 
         // ── 互斥锁 ──────────────────────────────────────────────────
-        m.add_function(ModuleFunction::new("创建锁", "qi_sync_mutex_create", vec![], "i64"));
+        m.add_function(ModuleFunction::new(
+            "创建锁",
+            "qi_sync_mutex_create",
+            vec![],
+            "i64",
+        ));
         m.add_function(ModuleFunction::new(
             "加锁",
             "qi_sync_mutex_lock",

@@ -20,7 +20,10 @@ pub struct Scope {
 
 impl ScopeManager {
     pub fn new() -> Self {
-        Self { scopes: vec![Scope::new_global()], current_scope: 0 }
+        Self {
+            scopes: vec![Scope::new_global()],
+            current_scope: 0,
+        }
     }
 
     pub fn enter_scope(&mut self, span: Span) {

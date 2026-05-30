@@ -52,7 +52,9 @@ impl 嵌入结果 {
     /// 创建新的嵌入结果
     pub fn 创建(文本: String, 向量: 向量) -> Self {
         let 维度 = 向量.len();
-        Self { 文本, 向量, 维度 }
+        Self {
+            文本, 向量, 维度
+        }
     }
 
     /// 计算与另一个嵌入的余弦相似度
@@ -72,7 +74,9 @@ impl 嵌入结果 {
         let 模B: f64 = 其他.向量.iter().map(|x| x * x).sum::<f64>().sqrt();
 
         if 模A == 0.0 || 模B == 0.0 {
-            return Err(大模型错误::嵌入错误("零向量无法计算相似度".to_string()));
+            return Err(大模型错误::嵌入错误(
+                "零向量无法计算相似度".to_string(),
+            ));
         }
 
         Ok(点积 / (模A * 模B))
@@ -143,7 +147,12 @@ pub struct 文档 {
 impl 文档 {
     /// 创建新文档
     pub fn 创建(id: String, 内容: String, 嵌入: 向量) -> Self {
-        Self { id, 内容, 嵌入, 元数据: HashMap::new() }
+        Self {
+            id,
+            内容,
+            嵌入,
+            元数据: HashMap::new(),
+        }
     }
 
     /// 添加元数据
@@ -174,7 +183,10 @@ pub struct 知识库 {
 impl 知识库 {
     /// 创建新的知识库
     pub fn 创建(嵌入器: 嵌入器) -> Self {
-        Self { 文档列表: Vec::new(), 嵌入器 }
+        Self {
+            文档列表: Vec::new(),
+            嵌入器,
+        }
     }
 
     /// 添加文档
@@ -204,7 +216,10 @@ impl 知识库 {
             .iter()
             .map(|文档| {
                 let 分数 = self.计算相似度(&查询嵌入.向量, &文档.嵌入);
-                检索结果 { 文档: 文档.clone(), 分数 }
+                检索结果 {
+                    文档: 文档.clone(),
+                    分数,
+                }
             })
             .collect();
 
@@ -292,7 +307,9 @@ impl 提示模板 {
                 let 占位符 = format!("{{{}}}", 变量名);
                 结果 = 结果.replace(&占位符, 值);
             } else {
-                return Err(大模型错误::模板错误(format!("缺少变量: {}", 变量名)));
+                return Err(大模型错误::模板错误(
+                    format!("缺少变量: {}", 变量名),
+                ));
             }
         }
 
@@ -352,7 +369,9 @@ pub struct 检索增强生成 {
 impl 检索增强生成 {
     /// 创建新的 RAG 系统
     pub fn 创建(知识库: 知识库, 模板: 提示模板, 配置: 模型配置) -> Self {
-        Self { 知识库, 模板, 配置 }
+        Self {
+            知识库, 模板, 配置
+        }
     }
 
     /// 生成回答
@@ -388,7 +407,10 @@ pub enum 代理动作 {
     /// 思考
     思考(String),
     /// 执行工具
-    执行工具 { 工具名: String, 参数: HashMap<String, String> },
+    执行工具 {
+        工具名: String,
+        参数: HashMap<String, String>,
+    },
     /// 回答
     回答(String),
 }
@@ -421,7 +443,12 @@ pub struct 智能代理 {
 impl 智能代理 {
     /// 创建新的智能代理
     pub fn 创建(名称: String, 系统提示: String, 配置: 模型配置) -> Self {
-        Self { 名称, 系统提示, 工具列表: Vec::new(), 配置 }
+        Self {
+            名称,
+            系统提示,
+            工具列表: Vec::new(),
+            配置,
+        }
     }
 
     /// 添加工具

@@ -57,7 +57,13 @@ pub struct 工具参数 {
 impl 工具参数 {
     /// 创建新的工具参数
     pub fn 创建(名称: String, 类型: String, 描述: String, 必需: bool) -> Self {
-        Self { 名称, 类型, 描述, 必需, 默认值: None }
+        Self {
+            名称,
+            类型,
+            描述,
+            必需,
+            默认值: None,
+        }
     }
 
     /// 设置默认值
@@ -148,7 +154,10 @@ impl MCP工具 {
         // 验证必需参数
         for 工具参数 in &self.参数列表 {
             if 工具参数.必需 && !参数.contains_key(&工具参数.名称) {
-                return Err(MCP错误::工具错误(format!("缺少必需参数: {}", 工具参数.名称)));
+                return Err(MCP错误::工具错误(format!(
+                    "缺少必需参数: {}",
+                    工具参数.名称
+                )));
             }
         }
 
@@ -167,7 +176,10 @@ impl MCP工具 {
         for 参数 in &self.参数列表 {
             let mut param_schema = serde_json::Map::new();
             param_schema.insert("type".to_string(), JsonValue::String(参数.类型.clone()));
-            param_schema.insert("description".to_string(), JsonValue::String(参数.描述.clone()));
+            param_schema.insert(
+                "description".to_string(),
+                JsonValue::String(参数.描述.clone()),
+            );
 
             if let Some(ref 默认值) = 参数.默认值 {
                 param_schema.insert("default".to_string(), 默认值.clone());
@@ -244,7 +256,14 @@ pub enum 资源内容 {
 impl MCP资源 {
     /// 创建新资源
     pub fn 创建(uri: String, 名称: String, 描述: String, 类型: 资源类型) -> Self {
-        Self { uri, 名称, 描述, 类型, mime类型: None, 内容: None }
+        Self {
+            uri,
+            名称,
+            描述,
+            类型,
+            mime类型: None,
+            内容: None,
+        }
     }
 
     /// 设置MIME类型
@@ -307,8 +326,14 @@ impl MCP资源 {
         let mut obj = serde_json::Map::new();
         obj.insert("uri".to_string(), JsonValue::String(self.uri.clone()));
         obj.insert("name".to_string(), JsonValue::String(self.名称.clone()));
-        obj.insert("description".to_string(), JsonValue::String(self.描述.clone()));
-        obj.insert("type".to_string(), JsonValue::String(self.类型.转为字符串().to_string()));
+        obj.insert(
+            "description".to_string(),
+            JsonValue::String(self.描述.clone()),
+        );
+        obj.insert(
+            "type".to_string(),
+            JsonValue::String(self.类型.转为字符串().to_string()),
+        );
 
         if let Some(ref mime) = self.mime类型 {
             obj.insert("mimeType".to_string(), JsonValue::String(mime.clone()));
@@ -332,7 +357,9 @@ pub struct 提示参数 {
 impl 提示参数 {
     /// 创建新的提示参数
     pub fn 创建(名称: String, 描述: String, 必需: bool) -> Self {
-        Self { 名称, 描述, 必需 }
+        Self {
+            名称, 描述, 必需
+        }
     }
 }
 
@@ -352,7 +379,12 @@ pub struct MCP提示 {
 impl MCP提示 {
     /// 创建新提示
     pub fn 创建(名称: String, 描述: String, 模板: String) -> Self {
-        Self { 名称, 描述, 参数列表: Vec::new(), 模板 }
+        Self {
+            名称,
+            描述,
+            参数列表: Vec::new(),
+            模板,
+        }
     }
 
     /// 添加参数
@@ -368,7 +400,10 @@ impl MCP提示 {
         // 验证必需参数
         for 提示参数 in &self.参数列表 {
             if 提示参数.必需 && !参数.contains_key(&提示参数.名称) {
-                return Err(MCP错误::提示错误(format!("缺少必需参数: {}", 提示参数.名称)));
+                return Err(MCP错误::提示错误(format!(
+                    "缺少必需参数: {}",
+                    提示参数.名称
+                )));
             }
         }
 
@@ -460,7 +495,9 @@ impl MCP服务器 {
     /// 注册工具
     pub fn 注册工具(&mut self, 工具: MCP工具) -> MCP结果<()> {
         if self.工具表.contains_key(&工具.名称) {
-            return Err(MCP错误::工具错误(format!("工具已存在: {}", 工具.名称)));
+            return Err(MCP错误::工具错误(
+                format!("工具已存在: {}", 工具.名称),
+            ));
         }
         self.工具表.insert(工具.名称.clone(), 工具);
         Ok(())
@@ -478,7 +515,9 @@ impl MCP服务器 {
     /// 注册提示
     pub fn 注册提示(&mut self, 提示: MCP提示) -> MCP结果<()> {
         if self.提示表.contains_key(&提示.名称) {
-            return Err(MCP错误::提示错误(format!("提示已存在: {}", 提示.名称)));
+            return Err(MCP错误::提示错误(
+                format!("提示已存在: {}", 提示.名称),
+            ));
         }
         self.提示表.insert(提示.名称.clone(), 提示);
         Ok(())
@@ -676,7 +715,9 @@ pub struct MCP服务器模块 {
 impl MCP服务器模块 {
     /// 创建新的MCP服务器模块
     pub fn 创建() -> Self {
-        Self { 默认配置: MCP服务器配置::default() }
+        Self {
+            默认配置: MCP服务器配置::default(),
+        }
     }
 
     /// 创建MCP服务器

@@ -24,9 +24,15 @@ impl KeywordTable {
         keywords.insert("变量".to_string(), TokenKind::变量);
         keywords.insert("常量".to_string(), TokenKind::常量);
         keywords.insert("整数".to_string(), TokenKind::类型关键词(BasicType::整数));
-        keywords.insert("字符串".to_string(), TokenKind::类型关键词(BasicType::字符串));
+        keywords.insert(
+            "字符串".to_string(),
+            TokenKind::类型关键词(BasicType::字符串),
+        );
         keywords.insert("布尔".to_string(), TokenKind::类型关键词(BasicType::布尔));
-        keywords.insert("浮点数".to_string(), TokenKind::类型关键词(BasicType::浮点数));
+        keywords.insert(
+            "浮点数".to_string(),
+            TokenKind::类型关键词(BasicType::浮点数),
+        );
 
         // Additional keywords for grammar
         keywords.insert("导入".to_string(), TokenKind::导入);
@@ -61,8 +67,14 @@ impl KeywordTable {
         keywords.insert("假".to_string(), TokenKind::布尔字面量(false));
 
         // Type keywords - 基础类型
-        keywords.insert("长整数".to_string(), TokenKind::类型关键词(BasicType::长整数));
-        keywords.insert("短整数".to_string(), TokenKind::类型关键词(BasicType::短整数));
+        keywords.insert(
+            "长整数".to_string(),
+            TokenKind::类型关键词(BasicType::长整数),
+        );
+        keywords.insert(
+            "短整数".to_string(),
+            TokenKind::类型关键词(BasicType::短整数),
+        );
         keywords.insert("字节".to_string(), TokenKind::类型关键词(BasicType::字节));
 
         // Type keywords - 容器类型
@@ -73,7 +85,10 @@ impl KeywordTable {
         // Type keywords - 指针和引用类型
         keywords.insert("指针".to_string(), TokenKind::类型关键词(BasicType::指针));
         keywords.insert("引用".to_string(), TokenKind::类型关键词(BasicType::引用));
-        keywords.insert("可变引用".to_string(), TokenKind::类型关键词(BasicType::可变引用));
+        keywords.insert(
+            "可变引用".to_string(),
+            TokenKind::类型关键词(BasicType::可变引用),
+        );
 
         // Type keywords - 复合类型
         keywords.insert("类型".to_string(), TokenKind::类型);

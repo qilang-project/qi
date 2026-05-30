@@ -171,7 +171,13 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, text: String, span: Span, line: usize, column: usize) -> Self {
-        Self { kind, text, span, line, column }
+        Self {
+            kind,
+            text,
+            span,
+            line,
+            column,
+        }
     }
 }
 

@@ -172,7 +172,10 @@ mod tests {
         assert!(!result.is_null());
 
         let result_str = unsafe { CStr::from_ptr(result).to_string_lossy() };
-        assert_eq!(result_str, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            result_str,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
 
         qi_crypto_free_string(result);
     }

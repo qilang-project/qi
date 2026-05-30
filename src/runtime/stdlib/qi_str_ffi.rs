@@ -216,10 +216,18 @@ pub extern "C" fn qi_str_substring(s: QiStr, start: i64, len: i64) -> QiStr {
 
     if s.base.is_null() {
         // literal / borrow → 子串也是 literal，无 refcount
-        QiStr { ptr: new_ptr, len: new_len, base: std::ptr::null() }
+        QiStr {
+            ptr: new_ptr,
+            len: new_len,
+            base: std::ptr::null(),
+        }
     } else {
         // owned → 子串共享父 base，refcount++
-        clone(QiStr { ptr: new_ptr, len: new_len, base: s.base })
+        clone(QiStr {
+            ptr: new_ptr,
+            len: new_len,
+            base: s.base,
+        })
     }
 }
 

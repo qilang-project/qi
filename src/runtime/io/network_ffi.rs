@@ -770,7 +770,10 @@ unsafe fn closure_trampoline<T>(closure_obj: *const c_void) -> T
 where
     T: Copy,
 {
-    debug_assert_eq!(std::mem::size_of::<T>(), std::mem::size_of::<*const c_void>());
+    debug_assert_eq!(
+        std::mem::size_of::<T>(),
+        std::mem::size_of::<*const c_void>()
+    );
     let fn_ptr = *(closure_obj as *const *const c_void);
     *(&fn_ptr as *const *const c_void as *const T)
 }

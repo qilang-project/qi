@@ -245,7 +245,10 @@ impl StringInterface {
         if total_length > config.max_string_length {
             return Err(RuntimeError::validation_error(
                 "字符串长度错误",
-                &format!("字符串总长度 {} 超过最大限制 {}", total_length, config.max_string_length),
+                &format!(
+                    "字符串总长度 {} 超过最大限制 {}",
+                    total_length, config.max_string_length
+                ),
             ));
         }
 

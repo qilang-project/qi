@@ -86,7 +86,12 @@ pub extern "C" fn qi_subprocess_spawn(command: *const c_char, args_json: *const 
             eof_clone.store(true, Ordering::SeqCst);
         });
 
-        let state = ChildState { child, stdin, lines, eof };
+        let state = ChildState {
+            child,
+            stdin,
+            lines,
+            eof,
+        };
         let handle = COUNTER.fetch_add(1, Ordering::SeqCst);
         registry()
             .lock()
@@ -300,7 +305,11 @@ mod tests {
             qi_subprocess_free_string(got);
         }
         // 应在约 300ms 内完成（给 100ms 宽容量）
-        assert!(elapsed < Duration::from_millis(500), "超时耗时过长: {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "超时耗时过长: {:?}",
+            elapsed
+        );
 
         assert_eq!(qi_subprocess_terminate(handle), 1);
     }

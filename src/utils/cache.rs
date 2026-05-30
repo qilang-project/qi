@@ -49,7 +49,11 @@ impl CompilationCache {
     pub fn with_cache_dir(cache_dir: PathBuf) -> Result<Self, CacheError> {
         std::fs::create_dir_all(&cache_dir)?;
 
-        let mut cache = Self { entries: HashMap::new(), cache_dir, max_entries: 1000 };
+        let mut cache = Self {
+            entries: HashMap::new(),
+            cache_dir,
+            max_entries: 1000,
+        };
 
         cache.load_cache_index()?;
         Ok(cache)

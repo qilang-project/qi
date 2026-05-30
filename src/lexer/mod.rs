@@ -396,15 +396,27 @@ impl Lexer {
                 .map(Some),
 
             // Numbers
-            '0'..='9' => Ok(Some(self.scan_number(start_pos, start_line, start_column)?)),
+            '0'..='9' => Ok(Some(self.scan_number(
+                start_pos,
+                start_line,
+                start_column,
+            )?)),
 
             // Identifiers and keywords
             c if c.is_alphabetic() || c == '_' => {
                 // Handle Chinese characters and standard identifiers
                 if self.unicode_handler.is_chinese_char(c) {
-                    Ok(Some(self.scan_chinese_identifier(start_pos, start_line, start_column)))
+                    Ok(Some(self.scan_chinese_identifier(
+                        start_pos,
+                        start_line,
+                        start_column,
+                    )))
                 } else {
-                    Ok(Some(self.scan_identifier(start_pos, start_line, start_column)))
+                    Ok(Some(self.scan_identifier(
+                        start_pos,
+                        start_line,
+                        start_column,
+                    )))
                 }
             }
 
@@ -1084,7 +1096,10 @@ impl Lexer {
 
     /// Get error summary statistics
     pub fn get_error_summary(&self) -> (usize, usize) {
-        (self.diagnostics.error_count(), self.diagnostics.warning_count())
+        (
+            self.diagnostics.error_count(),
+            self.diagnostics.warning_count(),
+        )
     }
 
     /// Check if any critical errors occurred

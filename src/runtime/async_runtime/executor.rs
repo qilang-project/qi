@@ -125,7 +125,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_spawn() {
-        let pool_config = PoolConfig { worker_count: 2, ..Default::default() };
+        let pool_config = PoolConfig {
+            worker_count: 2,
+            ..Default::default()
+        };
         let pool = Arc::new(WorkerPool::new(pool_config).unwrap());
         let scheduler = Arc::new(Scheduler::new(SchedulerConfig::default()).unwrap());
         let executor = Executor::new(pool, scheduler).unwrap();
@@ -139,7 +142,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_shutdown() {
-        let pool_config = PoolConfig { worker_count: 2, ..Default::default() };
+        let pool_config = PoolConfig {
+            worker_count: 2,
+            ..Default::default()
+        };
         let pool = Arc::new(WorkerPool::new(pool_config).unwrap());
         let scheduler = Arc::new(Scheduler::new(SchedulerConfig::default()).unwrap());
         let executor = Executor::new(pool, scheduler).unwrap();

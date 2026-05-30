@@ -117,10 +117,17 @@ fn test_unicode_error_diagnostics() {
     let result = lexer.tokenize();
 
     // Should handle Chinese characters without errors
-    assert!(result.is_ok(), "Lexer should accept valid Chinese identifiers");
+    assert!(
+        result.is_ok(),
+        "Lexer should accept valid Chinese identifiers"
+    );
 
     let diagnostics = lexer.diagnostics();
-    assert_eq!(diagnostics.error_count(), 0, "Should have no errors for valid Chinese code");
+    assert_eq!(
+        diagnostics.error_count(),
+        0,
+        "Should have no errors for valid Chinese code"
+    );
 }
 
 #[test]

@@ -1033,8 +1033,9 @@ pub extern "C" fn qi_llm_chat_async(session_handle: i64, prompt: *const c_char) 
                     }
 
                     // 更新 Future 状态
-                    *value_clone.lock().unwrap() =
-                        Some(crate::runtime::async_runtime::future::FutureValue::String(响应));
+                    *value_clone.lock().unwrap() = Some(
+                        crate::runtime::async_runtime::future::FutureValue::String(响应),
+                    );
                     *state_clone.lock().unwrap() =
                         crate::runtime::async_runtime::future::FutureState::Completed;
                 }

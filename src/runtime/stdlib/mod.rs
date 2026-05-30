@@ -75,10 +75,17 @@ pub enum StdlibError {
     MathError { operation: String, message: String },
 
     #[error("系统调用错误: {system_call} - {message}")]
-    SystemError { system_call: String, message: String },
+    SystemError {
+        system_call: String,
+        message: String,
+    },
 
     #[error("类型转换错误: {from_type} -> {to_type} - {message}")]
-    ConversionError { from_type: String, to_type: String, message: String },
+    ConversionError {
+        from_type: String,
+        to_type: String,
+        message: String,
+    },
 
     #[error("加密操作错误: {operation} - {message}")]
     CryptoError { operation: String, message: String },
@@ -255,7 +262,9 @@ pub struct StdlibRegistry {
 impl StdlibRegistry {
     /// Create new function registry
     pub fn new() -> Self {
-        Self { functions: std::collections::HashMap::new() }
+        Self {
+            functions: std::collections::HashMap::new(),
+        }
     }
 
     /// Register a function

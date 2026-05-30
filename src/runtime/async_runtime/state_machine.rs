@@ -100,7 +100,10 @@ pub extern "C" fn qi_future_register_waker(
     if fut.is_null() {
         return;
     }
-    let waker = StateMachineWaker { poll_fn, frame: frame as usize };
+    let waker = StateMachineWaker {
+        poll_fn,
+        frame: frame as usize,
+    };
     unsafe {
         (*fut).register_sm_waker(waker);
     }

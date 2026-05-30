@@ -20,14 +20,26 @@ impl ChineseErrorMessages {
         let mut messages = HashMap::new();
 
         // Initialize common error messages
-        messages.insert("memory_allocation_failed".to_string(), "内存分配失败".to_string());
-        messages.insert("io_operation_failed".to_string(), "输入输出操作失败".to_string());
+        messages.insert(
+            "memory_allocation_failed".to_string(),
+            "内存分配失败".to_string(),
+        );
+        messages.insert(
+            "io_operation_failed".to_string(),
+            "输入输出操作失败".to_string(),
+        );
         messages.insert("network_error".to_string(), "网络错误".to_string());
         messages.insert("system_error".to_string(), "系统错误".to_string());
         messages.insert("validation_error".to_string(), "验证错误".to_string());
         messages.insert("security_error".to_string(), "安全错误".to_string());
-        messages.insert("initialization_failed".to_string(), "初始化失败".to_string());
-        messages.insert("program_execution_error".to_string(), "程序执行错误".to_string());
+        messages.insert(
+            "initialization_failed".to_string(),
+            "初始化失败".to_string(),
+        );
+        messages.insert(
+            "program_execution_error".to_string(),
+            "程序执行错误".to_string(),
+        );
         messages.insert("user_error".to_string(), "用户错误".to_string());
         messages.insert("debug_error".to_string(), "调试错误".to_string());
         messages.insert("internal_error".to_string(), "内部错误".to_string());
@@ -35,7 +47,10 @@ impl ChineseErrorMessages {
         messages.insert("assertion_error".to_string(), "断言错误".to_string());
 
         // Runtime specific messages
-        messages.insert("runtime_not_initialized".to_string(), "运行时环境未初始化".to_string());
+        messages.insert(
+            "runtime_not_initialized".to_string(),
+            "运行时环境未初始化".to_string(),
+        );
         messages.insert("program_not_loaded".to_string(), "程序未加载".to_string());
         messages.insert("stack_overflow".to_string(), "栈溢出".to_string());
         messages.insert("heap_overflow".to_string(), "堆溢出".to_string());
@@ -52,7 +67,10 @@ impl ChineseErrorMessages {
         messages.insert("invalid_input".to_string(), "无效输入".to_string());
         messages.insert("buffer_overflow".to_string(), "缓冲区溢出".to_string());
 
-        Self { messages, language: "zh-CN".to_string() }
+        Self {
+            messages,
+            language: "zh-CN".to_string(),
+        }
     }
 
     /// Get localized message for error key
@@ -340,10 +358,22 @@ mod tests {
     fn test_chinese_keywords() {
         let keywords = ChineseKeywords::new();
 
-        assert_eq!(keywords.get_chinese_keyword("if"), Some(&"如果".to_string()));
-        assert_eq!(keywords.get_chinese_keyword("while"), Some(&"当".to_string()));
-        assert_eq!(keywords.get_english_keyword("如果"), Some(&"if".to_string()));
-        assert_eq!(keywords.get_english_keyword("当"), Some(&"while".to_string()));
+        assert_eq!(
+            keywords.get_chinese_keyword("if"),
+            Some(&"如果".to_string())
+        );
+        assert_eq!(
+            keywords.get_chinese_keyword("while"),
+            Some(&"当".to_string())
+        );
+        assert_eq!(
+            keywords.get_english_keyword("如果"),
+            Some(&"if".to_string())
+        );
+        assert_eq!(
+            keywords.get_english_keyword("当"),
+            Some(&"while".to_string())
+        );
 
         assert!(keywords.is_chinese_keyword("如果"));
         assert!(keywords.is_english_keyword("if"));
@@ -391,7 +421,10 @@ mod tests {
             localizer.error_messages().get_message("custom_error"),
             Some(&"自定义错误".to_string())
         );
-        assert_eq!(localizer.keywords().get_chinese_keyword("custom"), Some(&"自定义".to_string()));
+        assert_eq!(
+            localizer.keywords().get_chinese_keyword("custom"),
+            Some(&"自定义".to_string())
+        );
     }
 
     #[test]

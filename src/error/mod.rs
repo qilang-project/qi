@@ -63,7 +63,11 @@ impl QiErrorBuilder {
     }
 
     pub fn location(mut self, file: impl Into<String>, line: usize, column: usize) -> Self {
-        self.error.location = Some(ErrorLocation { file: file.into(), line, column });
+        self.error.location = Some(ErrorLocation {
+            file: file.into(),
+            line,
+            column,
+        });
         self
     }
 

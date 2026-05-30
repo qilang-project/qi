@@ -184,7 +184,10 @@ impl DebugCommandProcessor {
             .unwrap()
             .as_micros() as u64;
 
-        Ok(CommandResult { execution_time_us: end_time - start_time, ..result })
+        Ok(CommandResult {
+            execution_time_us: end_time - start_time,
+            ..result
+        })
     }
 
     /// Get command history
