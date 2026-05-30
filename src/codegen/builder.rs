@@ -6720,45 +6720,307 @@ impl IrBuilder {
             }
 
             AstNode::选择表达式(select_expr) => {
-                // Build each select case
-                let mut cases = Vec::new();
+                // 真实 select：非阻塞轮询 + 超时/默认分支。
+                //
+                // 生成的 LLVM IR 结构（每个 select 用唯一 id 区分基本块名）：
+                //   br label %selN.poll
+                //   selN.poll:
+                //     ; 依次尝试每个 case 的非阻塞操作（try_receive / try_send）
+                //     ; 若 ready -> br case body block；否则 -> 下一个 case 的 try block
+                //   selN.notready:        ; 所有 case 都没就绪
+                //     ; 有默认分支 -> br 默认 body（首轮立即生效）
+                //     ; 有超时分支 -> 比较当前时间与 deadline；到点 -> 超时 body
+                //     ; 否则 -> backoff 后回到 poll
+                //   selN.backoff:
+                //     call void @qi_runtime_select_backoff()  ; sleep ~1ms
+                //     br label %selN.poll
+                //   selN.caseK: <body>  br %selN.end
+                //   ...
+                //   selN.end:
+                let sel_id = {
+                    self.label_counter += 1;
+                    self.label_counter
+                };
+                let poll_lbl = format!("sel{}.poll", sel_id);
+                let notready_lbl = format!("sel{}.notready", sel_id);
+                let backoff_lbl = format!("sel{}.backoff", sel_id);
+                let end_lbl = format!("sel{}.end", sel_id);
 
+                // 预先把每个真实 case（recv/send）的 channel/value 求值（在循环外只算一次），
+                // 并为 recv case 分配结果 slot。
+                struct PreparedCase {
+                    is_send: bool,
+                    channel: String,
+                    // recv: 接收变量名（mangled）+ 原始名；send: 要发的 i64 值
+                    recv_var: Option<(String, String)>,
+                    recv_slot: Option<String>, // alloca ptr 存接收到的 value 指针
+                    send_value: Option<String>,
+                    body: Vec<AstNode>,
+                    try_lbl: String,
+                    body_lbl: String,
+                }
+
+                let mut prepared: Vec<PreparedCase> = Vec::new();
+                let mut idx = 0usize;
                 for case in &select_expr.cases {
-                    let case_label = self.generate_label();
-
                     match &case.kind {
                         crate::parser::ast::SelectCaseKind::通道接收 { channel, variable } => {
                             let channel_expr = self.build_node(channel)?;
-                            let dest_temp = self.generate_temp();
-                            cases.push(SelectCase {
-                                operation_type: SelectOperationType::接收,
-                                channel: channel_expr,
-                                value: None,
-                                dest: Some(dest_temp),
-                                label: case_label.clone(),
+                            // 为接收值分配一个 ptr slot（在 select 之前）
+                            let slot = self.generate_temp();
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  {} = alloca ptr, align 8", slot),
                             });
+                            let recv_var = variable.as_ref().map(|v| {
+                                let mangled = self.mangle_function_name(v);
+                                // 注册接收变量类型（i64）并预分配 alloca
+                                self.variable_types.insert(v.clone(), "i64".to_string());
+                                self.variable_types.insert(mangled.clone(), "i64".to_string());
+                                self.add_instruction(IrInstruction::分配 {
+                                    dest: format!("%{}", mangled),
+                                    type_name: "i64".to_string(),
+                                });
+                                (mangled, v.clone())
+                            });
+                            prepared.push(PreparedCase {
+                                is_send: false,
+                                channel: channel_expr,
+                                recv_var,
+                                recv_slot: Some(slot),
+                                send_value: None,
+                                body: case.body.clone(),
+                                try_lbl: format!("sel{}.try{}", sel_id, idx),
+                                body_lbl: format!("sel{}.case{}", sel_id, idx),
+                            });
+                            idx += 1;
                         }
                         crate::parser::ast::SelectCaseKind::通道发送 { channel, value } => {
                             let channel_expr = self.build_node(channel)?;
-                            let value_expr = self.build_node(value)?;
-                            cases.push(SelectCase {
-                                operation_type: SelectOperationType::发送,
+                            // build_node 对 i64 标识符会发出 load 并返回已加载的 i64 值（非指针），
+                            // 对字面量返回立即数 —— 正好是 try_send 需要的 i64 操作数，无需再 load。
+                            let send_i64 = self.build_node(value)?;
+                            prepared.push(PreparedCase {
+                                is_send: true,
                                 channel: channel_expr,
-                                value: Some(value_expr),
-                                dest: None,
-                                label: case_label.clone(),
+                                recv_var: None,
+                                recv_slot: None,
+                                send_value: Some(send_i64),
+                                body: case.body.clone(),
+                                try_lbl: format!("sel{}.try{}", sel_id, idx),
+                                body_lbl: format!("sel{}.case{}", sel_id, idx),
                             });
+                            idx += 1;
                         }
-                        crate::parser::ast::SelectCaseKind::默认 => {
-                            // Default case handled separately
-                        }
+                        crate::parser::ast::SelectCaseKind::默认 => {}
+                        crate::parser::ast::SelectCaseKind::超时 { .. } => {}
                     }
                 }
 
-                // Generate select instruction
-                self.add_instruction(IrInstruction::选择语句 {
-                    cases: cases.clone(),
-                    default_case: None, // TODO: Handle default case
+                let default_body: Option<&Vec<AstNode>> =
+                    select_expr.default_case.as_ref().map(|c| &c.body);
+
+                // 超时分支：计算绝对 deadline（毫秒）。在 select 进入前求值一次。
+                let timeout_info: Option<(String, &Vec<AstNode>)> =
+                    if let Some(tc) = &select_expr.timeout_case {
+                        if let crate::parser::ast::SelectCaseKind::超时 { 毫秒 } = &tc.kind {
+                            let ms_val = self.build_node(毫秒)?;
+                            // ms 可能是指针变量，需要 load
+                            let ms_i64 = if ms_val.starts_with('%')
+                                && self
+                                    .variable_types
+                                    .get(ms_val.trim_start_matches('%'))
+                                    .map(|t| t != "i64" || true)
+                                    .unwrap_or(false)
+                            {
+                                let loaded = self.generate_temp();
+                                self.add_instruction(IrInstruction::标签 {
+                                    name: format!("  {} = load i64, ptr {}", loaded, ms_val),
+                                });
+                                loaded
+                            } else {
+                                ms_val
+                            };
+                            let now0 = self.generate_temp();
+                            let deadline = self.generate_temp();
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  {} = call i64 @qi_runtime_get_time_ms()", now0),
+                            });
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  {} = add i64 {}, {}", deadline, now0, ms_i64),
+                            });
+                            Some((deadline, &tc.body))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                // 进入轮询循环
+                self.add_instruction(IrInstruction::跳转 {
+                    label: poll_lbl.clone(),
+                });
+                self.add_instruction(IrInstruction::标签 {
+                    name: poll_lbl.clone(),
+                });
+                // poll 块需要显式终结符跳到第一个 try 块（LLVM 不允许 fall-through）
+                let first_try = if let Some(pc0) = prepared.first() {
+                    pc0.try_lbl.clone()
+                } else {
+                    notready_lbl.clone()
+                };
+                self.add_instruction(IrInstruction::跳转 {
+                    label: first_try,
+                });
+
+                // 依次尝试每个 case
+                for (i, pc) in prepared.iter().enumerate() {
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("{}:", pc.try_lbl),
+                    });
+                    let next_lbl = if i + 1 < prepared.len() {
+                        prepared[i + 1].try_lbl.clone()
+                    } else {
+                        notready_lbl.clone()
+                    };
+                    let status = self.generate_temp();
+                    if pc.is_send {
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  {} = call i32 @qi_runtime_channel_try_send(ptr {}, i64 {})",
+                                status,
+                                pc.channel,
+                                pc.send_value.as_ref().unwrap()
+                            ),
+                        });
+                    } else {
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!(
+                                "  {} = call i32 @qi_runtime_channel_try_receive(ptr {}, ptr {})",
+                                status,
+                                pc.channel,
+                                pc.recv_slot.as_ref().unwrap()
+                            ),
+                        });
+                    }
+                    let ready = self.generate_temp();
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("  {} = icmp eq i32 {}, 0", ready, status),
+                    });
+                    self.add_instruction(IrInstruction::条件跳转 {
+                        condition: ready,
+                        true_label: pc.body_lbl.clone(),
+                        false_label: next_lbl,
+                    });
+                }
+                // 如果没有任何 case（理论上不会），直接跳到 notready
+                if prepared.is_empty() {
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: notready_lbl.clone(),
+                    });
+                }
+
+                // notready：决定 默认 / 超时 / backoff
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", notready_lbl),
+                });
+                if let Some(_db) = default_body {
+                    // 有默认分支 —— 首轮没就绪立即走默认
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: format!("sel{}.default", sel_id),
+                    });
+                } else if let Some((deadline, _tb)) = &timeout_info {
+                    let now = self.generate_temp();
+                    let expired = self.generate_temp();
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("  {} = call i64 @qi_runtime_get_time_ms()", now),
+                    });
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("  {} = icmp sge i64 {}, {}", expired, now, deadline),
+                    });
+                    self.add_instruction(IrInstruction::条件跳转 {
+                        condition: expired,
+                        true_label: format!("sel{}.timeout", sel_id),
+                        false_label: backoff_lbl.clone(),
+                    });
+                } else {
+                    // 既无默认也无超时 —— 退化为无限轮询（仍非阻塞，靠 backoff 让出 CPU）
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: backoff_lbl.clone(),
+                    });
+                }
+
+                // backoff：sleep ~1ms 后回到 poll
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", backoff_lbl),
+                });
+                self.add_instruction(IrInstruction::标签 {
+                    // 末尾加 " ;" —— emit 时若给非 "= " 行补 ':'，会落在注释里，避免被当成 label
+                    name: "  call void @qi_runtime_select_backoff() ;".to_string(),
+                });
+                self.add_instruction(IrInstruction::跳转 {
+                    label: poll_lbl.clone(),
+                });
+
+                // 各 case body 基本块
+                for pc in &prepared {
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("{}:", pc.body_lbl),
+                    });
+                    // recv case：把接收到的值 load 出来，存进接收变量
+                    if !pc.is_send {
+                        let slot = pc.recv_slot.as_ref().unwrap();
+                        let vptr = self.generate_temp();
+                        let val = self.generate_temp();
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("  {} = load ptr, ptr {}", vptr, slot),
+                        });
+                        self.add_instruction(IrInstruction::标签 {
+                            name: format!("  {} = load i64, ptr {}", val, vptr),
+                        });
+                        if let Some((mangled, _orig)) = &pc.recv_var {
+                            self.add_instruction(IrInstruction::标签 {
+                                name: format!("  store i64 {}, ptr %{} ;", val, mangled),
+                            });
+                        }
+                    }
+                    for stmt in &pc.body {
+                        self.build_node(stmt)?;
+                    }
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
+                }
+
+                // 默认 body
+                if let Some(db) = default_body {
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("sel{}.default:", sel_id),
+                    });
+                    for stmt in db {
+                        self.build_node(stmt)?;
+                    }
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
+                }
+
+                // 超时 body
+                if let Some((_deadline, tb)) = &timeout_info {
+                    self.add_instruction(IrInstruction::标签 {
+                        name: format!("sel{}.timeout:", sel_id),
+                    });
+                    for stmt in *tb {
+                        self.build_node(stmt)?;
+                    }
+                    self.add_instruction(IrInstruction::跳转 {
+                        label: end_lbl.clone(),
+                    });
+                }
+
+                // end
+                self.add_instruction(IrInstruction::标签 {
+                    name: format!("{}:", end_lbl),
                 });
 
                 Ok("select".to_string())
@@ -7682,6 +7944,9 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_runtime_create_channel(i64)\n");
         ir.push_str("declare i32 @qi_runtime_channel_send(ptr, i64)\n");
         ir.push_str("declare i32 @qi_runtime_channel_receive(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_channel_try_receive(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_runtime_channel_try_send(ptr, i64)\n");
+        ir.push_str("declare void @qi_runtime_select_backoff()\n");
         ir.push_str("declare i32 @qi_runtime_channel_close(ptr)\n");
         ir.push_str("\n");
 

@@ -591,6 +591,7 @@ pub struct ChannelReceiveExpression {
 pub struct SelectExpression {
     pub cases: Vec<SelectCase>,
     pub default_case: Option<SelectCase>,
+    pub timeout_case: Option<SelectCase>,
     pub span: Span,
 }
 
@@ -625,6 +626,8 @@ pub enum SelectCaseKind {
     通道发送 { channel: Box<AstNode>, value: Box<AstNode> },
     /// Default case: 默认:
     默认,
+    /// Timeout case: 情况 超时(毫秒):
+    超时 { 毫秒: Box<AstNode> },
 }
 
 // ===== 新增语言特性的 AST 节点 | New Language Features AST Nodes =====

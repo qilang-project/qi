@@ -1161,10 +1161,30 @@ impl TypeChecker {
                 crate::parser::ast::SelectCaseKind::默认 => {
                     // Default case has no type checking requirements
                 }
+                crate::parser::ast::SelectCaseKind::超时 { 毫秒 } => {
+                    self.check(毫秒)?;
+                }
             }
 
             // Type check case body
             for stmt in &case.body {
+                self.check(stmt)?;
+            }
+        }
+
+        // Type check the timeout case body (if any)
+        if let Some(tc) = &select_expr.timeout_case {
+            if let crate::parser::ast::SelectCaseKind::超时 { 毫秒 } = &tc.kind {
+                self.check(毫秒)?;
+            }
+            for stmt in &tc.body {
+                self.check(stmt)?;
+            }
+        }
+
+        // Type check the default case body (if any)
+        if let Some(dc) = &select_expr.default_case {
+            for stmt in &dc.body {
                 self.check(stmt)?;
             }
         }

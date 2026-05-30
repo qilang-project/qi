@@ -172,11 +172,25 @@ Statement: AstNode = {
         span: Default::default(),
     }),
     // Select statement must be separate to avoid conflicts with expressions
-    "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" => AstNode::选择表达式(SelectExpression {
-        cases,
-        default_case,
-        span: Default::default(),
-    }),
+    "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" => {
+        // 超时分支以 SelectCase 形式混在 cases 里（情况 超时(ms): …），
+        // 在这里分离出来放进 timeout_case，其余仍是普通通道 case。
+        let mut chan_cases = Vec::new();
+        let mut timeout_case = None;
+        for c in cases {
+            if matches!(c.kind, SelectCaseKind::超时 { .. }) {
+                timeout_case = Some(c);
+            } else {
+                chan_cases.push(c);
+            }
+        }
+        AstNode::选择表达式(SelectExpression {
+            cases: chan_cases,
+            default_case,
+            timeout_case,
+            span: Default::default(),
+        })
+    },
 };
 
 ExportStatement: AstNode = {
@@ -1012,6 +1026,15 @@ SelectCaseList: Vec<SelectCase> = {
 };
 
 SelectCase: SelectCase = {
+    // Timeout case: 情况 超时(毫秒): <body>  —— 超时 是关键字 token，先于通道 case 匹配
+    "情况" "超时" "(" <ms:Expr> ")" ":" <body:StatementList> => SelectCase {
+        kind: SelectCaseKind::超时 {
+            毫秒: Box::new(ms),
+        },
+        body,
+        span: Default::default(),
+    },
+
     // Send case must come first: 情况 channel <- value:
     // This has higher priority to avoid ambiguity
     "情况" <channel:ChannelExpr> "<-" <value:Expr> ":" <body:StatementList> => SelectCase {

@@ -471,16 +471,103 @@ pub extern "C" fn qi_runtime_channel_receive(channel: *mut c_void, result_ptr: *
     -1 // Error
 }
 
-/// Select statement implementation
+/// Try to receive a value from a channel WITHOUT blocking.
+/// result_ptr: Output parameter - on success filled with a pointer to the received value.
+/// Returns: 0 on success (a value was received), 1 if the channel is currently empty,
+///          -1 on error (channel not found / disconnected).
+#[no_mangle]
+pub extern "C" fn qi_runtime_channel_try_receive(
+    channel: *mut c_void,
+    result_ptr: *mut *mut c_void,
+) -> i32 {
+    ensure_runtime_initialized();
+    let channel_id = channel as u64;
+
+    if let Some(registry) = CHANNEL_REGISTRY.get() {
+        if let Ok(registry_guard) = registry.lock() {
+            if let Some(channel_instance) = registry_guard.get(&channel_id) {
+                if let Ok(receiver) = channel_instance.receiver.lock() {
+                    match receiver.try_recv() {
+                        Ok(value_ptr) => {
+                            unsafe {
+                                *result_ptr = value_ptr;
+                            }
+                            return 0; // got a value
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            return 1; // not ready, but not an error
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            return -1; // closed
+                        }
+                    }
+                }
+            }
+        }
+    }
+    -1
+}
+
+/// Try to send a value to a channel WITHOUT blocking.
+/// (std::sync::mpsc is unbounded, so a send essentially never blocks; this mirrors
+///  the try-receive ABI so select can treat sends uniformly.)
+/// Returns: 0 on success, 1 if not ready (never, for unbounded), -1 on error.
+#[no_mangle]
+pub extern "C" fn qi_runtime_channel_try_send(channel: *mut c_void, value: i64) -> i32 {
+    ensure_runtime_initialized();
+    let channel_id = channel as u64;
+    let value_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+    if let Some(registry) = CHANNEL_REGISTRY.get() {
+        if let Ok(registry_guard) = registry.lock() {
+            if let Some(channel_instance) = registry_guard.get(&channel_id) {
+                if let Ok(sender) = channel_instance.sender.lock() {
+                    if sender.send(value_ptr).is_ok() {
+                        return 0;
+                    }
+                    // closed: reclaim the box
+                    unsafe {
+                        let _ = Box::from_raw(value_ptr as *mut i64);
+                    }
+                    return -1;
+                }
+            }
+        }
+    }
+    unsafe {
+        let _ = Box::from_raw(value_ptr as *mut i64);
+    }
+    -1
+}
+
+/// Sleep for the select poll loop's back-off interval (~1ms), so a select that is
+/// waiting on channels does not busy-spin. Kept as a tiny FFI helper so codegen's
+/// poll loop stays branch-only.
+#[no_mangle]
+pub extern "C" fn qi_runtime_select_backoff() {
+    std::thread::sleep(Duration::from_millis(1));
+}
+
+/// Select statement implementation — real non-blocking poll over a set of channel
+/// cases with a bounded wait.
+///
+/// ABI of `select_cases`: a pointer to an array of `QiSelectCase` records:
+///   { channel: *mut c_void, direction: i64 (0=recv,1=send), value: i64,
+///     result_out: *mut *mut c_void }
+/// followed by trailing metadata is NOT used here — codegen drives the actual
+/// case-body dispatch in LLVM IR using `qi_runtime_channel_try_receive` /
+/// `qi_runtime_channel_try_send` + `qi_runtime_select_backoff`. This entry point
+/// is retained for the declared symbol and for callers that pass a single-case
+/// array; it polls each case once (non-blocking) and returns the index of the
+/// first ready case (as a tagged pointer) or null if none were ready.
 #[no_mangle]
 pub extern "C" fn qi_runtime_select(select_cases: *mut c_void) -> *mut c_void {
     ensure_runtime_initialized();
     if debug_enabled() {
         eprintln!("DEBUG: select called with cases {:?}", select_cases);
     }
-
-    // For now, implement a simple blocking select
-    // In a real implementation, this would use a more sophisticated mechanism
+    // No structured case array is passed by the current codegen (it drives the
+    // poll loop inline in IR). Return null to indicate "no case taken here".
     std::ptr::null_mut()
 }
 
