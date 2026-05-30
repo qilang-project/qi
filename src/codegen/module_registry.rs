@@ -2590,6 +2590,14 @@ impl ModuleRegistry {
             "i32",  // 返回状态
         ));
 
+        // Streamable HTTP 传输主循环 (阻塞)
+        mcp_module.add_function(ModuleFunction::new(
+            "运行HTTP",
+            "qi_mcp_serve_http",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器ID, 主机, 端口
+            "i32",  // 返回状态
+        ));
+
         // 资源内容管理
         mcp_module.add_function(ModuleFunction::new(
             "设置资源文本内容",

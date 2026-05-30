@@ -5,9 +5,11 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
 use serde_json::{json, Value as JsonValue};
 
@@ -801,6 +803,337 @@ pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
     }
 
     eprintln!("[qi-mcp] stdio 服务器正常退出");
+    0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streamable HTTP transport  (POST /mcp + Mcp-Session-Id + SSE response)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 全局会话 ID 计数器（atomic，无需锁）
+static HTTP_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// 生成唯一会话 ID（不依赖 uuid crate）
+fn 生成会话id() -> String {
+    let n = HTTP_SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("mcp-{:x}-{:x}", ts, n)
+}
+
+/// 从原始 HTTP 请求字节流中解析出请求体
+/// 返回 (method, path, body_bytes)
+fn parse_http_request(buf: &[u8]) -> Option<(String, String, Vec<u8>)> {
+    // 找头/体分割
+    let header_end = buf.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| (p, p + 4))
+        .or_else(|| {
+            buf.windows(2)
+                .position(|w| w == b"\n\n")
+                .map(|p| (p, p + 2))
+        });
+
+    let (header_len, body_start) = header_end?;
+    let header_str = std::str::from_utf8(&buf[..header_len]).ok()?;
+
+    let first_line = header_str.lines().next()?;
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let path = parts.next()?.to_string();
+
+    // Content-Length
+    let content_length: usize = header_str.lines()
+        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    let body_available = &buf[body_start..];
+    let body = if content_length > 0 {
+        body_available[..content_length.min(body_available.len())].to_vec()
+    } else {
+        body_available.to_vec()
+    };
+
+    // Extract Mcp-Session-Id header if present
+    Some((method, path, body))
+}
+
+/// 从 HTTP 请求头文本中提取某个请求头的值（不区分大小写）
+fn extract_header<'a>(header_text: &'a str, name: &str) -> Option<&'a str> {
+    let lower_name = name.to_lowercase();
+    for line in header_text.lines().skip(1) {
+        if let Some(colon) = line.find(':') {
+            let key = line[..colon].trim().to_lowercase();
+            if key == lower_name {
+                return Some(line[colon + 1..].trim());
+            }
+        }
+    }
+    None
+}
+
+/// 从原始 HTTP 请求字节中提取头部文本
+fn extract_headers_text(buf: &[u8]) -> String {
+    let end = buf.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .or_else(|| buf.windows(2).position(|w| w == b"\n\n"))
+        .unwrap_or(buf.len());
+    std::str::from_utf8(&buf[..end]).unwrap_or("").to_string()
+}
+
+/// 发送 HTTP 响应（SSE 格式）
+fn send_sse_response(stream: &mut TcpStream, status: u16, session_id: &str, sse_body: &str) {
+    let response = format!(
+        "HTTP/1.1 {} {}\r\n\
+         Content-Type: text/event-stream\r\n\
+         Cache-Control: no-cache\r\n\
+         Mcp-Session-Id: {}\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Content-Length: {}\r\n\
+         \r\n\
+         {}",
+        status,
+        if status == 200 { "OK" } else { "Accepted" },
+        session_id,
+        sse_body.len(),
+        sse_body
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+/// 发送空 202 响应（用于 notifications，无响应体）
+fn send_202(stream: &mut TcpStream, session_id: &str) {
+    let response = format!(
+        "HTTP/1.1 202 Accepted\r\n\
+         Content-Length: 0\r\n\
+         Mcp-Session-Id: {}\r\n\
+         \r\n",
+        session_id
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+/// 发送 405 Method Not Allowed
+fn send_405(stream: &mut TcpStream) {
+    let _ = stream.write_all(
+        b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n"
+    );
+    let _ = stream.flush();
+}
+
+/// 发送 404 Not Found
+fn send_404(stream: &mut TcpStream) {
+    let _ = stream.write_all(
+        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+    );
+    let _ = stream.flush();
+}
+
+/// 处理单个 HTTP 连接（在调用线程上同步执行）
+fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registry: &Mutex<HashMap<String, bool>>) {
+    // 读取请求（最多 64 KB）
+    let mut buf = vec![0u8; 65536];
+    let mut total = 0usize;
+
+    // 尝试读足够数据
+    loop {
+        match stream.read(&mut buf[total..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                // 若已收到头+体分隔符并且 Content-Length 满足则停止
+                let hdr_text = extract_headers_text(&buf[..total]);
+                let content_length: usize = extract_header(&hdr_text, "content-length")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let header_end = buf[..total].windows(4)
+                    .position(|w| w == b"\r\n\r\n")
+                    .map(|p| p + 4)
+                    .or_else(|| buf[..total].windows(2).position(|w| w == b"\n\n").map(|p| p + 2));
+                if let Some(body_start) = header_end {
+                    if total >= body_start + content_length {
+                        break;
+                    }
+                }
+                if total >= buf.len() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if total == 0 {
+        return;
+    }
+
+    let (method, path, body_bytes) = match parse_http_request(&buf[..total]) {
+        Some(r) => r,
+        None => return,
+    };
+
+    eprintln!("[qi-mcp-http] {} {}", method, path);
+
+    // OPTIONS preflight — CORS
+    if method == "OPTIONS" {
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Mcp-Session-Id, Accept\r\nContent-Length: 0\r\n\r\n"
+        );
+        let _ = stream.flush();
+        return;
+    }
+
+    // Only handle /mcp path
+    if path != "/mcp" {
+        send_404(&mut stream);
+        return;
+    }
+
+    // GET /mcp — server-to-client SSE push channel (P2, not implemented)
+    // Return 200 with an empty SSE comment to satisfy clients that open this.
+    if method == "GET" {
+        eprintln!("[qi-mcp-http] GET /mcp: server→client SSE push not yet implemented (P2), returning empty SSE stream");
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 14\r\n\r\n: keep-alive\n\n"
+        );
+        let _ = stream.flush();
+        return;
+    }
+
+    if method != "POST" {
+        send_405(&mut stream);
+        return;
+    }
+
+    // Extract or assign session ID
+    let header_text = extract_headers_text(&buf[..total]);
+    let incoming_session = extract_header(&header_text, "mcp-session-id")
+        .map(|s| s.to_string());
+
+    let session_id = incoming_session.unwrap_or_else(|| 生成会话id());
+
+    // Register session (idempotent)
+    {
+        let mut reg = session_registry.lock().unwrap();
+        reg.entry(session_id.clone()).or_insert(true);
+    }
+
+    // Parse JSON-RPC body
+    let body_str = match std::str::from_utf8(&body_bytes) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => {
+            eprintln!("[qi-mcp-http] 请求体非 UTF-8");
+            send_404(&mut stream);
+            return;
+        }
+    };
+
+    if body_str.is_empty() {
+        send_202(&mut stream, &session_id);
+        return;
+    }
+
+    let req: JsonValue = match serde_json::from_str(&body_str) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[qi-mcp-http] JSON 解析错误: {}", e);
+            let err_resp = json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {"code": -32700, "message": format!("Parse error: {}", e)}
+            });
+            let sse = format!("event: message\ndata: {}\n\n", err_resp);
+            send_sse_response(&mut stream, 200, &session_id, &sse);
+            return;
+        }
+    };
+
+    let id = req.get("id").cloned();
+    let method_name = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let params = req.get("params").cloned().unwrap_or(json!({}));
+
+    eprintln!("[qi-mcp-http] 收到请求 method={} id={:?}", method_name, id);
+
+    // notifications (no id) — 202
+    if id.is_none() {
+        send_202(&mut stream, &session_id);
+        return;
+    }
+
+    let response = handle_request(server_id, method_name, &params, &id);
+
+    if let Some(resp) = response {
+        let sse = format!("event: message\ndata: {}\n\n", resp);
+        send_sse_response(&mut stream, 200, &session_id, &sse);
+        eprintln!("[qi-mcp-http] 已响应 method={}", method_name);
+    } else {
+        send_202(&mut stream, &session_id);
+    }
+}
+
+/// Streamable HTTP 传输主循环（阻塞）
+///
+/// 参数:
+/// - server_id: 服务器句柄
+/// - host:      绑定主机（如 "127.0.0.1" 或 "0.0.0.0"）
+/// - port:      监听端口
+///
+/// 返回: 0 正常退出, -1 服务器不存在, -2 bind 失败
+#[no_mangle]
+pub extern "C" fn qi_mcp_serve_http(
+    server_id: i64,
+    host: *const c_char,
+    port: i64,
+) -> i32 {
+    // 验证服务器存在
+    {
+        let 服务器池 = 获取服务器池().lock().unwrap();
+        if !服务器池.contains_key(&server_id) {
+            eprintln!("[qi-mcp-http] 服务器 {} 不存在", server_id);
+            return -1;
+        }
+    }
+
+    let bind_host = if host.is_null() {
+        "127.0.0.1".to_string()
+    } else {
+        unsafe { CStr::from_ptr(host).to_string_lossy().to_string() }
+    };
+    let bind_port = port as u16;
+    let addr = format!("{}:{}", bind_host, bind_port);
+
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[qi-mcp-http] bind {} 失败: {}", addr, e);
+            return -2;
+        }
+    };
+
+    eprintln!("[qi-mcp-http] HTTP MCP 服务器启动 http://{}:{}/mcp (server_id={})", bind_host, bind_port, server_id);
+
+    // 会话注册表（记录已见过的 session id）
+    let session_registry: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
+
+    for stream_result in listener.incoming() {
+        match stream_result {
+            Ok(stream) => {
+                handle_http_connection(server_id, stream, &session_registry);
+            }
+            Err(e) => {
+                eprintln!("[qi-mcp-http] accept 错误: {}", e);
+                break;
+            }
+        }
+    }
+
+    eprintln!("[qi-mcp-http] HTTP 服务器退出");
     0
 }
 

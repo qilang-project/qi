@@ -8016,6 +8016,7 @@ impl IrBuilder {
         ir.push_str("declare i32 @qi_mcp_set_tool_callback(i64, ptr, ptr)\n");
         ir.push_str("declare i32 @qi_mcp_set_tool_callback_ptr(i64, ptr, ptr)\n");
         ir.push_str("declare i32 @qi_mcp_serve_stdio(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_serve_http(i64, ptr, i64)\n");
         ir.push_str("declare ptr @qi_mcp_list_tools(i64)\n");
         ir.push_str("declare ptr @qi_mcp_call_tool(i64, ptr, ptr)\n");
         ir.push_str("declare i32 @qi_mcp_register_resource(i64, ptr, ptr, ptr)\n");
