@@ -30,6 +30,7 @@ pub mod path_ffi;
 pub mod random_ffi;
 pub mod env_ffi;
 pub mod process_ffi;
+pub mod subprocess_ffi;
 pub mod config_ffi;
 pub mod compress_ffi;
 pub mod test_ffi;
