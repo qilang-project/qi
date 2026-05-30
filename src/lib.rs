@@ -479,6 +479,17 @@ impl QiCompiler {
             command.arg("-lpthread");
             command.arg("-lm"); // Link math library (required for pow, sin, cos, etc.)
 
+            // Linux：qi 运行时(libqi_compiler.a)拉入 openssl/sqlite 等原生依赖；
+            // 手动用 clang 链接静态库时需补这些系统库（macOS 走 framework，见下）。
+            #[cfg(target_os = "linux")]
+            {
+                command
+                    .arg("-lssl")
+                    .arg("-lcrypto")
+                    .arg("-lsqlite3")
+                    .arg("-ldl");
+            }
+
             // On macOS, add frameworks required by reqwest and GUI
             // Force rebuild 2025-11-15
             #[cfg(target_os = "macos")]
