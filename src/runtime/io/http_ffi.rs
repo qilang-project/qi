@@ -458,18 +458,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // 需要联网：qi_http_get 现已是真实 HTTP 请求（不再是 Hello,World 模拟）
     fn test_http_get() {
         qi_http_init();
 
         let url = CString::new("https://example.com").unwrap();
         let response = qi_http_get(url.as_ptr());
 
-        // 在模拟实现中应该返回 "Hello, World!"
-        if !response.is_null() {
-            let response_str = unsafe { CStr::from_ptr(response).to_string_lossy() };
-            assert_eq!(response_str, "Hello, World!");
-            qi_http_free_string(response);
-        }
+        assert!(!response.is_null());
+        let response_str = unsafe { CStr::from_ptr(response).to_string_lossy().into_owned() };
+        qi_http_free_string(response);
+        // 真实响应应是 example.com 的页面内容
+        assert!(response_str.contains("Example Domain"), "got: {}", &response_str[..response_str.len().min(120)]);
     }
 
     #[test]
