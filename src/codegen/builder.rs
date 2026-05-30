@@ -619,6 +619,10 @@ pub struct IrBuilder {
     defined_functions: std::collections::HashSet<String>,
     /// Track global variables (both original and mangled names)
     global_variables: std::collections::HashSet<String>,
+    /// Track global variable LLVM types (name/mangled -> "ptr"|"i64"|"double"|"i1"|...).
+    /// Needed because `variable_types` is cleared on every function entry, which would
+    /// otherwise lose the type of module-level 变量/常量 and make them load as i64.
+    global_variable_types: std::collections::HashMap<String, String>,
     /// Track external function signatures (name -> (params, return_type))
     external_functions: std::collections::HashMap<String, (Vec<String>, String)>,
     /// Track which external functions return struct pointers (mangled_name -> struct_type_name)
@@ -697,6 +701,7 @@ impl IrBuilder {
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
             global_variables: std::collections::HashSet::new(),
+            global_variable_types: std::collections::HashMap::new(),
             external_functions: std::collections::HashMap::new(),
             external_function_return_struct_types: std::collections::HashMap::new(),
             struct_definitions: std::collections::HashMap::new(),
@@ -2177,7 +2182,31 @@ impl IrBuilder {
 
                 // Determine the type based on the initializer or type annotation
                 // For binary expressions, we need to evaluate them first to get their type
-                let (type_name, pre_evaluated_init) = if let Some(initializer) = &decl.initializer {
+                //
+                // 模块作用域（全局 变量/常量）且初始化器不是简单字面量时：绝对不能在这里
+                // build_node 求值，否则 call/load 等指令会落在任何函数之外，生成非法 LLVM IR
+                // （如全局 `通道<整数>()` 会在模块顶层 emit `call ptr @qi_runtime_create_channel`）。
+                // 此时只按 AST/类型注解推断类型，全局体置 null/0；运行期初始化暂不在此处接线。
+                let global_non_literal_init = self.current_function_name.is_none()
+                    && decl
+                        .initializer
+                        .as_ref()
+                        .map(|init| !matches!(init.as_ref(), AstNode::字面量表达式(_)))
+                        .unwrap_or(false);
+                let (type_name, pre_evaluated_init) = if global_non_literal_init {
+                    // 只推断类型，不发任何指令
+                    let init = decl.initializer.as_ref().unwrap();
+                    let ty = match init.as_ref() {
+                        AstNode::数组字面量表达式(_)
+                        | AstNode::字符串连接表达式(_)
+                        | AstNode::结构体实例化表达式(_)
+                        | AstNode::通道创建表达式(_)
+                        | AstNode::闭包表达式(_)
+                        | AstNode::取地址表达式(_) => "ptr".to_string(),
+                        _ => self.get_llvm_type(&decl.type_annotation),
+                    };
+                    (ty, None)
+                } else if let Some(initializer) = &decl.initializer {
                     match &**initializer {
                         AstNode::字面量表达式(literal) => {
                             let ty = match &literal.value {
@@ -2562,8 +2591,10 @@ impl IrBuilder {
                             _ => None // Complex initializers not supported for globals yet
                         }
                     } else {
-                        // Default zero initialization
-                        Some("0".to_string())
+                        // No initializer → let zero_for_ty pick the type-correct zero
+                        // (null for ptr, 0.0 for double, 0 for ints/bool). Returning a bare
+                        // "0" here would emit invalid IR like `global ptr 0`.
+                        None
                     };
 
                     self.add_instruction(IrInstruction::全局变量声明 {
@@ -2576,6 +2607,13 @@ impl IrBuilder {
                     // Track global variables
                     self.global_variables.insert(decl.name.clone());
                     self.global_variables.insert(mangled_name.clone());
+
+                    // Remember the global's LLVM type so it survives the per-function
+                    // `variable_types` clear (see 函数声明). Without this, references to a
+                    // non-integer global (string/float/bool/channel...) inside a function
+                    // would default to i64 and load a pointer-as-int.
+                    self.global_variable_types.insert(decl.name.clone(), type_name.to_string());
+                    self.global_variable_types.insert(mangled_name.clone(), type_name.to_string());
 
                     Ok(global_name)
                 } else {
@@ -3395,6 +3433,14 @@ impl IrBuilder {
                 // by instructions from previous functions during IR emission
                 self.variable_types.retain(|k, _| k.starts_with('t') && k[1..].chars().all(|c| c.is_ascii_digit()));
                 self.variable_struct_types.clear();
+
+                // Global variables are module-scoped: their types must remain visible
+                // inside every function body. Re-seed them after clearing the local scope
+                // so loads/prints of a global resolve to its real type (ptr/double/i1/...)
+                // instead of defaulting to i64.
+                for (k, v) in &self.global_variable_types {
+                    self.variable_types.insert(k.clone(), v.clone());
+                }
 
                 // Build parameter list with mangled names for Chinese identifiers
                 // For array parameters, add hidden length parameters
