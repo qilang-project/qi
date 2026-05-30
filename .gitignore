@@ -83,3 +83,9 @@ rustfmt.toml
 *.ll
 # Playwright MCP runtime artifacts
 .playwright-mcp/
+
+# 编译产物：MCP 服务器示例的可执行文件（无后缀）
+示例/标准库/MCP服务器/http服务
+示例/标准库/MCP服务器/stdio服务
+示例/标准库/MCP服务器/通知服务
+示例/标准库/MCP服务器/通知服务HTTP
