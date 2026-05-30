@@ -134,6 +134,7 @@ impl ModuleRegistry {
         self.register_random_module();
         self.register_env_module();
         self.register_process_module();
+        self.register_subprocess_module();
         self.register_config_module();
         self.register_compress_module();
         self.register_test_module();
@@ -3119,6 +3120,45 @@ impl ModuleRegistry {
 
         self.modules.insert("进程".to_string(), process_module.clone());
         self.modules.insert("标准库.进程".to_string(), process_module);
+    }
+
+    /// 注册子进程模块
+    fn register_subprocess_module(&mut self) {
+        let mut m = Module::new("子进程");
+
+        m.add_function(ModuleFunction::new(
+            "启动",
+            "qi_subprocess_spawn",
+            vec!["字符串".to_string(), "字符串".to_string()], // 命令, 参数JSON
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "写入行",
+            "qi_subprocess_write_line",
+            vec!["i64".to_string(), "字符串".to_string()], // 句柄, 行内容
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "读取行",
+            "qi_subprocess_read_line",
+            vec!["i64".to_string()],
+            "ptr", // 返回字符串
+        ));
+        m.add_function(ModuleFunction::new(
+            "存活",
+            "qi_subprocess_is_alive",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结束",
+            "qi_subprocess_terminate",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+
+        self.modules.insert("子进程".to_string(), m.clone());
+        self.modules.insert("标准库.子进程".to_string(), m);
     }
 
     /// 注册配置文件模块

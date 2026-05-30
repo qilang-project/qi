@@ -8080,6 +8080,16 @@ impl IrBuilder {
         ir.push_str("declare void @qi_process_free_string(ptr)\n");
         ir.push_str("\n");
 
+        // Subprocess functions
+        ir.push_str("; Subprocess functions\n");
+        ir.push_str("declare i64 @qi_subprocess_spawn(ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_subprocess_write_line(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_subprocess_read_line(i64)\n");
+        ir.push_str("declare i32 @qi_subprocess_is_alive(i64)\n");
+        ir.push_str("declare i32 @qi_subprocess_terminate(i64)\n");
+        ir.push_str("declare void @qi_subprocess_free_string(ptr)\n");
+        ir.push_str("\n");
+
         // Config functions
         ir.push_str("; Config functions\n");
         ir.push_str("declare ptr @qi_config_read_toml(ptr)\n");
