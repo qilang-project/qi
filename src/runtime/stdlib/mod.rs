@@ -18,6 +18,7 @@ pub mod llm;
 pub mod llm_ffi;
 pub mod mcp;
 pub mod mcp_ffi;
+pub mod mcp_client_ffi;
 pub mod os_ffi;
 pub mod cli_ffi;
 pub mod gui_ffi;

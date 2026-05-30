@@ -8095,6 +8095,15 @@ impl IrBuilder {
         ir.push_str("declare void @qi_subprocess_free_string(ptr)\n");
         ir.push_str("\n");
 
+        // MCP Client core functions (标准库.MCP客户端)
+        ir.push_str("; MCP Client core (标准库.MCP客户端)\n");
+        ir.push_str("declare i64 @qi_mcpc_connect_stdio(ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_mcpc_connect_http(ptr)\n");
+        ir.push_str("declare ptr @qi_mcpc_request(i64, ptr, ptr)\n");
+        ir.push_str("declare i64 @qi_mcpc_close(i64)\n");
+        ir.push_str("declare void @qi_mcpc_free_string(ptr)\n");
+        ir.push_str("\n");
+
         // Config functions
         ir.push_str("; Config functions\n");
         ir.push_str("declare ptr @qi_config_read_toml(ptr)\n");
@@ -9394,6 +9403,14 @@ impl IrBuilder {
                                 "qi_mcp_create_server" => "i64",  // Return server ID
                                 "qi_mcp_free_string" => "void",  // Cleanup function
                                 _ => "i32"  // Most MCP functions return i32 status
+                            }
+                        // MCP Client core functions
+                        } else if callee.starts_with("qi_mcpc_") {
+                            match callee.as_str() {
+                                "qi_mcpc_connect_stdio" | "qi_mcpc_connect_http" | "qi_mcpc_close" => "i64",
+                                "qi_mcpc_request" => "ptr",  // result JSON string
+                                "qi_mcpc_free_string" => "void",
+                                _ => "i64"
                             }
                         // List functions - check return type based on function name
                         } else if callee.starts_with("qi_list_") {

@@ -125,6 +125,9 @@ impl ModuleRegistry {
         // Register MCP Server module (MCP服务器模块)
         self.register_mcp_module();
 
+        // Register MCP Client core module (标准库.MCP客户端)
+        self.register_mcp_client_module();
+
         // Register string module (字符串模块)
         self.register_string_module();
 
@@ -2639,6 +2642,55 @@ impl ModuleRegistry {
         self.modules.insert("MCP服务器".to_string(), mcp_module.clone());
         self.modules.insert("标准库.MCP服务器".to_string(), mcp_module.clone());
         self.modules.insert("MCP".to_string(), mcp_module);
+    }
+
+    /// 注册 MCP 客户端核心模块（标准库.MCP客户端）
+    fn register_mcp_client_module(&mut self) {
+        let mut m = Module::new("MCP客户端");
+
+        // 连接 stdio MCP server（启动子进程）
+        m.add_function(ModuleFunction::new(
+            "连接stdio",
+            "qi_mcpc_connect_stdio",
+            vec!["字符串".to_string(), "字符串".to_string()], // cmd, args_json
+            "整数", // conn_id (>0=成功)
+        ));
+
+        // 连接 HTTP(Streamable) MCP server
+        m.add_function(ModuleFunction::new(
+            "连接http",
+            "qi_mcpc_connect_http",
+            vec!["字符串".to_string()], // base_url
+            "整数", // conn_id (>0=成功)
+        ));
+
+        // 发送 MCP 请求，返回 result 字段 JSON 串
+        m.add_function(ModuleFunction::new(
+            "请求",
+            "qi_mcpc_request",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // conn_id, method, params_json
+            "字符串", // result JSON 串
+        ));
+
+        // 关闭连接
+        m.add_function(ModuleFunction::new(
+            "关闭",
+            "qi_mcpc_close",
+            vec!["整数".to_string()], // conn_id
+            "整数",
+        ));
+
+        // 内存管理（Qi 通常不需要手动调用）
+        m.add_function(ModuleFunction::new(
+            "释放字符串",
+            "qi_mcpc_free_string",
+            vec!["字符串".to_string()],
+            "void",
+        ));
+
+        // Register module with canonical and short names
+        self.modules.insert("MCP客户端".to_string(), m.clone());
+        self.modules.insert("标准库.MCP客户端".to_string(), m);
     }
 
     /// 注册时间模块
