@@ -1,19 +1,23 @@
 //! 子进程管理模块 FFI
 //!
 //! 长存的流式子进程：stdin/stdout 走管道，按行读写（MCP stdio = 换行分隔 JSON-RPC）。
+//! 后台读线程持续读 stdout 放入队列；读取行/读取行超时从队列弹出。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::io::{BufRead, BufReader, Write};
 use std::os::raw::c_char;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 
 struct ChildState {
     child: Child,
     stdin: ChildStdin,
-    reader: BufReader<ChildStdout>,
+    lines: Arc<Mutex<VecDeque<String>>>,
+    eof: Arc<AtomicBool>,
 }
 
 type Registry = Mutex<HashMap<i64, Arc<Mutex<ChildState>>>>;
@@ -61,10 +65,32 @@ pub extern "C" fn qi_subprocess_spawn(command: *const c_char, args_json: *const 
             Some(s) => s,
             None => return -1,
         };
+
+        // 后台读线程：持续读 stdout，每行 push 进队列；EOF 设标志
+        let lines: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let eof: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+        let lines_clone = lines.clone();
+        let eof_clone = eof.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line_result in reader.lines() {
+                match line_result {
+                    Ok(line) => {
+                        if let Ok(mut q) = lines_clone.lock() {
+                            q.push_back(line);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            eof_clone.store(true, Ordering::SeqCst);
+        });
+
         let state = ChildState {
             child,
             stdin,
-            reader: BufReader::new(stdout),
+            lines,
+            eof,
         };
         let handle = COUNTER.fetch_add(1, Ordering::SeqCst);
         registry()
@@ -98,26 +124,98 @@ pub extern "C" fn qi_subprocess_write_line(handle: i64, line: *const c_char) -> 
 }
 
 /// 阻塞读一行 stdout（去掉行尾换行）。EOF/错误返回空串 ""。
+/// 使用后台读线程队列：轮询直到有行或 EOF。
 #[no_mangle]
 pub extern "C" fn qi_subprocess_read_line(handle: i64) -> *mut c_char {
     let empty = || CString::new("").unwrap().into_raw();
-    let cell = match get_child(handle) {
-        Some(c) => c,
-        None => return empty(),
+
+    // 取出 lines/eof Arc 引用（短暂持锁，不在 poll 期间持锁）
+    let (lines, eof) = {
+        let cell = match get_child(handle) {
+            Some(c) => c,
+            None => return empty(),
+        };
+        let st = match cell.lock() {
+            Ok(g) => g,
+            Err(_) => return empty(),
+        };
+        (st.lines.clone(), st.eof.clone())
     };
-    let mut st = match cell.lock() {
-        Ok(g) => g,
-        Err(_) => return empty(),
-    };
-    let mut line = String::new();
-    match st.reader.read_line(&mut line) {
-        Ok(0) | Err(_) => empty(),
-        Ok(_) => {
-            let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
-            CString::new(trimmed)
-                .unwrap_or_else(|_| CString::new("").unwrap())
-                .into_raw()
+
+    // 轮询队列，直到有行或 EOF
+    loop {
+        {
+            let mut q = match lines.lock() {
+                Ok(g) => g,
+                Err(_) => return empty(),
+            };
+            if let Some(line) = q.pop_front() {
+                return CString::new(line)
+                    .unwrap_or_else(|_| CString::new("").unwrap())
+                    .into_raw();
+            }
         }
+        if eof.load(Ordering::SeqCst) {
+            // 再检查一次队列（EOF 设置时可能还有残余行）
+            if let Ok(mut q) = lines.lock() {
+                if let Some(line) = q.pop_front() {
+                    return CString::new(line)
+                        .unwrap_or_else(|_| CString::new("").unwrap())
+                        .into_raw();
+                }
+            }
+            return empty();
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// 带超时读一行 stdout。timeout_ms 内有行则返回，否则返回 ""。EOF 也返回 ""。
+#[no_mangle]
+pub extern "C" fn qi_subprocess_read_line_timeout(handle: i64, timeout_ms: i64) -> *mut c_char {
+    let empty = || CString::new("").unwrap().into_raw();
+
+    let (lines, eof) = {
+        let cell = match get_child(handle) {
+            Some(c) => c,
+            None => return empty(),
+        };
+        let st = match cell.lock() {
+            Ok(g) => g,
+            Err(_) => return empty(),
+        };
+        (st.lines.clone(), st.eof.clone())
+    };
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(0) as u64);
+
+    loop {
+        {
+            let mut q = match lines.lock() {
+                Ok(g) => g,
+                Err(_) => return empty(),
+            };
+            if let Some(line) = q.pop_front() {
+                return CString::new(line)
+                    .unwrap_or_else(|_| CString::new("").unwrap())
+                    .into_raw();
+            }
+        }
+        if eof.load(Ordering::SeqCst) {
+            // drain any last lines
+            if let Ok(mut q) = lines.lock() {
+                if let Some(line) = q.pop_front() {
+                    return CString::new(line)
+                        .unwrap_or_else(|_| CString::new("").unwrap())
+                        .into_raw();
+                }
+            }
+            return empty();
+        }
+        if Instant::now() >= deadline {
+            return empty();
+        }
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -188,5 +286,31 @@ mod tests {
         assert_eq!(qi_subprocess_is_alive(handle), 1);
         assert_eq!(qi_subprocess_terminate(handle), 1);
         assert_eq!(qi_subprocess_is_alive(handle), 0);
+    }
+
+    #[test]
+    fn test_read_line_timeout_returns_empty_when_no_data() {
+        // cat 不写入任何数据，读取行超时(300ms) 应快速返回空串
+        let cmd = CString::new("cat").unwrap();
+        let handle = qi_subprocess_spawn(cmd.as_ptr(), std::ptr::null());
+        assert!(handle > 0);
+
+        let start = std::time::Instant::now();
+        let got = qi_subprocess_read_line_timeout(handle, 300);
+        let elapsed = start.elapsed();
+
+        unsafe {
+            let s = CStr::from_ptr(got).to_string_lossy().to_string();
+            assert_eq!(s, "", "超时应返回空串");
+            qi_subprocess_free_string(got);
+        }
+        // 应在约 300ms 内完成（给 100ms 宽容量）
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "超时耗时过长: {:?}",
+            elapsed
+        );
+
+        assert_eq!(qi_subprocess_terminate(handle), 1);
     }
 }

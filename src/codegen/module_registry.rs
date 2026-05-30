@@ -3152,6 +3152,12 @@ impl ModuleRegistry {
             "ptr", // 返回字符串
         ));
         m.add_function(ModuleFunction::new(
+            "读取行超时",
+            "qi_subprocess_read_line_timeout",
+            vec!["i64".to_string(), "i64".to_string()], // 句柄, 超时毫秒
+            "ptr", // 返回字符串
+        ));
+        m.add_function(ModuleFunction::new(
             "存活",
             "qi_subprocess_is_alive",
             vec!["i64".to_string()],
