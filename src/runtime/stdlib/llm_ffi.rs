@@ -74,12 +74,31 @@ impl LLM会话 {
         }
     }
 
+    /// 把配置里的 system 提示作为首条 system 消息插到 messages 最前面。
+    /// 之前 set_config("system", ...) 只存进配置 map 却从不发出去 —— 系统提示
+    /// 形同虚设。这里在构建请求体时统一注入（历史已含 system 时不重复）。
+    fn 注入系统消息(&self, 消息列表: &mut Vec<Value>) {
+        if let Some(系统) = self.配置.get("system") {
+            if !系统.is_empty() {
+                let 已有系统 = 消息列表
+                    .first()
+                    .and_then(|m| m.get("role"))
+                    .and_then(|r| r.as_str())
+                    == Some("system");
+                if !已有系统 {
+                    消息列表.insert(0, json!({ "role": "system", "content": 系统 }));
+                }
+            }
+        }
+    }
+
     fn 构建请求体(&self, 提示: &str, 流式: bool, 使用工具: bool) -> Value {
         let mut 消息列表 = self.历史.clone();
         消息列表.push(json!({
             "role": "user",
             "content": 提示
         }));
+        self.注入系统消息(&mut 消息列表);
 
         let mut 请求体 = json!({
             "model": self.模型,
@@ -105,9 +124,11 @@ impl LLM会话 {
     }
 
     fn 构建继续请求体(&self, 使用工具: bool) -> Value {
+        let mut 消息列表 = self.历史.clone();
+        self.注入系统消息(&mut 消息列表);
         let mut 请求体 = json!({
             "model": self.模型,
-            "messages": self.历史,
+            "messages": 消息列表,
             "temperature": self.配置.get("temperature")
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.7),
