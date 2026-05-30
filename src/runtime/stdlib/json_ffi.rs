@@ -173,11 +173,7 @@ pub extern "C" fn qi_json_set_bool(obj_id: i64, key: *const c_char, value: i64) 
 
 /// 设置对象字段
 #[no_mangle]
-pub extern "C" fn qi_json_set_object(
-    obj_id: i64,
-    key: *const c_char,
-    sub_obj_id: i64,
-) -> i64 {
+pub extern "C" fn qi_json_set_object(obj_id: i64, key: *const c_char, sub_obj_id: i64) -> i64 {
     if obj_id <= 0 || key.is_null() || sub_obj_id <= 0 {
         return 0;
     }
@@ -800,7 +796,9 @@ pub extern "C" fn qi_json_from_pairs(pairs: *const c_char) -> *mut c_char {
             对象.insert("结果".to_string(), Value::String(文本));
         }
 
-        CString::new(Value::Object(对象).to_string()).unwrap().into_raw()
+        CString::new(Value::Object(对象).to_string())
+            .unwrap()
+            .into_raw()
     }
 }
 
@@ -815,7 +813,9 @@ pub extern "C" fn qi_json_from_text(text: *const c_char) -> *mut c_char {
         let 文本 = CStr::from_ptr(text).to_string_lossy().to_string();
         let mut 对象 = Map::new();
         对象.insert("结果".to_string(), Value::String(文本));
-        CString::new(Value::Object(对象).to_string()).unwrap().into_raw()
+        CString::new(Value::Object(对象).to_string())
+            .unwrap()
+            .into_raw()
     }
 }
 
@@ -859,10 +859,7 @@ mod tests {
         let key = CString::new("name").unwrap();
         let value = CString::new("Alice").unwrap();
 
-        assert_eq!(
-            qi_json_set_string(obj_id, key.as_ptr(), value.as_ptr()),
-            1
-        );
+        assert_eq!(qi_json_set_string(obj_id, key.as_ptr(), value.as_ptr()), 1);
 
         let result = qi_json_get_string(obj_id, key.as_ptr());
         assert!(!result.is_null());

@@ -173,12 +173,19 @@ pub extern "C" fn qi_multipart_extract_boundary(content_type: *const c_char) -> 
             break;
         }
     }
-    CString::new(found).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(found)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 #[no_mangle]
 pub extern "C" fn qi_multipart_count(handle: i64) -> i64 {
-    pool().lock().unwrap().get(&handle).map(|v| v.len() as i64).unwrap_or(0)
+    pool()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .map(|v| v.len() as i64)
+        .unwrap_or(0)
 }
 
 fn part_field(handle: i64, idx: i64, f: impl Fn(&Part) -> String) -> *mut c_char {
@@ -193,7 +200,9 @@ fn part_field(handle: i64, idx: i64, f: impl Fn(&Part) -> String) -> *mut c_char
         }
         None => String::new(),
     };
-    CString::new(s).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 #[no_mangle]

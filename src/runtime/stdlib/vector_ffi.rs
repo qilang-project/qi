@@ -234,13 +234,8 @@ mod tests {
         let v2 = vec![4.0, 5.0, 6.0];
         let mut result: f64 = 0.0;
 
-        let ret = qi_vector_dot(
-            v1.as_ptr(),
-            v1.len() as i64,
-            v2.as_ptr(),
-            v2.len() as i64,
-            &mut result,
-        );
+        let ret =
+            qi_vector_dot(v1.as_ptr(), v1.len() as i64, v2.as_ptr(), v2.len() as i64, &mut result);
 
         assert_eq!(ret, 0);
         assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32

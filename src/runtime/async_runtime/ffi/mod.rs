@@ -3,13 +3,13 @@
 //! This module provides the interface to low-level C syscalls for platform-specific
 //! async I/O operations, as well as C interface functions for the async runtime.
 
-use std::ffi::c_void;
-use std::sync::OnceLock;
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::task::{Context, Poll};
+use std::ffi::c_void;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::task::{Context, Poll};
 
 pub mod syscalls;
 
@@ -19,7 +19,9 @@ pub use syscalls::{EpollEvent, EventType, SyscallResult};
 pub type TaskHandle = *mut c_void;
 
 /// Simple task storage for C interface
-static TASK_STORE: OnceLock<Mutex<HashMap<u64, Pin<Box<dyn Future<Output = *mut c_void> + Send + 'static>>>>> = OnceLock::new();
+static TASK_STORE: OnceLock<
+    Mutex<HashMap<u64, Pin<Box<dyn Future<Output = *mut c_void> + Send + 'static>>>>,
+> = OnceLock::new();
 static mut NEXT_TASK_ID: u64 = 1;
 static RUNTIME_INIT: OnceLock<()> = OnceLock::new();
 
@@ -41,10 +43,7 @@ pub(crate) fn 全局异步运行时() -> &'static tokio::runtime::Runtime {
             .filter(|n| *n > 0)
             .unwrap_or(2048);
         if debug_enabled() {
-            eprintln!(
-                "DEBUG: tokio runtime: {} workers, {} max blocking",
-                workers, max_blocking
-            );
+            eprintln!("DEBUG: tokio runtime: {} workers, {} max blocking", workers, max_blocking);
         }
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -77,7 +76,10 @@ fn ensure_runtime_initialized() {
 
 /// Create a new async task
 #[no_mangle]
-pub extern "C" fn qi_runtime_create_task(function_ptr: *const c_void, arg_count: i64) -> TaskHandle {
+pub extern "C" fn qi_runtime_create_task(
+    function_ptr: *const c_void,
+    arg_count: i64,
+) -> TaskHandle {
     ensure_runtime_initialized();
     if debug_enabled() {
         eprintln!("DEBUG: create_task called");
@@ -102,7 +104,8 @@ pub extern "C" fn qi_runtime_create_task(function_ptr: *const c_void, arg_count:
         }
         // Call the async function and return its result
         unsafe {
-            let func = std::mem::transmute::<usize, extern "C" fn() -> *const c_void>(function_addr);
+            let func =
+                std::mem::transmute::<usize, extern "C" fn() -> *const c_void>(function_addr);
             if debug_enabled() {
                 eprintln!("DEBUG: About to call function");
             }
@@ -162,25 +165,21 @@ pub extern "C" fn qi_runtime_await(task: TaskHandle) -> *mut c_void {
                 // Create a waker that does nothing - our futures are immediately ready
                 // since they just wrap synchronous function calls
                 use std::task::{RawWaker, RawWakerVTable, Waker};
-                
+
                 unsafe fn noop_clone(_: *const ()) -> RawWaker {
                     noop_raw_waker()
                 }
                 unsafe fn noop_wake(_: *const ()) {}
                 unsafe fn noop_wake_by_ref(_: *const ()) {}
                 unsafe fn noop_drop(_: *const ()) {}
-                
-                const NOOP_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-                    noop_clone,
-                    noop_wake,
-                    noop_wake_by_ref,
-                    noop_drop,
-                );
-                
+
+                const NOOP_WAKER_VTABLE: RawWakerVTable =
+                    RawWakerVTable::new(noop_clone, noop_wake, noop_wake_by_ref, noop_drop);
+
                 fn noop_raw_waker() -> RawWaker {
                     RawWaker::new(std::ptr::null(), &NOOP_WAKER_VTABLE)
                 }
-                
+
                 let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
                 let mut context = Context::from_waker(&waker);
 
@@ -320,9 +319,9 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 }
 
 // Channel implementation
-use std::sync::mpsc::{self, Sender, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Global channel registry
 static CHANNEL_REGISTRY: OnceLock<Mutex<HashMap<u64, Arc<ChannelInstance>>>> = OnceLock::new();
@@ -344,7 +343,7 @@ unsafe impl Sync for ChannelInstance {}
 
 /// Timer instance for timeout operations
 struct TimerInstance {
-    deadline_ms: i64,  // Absolute deadline in milliseconds since UNIX_EPOCH
+    deadline_ms: i64, // Absolute deadline in milliseconds since UNIX_EPOCH
     stopped: bool,
 }
 
@@ -406,14 +405,18 @@ pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i
         let registry = match CHANNEL_REGISTRY.get() {
             Some(r) => r,
             None => {
-                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                unsafe {
+                    let _ = Box::from_raw(value_ptr as *mut i64);
+                }
                 return -1;
             }
         };
         let registry_guard = match registry.lock() {
             Ok(g) => g,
             Err(_) => {
-                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                unsafe {
+                    let _ = Box::from_raw(value_ptr as *mut i64);
+                }
                 return -1;
             }
         };
@@ -423,7 +426,9 @@ pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i
                 if debug_enabled() {
                     eprintln!("DEBUG: Channel not found for ID {}", channel_id);
                 }
-                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                unsafe {
+                    let _ = Box::from_raw(value_ptr as *mut i64);
+                }
                 return -1;
             }
         }
@@ -436,7 +441,9 @@ pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i
                 eprintln!("DEBUG: Failed to send value to channel - channel might be closed");
             }
             // Clean up the boxed value on error
-            unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+            unsafe {
+                let _ = Box::from_raw(value_ptr as *mut i64);
+            }
             return -1;
         }
         if debug_enabled() {
@@ -444,17 +451,25 @@ pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i
         }
         return 0; // Success
     }
-    unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+    unsafe {
+        let _ = Box::from_raw(value_ptr as *mut i64);
+    }
     -1 // Error
 }
 
 /// Receive a value from a channel (blocking)
 /// result_ptr: Output parameter - will be filled with a pointer to the received value
 #[no_mangle]
-pub extern "C" fn qi_runtime_channel_receive(channel: *mut c_void, result_ptr: *mut *mut c_void) -> i32 {
+pub extern "C" fn qi_runtime_channel_receive(
+    channel: *mut c_void,
+    result_ptr: *mut *mut c_void,
+) -> i32 {
     ensure_runtime_initialized();
     if debug_enabled() {
-        eprintln!("DEBUG: channel_receive called with channel {:?}, result_ptr {:?}", channel, result_ptr);
+        eprintln!(
+            "DEBUG: channel_receive called with channel {:?}, result_ptr {:?}",
+            channel, result_ptr
+        );
     }
 
     let channel_id = channel as u64;
@@ -659,10 +674,8 @@ pub extern "C" fn qi_runtime_timer_create(deadline_ms: i64) -> *mut c_void {
     let current_time_ms = qi_runtime_get_time_ms();
     let absolute_deadline = current_time_ms + deadline_ms;
 
-    let timer = Arc::new(Mutex::new(TimerInstance {
-        deadline_ms: absolute_deadline,
-        stopped: false,
-    }));
+    let timer =
+        Arc::new(Mutex::new(TimerInstance { deadline_ms: absolute_deadline, stopped: false }));
 
     let timer_id = unsafe {
         let id = NEXT_TIMER_ID;
@@ -674,7 +687,10 @@ pub extern "C" fn qi_runtime_timer_create(deadline_ms: i64) -> *mut c_void {
         if let Ok(mut registry_guard) = registry.lock() {
             registry_guard.insert(timer_id, timer);
             if debug_enabled() {
-                eprintln!("DEBUG: Created timer with ID {}, absolute deadline {}", timer_id, absolute_deadline);
+                eprintln!(
+                    "DEBUG: Created timer with ID {}, absolute deadline {}",
+                    timer_id, absolute_deadline
+                );
             }
             return timer_id as *mut c_void;
         }
@@ -710,8 +726,10 @@ pub extern "C" fn qi_runtime_timer_expired(timer: *mut c_void) -> i64 {
                     let expired = current_time_ms >= timer_guard.deadline_ms;
 
                     if debug_enabled() {
-                        eprintln!("DEBUG: Timer {} check: current={}, deadline={}, expired={}",
-                                  timer_id, current_time_ms, timer_guard.deadline_ms, expired);
+                        eprintln!(
+                            "DEBUG: Timer {} check: current={}, deadline={}, expired={}",
+                            timer_id, current_time_ms, timer_guard.deadline_ms, expired
+                        );
                     }
 
                     return if expired { 1 } else { 0 };
@@ -768,16 +786,16 @@ pub extern "C" fn qi_runtime_timer_stop(timer: *mut c_void) -> i64 {
 pub trait IoEventLoop {
     /// Initialize the event loop
     fn initialize(&mut self) -> SyscallResult<()>;
-    
+
     /// Register a file descriptor for monitoring
     fn register_fd(&mut self, fd: i32, events: EventType) -> SyscallResult<()>;
-    
+
     /// Unregister a file descriptor
     fn unregister_fd(&mut self, fd: i32) -> SyscallResult<()>;
-    
+
     /// Wait for events with optional timeout (in milliseconds)
     fn wait_events(&mut self, timeout_ms: i32) -> SyscallResult<Vec<EpollEvent>>;
-    
+
     /// Cleanup and shutdown the event loop
     fn shutdown(&mut self) -> SyscallResult<()>;
 }

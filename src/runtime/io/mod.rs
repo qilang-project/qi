@@ -3,27 +3,29 @@
 //! This module provides synchronous I/O operations for file system access,
 //! network operations, and standard I/O with comprehensive Chinese language support.
 
-pub mod filesystem;
-pub mod http;
-pub mod network_ffi;
-pub mod tls_ffi;
-pub mod h2_ffi;
-pub mod http_ffi;
-pub mod websocket_ffi;
-pub mod stdio;
-pub mod interface;
 pub mod file;
+pub mod filesystem;
+pub mod h2_ffi;
+pub mod http;
+pub mod http_ffi;
+pub mod interface;
 pub mod io_ffi;
+pub mod network_ffi;
+pub mod stdio;
+pub mod tls_ffi;
+pub mod websocket_ffi;
 
 // Re-export main components
-pub use filesystem::{FileSystemInterface, FileOperation, FileEncoding};
-pub use http::{HttpClient, TcpManager, TimeoutManager, NetworkInterface, HttpRequest, HttpResponse};
-pub use interface::{IoInterface, IoConfig, IoStats, IoOperation, NetworkConfig};
-pub use file::{文件模块, 文件操作};
+pub use file::{文件操作, 文件模块};
+pub use filesystem::{FileEncoding, FileOperation, FileSystemInterface};
+pub use http::{
+    HttpClient, HttpRequest, HttpResponse, NetworkInterface, TcpManager, TimeoutManager,
+};
+pub use interface::{IoConfig, IoInterface, IoOperation, IoStats, NetworkConfig};
 
 // Create NetworkManager as TcpManager for compatibility
 pub type NetworkManager = TcpManager;
-pub use stdio::{StandardIo, ConsoleInterface};
+pub use stdio::{ConsoleInterface, StandardIo};
 
 /// I/O operation result type
 pub type IoResult<T> = Result<T, IoError>;
@@ -32,16 +34,10 @@ pub type IoResult<T> = Result<T, IoError>;
 #[derive(Debug, thiserror::Error)]
 pub enum IoError {
     #[error("文件操作失败: {path} - {message}")]
-    FileOperationFailed {
-        path: String,
-        message: String,
-    },
+    FileOperationFailed { path: String, message: String },
 
     #[error("网络操作失败: {endpoint} - {message}")]
-    NetworkOperationFailed {
-        endpoint: String,
-        message: String,
-    },
+    NetworkOperationFailed { endpoint: String, message: String },
 
     #[error("编码错误: {message}")]
     EncodingError { message: String },
@@ -56,10 +52,7 @@ pub enum IoError {
     Timeout { timeout_ms: u64 },
 
     #[error("连接被拒绝: {address}:{port}")]
-    ConnectionRefused {
-        address: String,
-        port: u16,
-    },
+    ConnectionRefused { address: String, port: u16 },
 
     #[error("系统I/O错误: {0}")]
     SystemIoError(#[from] std::io::Error),
@@ -89,11 +82,7 @@ impl Default for IoTimeout {
 impl IoTimeout {
     /// Create new timeout configuration
     pub fn new(timeout_ms: u64) -> Self {
-        Self {
-            timeout_ms,
-            read_timeout: true,
-            write_timeout: true,
-        }
+        Self { timeout_ms, read_timeout: true, write_timeout: true }
     }
 
     /// Get timeout as Duration
@@ -180,7 +169,9 @@ impl IoStatistics {
         if self.successful_reads == 1 {
             self.avg_read_time_ms = time_ms;
         } else {
-            self.avg_read_time_ms = (self.avg_read_time_ms * (self.successful_reads - 1) as f64 + time_ms) / self.successful_reads as f64;
+            self.avg_read_time_ms = (self.avg_read_time_ms * (self.successful_reads - 1) as f64
+                + time_ms)
+                / self.successful_reads as f64;
         }
     }
 
@@ -189,7 +180,9 @@ impl IoStatistics {
         if self.successful_writes == 1 {
             self.avg_write_time_ms = time_ms;
         } else {
-            self.avg_write_time_ms = (self.avg_write_time_ms * (self.successful_writes - 1) as f64 + time_ms) / self.successful_writes as f64;
+            self.avg_write_time_ms = (self.avg_write_time_ms * (self.successful_writes - 1) as f64
+                + time_ms)
+                / self.successful_writes as f64;
         }
     }
 

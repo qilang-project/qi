@@ -4,58 +4,62 @@
 //! string manipulation, mathematical operations, system information access,
 //! and type conversions with comprehensive Chinese language support.
 
-pub mod string;
-pub mod string_ffi;
-pub mod math;
-pub mod system;
+pub mod bytes_ffi;
+pub mod cli_ffi;
+pub mod closure_ffi;
+pub mod compress_ffi;
+pub mod config_ffi;
 pub mod conversion;
-pub mod debug;
 pub mod crypto;
 pub mod crypto_ffi;
-pub mod vector;
-pub mod vector_ffi;
+pub mod database_ffi;
+pub mod datetime;
+pub mod debug;
+pub mod env_ffi;
+pub mod exception_ffi;
+pub mod gui_ffi;
+pub mod hashmap;
+pub mod json_ffi;
+pub mod list;
 pub mod llm;
 pub mod llm_ffi;
+pub mod math;
 pub mod mcp;
-pub mod mcp_ffi;
 pub mod mcp_client_ffi;
-pub mod os_ffi;
-pub mod cli_ffi;
-pub mod gui_ffi;
-pub mod list;
-pub mod hashmap;
-pub mod datetime;
-pub mod json_ffi;
-pub mod regex_ffi;
-pub mod path_ffi;
-pub mod random_ffi;
-pub mod env_ffi;
-pub mod process_ffi;
-pub mod subprocess_ffi;
-pub mod config_ffi;
-pub mod compress_ffi;
-pub mod test_ffi;
-pub mod database_ffi;
-pub mod web_ffi;
-pub mod bytes_ffi;
-pub mod signal_ffi;
+pub mod mcp_ffi;
 pub mod multipart_ffi;
-pub mod exception_ffi;
-pub mod closure_ffi;
+pub mod os_ffi;
+pub mod path_ffi;
+pub mod process_ffi;
 pub mod qi_str;
 pub mod qi_str_ffi;
+pub mod random_ffi;
+pub mod regex_ffi;
+pub mod signal_ffi;
+pub mod string;
+pub mod string_ffi;
+pub mod subprocess_ffi;
 pub mod sync_ffi;
+pub mod system;
+pub mod test_ffi;
+pub mod vector;
+pub mod vector_ffi;
+pub mod web_ffi;
 
 // Re-export main components
-pub use string::{StringModule, StringOperation};
-pub use math::{MathModule, MathOperation};
-pub use system::{SystemModule, SystemInfo};
 pub use conversion::{ConversionModule, TypeConversion};
-pub use debug::{DebugModule, DebugInfo};
-pub use crypto::{加密模块, 加密操作, 编码格式};
+pub use crypto::{加密操作, 加密模块, 编码格式};
+pub use debug::{DebugInfo, DebugModule};
+pub use llm::{
+    大模型模块, 嵌入器, 提示模板, 智能代理, 检索增强生成, 知识库
+};
+pub use math::{MathModule, MathOperation};
+pub use mcp::{
+    MCP工具, MCP提示, MCP服务器, MCP服务器模块, MCP资源, 工具参数, 工具回调函数, 资源内容, 资源类型,
+};
+pub use string::{StringModule, StringOperation};
+pub use system::{SystemInfo, SystemModule};
 pub use vector::{向量, 向量模块};
-pub use llm::{大模型模块, 嵌入器, 知识库, 提示模板, 检索增强生成, 智能代理};
-pub use mcp::{MCP服务器模块, MCP服务器, MCP工具, MCP资源, MCP提示, 资源类型, 资源内容, 工具参数, 工具回调函数};
 // StandardLibrary is defined below, no need to re-export
 
 /// Standard library result type
@@ -65,47 +69,25 @@ pub type StdlibResult<T> = Result<T, StdlibError>;
 #[derive(Debug, thiserror::Error)]
 pub enum StdlibError {
     #[error("字符串操作错误: {operation} - {message}")]
-    StringOperationError {
-        operation: String,
-        message: String,
-    },
+    StringOperationError { operation: String, message: String },
 
     #[error("数学运算错误: {operation} - {message}")]
-    MathError {
-        operation: String,
-        message: String,
-    },
+    MathError { operation: String, message: String },
 
     #[error("系统调用错误: {system_call} - {message}")]
-    SystemError {
-        system_call: String,
-        message: String,
-    },
+    SystemError { system_call: String, message: String },
 
     #[error("类型转换错误: {from_type} -> {to_type} - {message}")]
-    ConversionError {
-        from_type: String,
-        to_type: String,
-        message: String,
-    },
+    ConversionError { from_type: String, to_type: String, message: String },
 
     #[error("加密操作错误: {operation} - {message}")]
-    CryptoError {
-        operation: String,
-        message: String,
-    },
+    CryptoError { operation: String, message: String },
 
     #[error("无效参数: {parameter} - {message}")]
-    InvalidParameter {
-        parameter: String,
-        message: String,
-    },
+    InvalidParameter { parameter: String, message: String },
 
     #[error("索引越界: 索引 {index}，长度 {length}")]
-    IndexOutOfBounds {
-        index: usize,
-        length: usize,
-    },
+    IndexOutOfBounds { index: usize, length: usize },
 
     #[error("除零错误")]
     DivisionByZero,
@@ -273,9 +255,7 @@ pub struct StdlibRegistry {
 impl StdlibRegistry {
     /// Create new function registry
     pub fn new() -> Self {
-        Self {
-            functions: std::collections::HashMap::new(),
-        }
+        Self { functions: std::collections::HashMap::new() }
     }
 
     /// Register a function

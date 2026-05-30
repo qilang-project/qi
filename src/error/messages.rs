@@ -53,11 +53,8 @@ pub const E2001_EXPECTED_TOKEN: ErrorMessage = ErrorMessage {
     hint: Some("请检查语法是否正确"),
 };
 
-pub const E2002_UNEXPECTED_TOKEN: ErrorMessage = ErrorMessage {
-    code: "E2002",
-    message: "意外的标记 '{0}'",
-    hint: None,
-};
+pub const E2002_UNEXPECTED_TOKEN: ErrorMessage =
+    ErrorMessage { code: "E2002", message: "意外的标记 '{0}'", hint: None };
 
 pub const E2003_MISSING_SEMICOLON: ErrorMessage = ErrorMessage {
     code: "E2003",
@@ -179,11 +176,8 @@ pub const E7003_STACK_OVERFLOW: ErrorMessage = ErrorMessage {
 };
 
 // IO 错误 - E8xxx
-pub const E8001_FILE_NOT_FOUND: ErrorMessage = ErrorMessage {
-    code: "E8001",
-    message: "文件未找到: '{0}'",
-    hint: None,
-};
+pub const E8001_FILE_NOT_FOUND: ErrorMessage =
+    ErrorMessage { code: "E8001", message: "文件未找到: '{0}'", hint: None };
 
 pub const E8002_PERMISSION_DENIED: ErrorMessage = ErrorMessage {
     code: "E8002",

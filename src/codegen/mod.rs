@@ -2,12 +2,12 @@
 
 pub mod builder;
 pub mod llvm;
-pub mod optimization;
 pub mod module_registry;
+pub mod optimization;
 
+use crate::config::{CompilationTarget, OptimizationLevel};
 use builder::IrBuilder;
 use optimization::OptimizationManager;
-use crate::config::{CompilationTarget, OptimizationLevel};
 
 /// Code generator
 #[allow(dead_code)]
@@ -37,7 +37,10 @@ impl CodeGenerator {
     }
 
     /// Set external function declarations for this module
-    pub fn set_external_functions(&mut self, external_funcs: std::collections::HashMap<String, (Vec<String>, String)>) {
+    pub fn set_external_functions(
+        &mut self,
+        external_funcs: std::collections::HashMap<String, (Vec<String>, String)>,
+    ) {
         self.ir_builder.set_external_functions(external_funcs);
     }
 
@@ -47,7 +50,10 @@ impl CodeGenerator {
     }
 
     /// Set import aliases for namespace resolution
-    pub fn set_import_aliases(&mut self, import_aliases: std::collections::HashMap<String, String>) {
+    pub fn set_import_aliases(
+        &mut self,
+        import_aliases: std::collections::HashMap<String, String>,
+    ) {
         self.ir_builder.set_import_aliases(import_aliases);
     }
 
@@ -57,8 +63,12 @@ impl CodeGenerator {
     }
 
     /// Set external function return struct types for cross-module struct returns
-    pub fn set_external_function_return_struct_types(&mut self, map: std::collections::HashMap<String, String>) {
-        self.ir_builder.set_external_function_return_struct_types(map);
+    pub fn set_external_function_return_struct_types(
+        &mut self,
+        map: std::collections::HashMap<String, String>,
+    ) {
+        self.ir_builder
+            .set_external_function_return_struct_types(map);
     }
 
     pub fn set_external_struct_definitions(
@@ -78,11 +88,15 @@ impl CodeGenerator {
 
     /// Generate LLVM IR from AST
     pub fn generate(&mut self, ast: &crate::parser::ast::AstNode) -> Result<String, CodegenError> {
-        let ir = self.ir_builder.build(ast)
+        let ir = self
+            .ir_builder
+            .build(ast)
             .map_err(|e| CodegenError::Llvm(e))?;
 
         // Run optimizations
-        let optimized_ir = self.optimization_manager.run_optimizations(&ir)
+        let optimized_ir = self
+            .optimization_manager
+            .run_optimizations(&ir)
             .map_err(|e| CodegenError::Optimization(e.to_string()))?;
 
         Ok(optimized_ir)
@@ -105,8 +119,13 @@ impl CodeGenerator {
     }
 
     /// Generate LLVM IR without optimizations
-    pub fn generate_without_optimization(&mut self, ast: &crate::parser::ast::AstNode) -> Result<String, CodegenError> {
-        let ir = self.ir_builder.build(ast)
+    pub fn generate_without_optimization(
+        &mut self,
+        ast: &crate::parser::ast::AstNode,
+    ) -> Result<String, CodegenError> {
+        let ir = self
+            .ir_builder
+            .build(ast)
             .map_err(|e| CodegenError::Llvm(e))?;
         Ok(ir)
     }
@@ -146,7 +165,9 @@ mod tests {
 
         let mut codegen = CodeGenerator::new(crate::config::CompilationTarget::Linux);
         // Use generate_without_optimization to prevent optimizer from removing unused variables
-        let ir = codegen.generate_without_optimization(&program.statements[0]).expect("Should generate IR");
+        let ir = codegen
+            .generate_without_optimization(&program.statements[0])
+            .expect("Should generate IR");
 
         // Debug: print the IR
         eprintln!("Generated IR:\n{}", ir);
@@ -170,7 +191,9 @@ mod tests {
         let program = parser.parse(tokens).expect("Should parse successfully");
 
         let mut codegen = CodeGenerator::new(crate::config::CompilationTarget::Linux);
-        let ir = codegen.generate(&program.statements[0]).expect("Should generate IR");
+        let ir = codegen
+            .generate(&program.statements[0])
+            .expect("Should generate IR");
 
         // Check that generated IR contains expected elements
         println!("Generated Function IR:\n{}", ir);
@@ -179,6 +202,9 @@ mod tests {
         assert!(ir.contains("ret i64 42"));
         // Regression: ensure closing brace is present (allow optional trailing newline)
         let ir_trimmed = ir.trim_end();
-        assert!(ir_trimmed.ends_with('}'), "Generated IR should end with a closing brace '}}' for function end");
+        assert!(
+            ir_trimmed.ends_with('}'),
+            "Generated IR should end with a closing brace '}}' for function end"
+        );
     }
 }

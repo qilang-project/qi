@@ -47,10 +47,7 @@ pub struct Module {
 impl Module {
     /// Create a new module
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            functions: HashMap::new(),
-        }
+        Self { name: name.into(), functions: HashMap::new() }
     }
 
     /// Add a function to this module
@@ -85,9 +82,7 @@ pub struct ModuleRegistry {
 impl ModuleRegistry {
     /// Create a new module registry
     pub fn new() -> Self {
-        let mut registry = Self {
-            modules: HashMap::new(),
-        };
+        let mut registry = Self { modules: HashMap::new() };
         registry.register_stdlib_modules();
         registry
     }
@@ -212,12 +207,12 @@ impl ModuleRegistry {
             "运行服务器",
             "qi_h2_serve",
             vec![
-                "字符串".to_string(),  // 证书路径
-                "字符串".to_string(),  // 私钥路径
-                "字符串".to_string(),  // 主机
-                "整数".to_string(),    // 端口
-                "指针".to_string(),    // 处理函数指针 (处理原始请求)
-                "指针".to_string(),    // 应用值指针
+                "字符串".to_string(), // 证书路径
+                "字符串".to_string(), // 私钥路径
+                "字符串".to_string(), // 主机
+                "整数".to_string(),   // 端口
+                "指针".to_string(),   // 处理函数指针 (处理原始请求)
+                "指针".to_string(),   // 应用值指针
             ],
             "整数",
         ));
@@ -329,8 +324,10 @@ impl ModuleRegistry {
             "整数",
         ));
 
-        self.modules.insert("字节切片".to_string(), bytes_module.clone());
-        self.modules.insert("标准库.字节切片".to_string(), bytes_module);
+        self.modules
+            .insert("字节切片".to_string(), bytes_module.clone());
+        self.modules
+            .insert("标准库.字节切片".to_string(), bytes_module);
 
         let mut signal_module = Module::new("信号");
         signal_module.add_function(ModuleFunction::new(
@@ -345,14 +342,11 @@ impl ModuleRegistry {
             vec![],
             "整数",
         ));
-        signal_module.add_function(ModuleFunction::new(
-            "重置",
-            "qi_signal_reset",
-            vec![],
-            "整数",
-        ));
-        self.modules.insert("信号".to_string(), signal_module.clone());
-        self.modules.insert("标准库.信号".to_string(), signal_module);
+        signal_module.add_function(ModuleFunction::new("重置", "qi_signal_reset", vec![], "整数"));
+        self.modules
+            .insert("信号".to_string(), signal_module.clone());
+        self.modules
+            .insert("标准库.信号".to_string(), signal_module);
 
         let mut mp_module = Module::new("多部分");
         mp_module.add_function(ModuleFunction::new(
@@ -415,7 +409,7 @@ impl ModuleRegistry {
             "安全调用处理器",
             "qi_web_call_handler_safe",
             vec!["指针".to_string(), "指针".to_string()], // handler 函数指针, 上下文指针
-            "指针",                                          // 响应指针（panic 时为 null）
+            "指针",                                       // 响应指针（panic 时为 null）
         ));
 
         web_module.add_function(ModuleFunction::new(
@@ -573,8 +567,10 @@ impl ModuleRegistry {
             "字符串",
         ));
 
-        self.modules.insert("Web运行时".to_string(), web_module.clone());
-        self.modules.insert("标准库.Web运行时".to_string(), web_module);
+        self.modules
+            .insert("Web运行时".to_string(), web_module.clone());
+        self.modules
+            .insert("标准库.Web运行时".to_string(), web_module);
     }
 
     /// Register the crypto module
@@ -630,8 +626,10 @@ impl ModuleRegistry {
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("加密".to_string(), crypto_module.clone());
-        self.modules.insert("标准库.加密".to_string(), crypto_module);
+        self.modules
+            .insert("加密".to_string(), crypto_module.clone());
+        self.modules
+            .insert("标准库.加密".to_string(), crypto_module);
     }
 
     /// Register the IO module
@@ -643,14 +641,14 @@ impl ModuleRegistry {
             "打印",
             "qi_runtime_print",
             vec!["字符串".to_string()],
-            "i32",  // qi_runtime_print returns i32
+            "i32", // qi_runtime_print returns i32
         ));
 
         io_module.add_function(ModuleFunction::new(
             "打印行",
             "qi_runtime_println",
             vec!["字符串".to_string()],
-            "i32",  // qi_runtime_println returns i32
+            "i32", // qi_runtime_println returns i32
         ));
 
         // 文件操作函数
@@ -665,35 +663,35 @@ impl ModuleRegistry {
             "写入文件",
             "qi_io_write_file",
             vec!["字符串".to_string(), "字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
             "追加文件",
             "qi_io_append_file",
             vec!["字符串".to_string(), "字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
             "删除文件",
             "qi_io_delete_file",
             vec!["字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
             "创建文件",
             "qi_io_create_file",
             vec!["字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
             "文件存在",
             "qi_io_file_exists",
             vec!["字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
@@ -707,19 +705,21 @@ impl ModuleRegistry {
             "创建目录",
             "qi_io_create_dir",
             vec!["字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         io_module.add_function(ModuleFunction::new(
             "删除目录",
             "qi_io_delete_dir",
             vec!["字符串".to_string()],
-            "整数",  // Returns 0 or 1 as i64
+            "整数", // Returns 0 or 1 as i64
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("输入输出".to_string(), io_module.clone());
-        self.modules.insert("标准库.输入输出".to_string(), io_module);
+        self.modules
+            .insert("输入输出".to_string(), io_module.clone());
+        self.modules
+            .insert("标准库.输入输出".to_string(), io_module);
     }
 
     /// Register the network module
@@ -731,56 +731,56 @@ impl ModuleRegistry {
             "TCP连接",
             "qi_network_tcp_connect",
             vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()], // 主机, 端口, 超时(毫秒)
-            "整数",  // 返回连接句柄
+            "整数",                                                             // 返回连接句柄
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP读取",
             "qi_network_tcp_read_string",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 缓冲区大小
-            "字符串",  // 返回读取的字符串
+            "字符串",                                     // 返回读取的字符串
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP写入",
             "qi_network_tcp_write_string",
             vec!["整数".to_string(), "字符串".to_string()], // 句柄, 数据字符串
-            "整数",  // 返回写入字节数
+            "整数",                                         // 返回写入字节数
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP关闭",
             "qi_network_tcp_close",
             vec!["整数".to_string()], // 句柄
-            "整数",  // 返回成功/失败
+            "整数",                   // 返回成功/失败
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP刷新",
             "qi_network_tcp_flush",
             vec!["整数".to_string()], // 句柄
-            "整数",  // 返回成功/失败
+            "整数",                   // 返回成功/失败
         ));
 
         network_module.add_function(ModuleFunction::new(
             "解析主机",
             "qi_network_resolve_host",
             vec!["字符串".to_string()], // 主机名
-            "字符串",  // 返回 IP 地址
+            "字符串",                   // 返回 IP 地址
         ));
 
         network_module.add_function(ModuleFunction::new(
             "端口可用",
             "qi_network_port_available",
             vec!["整数".to_string()], // 端口
-            "整数",  // 返回 1 可用，0 不可用
+            "整数",                   // 返回 1 可用，0 不可用
         ));
 
         network_module.add_function(ModuleFunction::new(
             "获取本机IP",
             "qi_network_get_local_ip",
-            vec![], // 无参数
-            "字符串",  // 返回本机 IP
+            vec![],   // 无参数
+            "字符串", // 返回本机 IP
         ));
 
         // TCP Server functions
@@ -788,21 +788,21 @@ impl ModuleRegistry {
             "TCP监听",
             "qi_network_tcp_listen",
             vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()], // 主机, 端口, 队列大小
-            "整数",  // 返回服务器句柄
+            "整数",                                                             // 返回服务器句柄
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP接受连接",
             "qi_network_tcp_accept",
             vec!["整数".to_string()], // 服务器句柄
-            "整数",  // 返回客户端句柄
+            "整数",                   // 返回客户端句柄
         ));
 
         network_module.add_function(ModuleFunction::new(
             "TCP服务器关闭",
             "qi_network_tcp_server_close",
             vec!["整数".to_string()], // 服务器句柄
-            "整数",  // 返回成功/失败
+            "整数",                   // 返回成功/失败
         ));
 
         network_module.add_function(ModuleFunction::new(
@@ -818,11 +818,7 @@ impl ModuleRegistry {
         network_module.add_function(ModuleFunction::new(
             "异步服务",
             "qi_runtime_async_serve",
-            vec![
-                "整数".to_string(),
-                "ptr".to_string(),
-                "ptr".to_string(),
-            ],
+            vec!["整数".to_string(), "ptr".to_string(), "ptr".to_string()],
             "整数",
         ));
 
@@ -888,47 +884,54 @@ impl ModuleRegistry {
             "UDP绑定",
             "qi_network_udp_bind",
             vec!["字符串".to_string(), "整数".to_string()], // 主机, 端口
-            "整数",  // 返回 UDP 套接字句柄
+            "整数",                                         // 返回 UDP 套接字句柄
         ));
 
         network_module.add_function(ModuleFunction::new(
             "UDP发送到",
             "qi_network_udp_send_string",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()], // 句柄, 消息, 目标主机, 目标端口
-            "整数",  // 返回发送字节数
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ], // 句柄, 消息, 目标主机, 目标端口
+            "整数", // 返回发送字节数
         ));
 
         network_module.add_function(ModuleFunction::new(
             "UDP接收",
             "qi_network_udp_recv_string",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 缓冲区大小
-            "字符串",  // 返回接收到的数据
+            "字符串",                                     // 返回接收到的数据
         ));
 
         network_module.add_function(ModuleFunction::new(
             "UDP关闭",
             "qi_network_udp_close",
             vec!["整数".to_string()], // 句柄
-            "整数",  // 返回成功/失败
+            "整数",                   // 返回成功/失败
         ));
 
         network_module.add_function(ModuleFunction::new(
             "UDP设置超时",
             "qi_network_udp_set_timeout",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时毫秒
-            "整数",  // 返回成功/失败
+            "整数",                                       // 返回成功/失败
         ));
 
         network_module.add_function(ModuleFunction::new(
             "UDP设置广播",
             "qi_network_udp_set_broadcast",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 启用(1)/禁用(0)
-            "整数",  // 返回成功/失败
+            "整数",                                       // 返回成功/失败
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("网络".to_string(), network_module.clone());
-        self.modules.insert("标准库.网络".to_string(), network_module);
+        self.modules
+            .insert("网络".to_string(), network_module.clone());
+        self.modules
+            .insert("标准库.网络".to_string(), network_module);
     }
 
     /// Register the HTTP module
@@ -940,55 +943,60 @@ impl ModuleRegistry {
             "获取",
             "qi_http_get",
             vec!["字符串".to_string()], // URL
-            "字符串",  // 返回响应体
+            "字符串",                   // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "发送",
             "qi_http_post",
             vec!["字符串".to_string(), "字符串".to_string()], // URL, 请求体
-            "字符串",  // 返回响应体
+            "字符串",                                         // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "更新",
             "qi_http_put",
             vec!["字符串".to_string(), "字符串".to_string()], // URL, 请求体
-            "字符串",  // 返回响应体
+            "字符串",                                         // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "删除",
             "qi_http_delete",
             vec!["字符串".to_string()], // URL
-            "字符串",  // 返回响应体
+            "字符串",                   // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "请求头",
             "qi_http_head",
             vec!["字符串".to_string()], // URL
-            "字符串",  // 返回状态信息
+            "字符串",                   // 返回状态信息
         ));
 
         http_module.add_function(ModuleFunction::new(
             "修补",
             "qi_http_patch",
             vec!["字符串".to_string(), "字符串".to_string()], // URL, 请求体
-            "字符串",  // 返回响应体
+            "字符串",                                         // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "选项",
             "qi_http_options",
             vec!["字符串".to_string()], // URL
-            "字符串",  // 返回响应体
+            "字符串",                   // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "请求",
             "qi_http_request",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "字符串",
         ));
 
@@ -997,42 +1005,46 @@ impl ModuleRegistry {
             "创建请求",
             "qi_http_request_create",
             vec!["字符串".to_string(), "字符串".to_string()], // 方法, URL
-            "整数",  // 返回请求句柄
+            "整数",                                           // 返回请求句柄
         ));
 
         http_module.add_function(ModuleFunction::new(
             "设置请求头",
             "qi_http_request_set_header",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 句柄, 名称, 值
-            "整数",  // 返回成功/失败
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 句柄, 名称, 值
+            "整数", // 返回成功/失败
         ));
 
         http_module.add_function(ModuleFunction::new(
             "设置请求体",
             "qi_http_request_set_body",
             vec!["整数".to_string(), "字符串".to_string()], // 句柄, 请求体
-            "整数",  // 返回成功/失败
+            "整数",                                         // 返回成功/失败
         ));
 
         http_module.add_function(ModuleFunction::new(
             "设置超时",
             "qi_http_request_set_timeout",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时(毫秒)
-            "整数",  // 返回成功/失败
+            "整数",                                       // 返回成功/失败
         ));
 
         http_module.add_function(ModuleFunction::new(
             "执行请求",
             "qi_http_request_execute",
             vec!["整数".to_string()], // 句柄
-            "字符串",  // 返回响应体
+            "字符串",                 // 返回响应体
         ));
 
         http_module.add_function(ModuleFunction::new(
             "获取状态码",
             "qi_http_get_status",
             vec!["字符串".to_string()], // URL
-            "整数",  // 返回状态码
+            "整数",                     // 返回状态码
         ));
 
         // HTTP 服务器功能
@@ -1040,28 +1052,28 @@ impl ModuleRegistry {
             "创建服务器",
             "qi_http_server_create",
             vec!["字符串".to_string(), "整数".to_string()], // 主机, 端口
-            "整数",  // 返回服务器句柄
+            "整数",                                         // 返回服务器句柄
         ));
 
         http_module.add_function(ModuleFunction::new(
             "处理请求",
             "qi_http_server_handle_request",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器句柄, 响应体, 状态码
-            "字符串",  // 返回请求信息 "方法|路径|请求体"
+            "字符串", // 返回请求信息 "方法|路径|请求体"
         ));
 
         http_module.add_function(ModuleFunction::new(
             "接受连接",
             "qi_http_server_accept",
             vec!["整数".to_string()], // 服务器句柄
-            "字符串",  // 返回完整HTTP请求
+            "字符串",                 // 返回完整HTTP请求
         ));
 
         http_module.add_function(ModuleFunction::new(
             "关闭服务器",
             "qi_http_server_close",
             vec!["整数".to_string()], // 服务器句柄
-            "整数",  // 返回成功/失败
+            "整数",                   // 返回成功/失败
         ));
 
         // Register module with both Chinese and path formats
@@ -1078,7 +1090,7 @@ impl ModuleRegistry {
             "连接",
             "qi_websocket_connect",
             vec!["字符串".to_string()], // URL (ws://host:port/path)
-            "整数",  // 返回连接句柄，-1表示失败
+            "整数",                     // 返回连接句柄，-1表示失败
         ));
 
         // WebSocket服务端接受连接（升级HTTP连接为WebSocket）
@@ -1086,7 +1098,7 @@ impl ModuleRegistry {
             "接受升级",
             "qi_websocket_accept",
             vec!["字符串".to_string(), "整数".to_string()], // host, port
-            "整数",  // 返回连接句柄，-1表示失败
+            "整数",                                         // 返回连接句柄，-1表示失败
         ));
 
         // 发送文本消息
@@ -1094,7 +1106,7 @@ impl ModuleRegistry {
             "发送文本",
             "qi_websocket_send_text",
             vec!["整数".to_string(), "字符串".to_string()], // 句柄, 消息
-            "整数",  // 返回0成功，-1失败
+            "整数",                                         // 返回0成功，-1失败
         ));
 
         // 接收文本消息
@@ -1102,7 +1114,7 @@ impl ModuleRegistry {
             "接收文本",
             "qi_websocket_recv_text",
             vec!["整数".to_string()], // 句柄
-            "字符串",  // 返回接收到的消息
+            "字符串",                 // 返回接收到的消息
         ));
 
         // 发送二进制数据
@@ -1110,7 +1122,7 @@ impl ModuleRegistry {
             "发送二进制",
             "qi_websocket_send_binary",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 句柄, 数据指针, 长度
-            "整数",  // 返回0成功，-1失败
+            "整数",                                                             // 返回0成功，-1失败
         ));
 
         // 发送Ping帧
@@ -1118,7 +1130,7 @@ impl ModuleRegistry {
             "发送心跳",
             "qi_websocket_ping",
             vec!["整数".to_string()], // 句柄
-            "整数",  // 返回0成功，-1失败
+            "整数",                   // 返回0成功，-1失败
         ));
 
         // 关闭连接
@@ -1126,7 +1138,7 @@ impl ModuleRegistry {
             "关闭",
             "qi_websocket_close",
             vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()], // 句柄, 状态码, 原因
-            "整数",  // 返回0成功，-1失败
+            "整数",                                                             // 返回0成功，-1失败
         ));
 
         // 检查连接状态
@@ -1134,7 +1146,7 @@ impl ModuleRegistry {
             "已连接",
             "qi_websocket_is_connected",
             vec!["整数".to_string()], // 句柄
-            "整数",  // 返回1已连接，0未连接
+            "整数",                   // 返回1已连接，0未连接
         ));
 
         // 检查是否为WebSocket升级请求
@@ -1142,7 +1154,7 @@ impl ModuleRegistry {
             "是升级请求",
             "qi_websocket_is_upgrade_request",
             vec!["字符串".to_string()], // HTTP请求头
-            "整数",  // 返回1是，0否
+            "整数",                     // 返回1是，0否
         ));
 
         // 获取客户端的WebSocket Key
@@ -1150,7 +1162,7 @@ impl ModuleRegistry {
             "获取客户端密钥",
             "qi_websocket_get_client_key",
             vec!["字符串".to_string()], // HTTP请求头
-            "字符串",  // 返回Sec-WebSocket-Key
+            "字符串",                   // 返回Sec-WebSocket-Key
         ));
 
         // 创建WebSocket升级响应
@@ -1158,7 +1170,7 @@ impl ModuleRegistry {
             "创建升级响应",
             "qi_websocket_create_upgrade_response",
             vec!["字符串".to_string()], // 客户端密钥
-            "字符串",  // 返回完整的HTTP升级响应
+            "字符串",                   // 返回完整的HTTP升级响应
         ));
 
         // 释放字符串内存
@@ -1174,7 +1186,7 @@ impl ModuleRegistry {
             "注册TCP连接",
             "qi_websocket_register_tcp",
             vec!["整数".to_string(), "整数".to_string()], // TCP文件描述符, 是否服务器端(1/0)
-            "整数",  // 返回WebSocket句柄
+            "整数",                                       // 返回WebSocket句柄
         ));
 
         // 注销WebSocket连接（不关闭底层TCP）
@@ -1182,12 +1194,14 @@ impl ModuleRegistry {
             "注销连接",
             "qi_websocket_unregister",
             vec!["整数".to_string()], // WebSocket句柄
-            "整数",  // 返回1成功，0失败
+            "整数",                   // 返回1成功，0失败
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("WebSocket".to_string(), ws_module.clone());
-        self.modules.insert("标准库.WebSocket".to_string(), ws_module);
+        self.modules
+            .insert("WebSocket".to_string(), ws_module.clone());
+        self.modules
+            .insert("标准库.WebSocket".to_string(), ws_module);
     }
 
     /// Register the vector module
@@ -1199,7 +1213,12 @@ impl ModuleRegistry {
         vector_module.add_function(ModuleFunction::new(
             "点积",
             "qi_vector_dot",
-            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            vec![
+                "数组".to_string(),
+                "整数".to_string(),
+                "数组".to_string(),
+                "整数".to_string(),
+            ],
             "浮点数",
         ));
 
@@ -1207,7 +1226,12 @@ impl ModuleRegistry {
         vector_module.add_function(ModuleFunction::new(
             "加",
             "qi_vector_add",
-            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            vec![
+                "数组".to_string(),
+                "整数".to_string(),
+                "数组".to_string(),
+                "整数".to_string(),
+            ],
             "数组",
         ));
 
@@ -1231,7 +1255,12 @@ impl ModuleRegistry {
         vector_module.add_function(ModuleFunction::new(
             "余弦相似度",
             "qi_vector_cosine_similarity",
-            vec!["数组".to_string(), "整数".to_string(), "数组".to_string(), "整数".to_string()],
+            vec![
+                "数组".to_string(),
+                "整数".to_string(),
+                "数组".to_string(),
+                "整数".to_string(),
+            ],
             "浮点数",
         ));
 
@@ -1244,8 +1273,10 @@ impl ModuleRegistry {
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("向量".to_string(), vector_module.clone());
-        self.modules.insert("标准库.向量".to_string(), vector_module);
+        self.modules
+            .insert("向量".to_string(), vector_module.clone());
+        self.modules
+            .insert("标准库.向量".to_string(), vector_module);
 
         // LLM Module - 大模型模块
         let mut llm_module = Module::new("大模型");
@@ -1254,8 +1285,12 @@ impl ModuleRegistry {
         llm_module.add_function(ModuleFunction::new(
             "创建会话",
             "qi_llm_create_session",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()], // 端点, 模型, 密钥
-            "整数",  // 返回会话句柄
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 端点, 模型, 密钥
+            "整数", // 返回会话句柄
         ));
 
         // 对话
@@ -1263,15 +1298,19 @@ impl ModuleRegistry {
             "对话",
             "qi_llm_chat",
             vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
-            "字符串",  // 返回LLM响应
+            "字符串",                                       // 返回LLM响应
         ));
 
         // 设置配置
         llm_module.add_function(ModuleFunction::new(
             "设置配置",
             "qi_llm_set_config",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 会话句柄, 键, 值
-            "整数",  // 返回状态
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 会话句柄, 键, 值
+            "整数", // 返回状态
         ));
 
         // 清空历史
@@ -1279,7 +1318,7 @@ impl ModuleRegistry {
             "清空历史",
             "qi_llm_clear_history",
             vec!["整数".to_string()], // 会话句柄
-            "整数",  // 返回状态
+            "整数",                   // 返回状态
         ));
 
         // 获取历史数量
@@ -1287,7 +1326,7 @@ impl ModuleRegistry {
             "历史数量",
             "qi_llm_get_history_count",
             vec!["整数".to_string()], // 会话句柄
-            "整数",  // 返回数量
+            "整数",                   // 返回数量
         ));
 
         // 关闭会话
@@ -1295,7 +1334,7 @@ impl ModuleRegistry {
             "关闭会话",
             "qi_llm_close_session",
             vec!["整数".to_string()], // 会话句柄
-            "整数",  // 返回状态
+            "整数",                   // 返回状态
         ));
 
         // 异步对话 (返回 Future<字符串>)
@@ -1303,7 +1342,7 @@ impl ModuleRegistry {
             "异步对话",
             "qi_llm_chat_async",
             vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
-            "未来<字符串>",  // 返回Future<字符串>
+            "未来<字符串>",                                 // 返回Future<字符串>
         ));
 
         // 流式对话
@@ -1311,7 +1350,7 @@ impl ModuleRegistry {
             "流式对话",
             "qi_llm_stream_chat",
             vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
-            "整数",  // 返回流句柄
+            "整数",                                         // 返回流句柄
         ));
 
         // 读取流片段
@@ -1334,7 +1373,12 @@ impl ModuleRegistry {
         llm_module.add_function(ModuleFunction::new(
             "注册工具",
             "qi_llm_register_tool",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "整数",
         ));
 
@@ -1424,13 +1468,20 @@ impl ModuleRegistry {
         llm_module.add_function(ModuleFunction::new(
             "添加工具结果",
             "qi_llm_add_tool_result",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "整数",
         ));
 
         // Register module with both Chinese and path formats
-        self.modules.insert("大模型".to_string(), llm_module.clone());
-        self.modules.insert("标准库.大模型".to_string(), llm_module.clone());
+        self.modules
+            .insert("大模型".to_string(), llm_module.clone());
+        self.modules
+            .insert("标准库.大模型".to_string(), llm_module.clone());
         self.modules.insert("LLM".to_string(), llm_module);
 
         // ===== 操作系统模块 (OS Module) =====
@@ -1441,93 +1492,93 @@ impl ModuleRegistry {
             "获取环境变量",
             "qi_os_getenv",
             vec!["字符串".to_string()], // 变量名
-            "字符串",  // 返回变量值
+            "字符串",                   // 返回变量值
         ));
 
         os_module.add_function(ModuleFunction::new(
             "设置环境变量",
             "qi_os_setenv",
             vec!["字符串".to_string(), "字符串".to_string()], // 变量名, 变量值
-            "整数",  // 返回状态码
+            "整数",                                           // 返回状态码
         ));
 
         os_module.add_function(ModuleFunction::new(
             "删除环境变量",
             "qi_os_unsetenv",
             vec!["字符串".to_string()], // 变量名
-            "整数",  // 返回状态码
+            "整数",                     // 返回状态码
         ));
 
         os_module.add_function(ModuleFunction::new(
             "所有环境变量",
             "qi_os_environ",
-            vec![], // 无参数
-            "字符串",  // 返回所有环境变量
+            vec![],   // 无参数
+            "字符串", // 返回所有环境变量
         ));
 
         // 目录操作
         os_module.add_function(ModuleFunction::new(
             "当前目录",
             "qi_os_getcwd",
-            vec![], // 无参数
-            "字符串",  // 返回当前目录路径
+            vec![],   // 无参数
+            "字符串", // 返回当前目录路径
         ));
 
         os_module.add_function(ModuleFunction::new(
             "切换目录",
             "qi_os_chdir",
             vec!["字符串".to_string()], // 目标路径
-            "整数",  // 返回状态码
+            "整数",                     // 返回状态码
         ));
 
         os_module.add_function(ModuleFunction::new(
             "用户主目录",
             "qi_os_homedir",
-            vec![], // 无参数
-            "字符串",  // 返回主目录路径
+            vec![],   // 无参数
+            "字符串", // 返回主目录路径
         ));
 
         os_module.add_function(ModuleFunction::new(
             "临时目录",
             "qi_os_tempdir",
-            vec![], // 无参数
-            "字符串",  // 返回临时目录路径
+            vec![],   // 无参数
+            "字符串", // 返回临时目录路径
         ));
 
         // 系统信息
         os_module.add_function(ModuleFunction::new(
             "操作系统类型",
             "qi_os_type",
-            vec![], // 无参数
-            "字符串",  // 返回 windows/linux/macos
+            vec![],   // 无参数
+            "字符串", // 返回 windows/linux/macos
         ));
 
         os_module.add_function(ModuleFunction::new(
             "系统架构",
             "qi_os_arch",
-            vec![], // 无参数
-            "字符串",  // 返回 x86_64/aarch64
+            vec![],   // 无参数
+            "字符串", // 返回 x86_64/aarch64
         ));
 
         os_module.add_function(ModuleFunction::new(
             "系统家族",
             "qi_os_family",
-            vec![], // 无参数
-            "字符串",  // 返回 unix/windows
+            vec![],   // 无参数
+            "字符串", // 返回 unix/windows
         ));
 
         os_module.add_function(ModuleFunction::new(
             "主机名",
             "qi_os_hostname",
-            vec![], // 无参数
-            "字符串",  // 返回主机名
+            vec![],   // 无参数
+            "字符串", // 返回主机名
         ));
 
         os_module.add_function(ModuleFunction::new(
             "用户名",
             "qi_os_username",
-            vec![], // 无参数
-            "字符串",  // 返回用户名
+            vec![],   // 无参数
+            "字符串", // 返回用户名
         ));
 
         // CPU信息
@@ -1535,7 +1586,7 @@ impl ModuleRegistry {
             "CPU核心数",
             "qi_os_cpu_count",
             vec![], // 无参数
-            "整数",  // 返回CPU核心数
+            "整数", // 返回CPU核心数
         ));
 
         // 进程信息
@@ -1543,14 +1594,14 @@ impl ModuleRegistry {
             "进程ID",
             "qi_os_getpid",
             vec![], // 无参数
-            "整数",  // 返回进程ID
+            "整数", // 返回进程ID
         ));
 
         os_module.add_function(ModuleFunction::new(
             "退出程序",
             "qi_os_exit",
             vec!["整数".to_string()], // 退出码
-            "void",  // 无返回值
+            "void",                   // 无返回值
         ));
 
         // 环境变量文件加载
@@ -1558,7 +1609,7 @@ impl ModuleRegistry {
             "加载环境文件",
             "qi_os_load_env",
             vec!["字符串".to_string()], // .env 文件路径
-            "整数",  // 返回加载的环境变量数量
+            "整数",                     // 返回加载的环境变量数量
         ));
 
         // 目录操作
@@ -1566,21 +1617,21 @@ impl ModuleRegistry {
             "列出目录",
             "qi_os_list_dir",
             vec!["字符串".to_string()], // 目录路径
-            "字符串",  // 返回目录内容列表
+            "字符串",                   // 返回目录内容列表
         ));
 
         os_module.add_function(ModuleFunction::new(
             "是否为目录",
             "qi_os_is_dir",
             vec!["字符串".to_string()], // 路径
-            "整数",  // 返回1或0
+            "整数",                     // 返回1或0
         ));
 
         os_module.add_function(ModuleFunction::new(
             "是否为文件",
             "qi_os_is_file",
             vec!["字符串".to_string()], // 路径
-            "整数",  // 返回1或0
+            "整数",                     // 返回1或0
         ));
 
         // 内存释放
@@ -1588,12 +1639,14 @@ impl ModuleRegistry {
             "释放字符串",
             "qi_os_free_string",
             vec!["字符串".to_string()], // 字符串指针
-            "void",  // 无返回值
+            "void",                     // 无返回值
         ));
 
         // Register module with various names
-        self.modules.insert("操作系统".to_string(), os_module.clone());
-        self.modules.insert("标准库.操作系统".to_string(), os_module.clone());
+        self.modules
+            .insert("操作系统".to_string(), os_module.clone());
+        self.modules
+            .insert("标准库.操作系统".to_string(), os_module.clone());
         self.modules.insert("OS".to_string(), os_module);
 
         // ===== 命令行模块 =====
@@ -1609,14 +1662,14 @@ impl ModuleRegistry {
             "创建应用",
             "qi_cli_create_app",
             vec!["字符串".to_string()], // 应用名称
-            "整数",  // 返回应用ID
+            "整数",                     // 返回应用ID
         ));
 
         cli_module.add_function(ModuleFunction::new(
             "设置版本",
             "qi_cli_set_version",
             vec!["整数".to_string(), "字符串".to_string()], // 应用ID, 版本号
-            "整数",  // 成功返回1
+            "整数",                                         // 成功返回1
         ));
 
         cli_module.add_function(ModuleFunction::new(
@@ -1656,7 +1709,7 @@ impl ModuleRegistry {
             "创建参数",
             "qi_cli_create_arg",
             vec!["字符串".to_string()], // 参数名称
-            "整数",  // 返回参数ID
+            "整数",                     // 返回参数ID
         ));
 
         cli_module.add_function(ModuleFunction::new(
@@ -1735,7 +1788,7 @@ impl ModuleRegistry {
             "创建子命令",
             "qi_cli_create_subcommand",
             vec!["字符串".to_string()], // 子命令名称
-            "整数",  // 返回子命令ID
+            "整数",                     // 返回子命令ID
         ));
 
         cli_module.add_function(ModuleFunction::new(
@@ -1762,7 +1815,7 @@ impl ModuleRegistry {
             "解析",
             "qi_cli_parse",
             vec!["整数".to_string()], // 应用ID
-            "整数",  // 返回匹配结果ID
+            "整数",                   // 返回匹配结果ID
         ));
 
         // 结果获取
@@ -1770,35 +1823,35 @@ impl ModuleRegistry {
             "获取值",
             "qi_cli_get_value",
             vec!["整数".to_string(), "字符串".to_string()], // 匹配结果ID, 参数名
-            "字符串",  // 返回值
+            "字符串",                                       // 返回值
         ));
 
         cli_module.add_function(ModuleFunction::new(
             "获取标志",
             "qi_cli_get_flag",
             vec!["整数".to_string(), "字符串".to_string()], // 匹配结果ID, 参数名
-            "整数",  // 返回布尔值(0/1)
+            "整数",                                         // 返回布尔值(0/1)
         ));
 
         cli_module.add_function(ModuleFunction::new(
             "有值",
             "qi_cli_has_value",
             vec!["整数".to_string(), "字符串".to_string()], // 匹配结果ID, 参数名
-            "整数",  // 返回布尔值(0/1)
+            "整数",                                         // 返回布尔值(0/1)
         ));
 
         cli_module.add_function(ModuleFunction::new(
             "包含子命令",
             "qi_cli_has_subcommand",
             vec!["整数".to_string(), "字符串".to_string()], // 匹配结果ID, 子命令名
-            "整数",  // 返回布尔值(0/1)
+            "整数",                                         // 返回布尔值(0/1)
         ));
 
         cli_module.add_function(ModuleFunction::new(
             "获取子命令",
             "qi_cli_get_subcommand",
             vec!["整数".to_string(), "字符串".to_string()], // 匹配结果ID, 子命令名
-            "整数",  // 返回子命令匹配结果ID
+            "整数",                                         // 返回子命令匹配结果ID
         ));
 
         // 内存管理
@@ -1831,8 +1884,10 @@ impl ModuleRegistry {
         ));
 
         // Register module with various names
-        self.modules.insert("命令行".to_string(), cli_module.clone());
-        self.modules.insert("标准库.命令行".to_string(), cli_module.clone());
+        self.modules
+            .insert("命令行".to_string(), cli_module.clone());
+        self.modules
+            .insert("标准库.命令行".to_string(), cli_module.clone());
         self.modules.insert("CLI".to_string(), cli_module);
 
         // ===== 图形化模块 (GUI Module) =====
@@ -1956,20 +2011,10 @@ impl ModuleRegistry {
         ));
 
         // 运行事件循环
-        gui_module.add_function(ModuleFunction::new(
-            "运行",
-            "qi_gui_run",
-            vec![],
-            "void",
-        ));
+        gui_module.add_function(ModuleFunction::new("运行", "qi_gui_run", vec![], "void"));
 
         // 获取版本
-        gui_module.add_function(ModuleFunction::new(
-            "版本",
-            "qi_gui_version",
-            vec![],
-            "字符串",
-        ));
+        gui_module.add_function(ModuleFunction::new("版本", "qi_gui_version", vec![], "字符串"));
 
         // 释放字符串
         gui_module.add_function(ModuleFunction::new(
@@ -2057,7 +2102,12 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "清除画面",
             "qi_gui_renderer_clear",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2065,7 +2115,14 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制像素",
             "qi_gui_renderer_draw_pixel",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2073,7 +2130,16 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制矩形",
             "qi_gui_renderer_draw_rect",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2081,7 +2147,16 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制直线",
             "qi_gui_renderer_draw_line",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2089,7 +2164,15 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制圆形",
             "qi_gui_renderer_draw_circle",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2097,7 +2180,12 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制图像",
             "qi_gui_renderer_draw_image",
-            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "整数", // 返回状态
         ));
 
@@ -2105,7 +2193,15 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制文本",
             "qi_gui_renderer_draw_text",
-            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2113,7 +2209,16 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "绘制缩放文本",
             "qi_gui_renderer_draw_text_scaled",
-            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
             "void",
         ));
 
@@ -2126,8 +2231,10 @@ impl ModuleRegistry {
         ));
 
         // Register module with various names
-        self.modules.insert("图形化".to_string(), gui_module.clone());
-        self.modules.insert("标准库.图形化".to_string(), gui_module.clone());
+        self.modules
+            .insert("图形化".to_string(), gui_module.clone());
+        self.modules
+            .insert("标准库.图形化".to_string(), gui_module.clone());
         self.modules.insert("GUI".to_string(), gui_module);
     }
 
@@ -2136,39 +2243,164 @@ impl ModuleRegistry {
         let mut list_module = Module::new("列表");
 
         // 整数列表
-        list_module.add_function(ModuleFunction::new("创建整数列表", "qi_list_int_create", vec![], "整数"));
-        list_module.add_function(ModuleFunction::new("添加整数", "qi_list_int_push", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("获取整数", "qi_list_int_get", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("设置整数", "qi_list_int_set", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("整数列表大小", "qi_list_int_size", vec!["整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("弹出整数", "qi_list_int_pop", vec!["整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("清空整数列表", "qi_list_int_clear", vec!["整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("删除整数元素", "qi_list_int_remove", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("插入整数", "qi_list_int_insert", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("包含整数", "qi_list_int_contains", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("查找整数索引", "qi_list_int_index_of", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new(
+            "创建整数列表",
+            "qi_list_int_create",
+            vec![],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "添加整数",
+            "qi_list_int_push",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "获取整数",
+            "qi_list_int_get",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "设置整数",
+            "qi_list_int_set",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "整数列表大小",
+            "qi_list_int_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "弹出整数",
+            "qi_list_int_pop",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "清空整数列表",
+            "qi_list_int_clear",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "删除整数元素",
+            "qi_list_int_remove",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "插入整数",
+            "qi_list_int_insert",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "包含整数",
+            "qi_list_int_contains",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "查找整数索引",
+            "qi_list_int_index_of",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
 
         // 浮点数列表
-        list_module.add_function(ModuleFunction::new("创建浮点列表", "qi_list_float_create", vec![], "整数"));
-        list_module.add_function(ModuleFunction::new("添加浮点数", "qi_list_float_push", vec!["整数".to_string(), "浮点数".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("获取浮点数", "qi_list_float_get", vec!["整数".to_string(), "整数".to_string()], "浮点数"));
-        list_module.add_function(ModuleFunction::new("浮点列表大小", "qi_list_float_size", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new(
+            "创建浮点列表",
+            "qi_list_float_create",
+            vec![],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "添加浮点数",
+            "qi_list_float_push",
+            vec!["整数".to_string(), "浮点数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "获取浮点数",
+            "qi_list_float_get",
+            vec!["整数".to_string(), "整数".to_string()],
+            "浮点数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "浮点列表大小",
+            "qi_list_float_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 字符串列表
-        list_module.add_function(ModuleFunction::new("创建字符串列表", "qi_list_string_create", vec![], "整数"));
-        list_module.add_function(ModuleFunction::new("添加字符串", "qi_list_string_push", vec!["整数".to_string(), "字符串".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("获取字符串", "qi_list_string_get", vec!["整数".to_string(), "整数".to_string()], "字符串"));
-        list_module.add_function(ModuleFunction::new("字符串列表大小", "qi_list_string_size", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new(
+            "创建字符串列表",
+            "qi_list_string_create",
+            vec![],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "添加字符串",
+            "qi_list_string_push",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "获取字符串",
+            "qi_list_string_get",
+            vec!["整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "字符串列表大小",
+            "qi_list_string_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 指针列表
-        list_module.add_function(ModuleFunction::new("创建指针列表", "qi_list_ptr_create", vec![], "整数"));
-        list_module.add_function(ModuleFunction::new("添加指针", "qi_list_ptr_push", vec!["整数".to_string(), "指针".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("获取指针", "qi_list_ptr_get", vec!["整数".to_string(), "整数".to_string()], "指针"));
-        list_module.add_function(ModuleFunction::new("设置指针", "qi_list_ptr_set", vec!["整数".to_string(), "整数".to_string(), "指针".to_string()], "整数"));
-        list_module.add_function(ModuleFunction::new("指针列表大小", "qi_list_ptr_size", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new(
+            "创建指针列表",
+            "qi_list_ptr_create",
+            vec![],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "添加指针",
+            "qi_list_ptr_push",
+            vec!["整数".to_string(), "指针".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "获取指针",
+            "qi_list_ptr_get",
+            vec!["整数".to_string(), "整数".to_string()],
+            "指针",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "设置指针",
+            "qi_list_ptr_set",
+            vec!["整数".to_string(), "整数".to_string(), "指针".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "指针列表大小",
+            "qi_list_ptr_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 通用操作
-        list_module.add_function(ModuleFunction::new("删除列表", "qi_list_free", vec!["整数".to_string()], "整数"));
+        list_module.add_function(ModuleFunction::new(
+            "删除列表",
+            "qi_list_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         self.modules.insert("列表".to_string(), list_module.clone());
         self.modules.insert("标准库.列表".to_string(), list_module);
@@ -2179,30 +2411,119 @@ impl ModuleRegistry {
         let mut map_module = Module::new("哈希表");
 
         // 整数哈希表
-        map_module.add_function(ModuleFunction::new("创建整数表", "qi_hashmap_int_create", vec![], "整数"));
-        map_module.add_function(ModuleFunction::new("设置整数", "qi_hashmap_int_set", vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("获取整数", "qi_hashmap_int_get", vec!["整数".to_string(), "字符串".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("包含键", "qi_hashmap_int_contains", vec!["整数".to_string(), "字符串".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("删除键", "qi_hashmap_int_remove", vec!["整数".to_string(), "字符串".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("表大小", "qi_hashmap_int_size", vec!["整数".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("清空表", "qi_hashmap_int_clear", vec!["整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new(
+            "创建整数表",
+            "qi_hashmap_int_create",
+            vec![],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "设置整数",
+            "qi_hashmap_int_set",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "获取整数",
+            "qi_hashmap_int_get",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "包含键",
+            "qi_hashmap_int_contains",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "删除键",
+            "qi_hashmap_int_remove",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "表大小",
+            "qi_hashmap_int_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "清空表",
+            "qi_hashmap_int_clear",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 浮点数哈希表
-        map_module.add_function(ModuleFunction::new("创建浮点表", "qi_hashmap_float_create", vec![], "整数"));
-        map_module.add_function(ModuleFunction::new("设置浮点数", "qi_hashmap_float_set", vec!["整数".to_string(), "字符串".to_string(), "浮点数".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("获取浮点数", "qi_hashmap_float_get", vec!["整数".to_string(), "字符串".to_string()], "浮点数"));
-        map_module.add_function(ModuleFunction::new("浮点表大小", "qi_hashmap_float_size", vec!["整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new(
+            "创建浮点表",
+            "qi_hashmap_float_create",
+            vec![],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "设置浮点数",
+            "qi_hashmap_float_set",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "浮点数".to_string(),
+            ],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "获取浮点数",
+            "qi_hashmap_float_get",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "浮点数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "浮点表大小",
+            "qi_hashmap_float_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 字符串哈希表
-        map_module.add_function(ModuleFunction::new("创建字符串表", "qi_hashmap_string_create", vec![], "整数"));
-        map_module.add_function(ModuleFunction::new("设置字符串", "qi_hashmap_string_set", vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], "整数"));
-        map_module.add_function(ModuleFunction::new("获取字符串", "qi_hashmap_string_get", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
-        map_module.add_function(ModuleFunction::new("字符串表大小", "qi_hashmap_string_size", vec!["整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new(
+            "创建字符串表",
+            "qi_hashmap_string_create",
+            vec![],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "设置字符串",
+            "qi_hashmap_string_set",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "整数",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "获取字符串",
+            "qi_hashmap_string_get",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+        map_module.add_function(ModuleFunction::new(
+            "字符串表大小",
+            "qi_hashmap_string_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 通用操作
-        map_module.add_function(ModuleFunction::new("释放表", "qi_hashmap_free", vec!["整数".to_string()], "整数"));
+        map_module.add_function(ModuleFunction::new(
+            "释放表",
+            "qi_hashmap_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
-        self.modules.insert("哈希表".to_string(), map_module.clone());
+        self.modules
+            .insert("哈希表".to_string(), map_module.clone());
         self.modules.insert("标准库.哈希表".to_string(), map_module);
     }
 
@@ -2215,7 +2536,7 @@ impl ModuleRegistry {
             "编码",
             "qi_json_encode",
             vec!["字符串".to_string()], // 接受任意对象的字符串表示
-            "字符串",  // 返回JSON字符串
+            "字符串",                   // 返回JSON字符串
         ));
 
         // JSON解码
@@ -2223,7 +2544,7 @@ impl ModuleRegistry {
             "解码",
             "qi_json_decode",
             vec!["字符串".to_string()], // JSON字符串
-            "整数",  // 返回JSON对象句柄
+            "整数",                     // 返回JSON对象句柄
         ));
 
         // JSON对象操作
@@ -2231,57 +2552,65 @@ impl ModuleRegistry {
             "创建对象",
             "qi_json_create_object",
             vec![],
-            "整数",  // 返回JSON对象句柄
+            "整数", // 返回JSON对象句柄
         ));
 
         json_module.add_function(ModuleFunction::new(
             "创建数组",
             "qi_json_create_array",
             vec![],
-            "整数",  // 返回JSON数组句柄
+            "整数", // 返回JSON数组句柄
         ));
 
         // 对象字段设置
         json_module.add_function(ModuleFunction::new(
             "设置字符串",
             "qi_json_set_string",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 对象句柄, 键, 值
-            "整数",  // 返回状态
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 对象句柄, 键, 值
+            "整数", // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "设置整数",
             "qi_json_set_int",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 值
-            "整数",  // 返回状态
+            "整数",                                                             // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "设置浮点数",
             "qi_json_set_float",
-            vec!["整数".to_string(), "字符串".to_string(), "浮点数".to_string()], // 对象句柄, 键, 值
-            "整数",  // 返回状态
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "浮点数".to_string(),
+            ], // 对象句柄, 键, 值
+            "整数", // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "设置布尔",
             "qi_json_set_bool",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 值(0/1)
-            "整数",  // 返回状态
+            "整数",                                                             // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "设置对象",
             "qi_json_set_object",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 子对象句柄
-            "整数",  // 返回状态
+            "整数",                                                             // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "设置数组",
             "qi_json_set_array",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 对象句柄, 键, 数组句柄
-            "整数",  // 返回状态
+            "整数",                                                             // 返回状态
         ));
 
         // 对象字段获取
@@ -2289,42 +2618,42 @@ impl ModuleRegistry {
             "获取字符串",
             "qi_json_get_string",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "字符串",  // 返回值
+            "字符串",                                       // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "获取整数",
             "qi_json_get_int",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "整数",  // 返回值
+            "整数",                                         // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "获取浮点数",
             "qi_json_get_float",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "浮点数",  // 返回值
+            "浮点数",                                       // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "获取布尔",
             "qi_json_get_bool",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "整数",  // 返回值(0/1)
+            "整数",                                         // 返回值(0/1)
         ));
 
         json_module.add_function(ModuleFunction::new(
             "获取对象",
             "qi_json_get_object",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "整数",  // 返回子对象句柄
+            "整数",                                         // 返回子对象句柄
         ));
 
         json_module.add_function(ModuleFunction::new(
             "获取数组",
             "qi_json_get_array",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "整数",  // 返回数组句柄
+            "整数",                                         // 返回数组句柄
         ));
 
         // 数组操作
@@ -2332,35 +2661,35 @@ impl ModuleRegistry {
             "数组添加字符串",
             "qi_json_array_push_string",
             vec!["整数".to_string(), "字符串".to_string()], // 数组句柄, 值
-            "整数",  // 返回状态
+            "整数",                                         // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组添加整数",
             "qi_json_array_push_int",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 值
-            "整数",  // 返回状态
+            "整数",                                       // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组添加浮点数",
             "qi_json_array_push_float",
             vec!["整数".to_string(), "浮点数".to_string()], // 数组句柄, 值
-            "整数",  // 返回状态
+            "整数",                                         // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组添加布尔",
             "qi_json_array_push_bool",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 值(0/1)
-            "整数",  // 返回状态
+            "整数",                                       // 返回状态
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组添加对象",
             "qi_json_array_push_object",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 对象句柄
-            "整数",  // 返回状态
+            "整数",                                       // 返回状态
         ));
 
         // 数组访问
@@ -2368,35 +2697,35 @@ impl ModuleRegistry {
             "数组获取字符串",
             "qi_json_array_get_string",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
-            "字符串",  // 返回值
+            "字符串",                                     // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组获取整数",
             "qi_json_array_get_int",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
-            "整数",  // 返回值
+            "整数",                                       // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组获取浮点数",
             "qi_json_array_get_float",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
-            "浮点数",  // 返回值
+            "浮点数",                                     // 返回值
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组获取布尔",
             "qi_json_array_get_bool",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
-            "整数",  // 返回值(0/1)
+            "整数",                                       // 返回值(0/1)
         ));
 
         json_module.add_function(ModuleFunction::new(
             "数组获取对象",
             "qi_json_array_get_object",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
-            "整数",  // 返回对象句柄
+            "整数",                                       // 返回对象句柄
         ));
 
         // 工具函数
@@ -2404,42 +2733,42 @@ impl ModuleRegistry {
             "数组长度",
             "qi_json_array_length",
             vec!["整数".to_string()], // 数组句柄
-            "整数",  // 返回长度
+            "整数",                   // 返回长度
         ));
 
         json_module.add_function(ModuleFunction::new(
             "是否包含键",
             "qi_json_has_key",
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
-            "整数",  // 返回1或0
+            "整数",                                         // 返回1或0
         ));
 
         json_module.add_function(ModuleFunction::new(
             "转字符串",
             "qi_json_to_string",
             vec!["整数".to_string()], // 对象或数组句柄
-            "字符串",  // 返回JSON字符串
+            "字符串",                 // 返回JSON字符串
         ));
 
         json_module.add_function(ModuleFunction::new(
             "格式化",
             "qi_json_to_string_pretty",
             vec!["整数".to_string()], // 对象或数组句柄
-            "字符串",  // 返回格式化的JSON字符串
+            "字符串",                 // 返回格式化的JSON字符串
         ));
 
         json_module.add_function(ModuleFunction::new(
             "从键值",
             "qi_json_from_pairs",
             vec!["字符串".to_string()], // 形如 "键=值;键2=值2"
-            "字符串",  // 返回JSON字符串
+            "字符串",                   // 返回JSON字符串
         ));
 
         json_module.add_function(ModuleFunction::new(
             "从文本",
             "qi_json_from_text",
             vec!["字符串".to_string()],
-            "字符串",  // 返回 {"结果":"..."}
+            "字符串", // 返回 {"结果":"..."}
         ));
 
         // 内存管理
@@ -2447,7 +2776,7 @@ impl ModuleRegistry {
             "删除",
             "qi_json_free",
             vec!["整数".to_string()], // JSON对象或数组句柄
-            "整数",  // 返回状态
+            "整数",                   // 返回状态
         ));
 
         // Register module with both Chinese and path formats
@@ -2463,119 +2792,157 @@ impl ModuleRegistry {
         mcp_module.add_function(ModuleFunction::new(
             "创建服务器",
             "qi_mcp_create_server",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()], // 名称, 版本, 描述
-            "整数",  // 返回服务器ID
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 名称, 版本, 描述
+            "整数", // 返回服务器ID
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "启动服务器",
             "qi_mcp_start_server",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态 (FFI返回i32)
+            "i32",                    // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "停止服务器",
             "qi_mcp_stop_server",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态 (FFI返回i32)
+            "i32",                    // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "是否运行中",
             "qi_mcp_is_running",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回1或0 (FFI返回i32)
+            "i32",                    // 返回1或0 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "销毁服务器",
             "qi_mcp_destroy_server",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态 (FFI返回i32)
+            "i32",                    // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "获取服务器信息",
             "qi_mcp_get_server_info",
             vec!["整数".to_string()], // 服务器ID
-            "ptr",  // 返回JSON字符串 (FFI返回*mut c_char)
+            "ptr",                    // 返回JSON字符串 (FFI返回*mut c_char)
         ));
 
         // 工具管理
         mcp_module.add_function(ModuleFunction::new(
             "注册工具",
             "qi_mcp_register_tool",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 描述
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 工具名, 描述
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "执行工具",
             "qi_mcp_call_tool",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 参数JSON
-            "ptr",  // 返回结果JSON (FFI返回*mut c_char)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 工具名, 参数JSON
+            "ptr", // 返回结果JSON (FFI返回*mut c_char)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "列出工具",
             "qi_mcp_list_tools",
             vec!["整数".to_string()], // 服务器ID
-            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+            "ptr",                    // 返回JSON数组 (FFI返回*mut c_char)
         ));
 
         // 资源管理
         mcp_module.add_function(ModuleFunction::new(
             "注册资源",
             "qi_mcp_register_resource",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器ID, URI, 名称, 描述, 类型
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ], // 服务器ID, URI, 名称, 描述, 类型
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "列出资源",
             "qi_mcp_list_resources",
             vec!["整数".to_string()], // 服务器ID
-            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+            "ptr",                    // 返回JSON数组 (FFI返回*mut c_char)
         ));
 
         // 提示管理
         mcp_module.add_function(ModuleFunction::new(
             "注册提示",
             "qi_mcp_register_prompt",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 名称, 描述, 模板
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 名称, 描述, 模板
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "获取提示",
             "qi_mcp_get_prompt",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 提示名, 参数JSON
-            "ptr",  // 返回填充后的文本 (FFI返回*mut c_char)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 提示名, 参数JSON
+            "ptr", // 返回填充后的文本 (FFI返回*mut c_char)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "列出提示",
             "qi_mcp_list_prompts",
             vec!["整数".to_string()], // 服务器ID
-            "ptr",  // 返回JSON数组 (FFI返回*mut c_char)
+            "ptr",                    // 返回JSON数组 (FFI返回*mut c_char)
         ));
 
         // 添加工具参数
         mcp_module.add_function(ModuleFunction::new(
             "添加工具参数",
             "qi_mcp_add_tool_parameter",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "字符串".to_string(), "整数".to_string()],
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
             // 服务器ID, 工具名, 参数名, 参数类型, 参数描述, 是否必需
-            "i32",  // 返回状态 (FFI返回i32)
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         // 设置工具回调
         mcp_module.add_function(ModuleFunction::new(
             "设置工具回调",
             "qi_mcp_set_tool_callback",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 工具名, 回调ID
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 工具名, 回调ID
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         // 设置工具回调闭包对象指针 (Qi 闭包对象版本)
@@ -2583,7 +2950,7 @@ impl ModuleRegistry {
             "设置工具回调指针",
             "qi_mcp_set_tool_callback_ptr",
             vec!["整数".to_string(), "字符串".to_string(), "指针".to_string()], // 服务器ID, 工具名, Qi闭包对象指针
-            "i32",  // 返回状态 (FFI返回i32)
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         // stdio JSON-RPC 2.0 服务器主循环 (阻塞直到 stdin EOF)
@@ -2591,7 +2958,7 @@ impl ModuleRegistry {
             "运行stdio",
             "qi_mcp_serve_stdio",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态
+            "i32",                    // 返回状态
         ));
 
         // Streamable HTTP 传输主循环 (阻塞)
@@ -2599,36 +2966,44 @@ impl ModuleRegistry {
             "运行HTTP",
             "qi_mcp_serve_http",
             vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 服务器ID, 主机, 端口
-            "i32",  // 返回状态
+            "i32",                                                              // 返回状态
         ));
 
         // 资源内容管理
         mcp_module.add_function(ModuleFunction::new(
             "设置资源文本内容",
             "qi_mcp_set_resource_text_content",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, URI, 内容
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, URI, 内容
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "设置资源JSON内容",
             "qi_mcp_set_resource_json_content",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, URI, JSON内容
-            "i32",  // 返回状态 (FFI返回i32)
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, URI, JSON内容
+            "i32", // 返回状态 (FFI返回i32)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "读取资源文本",
             "qi_mcp_read_resource_text",
             vec!["整数".to_string(), "字符串".to_string()], // 服务器ID, URI
-            "ptr",  // 返回文本内容 (FFI返回*mut c_char)
+            "ptr",                                          // 返回文本内容 (FFI返回*mut c_char)
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "读取资源JSON",
             "qi_mcp_read_resource_json",
             vec!["整数".to_string(), "字符串".to_string()], // 服务器ID, URI
-            "ptr",  // 返回JSON内容 (FFI返回*mut c_char)
+            "ptr",                                          // 返回JSON内容 (FFI返回*mut c_char)
         ));
 
         // 内存管理
@@ -2644,40 +3019,51 @@ impl ModuleRegistry {
             "通知工具变更",
             "qi_mcp_notify_tools_changed",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态
+            "i32",                    // 返回状态
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "通知资源变更",
             "qi_mcp_notify_resources_changed",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态
+            "i32",                    // 返回状态
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "通知提示变更",
             "qi_mcp_notify_prompts_changed",
             vec!["整数".to_string()], // 服务器ID
-            "i32",  // 返回状态
+            "i32",                    // 返回状态
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "日志消息",
             "qi_mcp_log_message",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 级别, 消息
-            "i32",  // 返回状态
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 级别, 消息
+            "i32", // 返回状态
         ));
 
         mcp_module.add_function(ModuleFunction::new(
             "通知进度",
             "qi_mcp_notify_progress",
-            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string()], // 服务器ID, token, progress, total
-            "i32",  // 返回状态
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ], // 服务器ID, token, progress, total
+            "i32", // 返回状态
         ));
 
         // Register module with various names
-        self.modules.insert("MCP服务器".to_string(), mcp_module.clone());
-        self.modules.insert("标准库.MCP服务器".to_string(), mcp_module.clone());
+        self.modules
+            .insert("MCP服务器".to_string(), mcp_module.clone());
+        self.modules
+            .insert("标准库.MCP服务器".to_string(), mcp_module.clone());
         self.modules.insert("MCP".to_string(), mcp_module);
     }
 
@@ -2690,7 +3076,7 @@ impl ModuleRegistry {
             "连接stdio",
             "qi_mcpc_connect_stdio",
             vec!["字符串".to_string(), "字符串".to_string()], // cmd, args_json
-            "整数", // conn_id (>0=成功)
+            "整数",                                           // conn_id (>0=成功)
         ));
 
         // 连接 HTTP(Streamable) MCP server
@@ -2698,14 +3084,18 @@ impl ModuleRegistry {
             "连接http",
             "qi_mcpc_connect_http",
             vec!["字符串".to_string()], // base_url
-            "整数", // conn_id (>0=成功)
+            "整数",                     // conn_id (>0=成功)
         ));
 
         // 发送 MCP 请求，返回 result 字段 JSON 串
         m.add_function(ModuleFunction::new(
             "请求",
             "qi_mcpc_request",
-            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // conn_id, method, params_json
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // conn_id, method, params_json
             "字符串", // result JSON 串
         ));
 
@@ -2769,91 +3159,399 @@ impl ModuleRegistry {
 
         // 当前时间
         dt_module.add_function(ModuleFunction::new("现在", "qi_datetime_now", vec![], "整数"));
-        dt_module.add_function(ModuleFunction::new("现在毫秒", "qi_datetime_now_millis", vec![], "整数"));
-        dt_module.add_function(ModuleFunction::new("当前毫秒", "qi_datetime_now_millis", vec![], "整数")); // 别名，用于 Web 框架
-        dt_module.add_function(ModuleFunction::new("现在微秒", "qi_datetime_now_micros", vec![], "整数"));
-        dt_module.add_function(ModuleFunction::new("现在纳秒", "qi_datetime_now_nanos", vec![], "整数"));
-        dt_module.add_function(ModuleFunction::new("本地时间", "qi_datetime_now_local", vec![], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "现在毫秒",
+            "qi_datetime_now_millis",
+            vec![],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "当前毫秒",
+            "qi_datetime_now_millis",
+            vec![],
+            "整数",
+        )); // 别名，用于 Web 框架
+        dt_module.add_function(ModuleFunction::new(
+            "现在微秒",
+            "qi_datetime_now_micros",
+            vec![],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "现在纳秒",
+            "qi_datetime_now_nanos",
+            vec![],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本地时间",
+            "qi_datetime_now_local",
+            vec![],
+            "整数",
+        ));
 
         // 格式化
-        dt_module.add_function(ModuleFunction::new("格式化", "qi_datetime_format", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
-        dt_module.add_function(ModuleFunction::new("格式化本地", "qi_datetime_format_local", vec!["整数".to_string(), "字符串".to_string()], "字符串"));
+        dt_module.add_function(ModuleFunction::new(
+            "格式化",
+            "qi_datetime_format",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "格式化本地",
+            "qi_datetime_format_local",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
 
         // 解析
-        dt_module.add_function(ModuleFunction::new("解析", "qi_datetime_parse", vec!["字符串".to_string(), "字符串".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "解析",
+            "qi_datetime_parse",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
 
         // 日期组件
-        dt_module.add_function(ModuleFunction::new("年", "qi_datetime_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("月", "qi_datetime_month", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("日", "qi_datetime_day", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("时", "qi_datetime_hour", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("分", "qi_datetime_minute", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("秒", "qi_datetime_second", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("星期几", "qi_datetime_weekday", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("季度", "qi_datetime_quarter", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("年的第几天", "qi_datetime_day_of_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("年的第几周", "qi_datetime_week_of_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("毫秒", "qi_datetime_millisecond", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "年",
+            "qi_datetime_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "月",
+            "qi_datetime_month",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "日",
+            "qi_datetime_day",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "时",
+            "qi_datetime_hour",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "分",
+            "qi_datetime_minute",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "秒",
+            "qi_datetime_second",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "星期几",
+            "qi_datetime_weekday",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "季度",
+            "qi_datetime_quarter",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "年的第几天",
+            "qi_datetime_day_of_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "年的第几周",
+            "qi_datetime_week_of_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "毫秒",
+            "qi_datetime_millisecond",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 日期计算
-        dt_module.add_function(ModuleFunction::new("加秒", "qi_datetime_add_seconds", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加分钟", "qi_datetime_add_minutes", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加小时", "qi_datetime_add_hours", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加天", "qi_datetime_add_days", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加周", "qi_datetime_add_weeks", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加月", "qi_datetime_add_months", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("加年", "qi_datetime_add_years", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("相差天数", "qi_datetime_diff_days", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("相差小时", "qi_datetime_diff_hours", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("相差分钟", "qi_datetime_diff_minutes", vec!["整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("相差秒数", "qi_datetime_diff_seconds", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "加秒",
+            "qi_datetime_add_seconds",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加分钟",
+            "qi_datetime_add_minutes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加小时",
+            "qi_datetime_add_hours",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加天",
+            "qi_datetime_add_days",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加周",
+            "qi_datetime_add_weeks",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加月",
+            "qi_datetime_add_months",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "加年",
+            "qi_datetime_add_years",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "相差天数",
+            "qi_datetime_diff_days",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "相差小时",
+            "qi_datetime_diff_hours",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "相差分钟",
+            "qi_datetime_diff_minutes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "相差秒数",
+            "qi_datetime_diff_seconds",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
 
         // 日期创建
-        dt_module.add_function(ModuleFunction::new("从年月日", "qi_datetime_from_ymd", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("从年月日时分秒", "qi_datetime_from_ymdhms", vec!["整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "从年月日",
+            "qi_datetime_from_ymd",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "从年月日时分秒",
+            "qi_datetime_from_ymdhms",
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
+            "整数",
+        ));
 
         // 工具函数
-        dt_module.add_function(ModuleFunction::new("是闰年", "qi_datetime_is_leap_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("月天数", "qi_datetime_days_in_month", vec!["整数".to_string(), "整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "是闰年",
+            "qi_datetime_is_leap_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "月天数",
+            "qi_datetime_days_in_month",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
 
         // 时间边界
-        dt_module.add_function(ModuleFunction::new("当天开始", "qi_datetime_start_of_day", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("当天结束", "qi_datetime_end_of_day", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本周开始", "qi_datetime_start_of_week", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本周结束", "qi_datetime_end_of_week", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本月开始", "qi_datetime_start_of_month", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本月结束", "qi_datetime_end_of_month", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本年开始", "qi_datetime_start_of_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本年结束", "qi_datetime_end_of_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本季度开始", "qi_datetime_start_of_quarter", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("本季度结束", "qi_datetime_end_of_quarter", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "当天开始",
+            "qi_datetime_start_of_day",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "当天结束",
+            "qi_datetime_end_of_day",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本周开始",
+            "qi_datetime_start_of_week",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本周结束",
+            "qi_datetime_end_of_week",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本月开始",
+            "qi_datetime_start_of_month",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本月结束",
+            "qi_datetime_end_of_month",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本年开始",
+            "qi_datetime_start_of_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本年结束",
+            "qi_datetime_end_of_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本季度开始",
+            "qi_datetime_start_of_quarter",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "本季度结束",
+            "qi_datetime_end_of_quarter",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 时间判断
-        dt_module.add_function(ModuleFunction::new("在范围内", "qi_datetime_is_between", vec!["整数".to_string(), "整数".to_string(), "整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是今天", "qi_datetime_is_today", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是本周", "qi_datetime_is_this_week", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是本月", "qi_datetime_is_this_month", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是本年", "qi_datetime_is_this_year", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是周末", "qi_datetime_is_weekend", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("是工作日", "qi_datetime_is_weekday", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "在范围内",
+            "qi_datetime_is_between",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是今天",
+            "qi_datetime_is_today",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是本周",
+            "qi_datetime_is_this_week",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是本月",
+            "qi_datetime_is_this_month",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是本年",
+            "qi_datetime_is_this_year",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是周末",
+            "qi_datetime_is_weekend",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "是工作日",
+            "qi_datetime_is_weekday",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 时间转换
-        dt_module.add_function(ModuleFunction::new("秒转毫秒", "qi_datetime_seconds_to_millis", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("毫秒转秒", "qi_datetime_millis_to_seconds", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("秒转微秒", "qi_datetime_seconds_to_micros", vec!["整数".to_string()], "整数"));
-        dt_module.add_function(ModuleFunction::new("微秒转秒", "qi_datetime_micros_to_seconds", vec!["整数".to_string()], "整数"));
+        dt_module.add_function(ModuleFunction::new(
+            "秒转毫秒",
+            "qi_datetime_seconds_to_millis",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "毫秒转秒",
+            "qi_datetime_millis_to_seconds",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "秒转微秒",
+            "qi_datetime_seconds_to_micros",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "微秒转秒",
+            "qi_datetime_micros_to_seconds",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 睡眠函数
-        dt_module.add_function(ModuleFunction::new("睡眠秒", "qi_datetime_sleep_seconds", vec!["整数".to_string()], "空"));
-        dt_module.add_function(ModuleFunction::new("睡眠毫秒", "qi_datetime_sleep_millis", vec!["整数".to_string()], "空"));
-        dt_module.add_function(ModuleFunction::new("睡眠微秒", "qi_datetime_sleep_micros", vec!["整数".to_string()], "空"));
+        dt_module.add_function(ModuleFunction::new(
+            "睡眠秒",
+            "qi_datetime_sleep_seconds",
+            vec!["整数".to_string()],
+            "空",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "睡眠毫秒",
+            "qi_datetime_sleep_millis",
+            vec!["整数".to_string()],
+            "空",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "睡眠微秒",
+            "qi_datetime_sleep_micros",
+            vec!["整数".to_string()],
+            "空",
+        ));
         // 异步睡眠（同步 block_in_place 版）— 仍 pin worker
-        dt_module.add_function(ModuleFunction::new("异步睡眠毫秒", "qi_datetime_async_sleep_millis", vec!["整数".to_string()], "空"));
+        dt_module.add_function(ModuleFunction::new(
+            "异步睡眠毫秒",
+            "qi_datetime_async_sleep_millis",
+            vec!["整数".to_string()],
+            "空",
+        ));
         // 异步睡眠返回 Future — 真正的 Future API。 用 等待 时间.异步睡眠未来(N) 调
-        dt_module.add_function(ModuleFunction::new("异步睡眠未来", "qi_datetime_async_sleep_future", vec!["整数".to_string()], "未来<空>"));
+        dt_module.add_function(ModuleFunction::new(
+            "异步睡眠未来",
+            "qi_datetime_async_sleep_future",
+            vec!["整数".to_string()],
+            "未来<空>",
+        ));
 
         self.modules.insert("时间".to_string(), dt_module.clone());
-        self.modules.insert("标准库.时间".to_string(), dt_module.clone());
+        self.modules
+            .insert("标准库.时间".to_string(), dt_module.clone());
         // 添加日期别名
         self.modules.insert("日期".to_string(), dt_module.clone());
         self.modules.insert("标准库.日期".to_string(), dt_module);
@@ -2922,7 +3620,11 @@ impl ModuleRegistry {
         string_module.add_function(ModuleFunction::new(
             "查找从位置",
             "qi_string_find_from",
-            vec!["字符串".to_string(), "字符串".to_string(), "整数".to_string()],
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
             "整数",
         ));
 
@@ -2963,14 +3665,18 @@ impl ModuleRegistry {
             "分割",
             "qi_string_split",
             vec!["字符串".to_string(), "字符串".to_string()],
-            "整数",  // 返回列表句柄
+            "整数", // 返回列表句柄
         ));
 
         // 字符串替换
         string_module.add_function(ModuleFunction::new(
             "替换",
             "qi_string_replace",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "字符串",
         ));
 
@@ -3003,7 +3709,7 @@ impl ModuleRegistry {
             "包含",
             "qi_string_contains",
             vec!["字符串".to_string(), "字符串".to_string()],
-            "整数",  // 返回 1 (true) 或 0 (false)
+            "整数", // 返回 1 (true) 或 0 (false)
         ));
 
         // 是否以某字符串开始
@@ -3032,11 +3738,15 @@ impl ModuleRegistry {
 
         // Note: qi_string_free is already available from future.rs, so we don't need to register it separately
 
-        self.modules.insert("字符串".to_string(), string_module.clone());
-        self.modules.insert("标准库.字符串".to_string(), string_module.clone());
+        self.modules
+            .insert("字符串".to_string(), string_module.clone());
+        self.modules
+            .insert("标准库.字符串".to_string(), string_module.clone());
         // 使用 "文本" 作为别名，因为 "字符串" 是类型关键词，无法在导入语句中使用
-        self.modules.insert("文本".to_string(), string_module.clone());
-        self.modules.insert("标准库.文本".to_string(), string_module);
+        self.modules
+            .insert("文本".to_string(), string_module.clone());
+        self.modules
+            .insert("标准库.文本".to_string(), string_module);
     }
 
     /// 注册正则表达式模块
@@ -3067,7 +3777,11 @@ impl ModuleRegistry {
         regex_module.add_function(ModuleFunction::new(
             "全部替换",
             "qi_regex_replace_all",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "ptr",
         ));
 
@@ -3078,7 +3792,8 @@ impl ModuleRegistry {
             "ptr",
         ));
 
-        self.modules.insert("正则".to_string(), regex_module.clone());
+        self.modules
+            .insert("正则".to_string(), regex_module.clone());
         self.modules.insert("标准库.正则".to_string(), regex_module);
     }
 
@@ -3178,15 +3893,12 @@ impl ModuleRegistry {
             "ptr",
         ));
 
-        random_module.add_function(ModuleFunction::new(
-            "UUID",
-            "qi_random_uuid",
-            vec![],
-            "ptr",
-        ));
+        random_module.add_function(ModuleFunction::new("UUID", "qi_random_uuid", vec![], "ptr"));
 
-        self.modules.insert("随机".to_string(), random_module.clone());
-        self.modules.insert("标准库.随机".to_string(), random_module);
+        self.modules
+            .insert("随机".to_string(), random_module.clone());
+        self.modules
+            .insert("标准库.随机".to_string(), random_module);
     }
 
     /// 注册环境变量模块
@@ -3228,19 +3940,9 @@ impl ModuleRegistry {
             "i32",
         ));
 
-        env_module.add_function(ModuleFunction::new(
-            "主目录",
-            "qi_env_home_dir",
-            vec![],
-            "ptr",
-        ));
+        env_module.add_function(ModuleFunction::new("主目录", "qi_env_home_dir", vec![], "ptr"));
 
-        env_module.add_function(ModuleFunction::new(
-            "全部",
-            "qi_env_all",
-            vec![],
-            "ptr",
-        ));
+        env_module.add_function(ModuleFunction::new("全部", "qi_env_all", vec![], "ptr"));
 
         self.modules.insert("环境".to_string(), env_module.clone());
         self.modules.insert("标准库.环境".to_string(), env_module);
@@ -3271,8 +3973,10 @@ impl ModuleRegistry {
             "void",
         ));
 
-        self.modules.insert("进程".to_string(), process_module.clone());
-        self.modules.insert("标准库.进程".to_string(), process_module);
+        self.modules
+            .insert("进程".to_string(), process_module.clone());
+        self.modules
+            .insert("标准库.进程".to_string(), process_module);
     }
 
     /// 注册子进程模块
@@ -3301,7 +4005,7 @@ impl ModuleRegistry {
             "读取行超时",
             "qi_subprocess_read_line_timeout",
             vec!["i64".to_string(), "i64".to_string()], // 句柄, 超时毫秒
-            "ptr", // 返回字符串
+            "ptr",                                      // 返回字符串
         ));
         m.add_function(ModuleFunction::new(
             "存活",
@@ -3352,8 +4056,10 @@ impl ModuleRegistry {
             "i32",
         ));
 
-        self.modules.insert("配置".to_string(), config_module.clone());
-        self.modules.insert("标准库.配置".to_string(), config_module);
+        self.modules
+            .insert("配置".to_string(), config_module.clone());
+        self.modules
+            .insert("标准库.配置".to_string(), config_module);
     }
 
     /// 注册压缩解压模块
@@ -3403,8 +4109,10 @@ impl ModuleRegistry {
             "i64",
         ));
 
-        self.modules.insert("压缩".to_string(), compress_module.clone());
-        self.modules.insert("标准库.压缩".to_string(), compress_module);
+        self.modules
+            .insert("压缩".to_string(), compress_module.clone());
+        self.modules
+            .insert("标准库.压缩".to_string(), compress_module);
     }
 
     /// 注册测试框架模块
@@ -3421,14 +4129,22 @@ impl ModuleRegistry {
         test_module.add_function(ModuleFunction::new(
             "断言相等_浮点",
             "qi_test_assert_eq_float",
-            vec!["浮点数".to_string(), "浮点数".to_string(), "字符串".to_string()],
+            vec![
+                "浮点数".to_string(),
+                "浮点数".to_string(),
+                "字符串".to_string(),
+            ],
             "i32",
         ));
 
         test_module.add_function(ModuleFunction::new(
             "断言相等_字符串",
             "qi_test_assert_eq_string",
-            vec!["字符串".to_string(), "字符串".to_string(), "字符串".to_string()],
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
             "i32",
         ));
 
@@ -3533,12 +4249,7 @@ impl ModuleRegistry {
         let mut m = Module::new("同步");
 
         // ── 互斥锁 ──────────────────────────────────────────────────
-        m.add_function(ModuleFunction::new(
-            "创建锁",
-            "qi_sync_mutex_create",
-            vec![],
-            "i64",
-        ));
+        m.add_function(ModuleFunction::new("创建锁", "qi_sync_mutex_create", vec![], "i64"));
         m.add_function(ModuleFunction::new(
             "加锁",
             "qi_sync_mutex_lock",

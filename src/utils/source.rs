@@ -1,7 +1,7 @@
 //! Source file management for Qi language
 
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 /// Source file representation
@@ -45,13 +45,18 @@ pub enum SourceError {
 impl SourceFile {
     pub fn new(path: PathBuf) -> Result<Self, SourceError> {
         let content = fs::read_to_string(&path)?;
-        let last_modified = fs::metadata(&path)?.modified()
+        let last_modified = fs::metadata(&path)?
+            .modified()
             .unwrap_or_else(|_| SystemTime::now());
 
         Self::from_content(path, content, last_modified)
     }
 
-    pub fn from_content(path: PathBuf, content: String, last_modified: SystemTime) -> Result<Self, SourceError> {
+    pub fn from_content(
+        path: PathBuf,
+        content: String,
+        last_modified: SystemTime,
+    ) -> Result<Self, SourceError> {
         // Validate UTF-8 encoding (String is always UTF-8 in Rust)
         // TODO: Add additional validation if needed
 
@@ -91,12 +96,14 @@ impl SourceFile {
         }
 
         // Binary search to find line number
-        let line = self.line_offsets.binary_search(&byte_offset)
+        let line = self
+            .line_offsets
+            .binary_search(&byte_offset)
             .unwrap_or_else(|idx| idx);
 
         let column = byte_offset - self.line_offsets[line];
         Some(Position {
-            line: line + 1, // 1-based line numbers
+            line: line + 1,     // 1-based line numbers
             column: column + 1, // 1-based column numbers
         })
     }
@@ -184,10 +191,7 @@ pub struct SourceManager {
 
 impl SourceManager {
     pub fn new() -> Self {
-        Self {
-            files: Vec::new(),
-            max_files: 1000,
-        }
+        Self { files: Vec::new(), max_files: 1000 }
     }
 
     pub fn load_file(&mut self, path: PathBuf) -> Result<&SourceFile, SourceError> {
@@ -276,9 +280,7 @@ impl ErrorContext {
     /// Create error context for a source file
     /// 为源文件创建错误上下文
     pub fn new(source_file: &SourceFile, line_number: usize, column_number: usize) -> Self {
-        let source_line = source_file.get_line(line_number)
-            .unwrap_or("")
-            .to_string();
+        let source_line = source_file.get_line(line_number).unwrap_or("").to_string();
 
         let line_before = if line_number > 1 {
             source_file.get_line(line_number - 1).map(|s| s.to_string())
@@ -359,7 +361,8 @@ impl ErrorContext {
         end_column: usize,
         context_lines: usize,
     ) -> Self {
-        let mut context = Self::new_with_context(source_file, start_line, start_column, context_lines);
+        let mut context =
+            Self::new_with_context(source_file, start_line, start_column, context_lines);
 
         // Extract span text
         let span_text = if start_line == end_line {
@@ -406,7 +409,14 @@ impl ErrorContext {
 
     /// Add related code snippet
     /// 添加相关代码片段
-    pub fn add_related_code(&mut self, description: String, file_path: Option<PathBuf>, line: usize, column: usize, snippet: String) {
+    pub fn add_related_code(
+        &mut self,
+        description: String,
+        file_path: Option<PathBuf>,
+        line: usize,
+        column: usize,
+        snippet: String,
+    ) {
         self.related_code.push(RelatedCode {
             file_path,
             line_number: line,
@@ -419,7 +429,9 @@ impl ErrorContext {
     /// Get the total number of context lines
     /// 获取上下文行总数
     pub fn total_context_lines(&self) -> usize {
-        self.more_context_before.len() + 1 + self.more_context_after.len()
+        self.more_context_before.len()
+            + 1
+            + self.more_context_after.len()
             + if self.line_before.is_some() { 1 } else { 0 }
             + if self.line_after.is_some() { 1 } else { 0 }
     }
@@ -490,8 +502,10 @@ impl ErrorContext {
 
         // Show span information if available
         if let Some(ref span) = self.error_span {
-            result.push_str(&format!("     错误范围: 第{}行第{}列 到 第{}行第{}列\n",
-                span.start_line, span.start_column, span.end_line, span.end_column));
+            result.push_str(&format!(
+                "     错误范围: 第{}行第{}列 到 第{}行第{}列\n",
+                span.start_line, span.start_column, span.end_line, span.end_column
+            ));
             result.push_str(&format!("     错误文本: \"{}\"\n", span.text));
         }
 
@@ -503,7 +517,10 @@ impl ErrorContext {
                 if let Some(ref path) = related.file_path {
                     result.push_str(&format!("          文件: {}\n", path.display()));
                 }
-                result.push_str(&format!("          位置: 第{}行第{}列\n", related.line_number, related.column_number));
+                result.push_str(&format!(
+                    "          位置: 第{}行第{}列\n",
+                    related.line_number, related.column_number
+                ));
                 result.push_str(&format!("          代码: {}\n", related.code_snippet));
                 if i < self.related_code.len() - 1 {
                     result.push('\n');
@@ -622,7 +639,11 @@ pub fn create_error_context_from_string_with_span(
     context_lines: usize,
 ) -> ErrorContext {
     let mut context = create_error_context_from_string_with_context(
-        source_code, start_line, start_column, context_lines);
+        source_code,
+        start_line,
+        start_column,
+        context_lines,
+    );
 
     // Extract span text
     let lines: Vec<&str> = source_code.lines().collect();

@@ -120,10 +120,7 @@ pub extern "C" fn qi_string_substring(
 /// Extract substring from start position to end
 /// Returns a new string allocated with malloc
 #[no_mangle]
-pub extern "C" fn qi_string_substring_from(
-    text_ptr: *const c_char,
-    start: i64,
-) -> *mut c_char {
+pub extern "C" fn qi_string_substring_from(text_ptr: *const c_char, start: i64) -> *mut c_char {
     if text_ptr.is_null() || start < 0 {
         return empty_c_string();
     }
@@ -292,10 +289,7 @@ pub extern "C" fn qi_string_to_lower(text_ptr: *const c_char) -> *mut c_char {
 /// Check if a string contains a substring
 /// Returns 1 if contains, 0 if not
 #[no_mangle]
-pub extern "C" fn qi_string_contains(
-    text_ptr: *const c_char,
-    search_ptr: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_string_contains(text_ptr: *const c_char, search_ptr: *const c_char) -> i64 {
     if text_ptr.is_null() || search_ptr.is_null() {
         return 0;
     }
@@ -322,10 +316,7 @@ pub extern "C" fn qi_string_contains(
 /// Check if a string starts with a prefix
 /// Returns 1 if starts with, 0 if not
 #[no_mangle]
-pub extern "C" fn qi_string_starts_with(
-    text_ptr: *const c_char,
-    prefix_ptr: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_string_starts_with(text_ptr: *const c_char, prefix_ptr: *const c_char) -> i64 {
     if text_ptr.is_null() || prefix_ptr.is_null() {
         return 0;
     }
@@ -352,10 +343,7 @@ pub extern "C" fn qi_string_starts_with(
 /// Check if a string ends with a suffix
 /// Returns 1 if ends with, 0 if not
 #[no_mangle]
-pub extern "C" fn qi_string_ends_with(
-    text_ptr: *const c_char,
-    suffix_ptr: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_string_ends_with(text_ptr: *const c_char, suffix_ptr: *const c_char) -> i64 {
     if text_ptr.is_null() || suffix_ptr.is_null() {
         return 0;
     }
@@ -383,10 +371,7 @@ pub extern "C" fn qi_string_ends_with(
 /// Returns a string-list handle (compatible with 列表::字符串列表大小 / 获取字符串).
 /// Empty delimiter returns a list of one element (the original string).
 #[no_mangle]
-pub extern "C" fn qi_string_split(
-    text_ptr: *const c_char,
-    delimiter_ptr: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_string_split(text_ptr: *const c_char, delimiter_ptr: *const c_char) -> i64 {
     let list_handle = crate::runtime::stdlib::list::qi_list_string_create();
     if text_ptr.is_null() {
         return list_handle;
@@ -422,10 +407,7 @@ pub extern "C" fn qi_string_split(
 /// Compare two strings for equality
 /// Returns 1 if equal, 0 if not equal
 #[no_mangle]
-pub extern "C" fn qi_string_equals(
-    a_ptr: *const c_char,
-    b_ptr: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_string_equals(a_ptr: *const c_char, b_ptr: *const c_char) -> i64 {
     if a_ptr.is_null() && b_ptr.is_null() {
         return 1;
     }
@@ -435,7 +417,11 @@ pub extern "C" fn qi_string_equals(
     unsafe {
         let a = CStr::from_ptr(a_ptr);
         let b = CStr::from_ptr(b_ptr);
-        if a == b { 1 } else { 0 }
+        if a == b {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -445,8 +431,8 @@ pub extern "C" fn qi_string_equals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::{CStr, CString};
     use crate::runtime::async_runtime::future::qi_string_free;
+    use std::ffi::{CStr, CString};
 
     #[test]
     fn test_string_find() {

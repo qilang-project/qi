@@ -30,7 +30,11 @@ pub extern "C" fn qi_test_assert_eq_int(actual: i64, expected: i64, message: *co
 
 /// 断言相等（浮点数）
 #[no_mangle]
-pub extern "C" fn qi_test_assert_eq_float(actual: f64, expected: f64, message: *const c_char) -> i32 {
+pub extern "C" fn qi_test_assert_eq_float(
+    actual: f64,
+    expected: f64,
+    message: *const c_char,
+) -> i32 {
     const EPSILON: f64 = 1e-10;
 
     if (actual - expected).abs() < EPSILON {
@@ -136,7 +140,11 @@ pub extern "C" fn qi_test_assert_false(value: i32, message: *const c_char) -> i3
 
 /// 断言不等（整数）
 #[no_mangle]
-pub extern "C" fn qi_test_assert_ne_int(actual: i64, not_expected: i64, message: *const c_char) -> i32 {
+pub extern "C" fn qi_test_assert_ne_int(
+    actual: i64,
+    not_expected: i64,
+    message: *const c_char,
+) -> i32 {
     if actual != not_expected {
         return 1;
     }

@@ -2,11 +2,11 @@
 //!
 //! 提供 SQLite 数据库操作功能
 
+use rusqlite::Connection;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::Mutex;
-use std::collections::HashMap;
-use rusqlite::Connection;
 
 lazy_static::lazy_static! {
     static ref CONNECTIONS: Mutex<HashMap<i64, Connection>> = Mutex::new(HashMap::new());
@@ -89,15 +89,16 @@ pub extern "C" fn qi_db_query(conn_id: i64, sql: *const c_char) -> *mut c_char {
 
                                 for (i, col_name) in column_names.iter().enumerate() {
                                     // 尝试读取不同类型的值
-                                    let value: serde_json::Value = if let Ok(v) = row.get::<_, i64>(i) {
-                                        serde_json::json!(v)
-                                    } else if let Ok(v) = row.get::<_, f64>(i) {
-                                        serde_json::json!(v)
-                                    } else if let Ok(v) = row.get::<_, String>(i) {
-                                        serde_json::json!(v)
-                                    } else {
-                                        serde_json::Value::Null
-                                    };
+                                    let value: serde_json::Value =
+                                        if let Ok(v) = row.get::<_, i64>(i) {
+                                            serde_json::json!(v)
+                                        } else if let Ok(v) = row.get::<_, f64>(i) {
+                                            serde_json::json!(v)
+                                        } else if let Ok(v) = row.get::<_, String>(i) {
+                                            serde_json::json!(v)
+                                        } else {
+                                            serde_json::Value::Null
+                                        };
 
                                     row_map.insert(col_name.clone(), value);
                                 }
@@ -199,11 +200,14 @@ mod tests {
         assert!(conn_id > 0);
 
         // 创建表
-        let create_sql = CString::new("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)").unwrap();
+        let create_sql =
+            CString::new("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+                .unwrap();
         assert_eq!(qi_db_execute(conn_id, create_sql.as_ptr()), 0);
 
         // 插入数据
-        let insert_sql = CString::new("INSERT INTO users (name, age) VALUES ('Alice', 30)").unwrap();
+        let insert_sql =
+            CString::new("INSERT INTO users (name, age) VALUES ('Alice', 30)").unwrap();
         assert_eq!(qi_db_execute(conn_id, insert_sql.as_ptr()), 1);
 
         // 查询数据

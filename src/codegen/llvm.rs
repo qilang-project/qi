@@ -2,13 +2,13 @@
 
 use crate::config::CompilationTarget;
 #[cfg(feature = "llvm")]
-use crate::parser::ast::{AstNode, FunctionDeclaration, Parameter, TypeNode, BasicType};
+use crate::parser::ast::{AstNode, BasicType, FunctionDeclaration, Parameter, TypeNode};
+#[cfg(feature = "llvm")]
+use inkwell::builder::Builder;
 #[cfg(feature = "llvm")]
 use inkwell::context::Context;
 #[cfg(feature = "llvm")]
 use inkwell::module::Module;
-#[cfg(feature = "llvm")]
-use inkwell::builder::Builder;
 #[cfg(feature = "llvm")]
 use inkwell::types::BasicType;
 #[cfg(feature = "llvm")]
@@ -100,27 +100,45 @@ impl LlvmCodeGenerator {
     }
 
     /// Convert Qi type node to LLVM type
-    pub fn qi_type_to_llvm_type(&self, qi_type: &TypeNode) -> Result<inkwell::types::BasicTypeEnum, LlvmError> {
+    pub fn qi_type_to_llvm_type(
+        &self,
+        qi_type: &TypeNode,
+    ) -> Result<inkwell::types::BasicTypeEnum, LlvmError> {
         match qi_type {
-            TypeNode::基础类型(basic_type) => {
-                match basic_type {
-                    BasicType::整数 => Ok(self.context.i64_type().as_basic_type_enum()),
-                    BasicType::浮点数 => Ok(self.context.f64_type().as_basic_type_enum()),
-                    BasicType::布尔 => Ok(self.context.bool_type().as_basic_type_enum()),
-                    BasicType::字符 => Ok(self.context.i8_type().as_basic_type_enum()),
-                    BasicType::字符串 => Ok(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).as_basic_type_enum()),
-                    BasicType::空 => Err(LlvmError::IrGeneration("空类型无法转换为 LLVM 类型".to_string())),
+            TypeNode::基础类型(basic_type) => match basic_type {
+                BasicType::整数 => Ok(self.context.i64_type().as_basic_type_enum()),
+                BasicType::浮点数 => Ok(self.context.f64_type().as_basic_type_enum()),
+                BasicType::布尔 => Ok(self.context.bool_type().as_basic_type_enum()),
+                BasicType::字符 => Ok(self.context.i8_type().as_basic_type_enum()),
+                BasicType::字符串 => Ok(self
+                    .context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .as_basic_type_enum()),
+                BasicType::空 => {
+                    Err(LlvmError::IrGeneration("空类型无法转换为 LLVM 类型".to_string()))
                 }
+            },
+            TypeNode::函数类型(_) => {
+                Err(LlvmError::IrGeneration("函数类型作为参数暂不支持".to_string()))
             }
-            TypeNode::函数类型(_) => Err(LlvmError::IrGeneration("函数类型作为参数暂不支持".to_string())),
-            TypeNode::数组类型(_) => Err(LlvmError::IrGeneration("数组类型作为参数暂不支持".to_string())),
-            TypeNode::结构体类型(_) => Err(LlvmError::IrGeneration("结构体类型作为参数暂不支持".to_string())),
-            TypeNode::枚举类型(_) => Err(LlvmError::IrGeneration("枚举类型作为参数暂不支持".to_string())),
+            TypeNode::数组类型(_) => {
+                Err(LlvmError::IrGeneration("数组类型作为参数暂不支持".to_string()))
+            }
+            TypeNode::结构体类型(_) => {
+                Err(LlvmError::IrGeneration("结构体类型作为参数暂不支持".to_string()))
+            }
+            TypeNode::枚举类型(_) => {
+                Err(LlvmError::IrGeneration("枚举类型作为参数暂不支持".to_string()))
+            }
         }
     }
 
     /// Create LLVM function type from Qi function declaration
-    pub fn create_function_type(&self, func_decl: &FunctionDeclaration) -> Result<inkwell::types::FunctionType, LlvmError> {
+    pub fn create_function_type(
+        &self,
+        func_decl: &FunctionDeclaration,
+    ) -> Result<inkwell::types::FunctionType, LlvmError> {
         // Convert parameter types
         let mut param_types = Vec::new();
         for param in &func_decl.parameters {
@@ -166,7 +184,10 @@ impl LlvmCodeGenerator {
     }
 
     /// Declare a function in the LLVM module
-    pub fn declare_function(&mut self, func_decl: &FunctionDeclaration) -> Result<FunctionValue, LlvmError> {
+    pub fn declare_function(
+        &mut self,
+        func_decl: &FunctionDeclaration,
+    ) -> Result<FunctionValue, LlvmError> {
         let func_type = self.create_function_type(func_decl)?;
         let function_value = self.module.add_function(&func_decl.name, func_type, None);
 
@@ -181,7 +202,11 @@ impl LlvmCodeGenerator {
     }
 
     /// Start generating function body with parameter handling
-    pub fn start_function_body(&mut self, function: FunctionValue, func_decl: &FunctionDeclaration) -> Result<(), LlvmError> {
+    pub fn start_function_body(
+        &mut self,
+        function: FunctionValue,
+        func_decl: &FunctionDeclaration,
+    ) -> Result<(), LlvmError> {
         self.current_function = Some(function);
         self.parameter_values.clear();
 
@@ -194,13 +219,16 @@ impl LlvmCodeGenerator {
             if let Some(param_value) = function.get_nth_param(i as u32) {
                 // Create an alloca for the parameter
                 let param_type = param_value.get_type();
-                let alloca = self.builder.build_alloca(param_type, &format!("{}_addr", param.name));
+                let alloca = self
+                    .builder
+                    .build_alloca(param_type, &format!("{}_addr", param.name));
 
                 // Store the parameter value in the alloca
                 self.builder.build_store(alloca, param_value);
 
                 // Store the alloca address for parameter access
-                self.parameter_values.insert(param.name.clone(), alloca.into());
+                self.parameter_values
+                    .insert(param.name.clone(), alloca.into());
             }
         }
 
@@ -222,17 +250,25 @@ impl LlvmCodeGenerator {
     }
 
     /// Generate function call with argument passing
-    pub fn generate_function_call(&mut self, callee: &str, arguments: &[AstNode]) -> Result<BasicValueEnum, LlvmError> {
+    pub fn generate_function_call(
+        &mut self,
+        callee: &str,
+        arguments: &[AstNode],
+    ) -> Result<BasicValueEnum, LlvmError> {
         // Look up function in module
-        let function = self.module.get_function(callee)
+        let function = self
+            .module
+            .get_function(callee)
             .ok_or_else(|| LlvmError::IrGeneration(format!("函数 '{}' 未定义", callee)))?;
 
         // Check argument count
         if function.count_params() as usize != arguments.len() {
-            return Err(LlvmError::IrGeneration(
-                format!("函数 '{}' 期望 {} 个参数，实际提供 {} 个",
-                    callee, function.count_params(), arguments.len())
-            ));
+            return Err(LlvmError::IrGeneration(format!(
+                "函数 '{}' 期望 {} 个参数，实际提供 {} 个",
+                callee,
+                function.count_params(),
+                arguments.len()
+            )));
         }
 
         // Generate argument values
@@ -241,14 +277,16 @@ impl LlvmCodeGenerator {
             let arg_value = self.generate_expression(arg)?;
 
             // Check if type conversion is needed
-            let expected_param_type = function.get_nth_param(i as u32)
+            let expected_param_type = function
+                .get_nth_param(i as u32)
                 .ok_or_else(|| LlvmError::IrGeneration(format!("参数 {} 类型获取失败", i)))?
                 .get_type();
 
             let arg_type = arg_value.get_type();
             if arg_type != expected_param_type {
                 // Try to perform type conversion
-                let converted_value = self.convert_type(arg_value, arg_type, expected_param_type)?;
+                let converted_value =
+                    self.convert_type(arg_value, arg_type, expected_param_type)?;
                 arg_values.push(converted_value);
             } else {
                 arg_values.push(arg_value);
@@ -259,17 +297,24 @@ impl LlvmCodeGenerator {
         let call_result = self.builder.build_call(function, &arg_values, "calltmp");
 
         // Handle void return type
-        if function.get_return_type().map_or(false, |t| t.is_void_type()) {
+        if function
+            .get_return_type()
+            .map_or(false, |t| t.is_void_type())
+        {
             Ok(self.context.i64_type().const_zero().as_basic_value_enum()) // Return dummy value for void functions
         } else {
-            call_result.try_as_basic_value()
+            call_result
+                .try_as_basic_value()
                 .left()
                 .ok_or_else(|| LlvmError::IrGeneration("函数调用返回值处理失败".to_string()))
         }
     }
 
     /// Generate function call expression with module prefix support
-    pub fn generate_function_call_expr(&mut self, call: &crate::parser::ast::FunctionCallExpression) -> Result<BasicValueEnum, LlvmError> {
+    pub fn generate_function_call_expr(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<BasicValueEnum, LlvmError> {
         // 构建完整的函数名
         let function_name = if let Some(module_qualifier) = &call.module_qualifier {
             // 模块前缀调用，如 数学.最大值
@@ -294,20 +339,31 @@ impl LlvmCodeGenerator {
     }
 
     /// Generate literal expression
-    pub fn generate_literal(&self, literal: &crate::parser::ast::LiteralExpression) -> Result<BasicValueEnum, LlvmError> {
+    pub fn generate_literal(
+        &self,
+        literal: &crate::parser::ast::LiteralExpression,
+    ) -> Result<BasicValueEnum, LlvmError> {
         match &literal.value {
-            crate::parser::ast::LiteralValue::整数(value) => {
-                Ok(self.context.i64_type().const_int(*value as u64, false).as_basic_value_enum())
-            }
-            crate::parser::ast::LiteralValue::浮点数(value) => {
-                Ok(self.context.f64_type().const_float(*value).as_basic_value_enum())
-            }
-            crate::parser::ast::LiteralValue::布尔(value) => {
-                Ok(self.context.bool_type().const_int(*value as u64, false).as_basic_value_enum())
-            }
-            crate::parser::ast::LiteralValue::字符(value) => {
-                Ok(self.context.i8_type().const_int(*value as u64, false).as_basic_value_enum())
-            }
+            crate::parser::ast::LiteralValue::整数(value) => Ok(self
+                .context
+                .i64_type()
+                .const_int(*value as u64, false)
+                .as_basic_value_enum()),
+            crate::parser::ast::LiteralValue::浮点数(value) => Ok(self
+                .context
+                .f64_type()
+                .const_float(*value)
+                .as_basic_value_enum()),
+            crate::parser::ast::LiteralValue::布尔(value) => Ok(self
+                .context
+                .bool_type()
+                .const_int(*value as u64, false)
+                .as_basic_value_enum()),
+            crate::parser::ast::LiteralValue::字符(value) => Ok(self
+                .context
+                .i8_type()
+                .const_int(*value as u64, false)
+                .as_basic_value_enum()),
             crate::parser::ast::LiteralValue::字符串(_) => {
                 Err(LlvmError::IrGeneration("字符串字面量生成暂未实现".to_string()))
             }
@@ -315,7 +371,10 @@ impl LlvmCodeGenerator {
     }
 
     /// Generate identifier expression (load variable or parameter)
-    pub fn generate_identifier(&self, identifier: &crate::parser::ast::IdentifierExpression) -> Result<BasicValueEnum, LlvmError> {
+    pub fn generate_identifier(
+        &self,
+        identifier: &crate::parser::ast::IdentifierExpression,
+    ) -> Result<BasicValueEnum, LlvmError> {
         // First try to load as parameter
         if let Some(param_value) = self.load_parameter(&identifier.name) {
             return Ok(param_value);
@@ -326,7 +385,10 @@ impl LlvmCodeGenerator {
     }
 
     /// Generate binary expression
-    pub fn generate_binary_expression(&mut self, binary: &crate::parser::ast::BinaryExpression) -> Result<BasicValueEnum, LlvmError> {
+    pub fn generate_binary_expression(
+        &mut self,
+        binary: &crate::parser::ast::BinaryExpression,
+    ) -> Result<BasicValueEnum, LlvmError> {
         let left_value = self.generate_expression(&binary.left)?;
         let right_value = self.generate_expression(&binary.right)?;
 
@@ -335,11 +397,17 @@ impl LlvmCodeGenerator {
                 if left_value.is_int_value() && right_value.is_int_value() {
                     let left_int = left_value.into_int_value();
                     let right_int = right_value.into_int_value();
-                    Ok(self.builder.build_int_add(left_int, right_int, "addtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_int_add(left_int, right_int, "addtmp")
+                        .as_basic_value_enum())
                 } else if left_value.is_float_value() && right_value.is_float_value() {
                     let left_float = left_value.into_float_value();
                     let right_float = right_value.into_float_value();
-                    Ok(self.builder.build_float_add(left_float, right_float, "addtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_float_add(left_float, right_float, "addtmp")
+                        .as_basic_value_enum())
                 } else {
                     Err(LlvmError::IrGeneration("加法操作类型不匹配".to_string()))
                 }
@@ -348,11 +416,17 @@ impl LlvmCodeGenerator {
                 if left_value.is_int_value() && right_value.is_int_value() {
                     let left_int = left_value.into_int_value();
                     let right_int = right_value.into_int_value();
-                    Ok(self.builder.build_int_sub(left_int, right_int, "subtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_int_sub(left_int, right_int, "subtmp")
+                        .as_basic_value_enum())
                 } else if left_value.is_float_value() && right_value.is_float_value() {
                     let left_float = left_value.into_float_value();
                     let right_float = right_value.into_float_value();
-                    Ok(self.builder.build_float_sub(left_float, right_float, "subtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_float_sub(left_float, right_float, "subtmp")
+                        .as_basic_value_enum())
                 } else {
                     Err(LlvmError::IrGeneration("减法操作类型不匹配".to_string()))
                 }
@@ -361,11 +435,17 @@ impl LlvmCodeGenerator {
                 if left_value.is_int_value() && right_value.is_int_value() {
                     let left_int = left_value.into_int_value();
                     let right_int = right_value.into_int_value();
-                    Ok(self.builder.build_int_mul(left_int, right_int, "multmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_int_mul(left_int, right_int, "multmp")
+                        .as_basic_value_enum())
                 } else if left_value.is_float_value() && right_value.is_float_value() {
                     let left_float = left_value.into_float_value();
                     let right_float = right_value.into_float_value();
-                    Ok(self.builder.build_float_mul(left_float, right_float, "multmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_float_mul(left_float, right_float, "multmp")
+                        .as_basic_value_enum())
                 } else {
                     Err(LlvmError::IrGeneration("乘法操作类型不匹配".to_string()))
                 }
@@ -374,11 +454,17 @@ impl LlvmCodeGenerator {
                 if left_value.is_int_value() && right_value.is_int_value() {
                     let left_int = left_value.into_int_value();
                     let right_int = right_value.into_int_value();
-                    Ok(self.builder.build_int_signed_div(left_int, right_int, "divtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_int_signed_div(left_int, right_int, "divtmp")
+                        .as_basic_value_enum())
                 } else if left_value.is_float_value() && right_value.is_float_value() {
                     let left_float = left_value.into_float_value();
                     let right_float = right_value.into_float_value();
-                    Ok(self.builder.build_float_div(left_float, right_float, "divtmp").as_basic_value_enum())
+                    Ok(self
+                        .builder
+                        .build_float_div(left_float, right_float, "divtmp")
+                        .as_basic_value_enum())
                 } else {
                     Err(LlvmError::IrGeneration("除法操作类型不匹配".to_string()))
                 }
@@ -388,21 +474,41 @@ impl LlvmCodeGenerator {
     }
 
     /// Type conversion between compatible types
-    pub fn convert_type(&self, value: BasicValueEnum, from_type: inkwell::types::BasicTypeEnum, to_type: inkwell::types::BasicTypeEnum) -> Result<BasicValueEnum, LlvmError> {
+    pub fn convert_type(
+        &self,
+        value: BasicValueEnum,
+        from_type: inkwell::types::BasicTypeEnum,
+        to_type: inkwell::types::BasicTypeEnum,
+    ) -> Result<BasicValueEnum, LlvmError> {
         if from_type == to_type {
             return Ok(value);
         }
 
         match (from_type, to_type) {
-            (inkwell::types::BasicTypeEnum::IntType(_), inkwell::types::BasicTypeEnum::FloatType(_)) => {
+            (
+                inkwell::types::BasicTypeEnum::IntType(_),
+                inkwell::types::BasicTypeEnum::FloatType(_),
+            ) => {
                 let int_val = value.into_int_value();
-                Ok(self.builder.build_sitofp(int_val, to_type.into_float_type(), "sitofp").as_basic_value_enum())
+                Ok(self
+                    .builder
+                    .build_sitofp(int_val, to_type.into_float_type(), "sitofp")
+                    .as_basic_value_enum())
             }
-            (inkwell::types::BasicTypeEnum::FloatType(_), inkwell::types::BasicTypeEnum::IntType(_)) => {
+            (
+                inkwell::types::BasicTypeEnum::FloatType(_),
+                inkwell::types::BasicTypeEnum::IntType(_),
+            ) => {
                 let float_val = value.into_float_value();
-                Ok(self.builder.build_fptosi(float_val, to_type.into_int_type(), "fptosi").as_basic_value_enum())
+                Ok(self
+                    .builder
+                    .build_fptosi(float_val, to_type.into_int_type(), "fptosi")
+                    .as_basic_value_enum())
             }
-            _ => Err(LlvmError::IrGeneration(format!("不支持的类型转换: {:?} -> {:?}", from_type, to_type))),
+            _ => Err(LlvmError::IrGeneration(format!(
+                "不支持的类型转换: {:?} -> {:?}",
+                from_type, to_type
+            ))),
         }
     }
 

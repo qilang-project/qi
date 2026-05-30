@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::task::JoinHandle;
 
-use crate::runtime::{RuntimeResult, RuntimeError};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 static TASK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -152,10 +152,7 @@ impl TaskHandle {
     pub async fn join(&self) -> RuntimeResult<()> {
         let join_handle = {
             let mut guard = self.join_handle.lock().map_err(|_| {
-                RuntimeError::lock_error(
-                    "任务等待锁失败".to_string(),
-                    "锁错误".to_string(),
-                )
+                RuntimeError::lock_error("任务等待锁失败".to_string(), "锁错误".to_string())
             })?;
             guard.take()
         };
@@ -178,10 +175,9 @@ impl TaskHandle {
             // Already awaited; return current status
             match self.inner.status() {
                 TaskStatus::Completed => Ok(()),
-                TaskStatus::Cancelled => Err(RuntimeError::task_error(
-                    "任务已取消".to_string(),
-                    "任务取消".to_string(),
-                )),
+                TaskStatus::Cancelled => {
+                    Err(RuntimeError::task_error("任务已取消".to_string(), "任务取消".to_string()))
+                }
                 TaskStatus::Failed => Err(RuntimeError::task_error(
                     "任务执行失败".to_string(),
                     "任务失败".to_string(),

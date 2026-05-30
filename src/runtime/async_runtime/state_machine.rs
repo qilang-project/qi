@@ -37,8 +37,8 @@ pub extern "C" fn qi_async_alloc_frame(size: i64) -> *mut u8 {
     if size <= 0 {
         return std::ptr::null_mut();
     }
-    let layout = std::alloc::Layout::from_size_align(size as usize, 8)
-        .expect("invalid frame layout");
+    let layout =
+        std::alloc::Layout::from_size_align(size as usize, 8).expect("invalid frame layout");
     unsafe {
         let ptr = std::alloc::alloc_zeroed(layout);
         if ptr.is_null() {
@@ -55,8 +55,8 @@ pub extern "C" fn qi_async_free_frame(ptr: *mut u8, size: i64) {
     if ptr.is_null() || size <= 0 {
         return;
     }
-    let layout = std::alloc::Layout::from_size_align(size as usize, 8)
-        .expect("invalid frame layout");
+    let layout =
+        std::alloc::Layout::from_size_align(size as usize, 8).expect("invalid frame layout");
     unsafe {
         std::alloc::dealloc(ptr, layout);
     }
@@ -72,10 +72,7 @@ pub extern "C" fn qi_async_free_frame(ptr: *mut u8, size: i64) {
 /// poll_fn 是 codegen 生成的 fn(*mut u8) — 不同异步函数有不同的 poll_fn。
 /// 通过 usize 跨 Send 边界（裸函数指针 / 裸 frame ptr 都不是 Send，但 usize 是）。
 #[no_mangle]
-pub extern "C" fn qi_async_spawn_poll(
-    poll_fn: extern "C" fn(*mut u8),
-    frame: *mut u8,
-) {
+pub extern "C" fn qi_async_spawn_poll(poll_fn: extern "C" fn(*mut u8), frame: *mut u8) {
     let poll_addr = poll_fn as usize;
     let frame_addr = frame as usize;
     let rt = crate::runtime::async_runtime::ffi::全局异步运行时();
@@ -103,10 +100,7 @@ pub extern "C" fn qi_future_register_waker(
     if fut.is_null() {
         return;
     }
-    let waker = StateMachineWaker {
-        poll_fn,
-        frame: frame as usize,
-    };
+    let waker = StateMachineWaker { poll_fn, frame: frame as usize };
     unsafe {
         (*fut).register_sm_waker(waker);
     }
@@ -348,7 +342,9 @@ mod tests {
                 1 => {
                     let v = qi_future_value_i64(frame.awaited_future);
                     frame.local_a = v;
-                    unsafe { drop(Box::from_raw(frame.awaited_future)); }
+                    unsafe {
+                        drop(Box::from_raw(frame.awaited_future));
+                    }
                     frame.awaited_future = std::ptr::null_mut();
 
                     let result = frame.local_a + 2;
@@ -414,7 +410,9 @@ mod tests {
             }
 
             let value = qi_future_value_i64(return_fut);
-            unsafe { drop(Box::from_raw(return_fut)); }
+            unsafe {
+                drop(Box::from_raw(return_fut));
+            }
             value
         });
 
@@ -444,6 +442,8 @@ mod tests {
         qi_future_complete_i64(fut, 12345);
         assert_eq!(qi_future_is_ready(fut), 1);
         assert_eq!(qi_future_value_i64(fut), 12345);
-        unsafe { drop(Box::from_raw(fut)); }
+        unsafe {
+            drop(Box::from_raw(fut));
+        }
     }
 }

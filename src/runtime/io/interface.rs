@@ -4,15 +4,15 @@
 //! including file system, network, and standard I/O with comprehensive
 //! Chinese language support and cross-platform compatibility.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::runtime::{RuntimeResult, RuntimeError};
 use super::filesystem::FileSystemInterface;
 use super::http::NetworkInterface;
-use super::stdio::{StandardIo, ConsoleInterface};
+use super::stdio::{ConsoleInterface, StandardIo};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 /// Unified I/O interface that provides access to all I/O functionality
 #[derive(Debug)]
@@ -201,7 +201,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "read_file".to_string(),
             resource: path.to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: result.as_ref().map(|s| s.len() as u64).unwrap_or(0),
             success: result.is_ok(),
@@ -227,7 +230,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "write_file".to_string(),
             resource: path.to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: content.len() as u64,
             success: result.is_ok(),
@@ -253,7 +259,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "append_file".to_string(),
             resource: path.to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: content.len() as u64,
             success: result.is_ok(),
@@ -295,7 +304,8 @@ impl IoInterface {
         let result = {
             let fs = self.filesystem.lock().unwrap();
             fs.list_directory(path).map(|paths| {
-                paths.into_iter()
+                paths
+                    .into_iter()
                     .filter_map(|p| p.to_str().map(|s| s.to_string()))
                     .collect()
             })
@@ -319,7 +329,7 @@ impl IoInterface {
             let network = self.network.lock().unwrap();
             network.make_request(&request).and_then(|response| {
                 String::from_utf8(response.body).map_err(|e| super::IoError::EncodingError {
-                    message: format!("HTTP响应编码错误: {}", e)
+                    message: format!("HTTP响应编码错误: {}", e),
                 })
             })
         };
@@ -329,7 +339,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "http_get".to_string(),
             resource: url.to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: result.as_ref().map(|s| s.len() as u64).unwrap_or(0),
             success: result.is_ok(),
@@ -353,7 +366,7 @@ impl IoInterface {
             let network = self.network.lock().unwrap();
             network.make_request(&request).and_then(|response| {
                 String::from_utf8(response.body).map_err(|e| super::IoError::EncodingError {
-                    message: format!("HTTP响应编码错误: {}", e)
+                    message: format!("HTTP响应编码错误: {}", e),
                 })
             })
         };
@@ -363,7 +376,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "http_post".to_string(),
             resource: url.to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: result.as_ref().map(|s| s.len() as u64).unwrap_or(0),
             success: result.is_ok(),
@@ -391,7 +407,10 @@ impl IoInterface {
             id: operation_id,
             operation_type: "print".to_string(),
             resource: "stdout".to_string(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: duration.as_millis() as f64,
             bytes_transferred: text.len() as u64,
             success: result.is_ok(),
@@ -571,10 +590,14 @@ impl IoInterface {
     /// Private helper methods
 
     fn generate_operation_id(&self, operation_type: &str) -> String {
-        format!("{}_{}", operation_type, SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis())
+        format!(
+            "{}_{}",
+            operation_type,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        )
     }
 
     fn record_operation(&self, operation: &IoOperation) {
@@ -585,7 +608,10 @@ impl IoInterface {
 
         // Update operation type counts
         match operation.operation_type.as_str() {
-            op if op.starts_with("read_file") || op.starts_with("write_file") || op.starts_with("append_file") => {
+            op if op.starts_with("read_file")
+                || op.starts_with("write_file")
+                || op.starts_with("append_file") =>
+            {
                 stats.file_operations += 1;
             }
             op if op.starts_with("http_") => {
@@ -597,15 +623,23 @@ impl IoInterface {
             _ => {}
         }
 
-        *stats.operations_by_type.entry(operation.operation_type.clone()).or_insert(0) += 1;
+        *stats
+            .operations_by_type
+            .entry(operation.operation_type.clone())
+            .or_insert(0) += 1;
 
         // Update byte counts
-        stats.total_bytes_read += if operation.operation_type.contains("read") || operation.operation_type.contains("get") {
+        stats.total_bytes_read += if operation.operation_type.contains("read")
+            || operation.operation_type.contains("get")
+        {
             operation.bytes_transferred
         } else {
             0
         };
-        stats.total_bytes_written += if operation.operation_type.contains("write") || operation.operation_type.contains("post") || operation.operation_type.contains("print") {
+        stats.total_bytes_written += if operation.operation_type.contains("write")
+            || operation.operation_type.contains("post")
+            || operation.operation_type.contains("print")
+        {
             operation.bytes_transferred
         } else {
             0
@@ -613,7 +647,8 @@ impl IoInterface {
 
         // Update average operation time
         if stats.total_operations > 0 {
-            let total_time = stats.avg_operation_time_ms * (stats.total_operations - 1) as f64 + operation.duration_ms;
+            let total_time = stats.avg_operation_time_ms * (stats.total_operations - 1) as f64
+                + operation.duration_ms;
             stats.avg_operation_time_ms = total_time / stats.total_operations as f64;
         }
     }

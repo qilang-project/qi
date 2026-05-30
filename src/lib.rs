@@ -1,4 +1,4 @@
- //! Qi Language Compiler
+//! Qi Language Compiler
 //!
 //! A compiler for the Qi programming language with 100% Chinese keywords.
 //! Compiles Qi source code to executable binaries for multiple platforms.
@@ -20,7 +20,9 @@ pub mod targets;
 pub mod utils;
 
 // Force export of async runtime FFI functions to ensure they're included in the static library
-pub use runtime::async_runtime::ffi::{qi_runtime_create_task, qi_runtime_await, qi_runtime_spawn_task};
+pub use runtime::async_runtime::ffi::{
+    qi_runtime_await, qi_runtime_create_task, qi_runtime_spawn_task,
+};
 
 // Dummy function to ensure async runtime functions are not optimized out
 #[doc(hidden)]
@@ -63,8 +65,8 @@ pub extern "C" fn _qi_force_link_sync_runtime() {
     }
 }
 
-use std::path::PathBuf;
 use crate::semantic::module::ModuleRegistry;
+use std::path::PathBuf;
 
 /// Compiler configuration and settings
 pub mod config;
@@ -78,9 +80,7 @@ pub struct QiCompiler {
 impl QiCompiler {
     /// Create a new compiler instance with default configuration
     pub fn new() -> Self {
-        Self {
-            config: config::CompilerConfig::default(),
-        }
+        Self { config: config::CompilerConfig::default() }
     }
 
     /// Create a new compiler instance with custom configuration
@@ -123,20 +123,15 @@ impl QiCompiler {
         let warnings = Vec::new();
 
         // 1. Parse and register all modules
-        self.parse_and_collect_modules(
-            &entry_file,
-            &mut module_registry,
-            &mut compiled_modules
-        )?;
-        
+        self.parse_and_collect_modules(&entry_file, &mut module_registry, &mut compiled_modules)?;
+
         // 1.5. Process public imports (re-exports)
         self.process_public_imports(&mut module_registry, &compiled_modules)?;
         let (
             external_struct_definitions,
             external_struct_field_names,
             external_struct_function_fields,
-        ) =
-            self.collect_struct_layouts(&compiled_modules);
+        ) = self.collect_struct_layouts(&compiled_modules);
 
         let mut object_files: Vec<PathBuf> = Vec::new();
         let mut ir_files: Vec<PathBuf> = Vec::new();
@@ -144,7 +139,8 @@ impl QiCompiler {
         // 2. Compile each module independently
         for (module_path, ast) in &compiled_modules {
             // Get module info by file path (normalize for consistent lookup)
-            let path_key = module_path.canonicalize()
+            let path_key = module_path
+                .canonicalize()
                 .unwrap_or_else(|_| module_path.clone())
                 .to_string_lossy()
                 .to_string();
@@ -168,7 +164,8 @@ impl QiCompiler {
                     if is_stdlib {
                         // Skip file resolution for standard library imports
                         // Standard library modules are built-in and handled by ModuleRegistry in codegen
-                        let module_name = import.module_path.last().unwrap_or(&import.module_path[0]);
+                        let module_name =
+                            import.module_path.last().unwrap_or(&import.module_path[0]);
                         let alias_name = import.alias.as_ref().unwrap_or(module_name);
                         import_aliases.insert(alias_name.clone(), module_name.clone());
                         continue;
@@ -176,14 +173,17 @@ impl QiCompiler {
 
                     // Resolve import path to actual module
                     let import_path = self.resolve_import_path(module_path, &import.module_path)?;
-                    let import_path_key = import_path.canonicalize()
+                    let import_path_key = import_path
+                        .canonicalize()
                         .unwrap_or_else(|_| import_path.clone())
                         .to_string_lossy()
                         .to_string();
 
                     if let Some(imported_module) = module_registry.get_module(&import_path_key) {
                         // Use package name for the alias
-                        let import_module_name = imported_module.package_name.as_ref()
+                        let import_module_name = imported_module
+                            .package_name
+                            .as_ref()
                             .unwrap_or(&imported_module.name);
 
                         // Set up alias mapping
@@ -198,21 +198,27 @@ impl QiCompiler {
                                 if let Some(sig) = &symbol.function_signature {
                                     // Mangle the function name same way as builder does
                                     let mangled_name = self.mangle_function_name(func_name);
-                                    let param_types: Vec<String> = sig.parameters.iter()
-                                        .map(|(_, ty)| ty.clone())
-                                        .collect();
+                                    let param_types: Vec<String> =
+                                        sig.parameters.iter().map(|(_, ty)| ty.clone()).collect();
 
                                     // Track struct return types for ptr-returning functions
                                     // by looking at the original return type annotation in the module AST
                                     if sig.return_type == "ptr" {
                                         // Try to find the actual struct type name from the module's AST
-                                        if let Some(struct_name) = get_function_return_struct_name(&imported_module, func_name) {
-                                            external_fn_return_struct_types.insert(mangled_name.clone(), struct_name);
+                                        if let Some(struct_name) = get_function_return_struct_name(
+                                            &imported_module,
+                                            func_name,
+                                        ) {
+                                            external_fn_return_struct_types
+                                                .insert(mangled_name.clone(), struct_name);
                                         }
                                     }
 
                                     // Only register the original function name
-                                    external_functions.insert(mangled_name, (param_types, sig.return_type.clone()));
+                                    external_functions.insert(
+                                        mangled_name,
+                                        (param_types, sig.return_type.clone()),
+                                    );
                                 }
                             }
                         }
@@ -228,7 +234,8 @@ impl QiCompiler {
                     if other_path == module_path {
                         continue;
                     }
-                    let other_key = other_path.canonicalize()
+                    let other_key = other_path
+                        .canonicalize()
                         .unwrap_or_else(|_| other_path.clone())
                         .to_string_lossy()
                         .to_string();
@@ -236,7 +243,8 @@ impl QiCompiler {
                         Some(m) => m,
                         None => continue,
                     };
-                    let same_pkg = match (current_package_name, other_module.package_name.as_ref()) {
+                    let same_pkg = match (current_package_name, other_module.package_name.as_ref())
+                    {
                         (Some(a), Some(b)) => a == b,
                         (None, None) => true,
                         _ => false,
@@ -254,19 +262,28 @@ impl QiCompiler {
                             if external_functions.contains_key(&mangled_name) {
                                 continue;
                             }
-                            let param_types: Vec<String> = func.parameters.iter()
-                                .map(|p| crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                    &p.type_annotation
-                                ))
+                            let param_types: Vec<String> = func
+                                .parameters
+                                .iter()
+                                .map(|p| {
+                                    crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                        &p.type_annotation,
+                                    )
+                                })
                                 .collect();
-                            let return_type = crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                &func.return_type
-                            );
+                            let return_type =
+                                crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                    &func.return_type,
+                                );
                             if return_type == "ptr" {
                                 if let Some(rt) = func.return_type.as_ref() {
                                     let struct_name = match rt {
-                                        crate::parser::ast::TypeNode::自定义类型(name) => Some(name.clone()),
-                                        crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                                        crate::parser::ast::TypeNode::自定义类型(name) => {
+                                            Some(name.clone())
+                                        }
+                                        crate::parser::ast::TypeNode::结构体类型(st) => {
+                                            Some(st.name.clone())
+                                        }
                                         _ => None,
                                     };
                                     if let Some(name) = struct_name {
@@ -282,7 +299,8 @@ impl QiCompiler {
             }
 
             // Generate LLVM IR for this module
-            let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
+            let mut codegen =
+                crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
 
             // Set external functions for this module
             codegen.set_external_functions(external_functions);
@@ -303,17 +321,21 @@ impl QiCompiler {
             codegen.set_verbose(self.config.verbose);
 
             // Set whether this is the entry module (only entry file generates @main)
-            let is_entry = module_path.canonicalize().unwrap_or_else(|_| module_path.clone())
-                == entry_file.canonicalize().unwrap_or_else(|_| entry_file.clone());
+            let is_entry = module_path
+                .canonicalize()
+                .unwrap_or_else(|_| module_path.clone())
+                == entry_file
+                    .canonicalize()
+                    .unwrap_or_else(|_| entry_file.clone());
             codegen.set_is_entry_module(is_entry);
 
-            let ir_content = codegen.generate(&ast)
-                .map_err(|e| CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e)))?;
+            let ir_content = codegen.generate(&ast).map_err(|e| {
+                CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e))
+            })?;
 
             // Write LLVM IR to file
             let ir_path = module_path.with_extension("ll");
-            std::fs::write(&ir_path, ir_content)
-                .map_err(CompilerError::Io)?;
+            std::fs::write(&ir_path, ir_content).map_err(CompilerError::Io)?;
             ir_files.push(ir_path.clone());
 
             // Compile IR to object file (.o)
@@ -325,7 +347,7 @@ impl QiCompiler {
         let executable_path = if cfg!(windows) {
             entry_file.with_extension("exe") // e.g., "main.exe"
         } else {
-            entry_file.with_extension("")   // e.g., "main"
+            entry_file.with_extension("") // e.g., "main"
         };
         self.link_objects(&object_files, &executable_path)?;
 
@@ -350,16 +372,17 @@ impl QiCompiler {
         };
 
         // Read and parse the file
-        let source_code = std::fs::read_to_string(&source_file)
-            .map_err(CompilerError::Io)?;
+        let source_code = std::fs::read_to_string(&source_file).map_err(CompilerError::Io)?;
 
         let mut lexer = crate::lexer::Lexer::new(source_code);
-        let tokens = lexer.tokenize()
+        let tokens = lexer
+            .tokenize()
             .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
 
         let parser = crate::parser::Parser::new();
-        let program = parser.parse(tokens)
-            .map_err(|e| CompilerError::Parse(format!("解析错误 {}: {}", source_file.display(), e)))?;
+        let program = parser.parse(tokens).map_err(|e| {
+            CompilerError::Parse(format!("解析错误 {}: {}", source_file.display(), e))
+        })?;
 
         let ast = crate::parser::ast::AstNode::程序(program.clone());
 
@@ -368,9 +391,10 @@ impl QiCompiler {
         codegen.set_verbose(self.config.verbose);
 
         // Generate and return IR content
-        codegen.generate(&ast).map_err(|e| CompilerError::Codegen(e.to_string()))
+        codegen
+            .generate(&ast)
+            .map_err(|e| CompilerError::Codegen(e.to_string()))
     }
-
 
     /// Mangle function name (same logic as codegen::builder)
     fn mangle_function_name(&self, name: &str) -> String {
@@ -406,9 +430,7 @@ impl QiCompiler {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CompilerError::Codegen(
-                format!("LLVM IR 编译为目标文件失败: {}", error)
-            ));
+            return Err(CompilerError::Codegen(format!("LLVM IR 编译为目标文件失败: {}", error)));
         }
 
         Ok(obj_path)
@@ -438,19 +460,19 @@ impl QiCompiler {
         if cfg!(windows) {
             // On Windows, link with essential Windows API libraries
             command.args(&[
-                "-lkernel32",     // Core Windows API functions
-                "-luser32",       // User interface functions
-                "-ladvapi32",     // Advanced Windows API
-                "-lntdll",        // NT native API
-                "-luserenv",      // User environment functions (including GetUserProfileDirectoryW)
-                "-lws2_32",       // Windows Sockets API
-                "-lshell32",      // Shell functions (SHGetKnownFolderPath)
-                "-lole32",        // COM functions (CoTaskMemFree)
+                "-lkernel32", // Core Windows API functions
+                "-luser32",   // User interface functions
+                "-ladvapi32", // Advanced Windows API
+                "-lntdll",    // NT native API
+                "-luserenv",  // User environment functions (including GetUserProfileDirectoryW)
+                "-lws2_32",   // Windows Sockets API
+                "-lshell32",  // Shell functions (SHGetKnownFolderPath)
+                "-lole32",    // COM functions (CoTaskMemFree)
             ]);
         } else {
             // On Unix-like systems, use pthread and math library
             command.arg("-lpthread");
-            command.arg("-lm");  // Link math library (required for pow, sin, cos, etc.)
+            command.arg("-lm"); // Link math library (required for pow, sin, cos, etc.)
 
             // On macOS, add frameworks required by reqwest and GUI
             // Force rebuild 2025-11-15
@@ -484,34 +506,31 @@ impl QiCompiler {
             }
         }
 
-
-        let output = command.output()
-            .map_err(CompilerError::Io)?;
+        let output = command.output().map_err(CompilerError::Io)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let cmd_str = command.get_args()
+            let cmd_str = command
+                .get_args()
                 .map(|arg| format!("\"{}\"", arg.to_string_lossy()))
                 .collect::<Vec<_>>()
                 .join(" ");
-            return Err(CompilerError::Codegen(
-                format!("链接失败: {}\nCommand: clang {}\nStdout: {}\nStderr: {}",
-                    stderr, cmd_str, stdout, stderr)
-            ));
+            return Err(CompilerError::Codegen(format!(
+                "链接失败: {}\nCommand: clang {}\nStdout: {}\nStderr: {}",
+                stderr, cmd_str, stdout, stderr
+            )));
         }
 
         // On Unix-like systems, ensure the executable has execute permissions
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(executable_path)
-                .map_err(CompilerError::Io)?;
+            let metadata = std::fs::metadata(executable_path).map_err(CompilerError::Io)?;
             let mut permissions = metadata.permissions();
             // Set executable permission (0o755 = rwxr-xr-x)
             permissions.set_mode(0o755);
-            std::fs::set_permissions(executable_path, permissions)
-                .map_err(CompilerError::Io)?;
+            std::fs::set_permissions(executable_path, permissions).map_err(CompilerError::Io)?;
         }
 
         Ok(())
@@ -527,31 +546,35 @@ impl QiCompiler {
 
         // Get the compiler executable location
         let compiler_exe_path = std::env::current_exe()?;
-        let compiler_dir = compiler_exe_path.parent()
+        let compiler_dir = compiler_exe_path
+            .parent()
             .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
 
         // Search strategies in order of preference:
         let mut search_paths = vec![
             // 1. Same directory as compiler executable (for deployed releases)
             compiler_dir.join(lib_name),
-
             // 2. Current working directory (for local development)
             std::env::current_dir()?.join(lib_name),
-
             // 3. target/release/ relative to current directory (for release builds)
-            std::env::current_dir()?.join("target").join("release").join(lib_name),
-
+            std::env::current_dir()?
+                .join("target")
+                .join("release")
+                .join(lib_name),
             // 4. target/debug/ relative to current directory (for debug builds)
-            std::env::current_dir()?.join("target").join("debug").join(lib_name),
-
+            std::env::current_dir()?
+                .join("target")
+                .join("debug")
+                .join(lib_name),
             // 5. target/release/ relative to project root (go up from compiler dir)
-            compiler_dir.parent()
+            compiler_dir
+                .parent()
                 .and_then(|p| p.parent())
                 .map(|root| root.join("target").join("release").join(lib_name))
                 .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
-
             // 6. target/debug/ relative to project root (go up from compiler dir)
-            compiler_dir.parent()
+            compiler_dir
+                .parent()
                 .and_then(|p| p.parent())
                 .map(|root| root.join("target").join("debug").join(lib_name))
                 .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
@@ -575,12 +598,15 @@ impl QiCompiler {
         }
 
         // If none found, return error with list of attempted paths
-        let paths_str: Vec<String> = search_paths.iter()
+        let paths_str: Vec<String> = search_paths
+            .iter()
             .map(|p| p.display().to_string())
             .collect();
-        Err(CompilerError::Codegen(
-            format!("找不到运行时库 {}\n尝试的路径:\n{}", lib_name, paths_str.join("\n"))
-        ))
+        Err(CompilerError::Codegen(format!(
+            "找不到运行时库 {}\n尝试的路径:\n{}",
+            lib_name,
+            paths_str.join("\n")
+        )))
     }
 
     /// Parse a file and recursively parse its imports
@@ -594,7 +620,7 @@ impl QiCompiler {
             file_path,
             module_registry,
             compiled_modules,
-            &mut std::collections::HashSet::new()
+            &mut std::collections::HashSet::new(),
         )
     }
 
@@ -608,13 +634,14 @@ impl QiCompiler {
     ) -> Result<crate::parser::ast::AstNode, CompilerError> {
         // Prevent infinite recursion
         if visited.contains(file_path) {
-            return Ok(compiled_modules.get(file_path).cloned()
-                .unwrap_or_else(|| crate::parser::ast::AstNode::程序(crate::parser::ast::Program {
+            return Ok(compiled_modules.get(file_path).cloned().unwrap_or_else(|| {
+                crate::parser::ast::AstNode::程序(crate::parser::ast::Program {
                     package_name: None,
                     imports: vec![],
                     statements: vec![],
                     source_span: Default::default(),
-                })));
+                })
+            }));
         }
 
         // Check if already compiled
@@ -626,22 +653,24 @@ impl QiCompiler {
         visited.insert(file_path.clone());
 
         // Read and parse the file
-        let source_code = std::fs::read_to_string(file_path)
-            .map_err(CompilerError::Io)?;
+        let source_code = std::fs::read_to_string(file_path).map_err(CompilerError::Io)?;
 
         let mut lexer = crate::lexer::Lexer::new(source_code);
-        let tokens = lexer.tokenize()
+        let tokens = lexer
+            .tokenize()
             .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
 
         let parser = crate::parser::Parser::new();
-        let program = parser.parse(tokens)
-            .map_err(|e| CompilerError::Parse(format!("解析错误 {}: {}", file_path.display(), e)))?;
+        let program = parser.parse(tokens).map_err(|e| {
+            CompilerError::Parse(format!("解析错误 {}: {}", file_path.display(), e))
+        })?;
 
         // Convert program to AST node and extract imports
         let ast = crate::parser::ast::AstNode::程序(program.clone());
 
         // Register current module
-        let module_name = file_path.file_stem()
+        let module_name = file_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -651,11 +680,15 @@ impl QiCompiler {
             path: file_path.clone(),
             package_name: program.package_name.clone(),
             exports: module_registry.extract_exports(&program),
-            imports: program.imports.iter().map(|imp| crate::semantic::module::Import {
-                module_path: imp.module_path.clone(),
-                items: imp.items.clone(),
-                alias: imp.alias.clone(),
-            }).collect(),
+            imports: program
+                .imports
+                .iter()
+                .map(|imp| crate::semantic::module::Import {
+                    module_path: imp.module_path.clone(),
+                    items: imp.items.clone(),
+                    alias: imp.alias.clone(),
+                })
+                .collect(),
         };
 
         module_registry.register_module(module);
@@ -667,7 +700,7 @@ impl QiCompiler {
                 package_name,
                 module_registry,
                 compiled_modules,
-                visited
+                visited,
             )?;
         }
 
@@ -686,7 +719,7 @@ impl QiCompiler {
                 &import_path,
                 module_registry,
                 compiled_modules,
-                visited
+                visited,
             )?;
         }
 
@@ -700,14 +733,15 @@ impl QiCompiler {
     fn resolve_import_path(
         &self,
         current_file: &PathBuf,
-        module_path: &[String]
+        module_path: &[String],
     ) -> Result<PathBuf, CompilerError> {
-        let parent_dir = current_file.parent()
+        let parent_dir = current_file
+            .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
         // Check if this is an explicit relative path (starts with . or ..)
-        let is_explicit_relative = !module_path.is_empty() &&
-            (module_path[0] == "." || module_path[0] == "..");
+        let is_explicit_relative =
+            !module_path.is_empty() && (module_path[0] == "." || module_path[0] == "..");
 
         // 1. Handle explicit relative paths with . and ..
         if is_explicit_relative {
@@ -734,18 +768,22 @@ impl QiCompiler {
                                 return Ok(simple_path);
                             }
                             // Try module_name/module_name.qi (package structure)
-                            let package_path = import_path.join(component).join(format!("{}.qi", component));
+                            let package_path = import_path
+                                .join(component)
+                                .join(format!("{}.qi", component));
                             if package_path.exists() {
                                 return Ok(package_path);
                             }
                             // If neither exists, return error
                             return Err(CompilerError::Io(std::io::Error::new(
                                 std::io::ErrorKind::NotFound,
-                                format!("无法找到相对路径导入的模块: {} (尝试了 {}.qi 和 {}/{}.qi)",
+                                format!(
+                                    "无法找到相对路径导入的模块: {} (尝试了 {}.qi 和 {}/{}.qi)",
                                     module_path.join("/"),
                                     simple_path.display(),
                                     import_path.join(component).display(),
-                                    component)
+                                    component
+                                ),
                             )));
                         } else {
                             // Intermediate directory component
@@ -758,7 +796,9 @@ impl QiCompiler {
 
         // 1.5. Try package-internal submodule paths such as Web.控制器 -> <package_root>/控制器.qi
         if !module_path.is_empty() {
-            if let Ok(Some(package_manifest)) = crate::package::ResolvedPackageManifest::discover(current_file) {
+            if let Ok(Some(package_manifest)) =
+                crate::package::ResolvedPackageManifest::discover(current_file)
+            {
                 if let Some(package_name) = package_manifest.package_name() {
                     if module_path.first().map(|s| s.as_str()) == Some(package_name) {
                         if let Some(package_path) =
@@ -772,7 +812,9 @@ impl QiCompiler {
         }
 
         if module_path.len() > 1 {
-            if let Some(package_path) = self.resolve_package_internal_module_path(current_file, module_path) {
+            if let Some(package_path) =
+                self.resolve_package_internal_module_path(current_file, module_path)
+            {
                 return Ok(package_path);
             }
         }
@@ -806,13 +848,17 @@ impl QiCompiler {
 
         // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
-            if let Some(local_package_path) = self.resolve_local_manifest_package_path(current_file, module_path) {
+            if let Some(local_package_path) =
+                self.resolve_local_manifest_package_path(current_file, module_path)
+            {
                 return Ok(local_package_path);
             }
 
             if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
                 let packages_root = std::path::Path::new(&package_root);
-                if let Some(package_path) = self.resolve_package_path_from_root(packages_root, module_path) {
+                if let Some(package_path) =
+                    self.resolve_package_path_from_root(packages_root, module_path)
+                {
                     return Ok(package_path);
                 }
             }
@@ -841,7 +887,9 @@ impl QiCompiler {
             }
 
             for packages_root in default_package_paths {
-                if let Some(package_path) = self.resolve_package_path_from_root(&packages_root, module_path) {
+                if let Some(package_path) =
+                    self.resolve_package_path_from_root(&packages_root, module_path)
+                {
                     return Ok(package_path);
                 }
             }
@@ -849,7 +897,10 @@ impl QiCompiler {
 
         Err(CompilerError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)", module_path.join("/"))
+            format!(
+                "无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)",
+                module_path.join("/")
+            ),
         )))
     }
 
@@ -869,10 +920,18 @@ impl QiCompiler {
                         continue;
                     }
 
-                    let manifest = match crate::package::ResolvedPackageManifest::discover(&package_dir) {
-                        Ok(Some(manifest)) if manifest.root_dir == package_dir.canonicalize().unwrap_or(package_dir.clone()) => manifest,
-                        _ => continue,
-                    };
+                    let manifest =
+                        match crate::package::ResolvedPackageManifest::discover(&package_dir) {
+                            Ok(Some(manifest))
+                                if manifest.root_dir
+                                    == package_dir
+                                        .canonicalize()
+                                        .unwrap_or(package_dir.clone()) =>
+                            {
+                                manifest
+                            }
+                            _ => continue,
+                        };
 
                     if manifest.package_name() == Some(package_name.as_str()) {
                         if let Some(package_path) =
@@ -1006,7 +1065,8 @@ impl QiCompiler {
 
             if matches_package_root && entry_file.exists() {
                 let package_dir = ancestor;
-                let submodule_path = self.resolve_submodule_path_in_package(&package_dir, &module_path[1..]);
+                let submodule_path =
+                    self.resolve_submodule_path_in_package(&package_dir, &module_path[1..]);
                 if let Some(path) = submodule_path {
                     return Some(path);
                 }
@@ -1063,7 +1123,9 @@ impl QiCompiler {
 
         if submodule_parts.len() == 1 {
             let nested_name = &submodule_parts[0];
-            let nested_entry = package_dir.join(nested_name).join(format!("{}.qi", nested_name));
+            let nested_entry = package_dir
+                .join(nested_name)
+                .join(format!("{}.qi", nested_name));
             if nested_entry.exists() {
                 return Some(nested_entry);
             }
@@ -1071,7 +1133,7 @@ impl QiCompiler {
 
         None
     }
-    
+
     /// Discover and parse all files in the same package directory
     fn discover_and_parse_same_package_files(
         &self,
@@ -1082,12 +1144,12 @@ impl QiCompiler {
         visited: &mut std::collections::HashSet<PathBuf>,
     ) -> Result<(), CompilerError> {
         // Get the directory containing the entry file
-        let dir = entry_file.parent()
+        let dir = entry_file
+            .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
         // Read all .qi files in the directory
-        let entries = std::fs::read_dir(dir)
-            .map_err(CompilerError::Io)?;
+        let entries = std::fs::read_dir(dir).map_err(CompilerError::Io)?;
 
         for entry in entries {
             let entry = entry.map_err(CompilerError::Io)?;
@@ -1123,7 +1185,7 @@ impl QiCompiler {
                                         &path,
                                         module_registry,
                                         compiled_modules,
-                                        visited
+                                        visited,
                                     )?;
                                 }
                             }
@@ -1147,11 +1209,11 @@ impl QiCompiler {
     ) -> Result<(), CompilerError> {
         // Only auto-discover files that don't have imports to avoid conflicts
         // This is a conservative approach to prevent external function declaration issues
-        let dir = entry_file.parent()
+        let dir = entry_file
+            .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
 
-        let entries = std::fs::read_dir(dir)
-            .map_err(CompilerError::Io)?;
+        let entries = std::fs::read_dir(dir).map_err(CompilerError::Io)?;
 
         for entry in entries {
             let entry = entry.map_err(CompilerError::Io)?;
@@ -1185,7 +1247,7 @@ impl QiCompiler {
                                         &path,
                                         module_registry,
                                         compiled_modules,
-                                        visited
+                                        visited,
                                     )?;
                                 }
                             }
@@ -1224,26 +1286,29 @@ impl QiCompiler {
     fn process_public_imports(
         &self,
         module_registry: &mut ModuleRegistry,
-        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>
+        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
     ) -> Result<(), CompilerError> {
         // Collect all modules that need re-export processing
         let module_paths: Vec<PathBuf> = compiled_modules.keys().cloned().collect();
-        
+
         for module_path in module_paths {
-            let path_key = module_path.canonicalize()
+            let path_key = module_path
+                .canonicalize()
                 .unwrap_or_else(|_| module_path.clone())
                 .to_string_lossy()
                 .to_string();
-            
+
             // Get current module (we'll need to modify it)
             let imports_to_process: Vec<Vec<String>> = {
                 let module = match module_registry.get_module(&path_key) {
                     Some(m) => m,
                     None => continue,
                 };
-                
+
                 // Collect public imports
-                module.imports.iter()
+                module
+                    .imports
+                    .iter()
                     .filter(|imp| {
                         // Check if this is a public import by looking at AST
                         if let Some(ast_node) = compiled_modules.get(&module_path) {
@@ -1261,7 +1326,7 @@ impl QiCompiler {
                     .map(|imp| imp.module_path.clone())
                     .collect()
             };
-            
+
             // Process each public import
             for import_path_parts in imports_to_process {
                 // Skip standard library imports (they are built-in)
@@ -1271,11 +1336,12 @@ impl QiCompiler {
                 }
 
                 let import_path = self.resolve_import_path(&module_path, &import_path_parts)?;
-                let import_path_key = import_path.canonicalize()
+                let import_path_key = import_path
+                    .canonicalize()
                     .unwrap_or_else(|_| import_path.clone())
                     .to_string_lossy()
                     .to_string();
-                
+
                 // Get exports from imported module
                 let exports_to_add: Vec<_> = {
                     if let Some(imported_module) = module_registry.get_module(&import_path_key) {
@@ -1284,18 +1350,21 @@ impl QiCompiler {
                         Vec::new()
                     }
                 };
-                
+
                 // Add exports to current module (we need mutable access)
                 module_registry.add_reexports(&path_key, exports_to_add);
             }
         }
-        
+
         Ok(())
     }
 }
 
 /// Helper: given a module and function name, extract the struct type name from return type annotation
-fn get_function_return_struct_name(module: &crate::semantic::module::Module, func_name: &str) -> Option<String> {
+fn get_function_return_struct_name(
+    module: &crate::semantic::module::Module,
+    func_name: &str,
+) -> Option<String> {
     // We need to look at the module's exports to find the function's return type node
     // The FunctionSignature only has a string, so we need to check if the module has an AST
     // Since Module doesn't carry the AST, we use a heuristic: if the symbol is a Function
@@ -1320,7 +1389,6 @@ pub struct CompilationResult {
     /// Warnings generated during compilation
     pub warnings: Vec<String>,
 }
-
 
 /// Compilation error types
 #[derive(Debug, thiserror::Error)]

@@ -2,14 +2,14 @@
 //!
 //! 为 Qi 语言提供 C 接口的 HTTP 客户端操作
 
-use super::http::{HttpClient, HttpRequest, HttpMethod};
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::time::Duration;
-use std::sync::OnceLock;
-use std::sync::Mutex;
+use super::http::{HttpClient, HttpMethod, HttpRequest};
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::io::{Read, Write};
+use std::os::raw::c_char;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 // 全局 HTTP 客户端
 static HTTP客户端: OnceLock<Mutex<HttpClient>> = OnceLock::new();
@@ -35,13 +35,17 @@ fn 获取请求句柄计数器() -> &'static Mutex<i64> {
 #[no_mangle]
 pub extern "C" fn qi_http_init() -> i64 {
     let _客户端 = 获取HTTP客户端();
-    1  // 成功
+    1 // 成功
 }
 
 /// 真实的阻塞 HTTP 请求（基于 reqwest，编译器已依赖）。
 /// 失败时返回 Err(错误信息)，调用方转成字符串返回给 Qi。
 #[allow(non_snake_case)]
-fn 执行HTTP请求(方法: reqwest::Method, 地址: &str, JSON体: Option<String>) -> Result<String, String> {
+fn 执行HTTP请求(
+    方法: reqwest::Method,
+    地址: &str,
+    JSON体: Option<String>,
+) -> Result<String, String> {
     use reqwest::blocking::Client;
     let 客户端 = Client::builder()
         .timeout(Duration::from_secs(300))
@@ -49,9 +53,7 @@ fn 执行HTTP请求(方法: reqwest::Method, 地址: &str, JSON体: Option<Strin
         .map_err(|e| format!("构建客户端失败: {}", e))?;
     let mut 构建器 = 客户端.request(方法, 地址);
     if let Some(体) = JSON体 {
-        构建器 = 构建器
-            .header("Content-Type", "application/json")
-            .body(体);
+        构建器 = 构建器.header("Content-Type", "application/json").body(体);
     }
     let 响应 = 构建器.send().map_err(|e| format!("请求失败: {}", e))?;
     响应.text().map_err(|e| format!("读取响应失败: {}", e))
@@ -117,12 +119,10 @@ pub extern "C" fn qi_http_put(url: *const c_char, body: *const c_char) -> *mut c
 
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
+            Ok(响应) => match 响应.body_as_string() {
+                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
         }
     }
@@ -143,12 +143,10 @@ pub extern "C" fn qi_http_delete(url: *const c_char) -> *mut c_char {
 
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
+            Ok(响应) => match 响应.body_as_string() {
+                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
         }
     }
@@ -200,12 +198,10 @@ pub extern "C" fn qi_http_patch(url: *const c_char, body: *const c_char) -> *mut
 
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
+            Ok(响应) => match 响应.body_as_string() {
+                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
         }
     }
@@ -227,12 +223,10 @@ pub extern "C" fn qi_http_options(url: *const c_char) -> *mut c_char {
 
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
+            Ok(响应) => match 响应.body_as_string() {
+                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
         }
     }
@@ -254,10 +248,16 @@ pub extern "C" fn qi_http_request(
     unsafe {
         let 方法字符串 = CStr::from_ptr(method).to_string_lossy().to_uppercase();
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
-        let 头文本 = if headers_json.is_null() { String::new() }
-            else { CStr::from_ptr(headers_json).to_string_lossy().to_string() };
-        let 体文本 = if body.is_null() { String::new() }
-            else { CStr::from_ptr(body).to_string_lossy().to_string() };
+        let 头文本 = if headers_json.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(headers_json).to_string_lossy().to_string()
+        };
+        let 体文本 = if body.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(body).to_string_lossy().to_string()
+        };
 
         let 方法 = match reqwest::Method::from_bytes(方法字符串.as_bytes()) {
             Ok(m) => m,
@@ -266,11 +266,14 @@ pub extern "C" fn qi_http_request(
         let 结果 = (|| -> Result<serde_json::Value, String> {
             let 客户端 = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(300))
-                .build().map_err(|e| e.to_string())?;
+                .build()
+                .map_err(|e| e.to_string())?;
             let mut 构建器 = 客户端.request(方法, &地址);
             // 自定义头
             if !头文本.is_empty() {
-                if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&头文本) {
+                if let Ok(serde_json::Value::Object(m)) =
+                    serde_json::from_str::<serde_json::Value>(&头文本)
+                {
                     for (k, v) in m {
                         if let Some(vs) = v.as_str() {
                             构建器 = 构建器.header(k, vs);
@@ -285,15 +288,20 @@ pub extern "C" fn qi_http_request(
             let 状态 = 响应.status().as_u16();
             let mut 头对象 = serde_json::Map::new();
             for (k, v) in 响应.headers().iter() {
-                头对象.insert(k.as_str().to_lowercase(),
-                    serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+                头对象.insert(
+                    k.as_str().to_lowercase(),
+                    serde_json::Value::String(v.to_str().unwrap_or("").to_string()),
+                );
             }
             let 体 = 响应.text().map_err(|e| e.to_string())?;
             Ok(serde_json::json!({"status": 状态, "headers": 头对象, "body": 体}))
         })();
         let 输出 = match 结果 {
             Ok(v) => v.to_string(),
-            Err(e) => serde_json::json!({"status":0,"headers":{},"body":format!("HTTP错误: {}", e)}).to_string(),
+            Err(e) => {
+                serde_json::json!({"status":0,"headers":{},"body":format!("HTTP错误: {}", e)})
+                    .to_string()
+            }
         };
         转为C字符串(输出)
     }
@@ -404,12 +412,10 @@ pub extern "C" fn qi_http_request_execute(handle: i64) -> *mut c_char {
     if let Some(请求) = 请求池.remove(&handle) {
         let 客户端 = 获取HTTP客户端().lock().unwrap();
         match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
+            Ok(响应) => match 响应.body_as_string() {
+                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
         }
     } else {
@@ -469,7 +475,11 @@ mod tests {
         let response_str = unsafe { CStr::from_ptr(response).to_string_lossy().into_owned() };
         qi_http_free_string(response);
         // 真实响应应是 example.com 的页面内容
-        assert!(response_str.contains("Example Domain"), "got: {}", &response_str[..response_str.len().min(120)]);
+        assert!(
+            response_str.contains("Example Domain"),
+            "got: {}",
+            &response_str[..response_str.len().min(120)]
+        );
     }
 
     #[test]
@@ -483,7 +493,8 @@ mod tests {
 
         let header_name = CString::new("Content-Type").unwrap();
         let header_value = CString::new("application/json").unwrap();
-        let result = qi_http_request_set_header(handle, header_name.as_ptr(), header_value.as_ptr());
+        let result =
+            qi_http_request_set_header(handle, header_name.as_ptr(), header_value.as_ptr());
         assert_eq!(result, 1);
 
         let body = CString::new("{\"test\":\"data\"}").unwrap();
@@ -604,7 +615,8 @@ pub extern "C" fn qi_http_server_handle_request(
                                     let 路径 = 部分[1];
 
                                     // 查找请求体（在空行之后）
-                                    let 请求体 = if let Some(位置) = 请求文本.find("\r\n\r\n") {
+                                    let 请求体 = if let Some(位置) = 请求文本.find("\r\n\r\n")
+                                    {
                                         请求文本[位置 + 4..].to_string()
                                     } else if let Some(位置) = 请求文本.find("\n\n") {
                                         请求文本[位置 + 2..].to_string()

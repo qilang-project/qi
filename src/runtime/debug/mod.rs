@@ -7,21 +7,23 @@
 //! - Debug command processing
 //! - Chinese language support for debugging messages
 
-pub mod stack_trace;
-pub mod variable_inspector;
 pub mod commands;
 pub mod profiler;
+pub mod stack_trace;
+pub mod variable_inspector;
 
 // Re-export main components (without duplicates)
-pub use stack_trace::{StackTraceCollector, EnhancedStackFrame, FrameType, StackTraceConfig};
-pub use variable_inspector::{VariableInspector, VariableInfo, VariableValue, InspectorConfig, VariableMetadata};
-pub use commands::{DebugCommandProcessor, CommandResult};
-pub use profiler::{Profiler, ProfileConfig};
+pub use commands::{CommandResult, DebugCommandProcessor};
+pub use profiler::{ProfileConfig, Profiler};
+pub use stack_trace::{EnhancedStackFrame, FrameType, StackTraceCollector, StackTraceConfig};
+pub use variable_inspector::{
+    InspectorConfig, VariableInfo, VariableInspector, VariableMetadata, VariableValue,
+};
 // Rename to avoid conflict
 pub use profiler::ProfileData as ProfilerData;
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::sync::{Arc, Mutex};
-use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// Comprehensive debugging system for Qi runtime
 pub struct DebugSystem {
@@ -147,7 +149,10 @@ impl DebugSystem {
     }
 
     /// Capture stack trace with context
-    pub fn capture_stack_trace_with_context(&self, context: &str) -> RuntimeResult<Vec<EnhancedStackFrame>> {
+    pub fn capture_stack_trace_with_context(
+        &self,
+        context: &str,
+    ) -> RuntimeResult<Vec<EnhancedStackFrame>> {
         if !self.config.enable_stack_traces {
             return Err(RuntimeError::debug_error(
                 "Stack trace collection is disabled".to_string(),
@@ -155,7 +160,8 @@ impl DebugSystem {
             ));
         }
 
-        self.stack_collector.collect_stack_trace_with_context(context)
+        self.stack_collector
+            .collect_stack_trace_with_context(context)
     }
 
     /// Get formatted stack trace
@@ -183,7 +189,10 @@ impl DebugSystem {
     }
 
     /// Inspect a registered variable
-    pub fn inspect_variable(&self, name: &str) -> RuntimeResult<variable_inspector::InspectionResult> {
+    pub fn inspect_variable(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<variable_inspector::InspectionResult> {
         if !self.config.enable_variable_inspection {
             return Err(RuntimeError::debug_error(
                 "Variable inspection is disabled".to_string(),
@@ -195,7 +204,11 @@ impl DebugSystem {
     }
 
     /// Inspect a value directly
-    pub fn inspect_value(&self, name: &str, value: &dyn VariableValue) -> RuntimeResult<variable_inspector::InspectionResult> {
+    pub fn inspect_value(
+        &self,
+        name: &str,
+        value: &dyn VariableValue,
+    ) -> RuntimeResult<variable_inspector::InspectionResult> {
         if !self.config.enable_variable_inspection {
             return Err(RuntimeError::debug_error(
                 "Variable inspection is disabled".to_string(),
@@ -274,12 +287,15 @@ impl DebugSystem {
             match self.capture_stack_trace_with_context(&format!("错误: {}", error)) {
                 Ok(frames) => {
                     self.debug_module.error("错误堆栈跟踪:")?;
-                    for frame in frames.iter().take(5) { // Limit to first 5 frames
-                        self.debug_module.error(&format!("  {}", frame.frame.format()))?;
+                    for frame in frames.iter().take(5) {
+                        // Limit to first 5 frames
+                        self.debug_module
+                            .error(&format!("  {}", frame.frame.format()))?;
                     }
                 }
                 Err(e) => {
-                    self.debug_module.warning(&format!("无法捕获堆栈跟踪: {}", e))?;
+                    self.debug_module
+                        .warning(&format!("无法捕获堆栈跟踪: {}", e))?;
                 }
             }
         }

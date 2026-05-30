@@ -138,7 +138,11 @@ pub extern "C" fn qi_path_exists(path: *const c_char) -> i32 {
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let p = Path::new(path_str.as_ref());
 
-        if p.exists() { 1 } else { 0 }
+        if p.exists() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -153,7 +157,11 @@ pub extern "C" fn qi_path_is_dir(path: *const c_char) -> i32 {
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let p = Path::new(path_str.as_ref());
 
-        if p.is_dir() { 1 } else { 0 }
+        if p.is_dir() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -168,7 +176,11 @@ pub extern "C" fn qi_path_is_file(path: *const c_char) -> i32 {
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let p = Path::new(path_str.as_ref());
 
-        if p.is_file() { 1 } else { 0 }
+        if p.is_file() {
+            1
+        } else {
+            0
+        }
     }
 }
 

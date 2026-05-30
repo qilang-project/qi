@@ -13,12 +13,8 @@ impl WindowsTarget {
     pub fn new() -> Self {
         Self {
             target_triple: "x86_64-pc-windows-msvc".to_string(),
-            cpu_features: vec![
-                "sse2", "sse4.1", "sse4.2", "avx", "avx2"
-            ],
-            linker_flags: vec![
-                "/SUBSYSTEM:CONSOLE", "/ENTRY:main"
-            ],
+            cpu_features: vec!["sse2", "sse4.1", "sse4.2", "avx", "avx2"],
+            linker_flags: vec!["/SUBSYSTEM:CONSOLE", "/ENTRY:main"],
         }
     }
 }

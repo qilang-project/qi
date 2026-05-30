@@ -3,12 +3,12 @@
 //! This module provides comprehensive error handling with Chinese language
 //! localization, stack tracing, and recovery strategies for the Qi runtime.
 
-pub mod handler;
 pub mod chinese;
+pub mod handler;
 
 // Re-export main components
-pub use handler::{ErrorHandler, ErrorContext, RecoveryOption};
 pub use chinese::{ChineseErrorMessages, ChineseKeywords, MessageLocalizer};
+pub use handler::{ErrorContext, ErrorHandler, RecoveryOption};
 
 /// Error handling result type
 pub type ErrorResult<T> = Result<T, Error>;
@@ -84,22 +84,13 @@ pub enum Error {
     },
 
     /// Lock/synchronization errors
-    LockError {
-        message: String,
-        chinese_message: String,
-    },
+    LockError { message: String, chinese_message: String },
 
     /// Configuration errors
-    ConfigurationError {
-        message: String,
-        chinese_message: String,
-    },
+    ConfigurationError { message: String, chinese_message: String },
 
     /// General runtime errors
-    RuntimeError {
-        message: String,
-        chinese_message: String,
-    },
+    RuntimeError { message: String, chinese_message: String },
 }
 
 impl Error {
@@ -443,8 +434,7 @@ impl StackFrame {
 
     /// Format stack frame as string
     pub fn format(&self) -> String {
-        let mut result = format!("{} ({}:{}", self.function, self.file,
-            self.line.unwrap_or(0));
+        let mut result = format!("{} ({}:{}", self.function, self.file, self.line.unwrap_or(0));
         if let Some(col) = self.column {
             result.push_str(&format!(":{}", col));
         }
@@ -518,10 +508,7 @@ mod tests {
 
     #[test]
     fn test_error_creation() {
-        let error = Error::memory_error(
-            "Out of memory",
-            "内存不足"
-        );
+        let error = Error::memory_error("Out of memory", "内存不足");
 
         assert_eq!(error.message(), "Out of memory");
         assert_eq!(error.chinese_message(), "内存不足");

@@ -13,151 +13,150 @@ impl Span {
     }
 }
 
-
 /// Token kinds for Qi language
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     // Chinese Keywords (multi-character)
-    如果,      // if
-    否则,      // else
-    循环,      // loop
-    当,        // while
-    对于,      // for
-    函数,      // function
-    返回,      // return
-    变量,      // variable
-    常量,      // constant
-    字符串,    // string
-    布尔,      // boolean
-    类型,    // type
-    结构体,    // struct
-    枚举,      // enum
-    数组,      // array
-    方法,      // method
-    自己,      // self
+    如果,   // if
+    否则,   // else
+    循环,   // loop
+    当,     // while
+    对于,   // for
+    函数,   // function
+    返回,   // return
+    变量,   // variable
+    常量,   // constant
+    字符串, // string
+    布尔,   // boolean
+    类型,   // type
+    结构体, // struct
+    枚举,   // enum
+    数组,   // array
+    方法,   // method
+    自己,   // self
 
     // Single-character tokens
-    赋值,      // =
-    加,        // +
-    减,        // -
-    乘,        // *
-    除,        // /
-    取余,      // %
-    取地址,    // &
-    感叹号,    // ! (logical not)
+    赋值,   // =
+    加,     // +
+    减,     // -
+    乘,     // *
+    除,     // /
+    取余,   // %
+    取地址, // &
+    感叹号, // ! (logical not)
 
     // Compound assignment operators
-    加等,      // +=
-    减等,      // -=
-    乘等,      // *=
-    除等,      // /=
-    取余等,    // %=
+    加等,   // +=
+    减等,   // -=
+    乘等,   // *=
+    除等,   // /=
+    取余等, // %=
 
-    等于,      // ==
-    不等于,    // !=
-    大于,      // >
-    小于,      // <
-    大于等于,  // >=
-    小于等于,  // <=
-    分号,      // ;
-    逗号,      // ,
-    左括号,    // (
-    右括号,    // )
-    左大括号,  // {
-    右大括号,  // }
-    左方括号,  // [
-    右方括号,  // ]
-    冒号,      // :
-    双冒号,    // ::
-    箭头,      // ->
-    点,        // .
+    等于,     // ==
+    不等于,   // !=
+    大于,     // >
+    小于,     // <
+    大于等于, // >=
+    小于等于, // <=
+    分号,     // ;
+    逗号,     // ,
+    左括号,   // (
+    右括号,   // )
+    左大括号, // {
+    右大括号, // }
+    左方括号, // [
+    右方括号, // ]
+    冒号,     // :
+    双冒号,   // ::
+    箭头,     // ->
+    点,       // .
 
     // Chinese punctuation tokens
-    中文左括号,  // （
-    中文右括号,  // ）
+    中文左括号,   // （
+    中文右括号,   // ）
     中文左大括号, // 【
     中文右大括号, // 】
-    中文逗号,    // ，
-    中文分号,    // ；
+    中文逗号,     // ，
+    中文分号,     // ；
 
     // Additional keywords for grammar
-    导入,      // import
-    导出,      // export
-    作为,      // as
-    在,        // in
-    字符,      // char
-    空,        // null/void
-    参数,      // parameter
-    与,        // and
-    或,        // or
-    包,        // package
-    模块,      // module
-    公开,      // public
-    私有,      // private
+    导入, // import
+    导出, // export
+    作为, // as
+    在,   // in
+    字符, // char
+    空,   // null/void
+    参数, // parameter
+    与,   // and
+    或,   // or
+    包,   // package
+    模块, // module
+    公开, // public
+    私有, // private
 
     // Concurrency keywords - 并发关键字
-    启动,      // go/spawn
-    协程,      // coroutine/goroutine
-    通道,      // channel
-    选择,      // select
-    情况,      // case (for select statements)
-    并发,      // concurrent/parallel
-    未来,      // future (async type)
+    启动, // go/spawn
+    协程, // coroutine/goroutine
+    通道, // channel
+    选择, // select
+    情况, // case (for select statements)
+    并发, // concurrent/parallel
+    未来, // future (async type)
 
     // Synchronization keywords - 同步关键字
-    等待组,    // waitgroup
-    互斥锁,    // mutex
-    读写锁,    // rwmutex
-    条件变量,  // condvar
-    仅一次,    // once
+    等待组,   // waitgroup
+    互斥锁,   // mutex
+    读写锁,   // rwmutex
+    条件变量, // condvar
+    仅一次,   // once
 
     // Timeout and error handling keywords - 超时和错误处理关键字
-    尝试,      // try
-    捕获,      // catch
-    抛出,      // throw
-    最终,      // finally
-    重试,      // retry
-    超时,      // timeout
+    尝试, // try
+    捕获, // catch
+    抛出, // throw
+    最终, // finally
+    重试, // retry
+    超时, // timeout
 
     // Additional keywords for new features
-    闭包,      // closure/lambda
-    匹配,      // match
-    内联,      // inline
-    联合体,    // union
-    异步,      // async (function prefix: 异步 函数 X(...))
-    异步块,    // async block expression: 异步块 { ... } — 跟 异步 函数 区分以避 LALR 冲突
+    闭包,   // closure/lambda
+    匹配,   // match
+    内联,   // inline
+    联合体, // union
+    异步,   // async (function prefix: 异步 函数 X(...))
+    异步块, // async block expression: 异步块 { ... } — 跟 异步 函数 区分以避 LALR 冲突
 
     // Boolean literal constants
-    真,                 // true
-    假,                 // false
+    真, // true
+    假, // false
 
     // Identifiers and literals
-    标识符,              // Variable/function names (stored in text field)
-    字符串字面量,        // String literals (stored in text field)
-    格式字符串字面量,    // Format string literals f"..." with interpolation
-    整数字面量(i64),     // Integer literals
-    浮点数字面量,   // Float literals (stored in text field)
-    布尔字面量(bool),    // Boolean literals
-    字符字面量(char),    // Character literals
+    标识符,           // Variable/function names (stored in text field)
+    字符串字面量,     // String literals (stored in text field)
+    格式字符串字面量, // Format string literals f"..." with interpolation
+    整数字面量(i64),  // Integer literals
+    浮点数字面量,     // Float literals (stored in text field)
+    布尔字面量(bool), // Boolean literals
+    字符字面量(char), // Character literals
 
     // Additional keywords
-    非,                 // not
-    跳出,               // break
-    继续,               // continue
-    输入,               // input
-    长度,               // length
-    打印,               // print
-    自定义类型,         // custom type declaration keyword
-    解引用,             // dereference
-    取地址关键字,       // address-of keyword
-    新建,               // new (struct instantiation)
+    非,           // not
+    跳出,         // break
+    继续,         // continue
+    输入,         // input
+    长度,         // length
+    打印,         // print
+    自定义类型,   // custom type declaration keyword
+    解引用,       // dereference
+    取地址关键字, // address-of keyword
+    新建,         // new (struct instantiation)
 
     // Type keywords
     类型关键词(crate::parser::ast::BasicType),
 
     // Special
     文件结束,
-    错误,               // Lexical error (stored in text field)
+    错误, // Lexical error (stored in text field)
 }
 
 /// Token with source location information
@@ -172,13 +171,7 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, text: String, span: Span, line: usize, column: usize) -> Self {
-        Self {
-            kind,
-            text,
-            span,
-            line,
-            column,
-        }
+        Self { kind, text, span, line, column }
     }
 }
 

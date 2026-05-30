@@ -169,7 +169,11 @@ fn test_future_struct_compilation_pipeline() {
     let compiler = qi_compiler::QiCompiler::new();
     let result = compiler.generate_ir_for_file(source_file.clone());
 
-    assert!(result.is_ok(), "Future<结构体> IR generation should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Future<结构体> IR generation should succeed: {:?}",
+        result.err()
+    );
 
     let ir = result.unwrap();
     assert!(ir.contains("call ptr @qi_runtime_alloc(i64"));
@@ -181,7 +185,9 @@ fn test_control_flow_chinese_keywords() {
     let source = "如果 否则 当 对于 与 或".to_string();
     let mut lexer = Lexer::new(source);
 
-    let tokens = lexer.tokenize().expect("Should tokenize control flow keywords");
+    let tokens = lexer
+        .tokenize()
+        .expect("Should tokenize control flow keywords");
 
     let expected_keywords = vec![
         TokenKind::如果,
@@ -207,7 +213,8 @@ fn test_parse_control_flow_statements() {
         如果 x > 5 {
             变量 y = 10;
         }
-        "#.to_string();
+        "#
+    .to_string();
 
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().expect("Should tokenize successfully");
@@ -262,7 +269,9 @@ fn test_character_literal_tokenization() {
     let source = "'A' '5' '!';".to_string();
     let mut lexer = Lexer::new(source);
 
-    let tokens = lexer.tokenize().expect("Should tokenize character literals successfully");
+    let tokens = lexer
+        .tokenize()
+        .expect("Should tokenize character literals successfully");
 
     let expected_tokens = vec![
         TokenKind::字符字面量('A'),
@@ -332,7 +341,7 @@ fn test_lalrpop_cli_directly() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -372,7 +381,7 @@ fn test_binary_expressions() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -412,7 +421,7 @@ fn test_function_declarations() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -452,7 +461,7 @@ fn test_if_statements() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -491,7 +500,7 @@ fn test_if_else_statements() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -530,7 +539,7 @@ fn test_while_statements() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -569,7 +578,7 @@ fn test_for_statements() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -608,7 +617,7 @@ fn test_simple_function_calls() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -648,7 +657,7 @@ fn test_multiple_function_calls() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -657,7 +666,10 @@ fn test_multiple_function_calls() {
         }
         Err(e) => {
             println!("Multiple function call compilation failed: {}", e);
-            panic!("Multiple function call compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Multiple function call compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -689,7 +701,7 @@ fn test_function_calls_expressions() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -698,7 +710,10 @@ fn test_function_calls_expressions() {
         }
         Err(e) => {
             println!("Function call expression compilation failed: {}", e);
-            panic!("Function call expression compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Function call expression compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -730,7 +745,7 @@ fn test_boolean_expressions_in_if() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -770,7 +785,7 @@ fn test_all_comparison_operators() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -783,7 +798,10 @@ fn test_all_comparison_operators() {
         }
         Err(e) => {
             println!("All comparison operators compilation failed: {}", e);
-            panic!("All comparison operators compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "All comparison operators compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -815,7 +833,7 @@ fn test_boolean_expressions_in_while() {
             // Check generated IR content
             // IR检查已禁用 - executable_path现在指向可执行文件，不是IR
             // let ir_content = fs::read_to_string(&compilation_result.ir_paths[0])
-                //.expect("Failed to read generated IR file");
+            //.expect("Failed to read generated IR file");
             // println!("Generated IR:\n{}", ir_content);
 
             assert!(compilation_result.executable_path.exists());
@@ -823,7 +841,10 @@ fn test_boolean_expressions_in_while() {
         }
         Err(e) => {
             println!("Boolean while statement compilation failed: {}", e);
-            panic!("Boolean while statement compilation should have succeeded but failed with: {}", e);
+            panic!(
+                "Boolean while statement compilation should have succeeded but failed with: {}",
+                e
+            );
         }
     }
 }
@@ -960,7 +981,12 @@ fn test_fixtures_integration() {
         if path.is_file() && path.extension().map_or(false, |ext| ext == "qi") {
             let source = fs::read_to_string(&path).expect("Should read fixture file");
             let result = parser.parse_source(&source);
-            assert!(result.is_ok(), "Fixture should parse: {}\nError: {:?}", path.display(), result.err());
+            assert!(
+                result.is_ok(),
+                "Fixture should parse: {}\nError: {:?}",
+                path.display(),
+                result.err()
+            );
         }
     }
 }

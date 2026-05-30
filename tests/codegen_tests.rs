@@ -1,11 +1,11 @@
 //! Unit tests for Qi code generation module
 //! 测试代码生成模块
 
-use qi_compiler::lexer::*;
-use qi_compiler::parser::*;
 use qi_compiler::codegen::*;
 use qi_compiler::config::CompilationTarget;
 use qi_compiler::config::OptimizationLevel;
+use qi_compiler::lexer::*;
+use qi_compiler::parser::*;
 
 #[test]
 fn test_code_generator_creation() {
@@ -18,10 +18,8 @@ fn test_code_generator_creation() {
 
 #[test]
 fn test_code_generator_with_optimization() {
-    let _generator = CodeGenerator::new_with_optimization(
-        CompilationTarget::Linux,
-        OptimizationLevel::Basic
-    );
+    let _generator =
+        CodeGenerator::new_with_optimization(CompilationTarget::Linux, OptimizationLevel::Basic);
 
     // Test creation with optimization level
     assert!(true);
@@ -349,10 +347,8 @@ fn test_optimization_levels() {
     ];
 
     for opt_level in opt_levels {
-        let mut generator = CodeGenerator::new_with_optimization(
-            CompilationTarget::Linux,
-            opt_level.clone()
-        );
+        let mut generator =
+            CodeGenerator::new_with_optimization(CompilationTarget::Linux, opt_level.clone());
         let result = generator.generate(&AstNode::程序(program.clone()));
 
         // Should generate LLVM IR for all optimization levels
@@ -500,8 +496,7 @@ fn test_multiple_function_codegen() {
     if let Ok(ir) = result {
         assert!(!ir.is_empty());
         // Should contain multiple function definitions
-        let function_count = ir.matches("define").count() +
-                           ir.matches("@").count();
+        let function_count = ir.matches("define").count() + ir.matches("@").count();
         assert!(function_count >= 2); // At least add and multiply
     }
 }

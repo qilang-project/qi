@@ -2,9 +2,9 @@
 //!
 //! 为 Qi 语言提供跨平台的操作系统功能
 
+use std::env;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::env;
 
 /// 获取环境变量
 ///
@@ -55,7 +55,7 @@ pub extern "C" fn qi_os_setenv(name: *const c_char, value: *const c_char) -> i64
         let value_str = CStr::from_ptr(value).to_string_lossy().to_string();
 
         env::set_var(&name_str, &value_str);
-        1  // Return success (set_var panics on error)
+        1 // Return success (set_var panics on error)
     }
 }
 
@@ -393,7 +393,11 @@ pub extern "C" fn qi_os_is_dir(path: *const c_char) -> i64 {
         };
 
         let path_obj = std::path::Path::new(path_str);
-        if path_obj.is_dir() { 1 } else { 0 }
+        if path_obj.is_dir() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -416,7 +420,11 @@ pub extern "C" fn qi_os_is_file(path: *const c_char) -> i64 {
         };
 
         let path_obj = std::path::Path::new(path_str);
-        if path_obj.is_file() { 1 } else { 0 }
+        if path_obj.is_file() {
+            1
+        } else {
+            0
+        }
     }
 }
 

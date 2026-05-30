@@ -85,10 +85,7 @@ fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
 /// cert_path / key_path 都是 PEM 文件路径
 /// 成功返回 配置句柄 (>0)，失败返回 -1
 #[no_mangle]
-pub extern "C" fn qi_tls_create_config(
-    cert_path: *const c_char,
-    key_path: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_tls_create_config(cert_path: *const c_char, key_path: *const c_char) -> i64 {
     install_default_provider_once();
 
     let cert_path = match cstr_to_string(cert_path) {
@@ -128,7 +125,10 @@ pub extern "C" fn qi_tls_create_config(
     };
 
     let handle = next_handle();
-    config_pool().lock().unwrap().insert(handle, Arc::new(config));
+    config_pool()
+        .lock()
+        .unwrap()
+        .insert(handle, Arc::new(config));
     handle
 }
 
@@ -174,7 +174,10 @@ pub extern "C" fn qi_tls_listen(
     };
 
     let handle = next_handle();
-    listener_pool().lock().unwrap().insert(handle, (listener, config));
+    listener_pool()
+        .lock()
+        .unwrap()
+        .insert(handle, (listener, config));
     handle
 }
 
@@ -236,7 +239,11 @@ pub extern "C" fn qi_tls_accept(server_handle: i64) -> i64 {
 /// 调用方负责通过 qi_tls_free_string 释放。
 #[no_mangle]
 pub extern "C" fn qi_tls_read_string(handle: i64, buffer_size: i64) -> *mut c_char {
-    let size = if buffer_size <= 0 { 4096 } else { buffer_size as usize };
+    let size = if buffer_size <= 0 {
+        4096
+    } else {
+        buffer_size as usize
+    };
     let mut buf = vec![0u8; size];
 
     let n = {

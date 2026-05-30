@@ -4,14 +4,14 @@
 
 #![allow(non_snake_case)]
 
-use super::http::{TcpConnectionConfig, TcpConnection, NetworkInterface};
-use std::ffi::{CStr, CString, c_void};
-use std::os::raw::c_char;
-use std::time::Duration;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::collections::HashMap;
+use super::http::{NetworkInterface, TcpConnection, TcpConnectionConfig};
 use dashmap::DashMap;
+use std::collections::HashMap;
+use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
 
 // 全局网络接口实例
 use std::sync::OnceLock;
@@ -30,9 +30,7 @@ fn 获取网络接口() -> Option<&'static NetworkInterface> {
 
 fn 初始化网络接口() {
     全局网络接口.get_or_init(|| {
-        NetworkInterface::new().unwrap_or_else(|_| {
-            panic!("Failed to initialize network interface")
-        })
+        NetworkInterface::new().unwrap_or_else(|_| panic!("Failed to initialize network interface"))
     });
 }
 
@@ -201,7 +199,11 @@ pub extern "C" fn qi_network_tcp_write_string(handle: i64, data: *const c_char) 
 /// 返回 1 成功，0 失败
 #[no_mangle]
 pub extern "C" fn qi_network_tcp_close(handle: i64) -> i64 {
-    if 获取连接池().remove(&handle).is_some() { 1 } else { 0 }
+    if 获取连接池().remove(&handle).is_some() {
+        1
+    } else {
+        0
+    }
 }
 
 /// TCP 刷新缓冲区
@@ -290,27 +292,17 @@ pub extern "C" fn qi_network_get_local_ip() -> *mut c_char {
 
     // 使用 UDP 连接到外部地址获取本机 IP
     match UdpSocket::bind("0.0.0.0:0") {
-        Ok(socket) => {
-            match socket.connect("8.8.8.8:80") {
-                Ok(_) => {
-                    match socket.local_addr() {
-                        Ok(addr) => {
-                            let ip = addr.ip().to_string();
-                            CString::new(ip).unwrap().into_raw()
-                        }
-                        Err(_) => {
-                            CString::new("127.0.0.1").unwrap().into_raw()
-                        }
-                    }
+        Ok(socket) => match socket.connect("8.8.8.8:80") {
+            Ok(_) => match socket.local_addr() {
+                Ok(addr) => {
+                    let ip = addr.ip().to_string();
+                    CString::new(ip).unwrap().into_raw()
                 }
-                Err(_) => {
-                    CString::new("127.0.0.1").unwrap().into_raw()
-                }
-            }
-        }
-        Err(_) => {
-            CString::new("127.0.0.1").unwrap().into_raw()
-        }
+                Err(_) => CString::new("127.0.0.1").unwrap().into_raw(),
+            },
+            Err(_) => CString::new("127.0.0.1").unwrap().into_raw(),
+        },
+        Err(_) => CString::new("127.0.0.1").unwrap().into_raw(),
     }
 }
 
@@ -411,7 +403,11 @@ pub extern "C" fn qi_network_tcp_server_close(server_handle: i64) -> i64 {
 /// 返回字节切片句柄；连接关闭返回 0；错误返回 -1
 #[no_mangle]
 pub extern "C" fn qi_network_tcp_read_bytes(handle: i64, buffer_size: i64) -> i64 {
-    let size = if buffer_size <= 0 { 4096 } else { buffer_size as usize };
+    let size = if buffer_size <= 0 {
+        4096
+    } else {
+        buffer_size as usize
+    };
     let mut buf = vec![0u8; size];
 
     let n = match 获取连接池().get(&handle) {
@@ -913,12 +909,7 @@ async fn handle_conn_async(
         let req_handle = crate::runtime::stdlib::bytes_ffi::register_bytes(req_bytes);
 
         // 同步调 qi handler — 这是 μs 级 CPU 工作，短暂占用 tokio worker 没事
-        let resp_handle = invoke_handler(
-            handler_addr,
-            app_addr as *const c_void,
-            req_handle,
-            0,
-        );
+        let resp_handle = invoke_handler(handler_addr, app_addr as *const c_void, req_handle, 0);
         // handler 可能已经释放了；no-op 再来一次
         crate::runtime::stdlib::bytes_ffi::free_bytes(req_handle);
 
@@ -1002,9 +993,7 @@ fn request_has_connection_close(bytes: &[u8]) -> bool {
                 .map(|p| i + p)
                 .unwrap_or(headers.len());
             let value = &headers[i + needle.len()..line_end];
-            return value
-                .windows(5)
-                .any(|w| w.eq_ignore_ascii_case(b"close"));
+            return value.windows(5).any(|w| w.eq_ignore_ascii_case(b"close"));
         }
         i += 1;
     }
@@ -1124,7 +1113,11 @@ pub extern "C" fn qi_network_async_tcp_read_bytes(
         None => return fail_immediately(f_ptr, format!("invalid tcp handle {}", handle)),
     };
 
-    let buf_size = if buffer_size <= 0 { 4096 } else { buffer_size as usize };
+    let buf_size = if buffer_size <= 0 {
+        4096
+    } else {
+        buffer_size as usize
+    };
 
     异步运行时().spawn(async move {
         let mut buf = vec![0u8; buf_size];
@@ -1196,7 +1189,11 @@ pub extern "C" fn qi_network_async_tcp_write_bytes(
 /// 关闭异步 TCP 连接，释放池中条目
 #[no_mangle]
 pub extern "C" fn qi_network_async_tcp_close(handle: i64) -> i64 {
-    if tokio_tcp_pool().remove(&handle).is_some() { 1 } else { 0 }
+    if tokio_tcp_pool().remove(&handle).is_some() {
+        1
+    } else {
+        0
+    }
 }
 
 // ============================================================================

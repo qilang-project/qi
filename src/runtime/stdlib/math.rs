@@ -3,8 +3,8 @@
 //! This module provides comprehensive mathematical operations including
 //! basic arithmetic, advanced functions, and Chinese number formatting.
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::collections::HashMap;
-use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// Mathematical operation configuration
 #[derive(Debug, Clone)]
@@ -80,14 +80,21 @@ impl MathModule {
 
     /// Initialize mathematical constants
     fn initialize_constants(&mut self) {
-        self.constants.insert("PI".to_string(), std::f64::consts::PI);
+        self.constants
+            .insert("PI".to_string(), std::f64::consts::PI);
         self.constants.insert("E".to_string(), std::f64::consts::E);
-        self.constants.insert("LN_2".to_string(), std::f64::consts::LN_2);
-        self.constants.insert("LN_10".to_string(), std::f64::consts::LN_10);
-        self.constants.insert("LOG2_10".to_string(), std::f64::consts::LOG2_10);
-        self.constants.insert("LOG10_2".to_string(), std::f64::consts::LOG10_2);
-        self.constants.insert("SQRT_2".to_string(), std::f64::consts::SQRT_2);
-        self.constants.insert("SQRT_PI".to_string(), std::f64::consts::PI.sqrt());
+        self.constants
+            .insert("LN_2".to_string(), std::f64::consts::LN_2);
+        self.constants
+            .insert("LN_10".to_string(), std::f64::consts::LN_10);
+        self.constants
+            .insert("LOG2_10".to_string(), std::f64::consts::LOG2_10);
+        self.constants
+            .insert("LOG10_2".to_string(), std::f64::consts::LOG10_2);
+        self.constants
+            .insert("SQRT_2".to_string(), std::f64::consts::SQRT_2);
+        self.constants
+            .insert("SQRT_PI".to_string(), std::f64::consts::PI.sqrt());
     }
 
     /// Add two numbers
@@ -378,7 +385,10 @@ impl MathModule {
     pub fn constant(&self, name: &str) -> RuntimeResult<f64> {
         match self.constants.get(name) {
             Some(value) => Ok(*value),
-            None => Err(RuntimeError::internal_error(format!("未知的数学常数: {}", name), "未知的数学常数".to_string())),
+            None => Err(RuntimeError::internal_error(
+                format!("未知的数学常数: {}", name),
+                "未知的数学常数".to_string(),
+            )),
         }
     }
 
@@ -405,7 +415,10 @@ impl MathModule {
         self.check_bounds(max)?;
 
         if min > max {
-            return Err(RuntimeError::internal_error("最小值不能大于最大值", "最小值不能大于最大值"));
+            return Err(RuntimeError::internal_error(
+                "最小值不能大于最大值",
+                "最小值不能大于最大值",
+            ));
         }
 
         Ok(value.clamp(min, max))
@@ -453,7 +466,8 @@ impl MathModule {
             if num % 10000 != 0 {
                 let segment_result = self.convert_four_digits(num % 10000);
                 if !result.is_empty() && large_unit_index > 0 {
-                    result = format!("{}{}{}", segment_result, large_units[large_unit_index], result);
+                    result =
+                        format!("{}{}{}", segment_result, large_units[large_unit_index], result);
                 } else {
                     result = format!("{}{}", segment_result, result);
                 }

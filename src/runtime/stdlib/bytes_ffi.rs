@@ -5,11 +5,11 @@
 
 #![allow(non_snake_case)]
 
+use dashmap::DashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, Ordering};
-use dashmap::DashMap;
+use std::sync::OnceLock;
 
 // 用 DashMap 替换 Mutex<HashMap>。读 / 写 / 插入 / 删除 都走分片锁——不同
 // 句柄之间不再相互阻塞，hot path（追加切片、读取、释放）的瓶颈消失。
@@ -101,7 +101,9 @@ pub extern "C" fn qi_bytes_to_string(handle: i64) -> *mut c_char {
         }
         None => String::new(),
     };
-    CString::new(s).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 /// 字节长度
@@ -256,7 +258,9 @@ pub extern "C" fn qi_bytes_to_hex(handle: i64) -> *mut c_char {
         Some(v) => v.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
         None => String::new(),
     };
-    CString::new(hex).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(hex)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 /// 从十六进制字符串构造字节切片；非法字符返回 -1
@@ -296,7 +300,9 @@ pub extern "C" fn qi_bytes_to_base64(handle: i64) -> *mut c_char {
         None => Vec::new(),
     };
     let s = encode_base64(&bytes);
-    CString::new(s).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 /// 从 Base64 解码；非法返回 -1

@@ -4,10 +4,10 @@
 //! function timing, memory usage tracking, and performance analysis with Chinese
 //! language support for reports.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 
 /// Performance profiler
 #[derive(Debug)]
@@ -239,7 +239,10 @@ impl Profiler {
     }
 
     /// Create profiler with configuration
-    pub fn with_config(debug_module: Arc<crate::runtime::stdlib::debug::DebugModule>, config: ProfileConfig) -> Self {
+    pub fn with_config(
+        debug_module: Arc<crate::runtime::stdlib::debug::DebugModule>,
+        config: ProfileConfig,
+    ) -> Self {
         Self {
             debug_module,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -307,7 +310,8 @@ impl Profiler {
             stats.total_sessions += 1;
         }
 
-        self.debug_module.info(&format!("开始性能分析会话: {}", name))?;
+        self.debug_module
+            .info(&format!("开始性能分析会话: {}", name))?;
         Ok(())
     }
 
@@ -315,18 +319,22 @@ impl Profiler {
     pub fn stop_profiling(&self, name: &str) -> super::RuntimeResult<ProfileData> {
         let mut sessions = self.active_sessions.lock().unwrap();
 
-        let session = sessions.remove(name)
-            .ok_or_else(|| super::RuntimeError::debug_error(
+        let session = sessions.remove(name).ok_or_else(|| {
+            super::RuntimeError::debug_error(
                 format!("Profiling session '{}' not found", name),
                 format!("性能分析会话 '{}' 未找到", name),
-            ))?;
+            )
+        })?;
 
         let end_time = SystemTime::now();
-        let total_duration = end_time.duration_since(session.start_time)
-            .map_err(|e| super::RuntimeError::debug_error(
-                format!("Invalid duration: {}", e),
-                "无效持续时间".to_string(),
-            ))?
+        let total_duration = end_time
+            .duration_since(session.start_time)
+            .map_err(|e| {
+                super::RuntimeError::debug_error(
+                    format!("Invalid duration: {}", e),
+                    "无效持续时间".to_string(),
+                )
+            })?
             .as_micros() as u64;
 
         // Collect final memory snapshot
@@ -370,16 +378,22 @@ impl Profiler {
         // Auto-save if enabled
         if self.config.auto_save {
             if let Err(e) = self.auto_save_profile(&profile_data) {
-                self.debug_module.warning(&format!("自动保存性能分析失败: {}", e))?;
+                self.debug_module
+                    .warning(&format!("自动保存性能分析失败: {}", e))?;
             }
         }
 
-        self.debug_module.info(&format!("性能分析会话完成: {} (耗时: {}μs)", name, total_duration))?;
+        self.debug_module
+            .info(&format!("性能分析会话完成: {} (耗时: {}μs)", name, total_duration))?;
         Ok(profile_data)
     }
 
     /// Enter a function call
-    pub fn enter_function(&self, session_name: &str, function_name: &str) -> super::RuntimeResult<()> {
+    pub fn enter_function(
+        &self,
+        session_name: &str,
+        function_name: &str,
+    ) -> super::RuntimeResult<()> {
         let mut sessions = self.active_sessions.lock().unwrap();
 
         if let Some(session) = sessions.get_mut(session_name) {
@@ -408,7 +422,11 @@ impl Profiler {
     }
 
     /// Exit a function call
-    pub fn exit_function(&self, session_name: &str, function_name: &str) -> super::RuntimeResult<()> {
+    pub fn exit_function(
+        &self,
+        session_name: &str,
+        function_name: &str,
+    ) -> super::RuntimeResult<()> {
         let mut sessions = self.active_sessions.lock().unwrap();
 
         if let Some(session) = sessions.get_mut(session_name) {
@@ -438,12 +456,14 @@ impl Profiler {
                     sub_call_count: 0, // TODO: Calculate sub-calls
                 };
 
-                session.function_times
+                session
+                    .function_times
                     .entry(function_name.to_string())
                     .or_insert_with(Vec::new)
                     .push(timing);
             } else {
-                self.debug_module.warning(&format!("空调用栈时尝试退出函数: {}", function_name))?;
+                self.debug_module
+                    .warning(&format!("空调用栈时尝试退出函数: {}", function_name))?;
             }
             Ok(())
         } else {
@@ -461,7 +481,9 @@ impl Profiler {
 
     /// Get profile data by name
     pub fn get_profile_by_name(&self, name: &str) -> Option<ProfileData> {
-        self.completed_data.lock().unwrap()
+        self.completed_data
+            .lock()
+            .unwrap()
             .iter()
             .find(|profile| profile.name == name)
             .cloned()
@@ -502,8 +524,13 @@ impl Profiler {
     }
 
     /// Generate performance summary
-    fn generate_performance_summary(&self, session: &ProfileSession, total_duration: u64) -> PerformanceSummary {
-        let all_timings: Vec<FunctionTiming> = session.function_times.values().flatten().cloned().collect();
+    fn generate_performance_summary(
+        &self,
+        session: &ProfileSession,
+        total_duration: u64,
+    ) -> PerformanceSummary {
+        let all_timings: Vec<FunctionTiming> =
+            session.function_times.values().flatten().cloned().collect();
 
         let total_calls = all_timings.len();
         let unique_functions = session.function_times.len();
@@ -516,19 +543,25 @@ impl Profiler {
         };
 
         let total_memory_allocated = all_timings.iter().map(|t| t.memory_allocated).sum();
-        let peak_memory = session.memory_snapshots.iter()
+        let peak_memory = session
+            .memory_snapshots
+            .iter()
             .map(|s| s.total_memory)
             .max()
             .unwrap_or(0);
 
         let mut call_distribution = HashMap::new();
         for timing in &all_timings {
-            *call_distribution.entry(timing.function_name.clone()).or_insert(0) += 1;
+            *call_distribution
+                .entry(timing.function_name.clone())
+                .or_insert(0) += 1;
         }
 
         let mut memory_distribution = HashMap::new();
         for timing in &all_timings {
-            *memory_distribution.entry(timing.function_name.clone()).or_insert(0) += timing.memory_allocated;
+            *memory_distribution
+                .entry(timing.function_name.clone())
+                .or_insert(0) += timing.memory_allocated;
         }
 
         PerformanceSummary {
@@ -573,9 +606,9 @@ impl Profiler {
         Ok(MemorySnapshot {
             timestamp_us: timestamp,
             total_memory,
-            heap_memory: total_memory / 2, // Mock split
+            heap_memory: total_memory / 2,  // Mock split
             stack_memory: total_memory / 4, // Mock split
-            allocation_count: 0, // TODO: Track allocations
+            allocation_count: 0,            // TODO: Track allocations
         })
     }
 
@@ -585,19 +618,22 @@ impl Profiler {
             let filename = format!("{}/{}_{}.json", dir, profile.name, profile.created_at);
 
             // Save profile data to file
-            let json = serde_json::to_string_pretty(profile)
-                .map_err(|e| super::RuntimeError::debug_error(
+            let json = serde_json::to_string_pretty(profile).map_err(|e| {
+                super::RuntimeError::debug_error(
                     format!("JSON serialization failed: {}", e),
                     "JSON序列化失败".to_string(),
-                ))?;
+                )
+            })?;
 
-            std::fs::write(&filename, json)
-                .map_err(|e| super::RuntimeError::debug_error(
+            std::fs::write(&filename, json).map_err(|e| {
+                super::RuntimeError::debug_error(
                     format!("Failed to write profile file: {}", e),
                     "写入性能分析文件失败".to_string(),
-                ))?;
+                )
+            })?;
 
-            self.debug_module.debug(&format!("性能分析已自动保存: {}", filename))?;
+            self.debug_module
+                .debug(&format!("性能分析已自动保存: {}", filename))?;
         }
 
         Ok(())
@@ -634,7 +670,10 @@ impl ProfileGuard {
 
 impl Drop for ProfileGuard {
     fn drop(&mut self) {
-        if let Err(e) = self.profiler.exit_function(&self.session_name, &self.function_name) {
+        if let Err(e) = self
+            .profiler
+            .exit_function(&self.session_name, &self.function_name)
+        {
             eprintln!("ProfileGuard drop failed: {}", e);
         }
     }
@@ -676,8 +715,12 @@ mod tests {
         profiler.start_profiling("test_session").unwrap();
 
         // Enter and exit function
-        profiler.enter_function("test_session", "test_function").unwrap();
-        profiler.exit_function("test_session", "test_function").unwrap();
+        profiler
+            .enter_function("test_session", "test_function")
+            .unwrap();
+        profiler
+            .exit_function("test_session", "test_function")
+            .unwrap();
 
         // Stop profiling
         let profile_data = profiler.stop_profiling("test_session").unwrap();

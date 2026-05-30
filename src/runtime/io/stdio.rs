@@ -3,8 +3,8 @@
 //! This module provides standard input/output operations with
 //! Chinese language support and console interface management.
 
-use std::io::{self, Write, Read};
-use super::{IoResult, IoError};
+use super::{IoError, IoResult};
+use std::io::{self, Read, Write};
 
 /// Standard I/O interface
 #[derive(Debug)]
@@ -89,8 +89,7 @@ impl StandardIo {
             self.output_buffer.push('\n');
             Ok(())
         } else {
-            writeln!(io::stdout(), "{}", text)
-                .map_err(|e| IoError::SystemIoError(e))
+            writeln!(io::stdout(), "{}", text).map_err(|e| IoError::SystemIoError(e))
         }
     }
 
@@ -113,8 +112,7 @@ impl StandardIo {
             self.error_buffer.push('\n');
             Ok(())
         } else {
-            writeln!(io::stderr(), "{}", text)
-                .map_err(|e| IoError::SystemIoError(e))
+            writeln!(io::stderr(), "{}", text).map_err(|e| IoError::SystemIoError(e))
         }
     }
 
@@ -428,7 +426,7 @@ impl ConsoleInterface {
         {
             // Use ioctl on Unix systems
             unsafe {
-                use libc::{ioctl, winsize, TIOCGWINSZ, STDOUT_FILENO};
+                use libc::{ioctl, winsize, STDOUT_FILENO, TIOCGWINSZ};
 
                 let mut size: winsize = std::mem::zeroed();
                 if ioctl(STDOUT_FILENO, TIOCGWINSZ, &mut size) == 0 {
@@ -450,10 +448,10 @@ impl ConsoleInterface {
         // Check if terminal supports colors
         std::env::var("TERM")
             .map(|term| {
-                term.contains("color") ||
-                term.contains("256") ||
-                term.contains("xterm") ||
-                term.contains("screen")
+                term.contains("color")
+                    || term.contains("256")
+                    || term.contains("xterm")
+                    || term.contains("screen")
             })
             .unwrap_or(false)
     }
@@ -468,12 +466,14 @@ impl Default for ConsoleInterface {
 impl Write for StandardIo {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let s = String::from_utf8_lossy(buf);
-        self.print(&s).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "I/O error"))?;
+        self.print(&s)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "I/O error"))?;
         Ok(s.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.flush_all().map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "I/O error"))
+        self.flush_all()
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "I/O error"))
     }
 }
 

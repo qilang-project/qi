@@ -8,7 +8,7 @@
 use std::ffi::{c_char, c_int, CStr};
 use std::sync::{Mutex, Once, RwLock};
 
-use crate::runtime::{RuntimeEnvironment, RuntimeConfig};
+use crate::runtime::{RuntimeConfig, RuntimeEnvironment};
 
 static RUNTIME_INIT: Once = Once::new();
 // 改 RwLock 让 hot path（alloc / gc_*）走 concurrent read lock 而非串行 Mutex。
@@ -23,7 +23,7 @@ static mut RUNTIME: Option<RwLock<RuntimeEnvironment>> = None;
 #[no_mangle]
 pub extern "C" fn qi_runtime_initialize() -> c_int {
     let mut result = 0;
-    
+
     RUNTIME_INIT.call_once(|| {
         let config = RuntimeConfig::default();
         match RuntimeEnvironment::new(config) {
@@ -168,7 +168,7 @@ pub extern "C" fn qi_runtime_print_int(value: i64) -> c_int {
 #[no_mangle]
 pub extern "C" fn qi_runtime_println_int(value: i64) -> c_int {
     println!("{}", value);
-    
+
     0
 }
 
@@ -187,9 +187,9 @@ pub extern "C" fn qi_runtime_print_float(value: f64) -> c_int {
 pub extern "C" fn qi_runtime_println_float(value: f64) -> c_int {
     // Format to always show decimal point for float values
     if value.fract() == 0.0 {
-        println!("{:.1}", value);  // Show one decimal place for whole numbers
+        println!("{:.1}", value); // Show one decimal place for whole numbers
     } else {
-        println!("{}", value);      // Show normal format for fractions
+        println!("{}", value); // Show normal format for fractions
     }
 
     0
@@ -222,9 +222,7 @@ pub extern "C" fn qi_runtime_alloc(size: usize) -> *mut u8 {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(runtime) = runtime_mutex.read() {
                 match runtime.memory_manager.allocate(size, None) {
-                    Ok(ptr) => {
-                        ptr
-                    }
+                    Ok(ptr) => ptr,
                     Err(e) => {
                         eprintln!("内存分配失败: {}", e);
                         std::ptr::null_mut()
@@ -252,9 +250,7 @@ pub extern "C" fn qi_runtime_dealloc(ptr: *mut u8, size: usize) -> c_int {
         if let Some(runtime_mutex) = RUNTIME.as_ref() {
             if let Ok(runtime) = runtime_mutex.read() {
                 match runtime.memory_manager.deallocate(ptr) {
-                    Ok(_) => {
-                        0
-                    }
+                    Ok(_) => 0,
                     Err(e) => {
                         eprintln!("内存释放失败: {}", e);
                         -1
@@ -431,12 +427,9 @@ pub extern "C" fn qi_runtime_string_concat(s1: *const c_char, s2: *const c_char)
     if s1.is_null() || s2.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     unsafe {
-        if let (Ok(str1), Ok(str2)) = (
-            CStr::from_ptr(s1).to_str(),
-            CStr::from_ptr(s2).to_str(),
-        ) {
+        if let (Ok(str1), Ok(str2)) = (CStr::from_ptr(s1).to_str(), CStr::from_ptr(s2).to_str()) {
             let result = format!("{}{}", str1, str2);
             if let Ok(c_string) = std::ffi::CString::new(result) {
                 return c_string.into_raw();
@@ -452,13 +445,13 @@ pub extern "C" fn qi_runtime_string_slice(s: *const c_char, start: i64, end: i64
     if s.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     unsafe {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             let chars: Vec<char> = rust_str.chars().collect();
             let start_idx = start.max(0) as usize;
             let end_idx = end.min(chars.len() as i64) as usize;
-            
+
             if start_idx < end_idx && end_idx <= chars.len() {
                 let substring: String = chars[start_idx..end_idx].iter().collect();
                 if let Ok(c_string) = std::ffi::CString::new(substring) {
@@ -476,12 +469,9 @@ pub extern "C" fn qi_runtime_string_compare(s1: *const c_char, s2: *const c_char
     if s1.is_null() || s2.is_null() {
         return -1;
     }
-    
+
     unsafe {
-        if let (Ok(str1), Ok(str2)) = (
-            CStr::from_ptr(s1).to_str(),
-            CStr::from_ptr(s2).to_str(),
-        ) {
+        if let (Ok(str1), Ok(str2)) = (CStr::from_ptr(s1).to_str(), CStr::from_ptr(s2).to_str()) {
             str1.cmp(str2) as c_int
         } else {
             -1
@@ -566,10 +556,9 @@ pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char)
     }
 
     unsafe {
-        if let (Ok(path_str), Ok(_mode_str)) = (
-            CStr::from_ptr(path).to_str(),
-            CStr::from_ptr(mode).to_str(),
-        ) {
+        if let (Ok(path_str), Ok(_mode_str)) =
+            (CStr::from_ptr(path).to_str(), CStr::from_ptr(mode).to_str())
+        {
             // Use a hash of the path as a temporary handle
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
@@ -586,7 +575,11 @@ pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char)
             }
 
             // Return a positive handle on success
-            if handle <= 0 { 1 } else { handle }
+            if handle <= 0 {
+                1
+            } else {
+                handle
+            }
         } else {
             eprintln!("文件打开失败: 无效的UTF-8字符串");
             -1
@@ -597,11 +590,7 @@ pub extern "C" fn qi_runtime_file_open(path: *const c_char, mode: *const c_char)
 /// Read from file (returns bytes read or negative on error)
 /// Simplified implementation that simulates reading data
 #[no_mangle]
-pub extern "C" fn qi_runtime_file_read(
-    handle: i64,
-    buffer: *mut u8,
-    size: usize,
-) -> i64 {
+pub extern "C" fn qi_runtime_file_read(handle: i64, buffer: *mut u8, size: usize) -> i64 {
     if handle <= 0 || buffer.is_null() || size == 0 {
         return -1;
     }
@@ -629,11 +618,7 @@ pub extern "C" fn qi_runtime_file_read(
 /// Write to file (returns bytes written or negative on error)
 /// Simplified implementation that simulates writing data
 #[no_mangle]
-pub extern "C" fn qi_runtime_file_write(
-    handle: i64,
-    data: *const u8,
-    size: usize,
-) -> i64 {
+pub extern "C" fn qi_runtime_file_write(handle: i64, data: *const u8, size: usize) -> i64 {
     if handle <= 0 || data.is_null() || size == 0 {
         return -1;
     }
@@ -673,7 +658,7 @@ pub extern "C" fn qi_runtime_file_read_string(path: *const c_char) -> *mut c_cha
     if path.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     unsafe {
         if let Ok(path_str) = CStr::from_ptr(path).to_str() {
             // Use standard library to read file
@@ -694,16 +679,18 @@ pub extern "C" fn qi_runtime_file_read_string(path: *const c_char) -> *mut c_cha
 
 /// Write string to file
 #[no_mangle]
-pub extern "C" fn qi_runtime_file_write_string(path: *const c_char, content: *const c_char) -> c_int {
+pub extern "C" fn qi_runtime_file_write_string(
+    path: *const c_char,
+    content: *const c_char,
+) -> c_int {
     if path.is_null() || content.is_null() {
         return -1;
     }
-    
+
     unsafe {
-        if let (Ok(path_str), Ok(content_str)) = (
-            CStr::from_ptr(path).to_str(),
-            CStr::from_ptr(content).to_str(),
-        ) {
+        if let (Ok(path_str), Ok(content_str)) =
+            (CStr::from_ptr(path).to_str(), CStr::from_ptr(content).to_str())
+        {
             // Use standard library to write file
             match std::fs::write(path_str, content_str) {
                 Ok(_) => 0,
@@ -733,7 +720,8 @@ pub extern "C" fn qi_runtime_http_get(url: *const c_char) -> *mut c_char {
         if let Ok(url_str) = CStr::from_ptr(url).to_str() {
             // For this simplified implementation, we simulate a successful HTTP response
             // In a full implementation, we would use the network interface
-            let mock_response = r#"{"message": "Mock HTTP response from Qi runtime", "status": "success"}"#;
+            let mock_response =
+                r#"{"message": "Mock HTTP response from Qi runtime", "status": "success"}"#;
 
             if let Ok(c_string) = std::ffi::CString::new(mock_response) {
                 // Update I/O operation count
@@ -761,10 +749,9 @@ pub extern "C" fn qi_runtime_http_post(url: *const c_char, data: *const c_char) 
     }
 
     unsafe {
-        if let (Ok(url_str), Ok(data_str)) = (
-            CStr::from_ptr(url).to_str(),
-            CStr::from_ptr(data).to_str(),
-        ) {
+        if let (Ok(url_str), Ok(data_str)) =
+            (CStr::from_ptr(url).to_str(), CStr::from_ptr(data).to_str())
+        {
             // For this simplified implementation, we simulate a successful HTTP response
             let mock_response = format!(
                 r#"{{"message": "Mock POST response", "received_data": "{}", "status": "success"}}"#,
@@ -815,7 +802,11 @@ pub extern "C" fn qi_runtime_tcp_connect(host: *const c_char, port: i32) -> i64 
             }
 
             // Return a positive handle on success
-            if handle <= 0 { 1 } else { handle }
+            if handle <= 0 {
+                1
+            } else {
+                handle
+            }
         } else {
             eprintln!("TCP连接失败: 无效的UTF-8主机字符串");
             -1
@@ -844,7 +835,7 @@ pub extern "C" fn qi_runtime_array_create(size: i64, element_size: i64) -> *mut 
     if size <= 0 || element_size <= 0 {
         return std::ptr::null_mut();
     }
-    
+
     let total_size = (size * element_size) as usize;
     qi_runtime_alloc(total_size)
 }
@@ -857,7 +848,7 @@ pub extern "C" fn qi_runtime_array_length(array: *const u8) -> i64 {
     if array.is_null() {
         return 0;
     }
-    
+
     unsafe {
         let length_ptr = array as *const i64;
         *length_ptr
@@ -896,7 +887,7 @@ pub extern "C" fn qi_runtime_string_to_int(s: *const c_char) -> i64 {
     if s.is_null() {
         return 0;
     }
-    
+
     unsafe {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             rust_str.parse::<i64>().unwrap_or(0)
@@ -912,7 +903,7 @@ pub extern "C" fn qi_runtime_string_to_float(s: *const c_char) -> f64 {
     if s.is_null() {
         return 0.0;
     }
-    
+
     unsafe {
         if let Ok(rust_str) = CStr::from_ptr(s).to_str() {
             rust_str.parse::<f64>().unwrap_or(0.0)
@@ -959,35 +950,35 @@ mod tests {
 
         qi_runtime_shutdown();
     }
-    
+
     #[test]
     fn test_string_operations() {
         use std::ffi::CString;
-        
+
         let s1 = CString::new("Hello").unwrap();
         let s2 = CString::new("World").unwrap();
-        
+
         let len = qi_runtime_string_length(s1.as_ptr());
         assert_eq!(len, 5);
-        
+
         let result = qi_runtime_string_concat(s1.as_ptr(), s2.as_ptr());
         assert!(!result.is_null());
-        
+
         unsafe {
             let result_str = CStr::from_ptr(result).to_str().unwrap();
             assert_eq!(result_str, "HelloWorld");
             qi_runtime_free_string(result);
         }
     }
-    
+
     #[test]
     fn test_math_operations() {
         let result = qi_runtime_math_sqrt(16.0);
         assert_eq!(result, 4.0);
-        
+
         let result = qi_runtime_math_pow(2.0, 3.0);
         assert_eq!(result, 8.0);
-        
+
         let result = qi_runtime_math_abs_int(-42);
         assert_eq!(result, 42);
     }
@@ -1080,9 +1071,7 @@ pub extern "C" fn qi_runtime_waitgroup_destroy(wg: *mut QiWaitGroup) -> i32 {
 /// Create a new mutex
 #[no_mangle]
 pub extern "C" fn qi_runtime_mutex_create() -> *mut QiMutex {
-    let mutex = Box::new(QiMutex {
-        inner: Arc::new(Mutex::new(())),
-    });
+    let mutex = Box::new(QiMutex { inner: Arc::new(Mutex::new(())) });
     Box::into_raw(mutex)
 }
 

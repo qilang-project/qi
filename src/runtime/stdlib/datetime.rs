@@ -108,10 +108,7 @@ pub extern "C" fn qi_datetime_format_local(timestamp: i64, format: *const c_char
 /// format: "%Y-%m-%d %H:%M:%S"
 /// datetime_str: "2024-01-15 14:30:00"
 #[no_mangle]
-pub extern "C" fn qi_datetime_parse(
-    datetime_str: *const c_char,
-    format: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_datetime_parse(datetime_str: *const c_char, format: *const c_char) -> i64 {
     if datetime_str.is_null() || format.is_null() {
         return 0;
     }
@@ -445,9 +442,7 @@ pub extern "C" fn qi_datetime_end_of_week(timestamp: i64) -> i64 {
 #[no_mangle]
 pub extern "C" fn qi_datetime_start_of_month(timestamp: i64) -> i64 {
     match DateTime::from_timestamp(timestamp, 0) {
-        Some(dt) => {
-            qi_datetime_from_ymd(dt.year() as i64, dt.month() as i64, 1)
-        }
+        Some(dt) => qi_datetime_from_ymd(dt.year() as i64, dt.month() as i64, 1),
         None => 0,
     }
 }
@@ -471,9 +466,7 @@ pub extern "C" fn qi_datetime_end_of_month(timestamp: i64) -> i64 {
 #[no_mangle]
 pub extern "C" fn qi_datetime_start_of_year(timestamp: i64) -> i64 {
     match DateTime::from_timestamp(timestamp, 0) {
-        Some(dt) => {
-            qi_datetime_from_ymd(dt.year() as i64, 1, 1)
-        }
+        Some(dt) => qi_datetime_from_ymd(dt.year() as i64, 1, 1),
         None => 0,
     }
 }
@@ -689,8 +682,7 @@ pub extern "C" fn qi_datetime_async_sleep_future(
     crate::runtime::async_runtime::ffi::全局异步运行时().spawn(async move {
         tokio::time::sleep(dur).await;
         *value.lock().unwrap() = Some(FutureValue::None);
-        *state.lock().unwrap() =
-            crate::runtime::async_runtime::future::FutureState::Completed;
+        *state.lock().unwrap() = crate::runtime::async_runtime::future::FutureState::Completed;
         notify.notify_waiters();
     });
 
@@ -721,7 +713,11 @@ pub extern "C" fn qi_datetime_free_string(s: *mut c_char) {
 pub extern "C" fn qi_datetime_is_same_day(timestamp1: i64, timestamp2: i64) -> i64 {
     let start1 = qi_datetime_start_of_day(timestamp1);
     let start2 = qi_datetime_start_of_day(timestamp2);
-    if start1 == start2 { 1 } else { 0 }
+    if start1 == start2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// 判断两个时间戳是否在同一月
@@ -729,7 +725,11 @@ pub extern "C" fn qi_datetime_is_same_day(timestamp1: i64, timestamp2: i64) -> i
 pub extern "C" fn qi_datetime_is_same_month(timestamp1: i64, timestamp2: i64) -> i64 {
     let start1 = qi_datetime_start_of_month(timestamp1);
     let start2 = qi_datetime_start_of_month(timestamp2);
-    if start1 == start2 { 1 } else { 0 }
+    if start1 == start2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// 判断两个时间戳是否在同一年
@@ -737,19 +737,31 @@ pub extern "C" fn qi_datetime_is_same_month(timestamp1: i64, timestamp2: i64) ->
 pub extern "C" fn qi_datetime_is_same_year(timestamp1: i64, timestamp2: i64) -> i64 {
     let start1 = qi_datetime_start_of_year(timestamp1);
     let start2 = qi_datetime_start_of_year(timestamp2);
-    if start1 == start2 { 1 } else { 0 }
+    if start1 == start2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// 判断时间戳1是否在时间戳2之前
 #[no_mangle]
 pub extern "C" fn qi_datetime_is_before(timestamp1: i64, timestamp2: i64) -> i64 {
-    if timestamp1 < timestamp2 { 1 } else { 0 }
+    if timestamp1 < timestamp2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// 判断时间戳1是否在时间戳2之后
 #[no_mangle]
 pub extern "C" fn qi_datetime_is_after(timestamp1: i64, timestamp2: i64) -> i64 {
-    if timestamp1 > timestamp2 { 1 } else { 0 }
+    if timestamp1 > timestamp2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// 判断是否为工作日（非周末）

@@ -5,9 +5,9 @@ use std::path::PathBuf;
 /// Diagnostic level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticLevel {
-    错误,    // Error
-    警告,    // Warning
-    信息,    // Info
+    错误, // Error
+    警告, // Warning
+    信息, // Info
 }
 
 /// Diagnostic message
@@ -32,15 +32,17 @@ pub struct DiagnosticManager {
 
 impl DiagnosticManager {
     pub fn new() -> Self {
-        Self {
-            diagnostics: Vec::new(),
-            max_errors: 100,
-            max_warnings: 100,
-        }
+        Self { diagnostics: Vec::new(), max_errors: 100, max_warnings: 100 }
     }
 
     /// Add syntax error with code and suggestion
-    pub fn syntax_error(&mut self, span: crate::lexer::Span, expected: &str, found: &str, suggestion: Option<&str>) {
+    pub fn syntax_error(
+        &mut self,
+        span: crate::lexer::Span,
+        expected: &str,
+        found: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E001".to_string(),
@@ -54,7 +56,13 @@ impl DiagnosticManager {
     }
 
     /// Add type mismatch error with suggestion
-    pub fn type_mismatch_error(&mut self, span: crate::lexer::Span, expected: &str, found: &str, suggestion: Option<&str>) {
+    pub fn type_mismatch_error(
+        &mut self,
+        span: crate::lexer::Span,
+        expected: &str,
+        found: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E002".to_string(),
@@ -68,7 +76,12 @@ impl DiagnosticManager {
     }
 
     /// Add undefined variable error with suggestion
-    pub fn undefined_variable_error(&mut self, span: crate::lexer::Span, var_name: &str, suggestion: Option<&str>) {
+    pub fn undefined_variable_error(
+        &mut self,
+        span: crate::lexer::Span,
+        var_name: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E003".to_string(),
@@ -82,7 +95,12 @@ impl DiagnosticManager {
     }
 
     /// Add function call error with suggestion
-    pub fn function_call_error(&mut self, span: crate::lexer::Span, message: &str, suggestion: Option<&str>) {
+    pub fn function_call_error(
+        &mut self,
+        span: crate::lexer::Span,
+        message: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E004".to_string(),
@@ -96,7 +114,13 @@ impl DiagnosticManager {
     }
 
     /// Add invalid operation error with suggestion
-    pub fn invalid_operation_error(&mut self, span: crate::lexer::Span, operation: &str, type_name: &str, suggestion: Option<&str>) {
+    pub fn invalid_operation_error(
+        &mut self,
+        span: crate::lexer::Span,
+        operation: &str,
+        type_name: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E005".to_string(),
@@ -110,7 +134,13 @@ impl DiagnosticManager {
     }
 
     /// Add struct field error with suggestion
-    pub fn struct_field_error(&mut self, span: crate::lexer::Span, struct_name: &str, field_name: &str, suggestion: Option<&str>) {
+    pub fn struct_field_error(
+        &mut self,
+        span: crate::lexer::Span,
+        struct_name: &str,
+        field_name: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E006".to_string(),
@@ -124,7 +154,12 @@ impl DiagnosticManager {
     }
 
     /// Add array access error with suggestion
-    pub fn array_access_error(&mut self, span: crate::lexer::Span, message: &str, suggestion: Option<&str>) {
+    pub fn array_access_error(
+        &mut self,
+        span: crate::lexer::Span,
+        message: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E007".to_string(),
@@ -160,7 +195,9 @@ impl DiagnosticManager {
             english_message: format!("Unused variable: '{}'", var_name),
             file_path: None,
             span: Some(span),
-            suggestion: Some("如果不需要此变量，请考虑删除它或在变量名前添加下划线前缀".to_string()),
+            suggestion: Some(
+                "如果不需要此变量，请考虑删除它或在变量名前添加下划线前缀".to_string(),
+            ),
             related_code: None,
         });
     }
@@ -210,12 +247,20 @@ impl DiagnosticManager {
     }
 
     /// Add unmatched brackets error
-    pub fn unmatched_brackets_error(&mut self, span: crate::lexer::Span, opening: char, closing: char) {
+    pub fn unmatched_brackets_error(
+        &mut self,
+        span: crate::lexer::Span,
+        opening: char,
+        closing: char,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E010".to_string(),
             message: format!("括号不匹配: '{}' 与 '{}' 不匹配", opening, closing),
-            english_message: format!("Unmatched brackets: '{}' does not match '{}'", opening, closing),
+            english_message: format!(
+                "Unmatched brackets: '{}' does not match '{}'",
+                opening, closing
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查括号是否正确配对".to_string()),
@@ -268,7 +313,12 @@ impl DiagnosticManager {
     // ===== 语义错误 | Semantic Errors =====
 
     /// Add variable redeclaration error
-    pub fn variable_redeclaration_error(&mut self, span: crate::lexer::Span, var_name: &str, original_span: crate::lexer::Span) {
+    pub fn variable_redeclaration_error(
+        &mut self,
+        span: crate::lexer::Span,
+        var_name: &str,
+        original_span: crate::lexer::Span,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E014".to_string(),
@@ -277,7 +327,10 @@ impl DiagnosticManager {
             file_path: None,
             span: Some(span),
             suggestion: Some("使用不同的变量名".to_string()),
-            related_code: Some(format!("原始声明在 {}..{}", original_span.start, original_span.end)),
+            related_code: Some(format!(
+                "原始声明在 {}..{}",
+                original_span.start, original_span.end
+            )),
         });
     }
 
@@ -296,7 +349,12 @@ impl DiagnosticManager {
     }
 
     /// Add undefined function error
-    pub fn undefined_function_error(&mut self, span: crate::lexer::Span, func_name: &str, suggestion: Option<&str>) {
+    pub fn undefined_function_error(
+        &mut self,
+        span: crate::lexer::Span,
+        func_name: &str,
+        suggestion: Option<&str>,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E016".to_string(),
@@ -310,12 +368,24 @@ impl DiagnosticManager {
     }
 
     /// Add parameter count mismatch error
-    pub fn parameter_count_mismatch_error(&mut self, span: crate::lexer::Span, func_name: &str, expected: usize, found: usize) {
+    pub fn parameter_count_mismatch_error(
+        &mut self,
+        span: crate::lexer::Span,
+        func_name: &str,
+        expected: usize,
+        found: usize,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E017".to_string(),
-            message: format!("函数 '{}' 参数数量不匹配: 期望 {} 个参数, 实际 {} 个", func_name, expected, found),
-            english_message: format!("Function '{}' parameter count mismatch: expected {}, found {}", func_name, expected, found),
+            message: format!(
+                "函数 '{}' 参数数量不匹配: 期望 {} 个参数, 实际 {} 个",
+                func_name, expected, found
+            ),
+            english_message: format!(
+                "Function '{}' parameter count mismatch: expected {}, found {}",
+                func_name, expected, found
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查函数调用的参数数量".to_string()),
@@ -324,12 +394,31 @@ impl DiagnosticManager {
     }
 
     /// Add parameter type mismatch error
-    pub fn parameter_type_mismatch_error(&mut self, span: crate::lexer::Span, func_name: &str, param_index: usize, expected: &str, found: &str) {
+    pub fn parameter_type_mismatch_error(
+        &mut self,
+        span: crate::lexer::Span,
+        func_name: &str,
+        param_index: usize,
+        expected: &str,
+        found: &str,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E018".to_string(),
-            message: format!("函��� '{}' 第 {} 个参数类型不匹配: 期望 '{}', 实际 '{}'", func_name, param_index + 1, expected, found),
-            english_message: format!("Function '{}' parameter {} type mismatch: expected '{}', found '{}'", func_name, param_index + 1, expected, found),
+            message: format!(
+                "函��� '{}' 第 {} 个参数类型不匹配: 期望 '{}', 实际 '{}'",
+                func_name,
+                param_index + 1,
+                expected,
+                found
+            ),
+            english_message: format!(
+                "Function '{}' parameter {} type mismatch: expected '{}', found '{}'",
+                func_name,
+                param_index + 1,
+                expected,
+                found
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查参数类型是否正确".to_string()),
@@ -338,12 +427,24 @@ impl DiagnosticManager {
     }
 
     /// Add return type mismatch error
-    pub fn return_type_mismatch_error(&mut self, span: crate::lexer::Span, func_name: &str, expected: &str, found: &str) {
+    pub fn return_type_mismatch_error(
+        &mut self,
+        span: crate::lexer::Span,
+        func_name: &str,
+        expected: &str,
+        found: &str,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E019".to_string(),
-            message: format!("函数 '{}' 返回类型不匹配: 期望 '{}', 实际 '{}'", func_name, expected, found),
-            english_message: format!("Function '{}' return type mismatch: expected '{}', found '{}'", func_name, expected, found),
+            message: format!(
+                "函数 '{}' 返回类型不匹配: 期望 '{}', 实际 '{}'",
+                func_name, expected, found
+            ),
+            english_message: format!(
+                "Function '{}' return type mismatch: expected '{}', found '{}'",
+                func_name, expected, found
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查返回值的类型".to_string()),
@@ -366,12 +467,20 @@ impl DiagnosticManager {
     }
 
     /// Add invalid array index type error
-    pub fn invalid_array_index_type_error(&mut self, span: crate::lexer::Span, expected: &str, found: &str) {
+    pub fn invalid_array_index_type_error(
+        &mut self,
+        span: crate::lexer::Span,
+        expected: &str,
+        found: &str,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E021".to_string(),
             message: format!("数组索引类型错误: 期望 '{}', 实际 '{}'", expected, found),
-            english_message: format!("Array index type error: expected '{}', found '{}'", expected, found),
+            english_message: format!(
+                "Array index type error: expected '{}', found '{}'",
+                expected, found
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("数组索引必须是整数类型".to_string()),
@@ -380,12 +489,20 @@ impl DiagnosticManager {
     }
 
     /// Add array out of bounds error
-    pub fn array_out_of_bounds_error(&mut self, span: crate::lexer::Span, array_size: usize, index: isize) {
+    pub fn array_out_of_bounds_error(
+        &mut self,
+        span: crate::lexer::Span,
+        array_size: usize,
+        index: isize,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E022".to_string(),
             message: format!("数组越界访问: 数组长度 {}, 访问索引 {}", array_size, index),
-            english_message: format!("Array out of bounds: array size {}, accessing index {}", array_size, index),
+            english_message: format!(
+                "Array out of bounds: array size {}, accessing index {}",
+                array_size, index
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查数组索引是否在有效范围内".to_string()),
@@ -394,12 +511,20 @@ impl DiagnosticManager {
     }
 
     /// Add non-boolean condition error
-    pub fn non_boolean_condition_error(&mut self, span: crate::lexer::Span, condition_type: &str, context: &str) {
+    pub fn non_boolean_condition_error(
+        &mut self,
+        span: crate::lexer::Span,
+        condition_type: &str,
+        context: &str,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::错误,
             code: "E023".to_string(),
             message: format!("{} 条件必须是布尔类型, 实际是 '{}'", context, condition_type),
-            english_message: format!("{} condition must be boolean, actual type is '{}'", context, condition_type),
+            english_message: format!(
+                "{} condition must be boolean, actual type is '{}'",
+                context, condition_type
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查条件表达式的类型".to_string()),
@@ -485,7 +610,10 @@ impl DiagnosticManager {
             level: DiagnosticLevel::错误,
             code: "R006".to_string(),
             message: format!("类型转换错误: 无法将 '{}' 转换为 '{}'", from, to),
-            english_message: format!("Type conversion error: cannot convert '{}' to '{}'", from, to),
+            english_message: format!(
+                "Type conversion error: cannot convert '{}' to '{}'",
+                from, to
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("检查类型转换是否合理".to_string()),
@@ -538,12 +666,20 @@ impl DiagnosticManager {
     }
 
     /// Add unused function parameter warning
-    pub fn unused_parameter_warning(&mut self, span: crate::lexer::Span, param_name: &str, func_name: &str) {
+    pub fn unused_parameter_warning(
+        &mut self,
+        span: crate::lexer::Span,
+        param_name: &str,
+        func_name: &str,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::警告,
             code: "W004".to_string(),
             message: format!("未使用的函数参数: '{}' 在函数 '{}'", param_name, func_name),
-            english_message: format!("Unused function parameter: '{}' in function '{}'", param_name, func_name),
+            english_message: format!(
+                "Unused function parameter: '{}' in function '{}'",
+                param_name, func_name
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("如果不需要此参数，请考虑删除它或在参数名前添加下划线".to_string()),
@@ -552,21 +688,37 @@ impl DiagnosticManager {
     }
 
     /// Add variable shadowing warning
-    pub fn variable_shadowing_warning(&mut self, span: crate::lexer::Span, var_name: &str, original_span: crate::lexer::Span) {
+    pub fn variable_shadowing_warning(
+        &mut self,
+        span: crate::lexer::Span,
+        var_name: &str,
+        original_span: crate::lexer::Span,
+    ) {
         self.add_diagnostic(Diagnostic {
             level: DiagnosticLevel::警告,
             code: "W005".to_string(),
             message: format!("变量遮蔽: '{}' 遮蔽了外层作用域的同名变量", var_name),
-            english_message: format!("Variable shadowing: '{}' shadows variable with same name in outer scope", var_name),
+            english_message: format!(
+                "Variable shadowing: '{}' shadows variable with same name in outer scope",
+                var_name
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some("考虑使用不同的变量名".to_string()),
-            related_code: Some(format!("原始变量在 {}..{}", original_span.start, original_span.end)),
+            related_code: Some(format!(
+                "原始变量在 {}..{}",
+                original_span.start, original_span.end
+            )),
         });
     }
 
     /// Add function name conflict warning
-    pub fn function_name_conflict_warning(&mut self, span: crate::lexer::Span, func_name: &str, builtin: bool) {
+    pub fn function_name_conflict_warning(
+        &mut self,
+        span: crate::lexer::Span,
+        func_name: &str,
+        builtin: bool,
+    ) {
         let suggestion = if builtin {
             "避免使用内置函数名".to_string()
         } else {
@@ -577,7 +729,10 @@ impl DiagnosticManager {
             level: DiagnosticLevel::警告,
             code: "W006".to_string(),
             message: format!("函数名冲突: '{}' 与现有函数冲突", func_name),
-            english_message: format!("Function name conflict: '{}' conflicts with existing function", func_name),
+            english_message: format!(
+                "Function name conflict: '{}' conflicts with existing function",
+                func_name
+            ),
             file_path: None,
             span: Some(span),
             suggestion: Some(suggestion),
@@ -626,8 +781,7 @@ impl DiagnosticManager {
             span: None,
             suggestion: None,
             related_code: None,
-        }
-        );
+        });
     }
 
     pub fn add_info(&mut self, code: &str, message: &str, english_message: &str) {
@@ -648,13 +802,15 @@ impl DiagnosticManager {
     }
 
     pub fn get_errors(&self) -> Vec<&Diagnostic> {
-        self.diagnostics.iter()
+        self.diagnostics
+            .iter()
             .filter(|d| d.level == DiagnosticLevel::错误)
             .collect()
     }
 
     pub fn get_warnings(&self) -> Vec<&Diagnostic> {
-        self.diagnostics.iter()
+        self.diagnostics
+            .iter()
             .filter(|d| d.level == DiagnosticLevel::警告)
             .collect()
     }
@@ -664,17 +820,21 @@ impl DiagnosticManager {
     }
 
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|d| d.level == DiagnosticLevel::错误)
+        self.diagnostics
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::错误)
     }
 
     pub fn error_count(&self) -> usize {
-        self.diagnostics.iter()
+        self.diagnostics
+            .iter()
             .filter(|d| d.level == DiagnosticLevel::错误)
             .count()
     }
 
     pub fn warning_count(&self) -> usize {
-        self.diagnostics.iter()
+        self.diagnostics
+            .iter()
             .filter(|d| d.level == DiagnosticLevel::警告)
             .count()
     }

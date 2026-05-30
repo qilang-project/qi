@@ -2,8 +2,8 @@
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fmt;
+use std::path::PathBuf;
 
 impl fmt::Display for CompilationTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,11 +140,10 @@ impl CompilerConfig {
 
     /// Load configuration from file
     pub fn from_file(path: &PathBuf) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::Io(path.clone(), e))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| ConfigError::Io(path.clone(), e))?;
 
-        serde_json::from_str(&content)
-            .map_err(|e| ConfigError::Parse(path.clone(), e))
+        serde_json::from_str(&content).map_err(|e| ConfigError::Parse(path.clone(), e))
     }
 
     /// Merge another configuration into this one

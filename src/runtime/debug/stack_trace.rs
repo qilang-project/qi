@@ -20,11 +20,7 @@ impl Backtrace {
 
     fn frames(&self) -> Vec<BacktraceFrame> {
         // Return a placeholder frame for testing
-        vec![
-            BacktraceFrame {
-                ip: std::ptr::null_mut(),
-            }
-        ]
+        vec![BacktraceFrame { ip: std::ptr::null_mut() }]
     }
 }
 
@@ -173,14 +169,20 @@ impl StackTraceCollector {
     }
 
     /// Collect stack trace with context
-    pub fn collect_stack_trace_with_context(&self, context: &str) -> RuntimeResult<Vec<EnhancedStackFrame>> {
-        self.debug.info(&format!("Collecting stack trace for: {}", context))?;
+    pub fn collect_stack_trace_with_context(
+        &self,
+        context: &str,
+    ) -> RuntimeResult<Vec<EnhancedStackFrame>> {
+        self.debug
+            .info(&format!("Collecting stack trace for: {}", context))?;
 
         let frames = self.collect_stack_trace()?;
 
-        self.debug.debug(&format!("Collected {} stack frames", frames.len()))?;
+        self.debug
+            .debug(&format!("Collected {} stack frames", frames.len()))?;
         for (i, frame) in frames.iter().enumerate() {
-            self.debug.trace(&format!("Frame {}: {}", i, frame.frame.format()))?;
+            self.debug
+                .trace(&format!("Frame {}: {}", i, frame.frame.format()))?;
         }
 
         Ok(frames)
@@ -198,7 +200,12 @@ impl StackTraceCollector {
 
             if let Some(enhanced_frame) = self.process_frame(backtrace_frame, frame_count)? {
                 // Filter internal frames if configured
-                if self.config.filter_internal_frames && matches!(enhanced_frame.frame_type, FrameType::RuntimeCode | FrameType::SystemCode) {
+                if self.config.filter_internal_frames
+                    && matches!(
+                        enhanced_frame.frame_type,
+                        FrameType::RuntimeCode | FrameType::SystemCode
+                    )
+                {
                     continue;
                 }
 
@@ -211,7 +218,11 @@ impl StackTraceCollector {
     }
 
     /// Process individual backtrace frame
-    fn process_frame(&self, frame: &BacktraceFrame, index: usize) -> RuntimeResult<Option<EnhancedStackFrame>> {
+    fn process_frame(
+        &self,
+        frame: &BacktraceFrame,
+        index: usize,
+    ) -> RuntimeResult<Option<EnhancedStackFrame>> {
         let ip = frame.ip();
         let ip_addr = ip as usize;
 
@@ -228,18 +239,19 @@ impl StackTraceCollector {
         // Create basic stack frame
         let (function_name, file_name, line, column) = if let Some(ref symbol) = symbol_info {
             (
-                symbol.name.clone().unwrap_or_else(|| format!("frame_{}", index)),
-                symbol.filename.clone().unwrap_or_else(|| "unknown".to_string()),
+                symbol
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("frame_{}", index)),
+                symbol
+                    .filename
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 symbol.lineno,
                 None, // Column info not available in backtrace crate
             )
         } else {
-            (
-                format!("frame_{}", index),
-                "unknown".to_string(),
-                None,
-                None,
-            )
+            (format!("frame_{}", index), "unknown".to_string(), None, None)
         };
 
         let basic_frame = crate::runtime::error::StackFrame::new(&function_name, &file_name)
@@ -253,14 +265,17 @@ impl StackTraceCollector {
             address_offset: Some(ip_addr),
             frame_type,
             locals: HashMap::new(), // TODO: Implement variable inspection
-            parameters: Vec::new(),  // TODO: Implement parameter inspection
+            parameters: Vec::new(), // TODO: Implement parameter inspection
         };
 
         Ok(Some(enhanced_frame))
     }
 
     /// Resolve symbol for address
-    fn resolve_symbol(&self, ip: *mut std::os::raw::c_void) -> RuntimeResult<Option<BacktraceSymbol>> {
+    fn resolve_symbol(
+        &self,
+        ip: *mut std::os::raw::c_void,
+    ) -> RuntimeResult<Option<BacktraceSymbol>> {
         let ip_addr = ip as usize;
 
         // Check cache first
@@ -294,7 +309,10 @@ impl StackTraceCollector {
                 if let Some(ref name) = symbol.name {
                     if name.contains("qi::runtime") || name.contains("qi_runtime") {
                         FrameType::RuntimeCode
-                    } else if name.contains("std::") || name.contains("core::") || name.contains("alloc::") {
+                    } else if name.contains("std::")
+                        || name.contains("core::")
+                        || name.contains("alloc::")
+                    {
                         FrameType::SystemCode
                     } else {
                         FrameType::UserCode
@@ -322,12 +340,7 @@ impl StackTraceCollector {
                 FrameType::Unknown => "未知",
             };
 
-            result.push_str(&format!(
-                "  {}. [{}] {}\n",
-                i,
-                frame_type_str,
-                frame.frame.format()
-            ));
+            result.push_str(&format!("  {}. [{}] {}\n", i, frame_type_str, frame.frame.format()));
 
             if let Some(ref module) = frame.module {
                 result.push_str(&format!("     模块: {}\n", module));
@@ -345,7 +358,8 @@ impl StackTraceCollector {
     pub fn add_source_mapping(&self, symbol: &str, source_info: SourceInfo) -> RuntimeResult<()> {
         let mut mapping = self.source_mapping.lock().unwrap();
         mapping.insert(symbol.to_string(), source_info);
-        self.debug.debug(&format!("Added source mapping for symbol: {}", symbol))?;
+        self.debug
+            .debug(&format!("Added source mapping for symbol: {}", symbol))?;
         Ok(())
     }
 
@@ -418,7 +432,10 @@ pub fn collect_and_format_stack_trace(debug: Arc<DebugModule>) -> RuntimeResult<
 }
 
 /// Convenience function to collect stack trace with context
-pub fn collect_stack_trace_with_context(debug: Arc<DebugModule>, context: &str) -> RuntimeResult<Vec<EnhancedStackFrame>> {
+pub fn collect_stack_trace_with_context(
+    debug: Arc<DebugModule>,
+    context: &str,
+) -> RuntimeResult<Vec<EnhancedStackFrame>> {
     let collector = StackTraceCollector::new(debug);
     collector.collect_stack_trace_with_context(context)
 }
@@ -490,7 +507,9 @@ mod tests {
             module: Some("test_module".to_string()),
         };
 
-        collector.add_source_mapping("test_symbol", source_info.clone()).unwrap();
+        collector
+            .add_source_mapping("test_symbol", source_info.clone())
+            .unwrap();
 
         let retrieved = collector.get_source_info("test_symbol");
         assert!(retrieved.is_some());
@@ -512,10 +531,7 @@ mod tests {
             lineno: None,
         });
 
-        assert_eq!(
-            collector.classify_frame_type(&runtime_symbol),
-            FrameType::RuntimeCode
-        );
+        assert_eq!(collector.classify_frame_type(&runtime_symbol), FrameType::RuntimeCode);
 
         let system_symbol = Some(BacktraceSymbol {
             name: Some("std::collections::test".to_string()),
@@ -523,10 +539,7 @@ mod tests {
             lineno: None,
         });
 
-        assert_eq!(
-            collector.classify_frame_type(&system_symbol),
-            FrameType::SystemCode
-        );
+        assert_eq!(collector.classify_frame_type(&system_symbol), FrameType::SystemCode);
     }
 
     #[test]

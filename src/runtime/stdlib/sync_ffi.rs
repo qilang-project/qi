@@ -145,7 +145,9 @@ pub extern "C" fn qi_sync_mutex_unlock(handle: i64) -> i32 {
         Ok(mut gr) => {
             if let Some(sg) = gr.remove(&handle) {
                 // SAFETY: 我们是唯一持有这个 guard 的，现在 drop 它
-                unsafe { sg.unlock(); }
+                unsafe {
+                    sg.unlock();
+                }
                 1
             } else {
                 -1 // 没有对应 guard（未加锁？）
@@ -170,15 +172,13 @@ pub extern "C" fn qi_sync_mutex_trylock(handle: i64) -> i32 {
     };
 
     match m.try_lock() {
-        Ok(guard) => {
-            match guard_registry().lock() {
-                Ok(mut gr) => {
-                    gr.insert(handle, SendableGuard::new(guard));
-                    1
-                }
-                Err(_) => -1,
+        Ok(guard) => match guard_registry().lock() {
+            Ok(mut gr) => {
+                gr.insert(handle, SendableGuard::new(guard));
+                1
             }
-        }
+            Err(_) => -1,
+        },
         Err(std::sync::TryLockError::WouldBlock) => 0,
         Err(_) => -1,
     }
@@ -192,7 +192,11 @@ pub extern "C" fn qi_sync_mutex_destroy(handle: i64) -> i32 {
     // 从注册表移除（注意：Box::leak 的内存不回收——生命周期与进程同）
     match mutex_registry().lock() {
         Ok(mut reg) => {
-            if reg.remove(&handle).is_some() { 1 } else { -1 }
+            if reg.remove(&handle).is_some() {
+                1
+            } else {
+                -1
+            }
         }
         Err(_) => -1,
     }
@@ -258,11 +262,12 @@ pub extern "C" fn qi_sync_atomic_add(handle: i64, delta: i64) -> i64 {
 pub extern "C" fn qi_sync_atomic_cas(handle: i64, expected: i64, new: i64) -> i32 {
     match atomic_registry().lock() {
         Ok(reg) => match reg.get(&handle) {
-            Some(a) => match a.compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => 1,
-                Err(_) => 0,
-            },
+            Some(a) => {
+                match a.compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => 1,
+                    Err(_) => 0,
+                }
+            }
             None => -1,
         },
         Err(_) => -1,
@@ -274,7 +279,11 @@ pub extern "C" fn qi_sync_atomic_cas(handle: i64, expected: i64, new: i64) -> i3
 pub extern "C" fn qi_sync_atomic_destroy(handle: i64) -> i32 {
     match atomic_registry().lock() {
         Ok(mut reg) => {
-            if reg.remove(&handle).is_some() { 1 } else { -1 }
+            if reg.remove(&handle).is_some() {
+                1
+            } else {
+                -1
+            }
         }
         Err(_) => -1,
     }

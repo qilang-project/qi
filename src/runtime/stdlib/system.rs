@@ -4,11 +4,11 @@
 //! variables, system information, and process management with Chinese
 //! language support.
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::env;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::process::Command;
 use std::path::PathBuf;
-use crate::runtime::{RuntimeResult, RuntimeError};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// System information structure
 #[derive(Debug, Clone)]
@@ -159,8 +159,12 @@ impl SystemModule {
         let uptime = self.get_system_uptime()?;
 
         // Get current working directory
-        let working_directory = env::current_dir()
-            .map_err(|e| RuntimeError::system_error(format!("获取工作目录失败: {}", e), "获取工作目录失败".to_string()))?;
+        let working_directory = env::current_dir().map_err(|e| {
+            RuntimeError::system_error(
+                format!("获取工作目录失败: {}", e),
+                "获取工作目录失败".to_string(),
+            )
+        })?;
 
         Ok(SystemInfo {
             os_type,
@@ -201,15 +205,24 @@ impl SystemModule {
 
         // Get process name
         let name = env::current_exe()
-            .map(|path| path.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .map(|path| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .unwrap_or_else(|_| "未知进程".to_string());
 
         // Get command line arguments
         let arguments: Vec<String> = env::args().collect();
 
         // Get working directory
-        let working_directory = env::current_dir()
-            .map_err(|e| RuntimeError::system_error(format!("获取工作目录失败: {}", e), "获取工作目录失败".to_string()))?;
+        let working_directory = env::current_dir().map_err(|e| {
+            RuntimeError::system_error(
+                format!("获取工作目录失败: {}", e),
+                "获取工作目录失败".to_string(),
+            )
+        })?;
 
         // Get memory usage (platform-specific)
         let memory_usage = self.get_process_memory()?;
@@ -300,7 +313,10 @@ impl SystemModule {
 
         match self.env_cache.get(key) {
             Some(value) => Ok(value.clone()),
-            None => Err(RuntimeError::system_error(format!("环境变量不存在: {}", key), "环境变量不存在".to_string())),
+            None => Err(RuntimeError::system_error(
+                format!("环境变量不存在: {}", key),
+                "环境变量不存在".to_string(),
+            )),
         }
     }
 
@@ -334,7 +350,8 @@ impl SystemModule {
             self.update_cache()?;
         }
 
-        let mut env_vars: Vec<(String, String)> = self.env_cache
+        let mut env_vars: Vec<(String, String)> = self
+            .env_cache
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
@@ -345,29 +362,45 @@ impl SystemModule {
 
     /// Get current working directory
     pub fn get_working_directory(&self) -> RuntimeResult<PathBuf> {
-        env::current_dir()
-            .map_err(|e| RuntimeError::system_error(format!("获取工作目录失败: {}", e), "获取工作目录失败".to_string()))
+        env::current_dir().map_err(|e| {
+            RuntimeError::system_error(
+                format!("获取工作目录失败: {}", e),
+                "获取工作目录失败".to_string(),
+            )
+        })
     }
 
     /// Set working directory
     pub fn set_working_directory(&mut self, path: &PathBuf) -> RuntimeResult<()> {
-        env::set_current_dir(path)
-            .map_err(|e| RuntimeError::system_error(format!("设置工作目录失败: {}", e), "设置工作目录失败".to_string()))
+        env::set_current_dir(path).map_err(|e| {
+            RuntimeError::system_error(
+                format!("设置工作目录失败: {}", e),
+                "设置工作目录失败".to_string(),
+            )
+        })
     }
 
     /// Get current Unix timestamp
     pub fn get_timestamp(&self) -> RuntimeResult<u64> {
         let now = SystemTime::now();
-        let duration = now.duration_since(UNIX_EPOCH)
-            .map_err(|e| RuntimeError::system_error(format!("获取时间戳失败: {}", e), "获取时间戳失败".to_string()))?;
+        let duration = now.duration_since(UNIX_EPOCH).map_err(|e| {
+            RuntimeError::system_error(
+                format!("获取时间戳失败: {}", e),
+                "获取时间戳失败".to_string(),
+            )
+        })?;
         Ok(duration.as_secs())
     }
 
     /// Get current timestamp in milliseconds
     pub fn get_timestamp_millis(&self) -> RuntimeResult<u64> {
         let now = SystemTime::now();
-        let duration = now.duration_since(UNIX_EPOCH)
-            .map_err(|e| RuntimeError::system_error(format!("获取时间戳失败: {}", e), "获取时间戳失败".to_string()))?;
+        let duration = now.duration_since(UNIX_EPOCH).map_err(|e| {
+            RuntimeError::system_error(
+                format!("获取时间戳失败: {}", e),
+                "获取时间戳失败".to_string(),
+            )
+        })?;
         Ok(duration.as_millis() as u64)
     }
 
@@ -383,7 +416,10 @@ impl SystemModule {
         {
             match env::var("HOME") {
                 Ok(home) => Ok(PathBuf::from(home)),
-                Err(_) => Err(RuntimeError::system_error("无法获取用户主目录".to_string(), "无法获取用户主目录".to_string())),
+                Err(_) => Err(RuntimeError::system_error(
+                    "无法获取用户主目录".to_string(),
+                    "无法获取用户主目录".to_string(),
+                )),
             }
         }
 
@@ -391,29 +427,40 @@ impl SystemModule {
         {
             match env::var("USERPROFILE") {
                 Ok(home) => Ok(PathBuf::from(home)),
-                Err(_) => Err(RuntimeError::system_error("无法获取用户主目录".to_string(), "无法获取用户主目录".to_string())),
+                Err(_) => Err(RuntimeError::system_error(
+                    "无法获取用户主目录".to_string(),
+                    "无法获取用户主目录".to_string(),
+                )),
             }
         }
 
         #[cfg(not(any(unix, windows)))]
         {
-            Err(RuntimeError::system_error("不支持的平台".to_string(), "不支持的平台".to_string()))
+            Err(RuntimeError::system_error(
+                "不支持的平台".to_string(),
+                "不支持的平台".to_string(),
+            ))
         }
     }
 
     /// Execute system command
     pub fn execute_command(&self, command: &str, args: &[&str]) -> RuntimeResult<String> {
-        let output = Command::new(command)
-            .args(args)
-            .output()
-            .map_err(|e| RuntimeError::system_error(format!("执行命令失败: {} - {}", command, e), "执行命令失败".to_string()))?;
+        let output = Command::new(command).args(args).output().map_err(|e| {
+            RuntimeError::system_error(
+                format!("执行命令失败: {} - {}", command, e),
+                "执行命令失败".to_string(),
+            )
+        })?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             Ok(stdout.to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(RuntimeError::system_error(format!("命令执行失败: {}", stderr), "命令执行失败".to_string()))
+            Err(RuntimeError::system_error(
+                format!("命令执行失败: {}", stderr),
+                "命令执行失败".to_string(),
+            ))
         }
     }
 
@@ -446,7 +493,12 @@ impl SystemModule {
         env::var("LANG")
             .or_else(|_| env::var("LC_ALL"))
             .or_else(|_| env::var("LC_CTYPE"))
-            .map_err(|_| RuntimeError::system_error("无法获取系统语言环境".to_string(), "无法获取系统语言环境".to_string()))
+            .map_err(|_| {
+                RuntimeError::system_error(
+                    "无法获取系统语言环境".to_string(),
+                    "无法获取系统语言环境".to_string(),
+                )
+            })
     }
 
     /// Set system locale
@@ -516,7 +568,7 @@ mod tests {
 
         // Should be sorted
         for i in 1..env_vars.len() {
-            assert!(env_vars[i-1].0 <= env_vars[i].0);
+            assert!(env_vars[i - 1].0 <= env_vars[i].0);
         }
     }
 
@@ -605,7 +657,9 @@ mod tests {
         let has_which = system.command_exists("which");
 
         // At least one of these should exist on most systems
-        assert!(has_ls || has_which || system.command_exists("dir") || system.command_exists("where"));
+        assert!(
+            has_ls || has_which || system.command_exists("dir") || system.command_exists("where")
+        );
     }
 
     #[test]

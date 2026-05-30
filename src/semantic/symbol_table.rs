@@ -1,7 +1,7 @@
 //! Symbol table management for Qi language
 
-use crate::parser::ast::TypeNode;
 use crate::lexer::Span;
+use crate::parser::ast::TypeNode;
 use std::collections::HashMap;
 
 /// Symbol kinds
@@ -58,18 +58,11 @@ pub struct SymbolTable {
 pub enum ScopeError {
     /// Name conflict
     #[error("名称冲突: {name} 已在作用域中定义")]
-    NameConflict {
-        name: String,
-        existing_span: Span,
-        new_span: Span,
-    },
+    NameConflict { name: String, existing_span: Span, new_span: Span },
 
     /// Undefined symbol
     #[error("未定义的符号: {name}")]
-    UndefinedSymbol {
-        name: String,
-        span: Span,
-    },
+    UndefinedSymbol { name: String, span: Span },
 }
 
 impl SymbolTable {
@@ -87,15 +80,19 @@ impl SymbolTable {
 
     pub fn exit_scope(&mut self) {
         self.symbols.retain(|_, symbols| {
-            symbols.last().map_or(true, |sym| sym.scope_level <= self.current_scope - 1)
+            symbols
+                .last()
+                .map_or(true, |sym| sym.scope_level <= self.current_scope - 1)
         });
         self.current_scope = self.current_scope.saturating_sub(1);
     }
 
     pub fn define_symbol(&mut self, symbol: Symbol) -> Result<(), ScopeError> {
         if let Some(existing_symbols) = self.symbols.get(&symbol.name) {
-            if let Some(existing) = existing_symbols.iter()
-                .find(|sym| sym.scope_level == self.current_scope) {
+            if let Some(existing) = existing_symbols
+                .iter()
+                .find(|sym| sym.scope_level == self.current_scope)
+            {
                 return Err(ScopeError::NameConflict {
                     name: symbol.name.clone(),
                     existing_span: existing.span,
@@ -104,7 +101,8 @@ impl SymbolTable {
             }
         }
 
-        self.symbols.entry(symbol.name.clone())
+        self.symbols
+            .entry(symbol.name.clone())
             .or_insert_with(Vec::new)
             .push(symbol);
 
@@ -112,10 +110,12 @@ impl SymbolTable {
     }
 
     pub fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
-        self.symbols.get(name)
-            .and_then(|symbols| symbols.iter()
+        self.symbols.get(name).and_then(|symbols| {
+            symbols
+                .iter()
                 .filter(|sym| sym.scope_level <= self.current_scope)
-                .max_by_key(|sym| sym.scope_level))
+                .max_by_key(|sym| sym.scope_level)
+        })
     }
 
     pub fn get_errors(&self) -> &[ScopeError] {

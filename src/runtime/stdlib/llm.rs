@@ -61,7 +61,9 @@ impl 嵌入结果 {
             return Err(大模型错误::嵌入错误("维度不匹配".to_string()));
         }
 
-        let 点积: f64 = self.向量.iter()
+        let 点积: f64 = self
+            .向量
+            .iter()
             .zip(其他.向量.iter())
             .map(|(a, b)| a * b)
             .sum();
@@ -121,9 +123,7 @@ impl 嵌入器 {
 
     /// 批量嵌入
     pub fn 批量嵌入(&self, 文本列表: &[String]) -> 大模型结果<Vec<嵌入结果>> {
-        文本列表.iter()
-            .map(|文本| self.嵌入(文本))
-            .collect()
+        文本列表.iter().map(|文本| self.嵌入(文本)).collect()
     }
 }
 
@@ -143,12 +143,7 @@ pub struct 文档 {
 impl 文档 {
     /// 创建新文档
     pub fn 创建(id: String, 内容: String, 嵌入: 向量) -> Self {
-        Self {
-            id,
-            内容,
-            嵌入,
-            元数据: HashMap::new(),
-        }
+        Self { id, 内容, 嵌入, 元数据: HashMap::new() }
     }
 
     /// 添加元数据
@@ -179,14 +174,15 @@ pub struct 知识库 {
 impl 知识库 {
     /// 创建新的知识库
     pub fn 创建(嵌入器: 嵌入器) -> Self {
-        Self {
-            文档列表: Vec::new(),
-            嵌入器,
-        }
+        Self { 文档列表: Vec::new(), 嵌入器 }
     }
 
     /// 添加文档
-    pub fn 添加文档(&mut self, 内容: String, 元数据: HashMap<String, String>) -> 大模型结果<String> {
+    pub fn 添加文档(
+        &mut self,
+        内容: String,
+        元数据: HashMap<String, String>,
+    ) -> 大模型结果<String> {
         let 嵌入结果 = self.嵌入器.嵌入(&内容)?;
         let id = format!("doc_{}", self.文档列表.len());
 
@@ -203,13 +199,12 @@ impl 知识库 {
     pub fn 检索(&self, 查询: &str, 数量: usize) -> 大模型结果<Vec<检索结果>> {
         let 查询嵌入 = self.嵌入器.嵌入(查询)?;
 
-        let mut 结果: Vec<检索结果> = self.文档列表.iter()
+        let mut 结果: Vec<检索结果> = self
+            .文档列表
+            .iter()
             .map(|文档| {
                 let 分数 = self.计算相似度(&查询嵌入.向量, &文档.嵌入);
-                检索结果 {
-                    文档: 文档.clone(),
-                    分数,
-                }
+                检索结果 { 文档: 文档.clone(), 分数 }
             })
             .collect();
 
@@ -366,9 +361,7 @@ impl 检索增强生成 {
         let 检索结果 = self.知识库.检索(问题, 检索数量)?;
 
         // 2. 构建上下文
-        let 上下文: Vec<String> = 检索结果.iter()
-            .map(|r| r.文档.内容.clone())
-            .collect();
+        let 上下文: Vec<String> = 检索结果.iter().map(|r| r.文档.内容.clone()).collect();
         let 上下文文本 = 上下文.join("\n\n");
 
         // 3. 填充模板
@@ -428,12 +421,7 @@ pub struct 智能代理 {
 impl 智能代理 {
     /// 创建新的智能代理
     pub fn 创建(名称: String, 系统提示: String, 配置: 模型配置) -> Self {
-        Self {
-            名称,
-            系统提示,
-            工具列表: Vec::new(),
-            配置,
-        }
+        Self { 名称, 系统提示, 工具列表: Vec::new(), 配置 }
     }
 
     /// 添加工具
@@ -531,8 +519,12 @@ mod tests {
         let mut 元数据 = HashMap::new();
         元数据.insert("来源".to_string(), "测试".to_string());
 
-        知识库.添加文档("这是第一个文档".to_string(), 元数据.clone()).unwrap();
-        知识库.添加文档("这是第二个文档".to_string(), 元数据).unwrap();
+        知识库
+            .添加文档("这是第一个文档".to_string(), 元数据.clone())
+            .unwrap();
+        知识库
+            .添加文档("这是第二个文档".to_string(), 元数据)
+            .unwrap();
 
         assert_eq!(知识库.文档数量(), 2);
 
@@ -563,8 +555,12 @@ mod tests {
         let 模块 = 大模型模块::创建();
         let mut 知识库 = 模块.创建知识库();
 
-        知识库.添加文档("量子是什么".to_string(), HashMap::new()).unwrap();
-        知识库.添加文档("量子力学基础".to_string(), HashMap::new()).unwrap();
+        知识库
+            .添加文档("量子是什么".to_string(), HashMap::new())
+            .unwrap();
+        知识库
+            .添加文档("量子力学基础".to_string(), HashMap::new())
+            .unwrap();
 
         let 模板 = 模块.创建模板("问题: {问题}\n上下文: {上下文}\n回答:".to_string());
         let rag = 模块.创建RAG(知识库, 模板);
@@ -576,10 +572,7 @@ mod tests {
     #[test]
     fn 测试智能代理() {
         let 模块 = 大模型模块::创建();
-        let 代理 = 模块.创建代理(
-            "助手".to_string(),
-            "你是一个有帮助的AI助手".to_string()
-        );
+        let 代理 = 模块.创建代理("助手".to_string(), "你是一个有帮助的AI助手".to_string());
 
         let 结果 = 代理.运行("完成一个任务").unwrap();
         assert!(结果.contains("助手"));

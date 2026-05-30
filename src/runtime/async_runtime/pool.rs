@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::runtime::{RuntimeResult, RuntimeError};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 /// Worker pool configuration
 #[derive(Debug, Clone)]
@@ -41,10 +41,7 @@ impl WorkerPool {
             ));
         }
 
-        Ok(Self {
-            config,
-            queue: super::queue::TaskQueue::new(),
-        })
+        Ok(Self { config, queue: super::queue::TaskQueue::new() })
     }
 
     /// Get the number of worker threads
@@ -103,10 +100,7 @@ mod tests {
 
     #[test]
     fn test_pool_validation() {
-        let config = PoolConfig {
-            worker_count: 0,
-            ..Default::default()
-        };
+        let config = PoolConfig { worker_count: 0, ..Default::default() };
         let pool = WorkerPool::new(config);
         assert!(pool.is_err());
     }

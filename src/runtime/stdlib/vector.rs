@@ -75,9 +75,7 @@ impl 向量 {
         if 长度 == 0.0 {
             return Err(VectorError::InvalidOperation("零向量无法归一化".to_string()));
         }
-        Ok(Self {
-            元素: self.元素.iter().map(|x| x / 长度).collect(),
-        })
+        Ok(Self { 元素: self.元素.iter().map(|x| x / 长度).collect() })
     }
 
     /// 向量加法
@@ -86,7 +84,9 @@ impl 向量 {
             return Err(VectorError::InvalidOperation("向量维度不匹配".to_string()));
         }
         Ok(Self {
-            元素: self.元素.iter()
+            元素: self
+                .元素
+                .iter()
                 .zip(其他.元素.iter())
                 .map(|(a, b)| a + b)
                 .collect(),
@@ -99,7 +99,9 @@ impl 向量 {
             return Err(VectorError::InvalidOperation("向量维度不匹配".to_string()));
         }
         Ok(Self {
-            元素: self.元素.iter()
+            元素: self
+                .元素
+                .iter()
                 .zip(其他.元素.iter())
                 .map(|(a, b)| a - b)
                 .collect(),
@@ -108,9 +110,7 @@ impl 向量 {
 
     /// 数量乘法
     pub fn 数乘(&self, 标量: f64) -> Self {
-        Self {
-            元素: self.元素.iter().map(|x| x * 标量).collect(),
-        }
+        Self { 元素: self.元素.iter().map(|x| x * 标量).collect() }
     }
 
     /// 点积
@@ -118,7 +118,9 @@ impl 向量 {
         if self.维度() != 其他.维度() {
             return Err(VectorError::InvalidOperation("向量维度不匹配".to_string()));
         }
-        Ok(self.元素.iter()
+        Ok(self
+            .元素
+            .iter()
             .zip(其他.元素.iter())
             .map(|(a, b)| a * b)
             .sum())
@@ -146,7 +148,9 @@ impl 向量 {
             return Err(VectorError::InvalidOperation("向量维度不匹配".to_string()));
         }
         Ok(Self {
-            元素: self.元素.iter()
+            元素: self
+                .元素
+                .iter()
                 .zip(其他.元素.iter())
                 .map(|(a, b)| a * b)
                 .collect(),
@@ -164,7 +168,9 @@ impl 向量 {
             }
         }
         Ok(Self {
-            元素: self.元素.iter()
+            元素: self
+                .元素
+                .iter()
                 .zip(其他.元素.iter())
                 .map(|(a, b)| a / b)
                 .collect(),
@@ -207,9 +213,7 @@ pub struct 向量模块 {
 impl 向量模块 {
     /// 创建新模块
     pub fn 创建() -> Self {
-        let mut 模块 = Self {
-            常用向量: HashMap::new(),
-        };
+        let mut 模块 = Self { 常用向量: HashMap::new() };
         模块.初始化常用向量();
         模块
     }
@@ -217,13 +221,18 @@ impl 向量模块 {
     /// 初始化常用向量
     fn 初始化常用向量(&mut self) {
         // 2D基向量
-        self.常用向量.insert("单位X".to_string(), 向量::从数组(&[1.0, 0.0]));
-        self.常用向量.insert("单位Y".to_string(), 向量::从数组(&[0.0, 1.0]));
+        self.常用向量
+            .insert("单位X".to_string(), 向量::从数组(&[1.0, 0.0]));
+        self.常用向量
+            .insert("单位Y".to_string(), 向量::从数组(&[0.0, 1.0]));
 
         // 3D基向量
-        self.常用向量.insert("单位X3D".to_string(), 向量::从数组(&[1.0, 0.0, 0.0]));
-        self.常用向量.insert("单位Y3D".to_string(), 向量::从数组(&[0.0, 1.0, 0.0]));
-        self.常用向量.insert("单位Z3D".to_string(), 向量::从数组(&[0.0, 0.0, 1.0]));
+        self.常用向量
+            .insert("单位X3D".to_string(), 向量::从数组(&[1.0, 0.0, 0.0]));
+        self.常用向量
+            .insert("单位Y3D".to_string(), 向量::从数组(&[0.0, 1.0, 0.0]));
+        self.常用向量
+            .insert("单位Z3D".to_string(), 向量::从数组(&[0.0, 0.0, 1.0]));
     }
 
     /// 获取常用向量
@@ -305,7 +314,8 @@ impl 向量模块 {
 
     /// 聚合函数 - 最大值
     pub fn 最大值(&self, 数据: &[f64]) -> VectorResult<f64> {
-        数据.iter()
+        数据
+            .iter()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .copied()
             .ok_or_else(|| VectorError::InvalidOperation("空数组没有最大值".to_string()))
@@ -313,7 +323,8 @@ impl 向量模块 {
 
     /// 聚合函数 - 最小值
     pub fn 最小值(&self, 数据: &[f64]) -> VectorResult<f64> {
-        数据.iter()
+        数据
+            .iter()
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .copied()
             .ok_or_else(|| VectorError::InvalidOperation("空数组没有最小值".to_string()))

@@ -7,13 +7,13 @@ pub mod error;
 include!(concat!(env!("OUT_DIR"), "/parser/grammar.rs"));
 
 pub use ast::{
-    AstNode, Program, TypeNode, BasicType, LiteralValue, LiteralExpression, IdentifierExpression,
-    VariableDeclaration, FunctionDeclaration, ReturnStatement, ExpressionStatement,
-    IfStatement, WhileStatement, LoopStatement, ForStatement, BinaryExpression, BinaryOperator,
-    AssignmentExpression, FunctionCallExpression, AwaitExpression, Parameter, ArrayAccessExpression,
-    ArrayLiteralExpression, StringConcatExpression, ArrayType, StructDeclaration, StructField,
-    EnumDeclaration, EnumVariant, StructType, EnumType, StructLiteralExpression,
-    StructFieldValue, FieldAccessExpression
+    ArrayAccessExpression, ArrayLiteralExpression, ArrayType, AssignmentExpression, AstNode,
+    AwaitExpression, BasicType, BinaryExpression, BinaryOperator, EnumDeclaration, EnumType,
+    EnumVariant, ExpressionStatement, FieldAccessExpression, ForStatement, FunctionCallExpression,
+    FunctionDeclaration, IdentifierExpression, IfStatement, LiteralExpression, LiteralValue,
+    LoopStatement, Parameter, Program, ReturnStatement, StringConcatExpression, StructDeclaration,
+    StructField, StructFieldValue, StructLiteralExpression, StructType, TypeNode,
+    VariableDeclaration, WhileStatement,
 };
 pub use error::ParseError;
 
@@ -109,9 +109,16 @@ fn snippet_with_caret(source: &str, line: usize, col: usize, span_chars: usize) 
     for c in line_text.chars().take(prefix_chars) {
         // Approximation: use 2 spaces for wide chars, 1 for narrow. Most terminals
         // align CJK to 2-cell width.
-        if (c as u32) >= 0x2E80 { caret.push(' '); caret.push(' '); } else { caret.push(' '); }
+        if (c as u32) >= 0x2E80 {
+            caret.push(' ');
+            caret.push(' ');
+        } else {
+            caret.push(' ');
+        }
     }
-    for _ in 0..span_chars.max(1) { caret.push('^'); }
+    for _ in 0..span_chars.max(1) {
+        caret.push('^');
+    }
     format!("{line_no}{line_text}\n{padding}{caret}")
 }
 
@@ -128,10 +135,7 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
         } else if s.contains("a-zA-Z") {
             saw_ascii_ident = true;
         } else {
-            let cleaned = s
-                .trim_start_matches("r#")
-                .trim_matches('"')
-                .to_string();
+            let cleaned = s.trim_start_matches("r#").trim_matches('"').to_string();
             if !cleaned.is_empty() && !friendly.contains(&cleaned) {
                 friendly.push(cleaned);
             }
@@ -176,9 +180,25 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
     }
 
     const RESERVED_LANDMINES: &[&str] = &[
-        "结果", "类型", "尝试", "捕获", "抛出", "最终",
-        "继续", "跳出", "返回", "等待", "异步", "异步块",
-        "新建", "解引用", "取地址", "在", "作为", "选择", "情况",
+        "结果",
+        "类型",
+        "尝试",
+        "捕获",
+        "抛出",
+        "最终",
+        "继续",
+        "跳出",
+        "返回",
+        "等待",
+        "异步",
+        "异步块",
+        "新建",
+        "解引用",
+        "取地址",
+        "在",
+        "作为",
+        "选择",
+        "情况",
     ];
     if RESERVED_LANDMINES.contains(&tok) {
         return format!(
@@ -213,8 +233,10 @@ mod error_format_tests {
         assert!(msg.contains("行"), "msg lacks line ref: {msg}");
         // Should detect missing `;` rather than going down the reserved-word path
         // (变量 isn't reserved in that sense).
-        assert!(msg.contains("漏写了 `;`") || msg.contains("漏写"),
-            "msg lacks semicolon hint: {msg}");
+        assert!(
+            msg.contains("漏写了 `;`") || msg.contains("漏写"),
+            "msg lacks semicolon hint: {msg}"
+        );
     }
 
     #[test]

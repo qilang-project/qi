@@ -13,12 +13,8 @@ impl LinuxTarget {
     pub fn new() -> Self {
         Self {
             target_triple: "x86_64-unknown-linux-gnu".to_string(),
-            cpu_features: vec![
-                "sse2", "sse4.1", "sse4.2", "avx", "avx2"
-            ],
-            linker_flags: vec![
-                "-no-pie", "-dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
-            ],
+            cpu_features: vec!["sse2", "sse4.1", "sse4.2", "avx", "avx2"],
+            linker_flags: vec!["-no-pie", "-dynamic-linker", "/lib64/ld-linux-x86-64.so.2"],
         }
     }
 }

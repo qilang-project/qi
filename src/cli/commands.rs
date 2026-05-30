@@ -230,18 +230,15 @@ impl Cli {
             Some(Commands::Compile { files, output, help: _ }) => {
                 self.compile_files(files, output, config).await
             }
-            Some(Commands::Run { file, args, help: _ }) => {
-                self.run_file(file, args, config).await
-            }
+            Some(Commands::Run { file, args, help: _ }) => self.run_file(file, args, config).await,
             Some(Commands::Debug { file, args, verbose, memory, profile, stack_trace }) => {
-                self.debug_file(file, args, verbose, memory, profile, stack_trace, config).await
+                self.debug_file(file, args, verbose, memory, profile, stack_trace, config)
+                    .await
             }
             Some(Commands::CheckRun { file, args, check_only }) => {
                 self.check_run_file(file, args, check_only, config).await
             }
-            Some(Commands::Check { files }) => {
-                self.check_files(files, config).await
-            }
+            Some(Commands::Check { files }) => self.check_files(files, config).await,
             Some(Commands::Format { files, inplace }) => {
                 self.format_files(files, inplace, config).await
             }
@@ -253,7 +250,8 @@ impl Cli {
                 if self.source_files.is_empty() {
                     return Err(CliError::NoInputFiles);
                 }
-                self.compile_files(self.source_files.clone(), self.output.clone(), config).await
+                self.compile_files(self.source_files.clone(), self.output.clone(), config)
+                    .await
             }
         }
     }
@@ -297,7 +295,7 @@ impl Cli {
 
             if matches!(config.target_platform, crate::config::CompilationTarget::Wasm) {
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 编译为可执行文件暂未实现".to_string()
+                    "WebAssembly 编译为可执行文件暂未实现".to_string(),
                 )));
             }
 
@@ -305,7 +303,6 @@ impl Cli {
             // Do not feed the executable back into clang as LLVM IR.
             let final_executable = result.executable_path;
 
-            
             // Move or rename output file if custom output is specified
             if let Some(output_path) = &output {
                 if files.len() == 1 {
@@ -317,7 +314,7 @@ impl Cli {
                 } else {
                     // Multiple files: can't use single output path
                     return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                        "无法将多个输入文件编译到单个输出文件".to_string()
+                        "无法将多个输入文件编译到单个输出文件".to_string(),
                     )));
                 }
             } else {
@@ -351,15 +348,15 @@ impl Cli {
         use std::process::Command;
 
         // Generate executable path in current directory
-        let executable_name = llvm_ir_path.file_stem()
-            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
-                "无效的文件名".to_string()
-            )))?
+        let executable_name = llvm_ir_path
+            .file_stem()
+            .ok_or_else(|| {
+                CliError::Compilation(crate::CompilerError::Codegen("无效的文件名".to_string()))
+            })?
             .to_string_lossy()
             .to_string();
 
-        let temp_executable = std::env::current_dir()?
-            .join(format!("{}.exec", executable_name));
+        let temp_executable = std::env::current_dir()?.join(format!("{}.exec", executable_name));
 
         if config.verbose {
             println!("正在编译 LLVM IR 到可执行文件...");
@@ -386,9 +383,10 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("LLVM IR 编译失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "LLVM IR 编译失败: {}",
+                error
+            ))));
         }
 
         // Link with Qi compiler library (which contains runtime + async symbols)
@@ -443,16 +441,12 @@ impl Cli {
                 .arg("AppKit");
         }
 
-        link_command
-            .arg("-o")
-            .arg(&temp_executable);
+        link_command.arg("-o").arg(&temp_executable);
 
         eprintln!("DEBUG: Link command: {:?}", link_command);
 
         let 命令字符串 = format!("{:?}", link_command);
-        let output = link_command
-            .output()
-            .map_err(|e| CliError::Io(e))?;
+        let output = link_command.output().map_err(|e| CliError::Io(e))?;
 
         if config.verbose {
             eprintln!("DEBUG: clang link finished, success={}", output.status.success());
@@ -461,9 +455,10 @@ impl Cli {
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             eprintln!("链接命令: {}", 命令字符串);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("链接失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "链接失败: {}",
+                error
+            ))));
         }
 
         // Clean up object file, but keep executable
@@ -522,20 +517,23 @@ impl Cli {
         match config.target_platform {
             crate::config::CompilationTarget::MacOS => {
                 // For macOS, the executable is already compiled and linked
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Linux => {
                 // For Linux, run the executable directly
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Windows => {
                 // For Windows, run the executable directly
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Wasm => {
                 // For WebAssembly, we need a different approach
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 运行暂未实现".to_string()
+                    "WebAssembly 运行暂未实现".to_string(),
                 )));
             }
         }
@@ -574,15 +572,15 @@ impl Cli {
         }
 
         // Generate executable path in current directory
-        let executable_name = llvm_ir_path.file_stem()
-            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
-                "无效的文件名".to_string()
-            )))?
+        let executable_name = llvm_ir_path
+            .file_stem()
+            .ok_or_else(|| {
+                CliError::Compilation(crate::CompilerError::Codegen("无效的文件名".to_string()))
+            })?
             .to_string_lossy()
             .to_string();
 
-        let temp_executable = std::env::current_dir()?
-            .join(format!("{}.exec", executable_name));
+        let temp_executable = std::env::current_dir()?.join(format!("{}.exec", executable_name));
 
         if config.verbose {
             eprintln!("DEBUG: temp_executable = {:?}", temp_executable);
@@ -613,9 +611,10 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("LLVM IR 编译失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "LLVM IR 编译失败: {}",
+                error
+            ))));
         }
 
         // Link with Qi compiler library (which contains runtime + async symbols)
@@ -670,16 +669,12 @@ impl Cli {
                 .arg("AppKit");
         }
 
-        link_command
-            .arg("-o")
-            .arg(&temp_executable);
+        link_command.arg("-o").arg(&temp_executable);
 
         eprintln!("DEBUG: Link command: {:?}", link_command);
 
         let 命令字符串 = format!("{:?}", link_command);
-        let output = link_command
-            .output()
-            .map_err(|e| CliError::Io(e))?;
+        let output = link_command.output().map_err(|e| CliError::Io(e))?;
 
         if config.verbose {
             eprintln!("DEBUG: clang link finished, success={}", output.status.success());
@@ -688,9 +683,10 @@ impl Cli {
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             eprintln!("链接命令: {}", 命令字符串);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("链接失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "链接失败: {}",
+                error
+            ))));
         }
 
         if config.verbose {
@@ -726,9 +722,10 @@ impl Cli {
         }
 
         if !output.status.success() {
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code())
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "程序运行失败，退出码: {:?}",
+                output.status.code()
+            ))));
         }
 
         // Clean up temporary files
@@ -768,9 +765,10 @@ impl Cli {
         }
 
         if !output.status.success() {
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code())
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "程序运行失败，退出码: {:?}",
+                output.status.code()
+            ))));
         }
 
         Ok(())
@@ -794,8 +792,7 @@ impl Cli {
                 println!("正在检查文件: {:?}", file);
             }
 
-            let source = std::fs::read_to_string(file)
-                .map_err(|e| CliError::Io(e))?;
+            let source = std::fs::read_to_string(file).map_err(|e| CliError::Io(e))?;
 
             match parser.parse_source(&source) {
                 Ok(_) => {
@@ -819,7 +816,7 @@ impl Cli {
             }
         } else {
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                "语法检查失败".to_string()
+                "语法检查失败".to_string(),
             )));
         }
 
@@ -838,7 +835,12 @@ impl Cli {
         Ok(())
     }
 
-    async fn show_info(&self, version: bool, language: bool, targets: bool) -> Result<(), CliError> {
+    async fn show_info(
+        &self,
+        version: bool,
+        language: bool,
+        targets: bool,
+    ) -> Result<(), CliError> {
         if version || (!language && !targets) {
             println!("Qi 编译器 v{}", env!("CARGO_PKG_VERSION"));
             println!("作者: Qi Language Team <team@qi-lang.org>");
@@ -893,11 +895,14 @@ impl Cli {
     }
 
     /// Ensure the Qi runtime library is built
-    fn ensure_runtime_library_built(&self, config: &crate::config::CompilerConfig) -> Result<(), CliError> {
+    fn ensure_runtime_library_built(
+        &self,
+        config: &crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
         use std::process::Command;
 
         let runtime_lib = self.get_runtime_library_path()?;
-        
+
         // Check if runtime library exists
         if runtime_lib.exists() {
             if config.verbose {
@@ -912,7 +917,7 @@ impl Cli {
 
         // Build the runtime library using cargo
         let project_root = std::env::current_dir()?;
-        
+
         let output = Command::new("cargo")
             .arg("build")
             .arg("--release")
@@ -923,9 +928,10 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("Runtime 库构建失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "Runtime 库构建失败: {}",
+                error
+            ))));
         }
 
         if config.verbose {
@@ -949,10 +955,18 @@ impl Cli {
         println!("🐛 调试模式启动");
         println!("📁 源文件: {:?}", file);
         println!("⚙️  调试选项:");
-        if verbose { println!("  • 详细输出: 开启"); }
-        if memory { println!("  • 内存监控: 开启"); }
-        if profile { println!("  • 性能分析: 开启"); }
-        if stack_trace { println!("  • 堆栈跟踪: 开启"); }
+        if verbose {
+            println!("  • 详细输出: 开启");
+        }
+        if memory {
+            println!("  • 内存监控: 开启");
+        }
+        if profile {
+            println!("  • 性能分析: 开启");
+        }
+        if stack_trace {
+            println!("  • 堆栈跟踪: 开启");
+        }
         println!();
 
         // Step 1: Parse and analyze the source file for debugging info
@@ -962,8 +976,7 @@ impl Cli {
 
         use crate::parser::Parser;
         let parser = Parser::new();
-        let source = std::fs::read_to_string(&file)
-            .map_err(|e| CliError::Io(e))?;
+        let source = std::fs::read_to_string(&file).map_err(|e| CliError::Io(e))?;
 
         let program = match parser.parse_source(&source) {
             Ok(program) => {
@@ -977,7 +990,7 @@ impl Cli {
             Err(parse_error) => {
                 eprintln!("{}", parse_error);
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "语法解析失败".to_string()
+                    "语法解析失败".to_string(),
                 )));
             }
         };
@@ -1031,17 +1044,35 @@ impl Cli {
         // Step 4: Run with debugging
         match config.target_platform {
             crate::config::CompilationTarget::MacOS => {
-                self.run_macos_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+                self.run_macos_executable_debug(
+                    &compile_result.executable_path,
+                    &args,
+                    debug_env,
+                    config,
+                )
+                .await?;
             }
             crate::config::CompilationTarget::Linux => {
-                self.run_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+                self.run_executable_debug(
+                    &compile_result.executable_path,
+                    &args,
+                    debug_env,
+                    config,
+                )
+                .await?;
             }
             crate::config::CompilationTarget::Windows => {
-                self.run_executable_debug(&compile_result.executable_path, &args, debug_env, config).await?;
+                self.run_executable_debug(
+                    &compile_result.executable_path,
+                    &args,
+                    debug_env,
+                    config,
+                )
+                .await?;
             }
             crate::config::CompilationTarget::Wasm => {
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 调试运行暂未实现".to_string()
+                    "WebAssembly 调试运行暂未实现".to_string(),
                 )));
             }
         }
@@ -1077,8 +1108,7 @@ impl Cli {
 
         use crate::parser::Parser;
         let parser = Parser::new();
-        let source = std::fs::read_to_string(&file)
-            .map_err(|e| CliError::Io(e))?;
+        let source = std::fs::read_to_string(&file).map_err(|e| CliError::Io(e))?;
 
         let program = match parser.parse_source(&source) {
             Ok(program) => {
@@ -1090,9 +1120,10 @@ impl Cli {
             }
             Err(parse_error) => {
                 eprintln!("  ✗ 语法错误: {:?}", parse_error);
-                return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    format!("语法检查失败: {:?}", parse_error)
-                )));
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                    "语法检查失败: {:?}",
+                    parse_error
+                ))));
             }
         };
 
@@ -1126,17 +1157,20 @@ impl Cli {
         // Step 3: Run the program
         match config.target_platform {
             crate::config::CompilationTarget::MacOS => {
-                self.run_macos_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_macos_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Linux => {
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Windows => {
-                self.run_executable(&compile_result.executable_path, &args, config).await?;
+                self.run_executable(&compile_result.executable_path, &args, config)
+                    .await?;
             }
             crate::config::CompilationTarget::Wasm => {
                 return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 运行暂未实现".to_string()
+                    "WebAssembly 运行暂未实现".to_string(),
                 )));
             }
         }
@@ -1181,9 +1215,10 @@ impl Cli {
 
         if !output.status.success() {
             eprintln!("❌ 程序异常退出，退出码: {:?}", output.status.code());
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code())
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "程序运行失败，退出码: {:?}",
+                output.status.code()
+            ))));
         }
 
         Ok(())
@@ -1200,15 +1235,16 @@ impl Cli {
         use std::process::Command;
 
         // Generate executable path in current directory
-        let executable_name = llvm_ir_path.file_stem()
-            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
-                "无效的文件名".to_string()
-            )))?
+        let executable_name = llvm_ir_path
+            .file_stem()
+            .ok_or_else(|| {
+                CliError::Compilation(crate::CompilerError::Codegen("无效的文件名".to_string()))
+            })?
             .to_string_lossy()
             .to_string();
 
-        let temp_executable = std::env::current_dir()?
-            .join(format!("{}_debug.exec", executable_name));
+        let temp_executable =
+            std::env::current_dir()?.join(format!("{}_debug.exec", executable_name));
 
         if config.verbose {
             println!("🔧 正在编译调试版本可执行文件...");
@@ -1217,7 +1253,7 @@ impl Cli {
         // Compile LLVM IR to object file with debug info
         let output = Command::new("clang")
             .arg("-c")
-            .arg("-g")  // Add debug symbols
+            .arg("-g") // Add debug symbols
             .arg("-O0") // No optimization
             .arg("-x")
             .arg("ir")
@@ -1229,9 +1265,10 @@ impl Cli {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("LLVM IR 编译失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "LLVM IR 编译失败: {}",
+                error
+            ))));
         }
 
         // Build runtime library if needed
@@ -1278,16 +1315,15 @@ impl Cli {
         }
 
         let 命令字符串 = format!("{:?}", link_command);
-        let output = link_command
-            .output()
-            .map_err(|e| CliError::Io(e))?;
+        let output = link_command.output().map_err(|e| CliError::Io(e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
             eprintln!("链接命令: {}", 命令字符串);
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("链接失败: {}", error)
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "链接失败: {}",
+                error
+            ))));
         }
 
         // Run with debugging environment
@@ -1315,9 +1351,10 @@ impl Cli {
 
         if !output.status.success() {
             eprintln!("❌ 调试程序异常退出，退出码: {:?}", output.status.code());
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code())
-            )));
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+                "程序运行失败，退出码: {:?}",
+                output.status.code()
+            ))));
         }
 
         // Clean up temporary files
@@ -1382,7 +1419,7 @@ impl Cli {
         }
 
         Err(CliError::Compilation(crate::CompilerError::Codegen(
-            "无法编译 Qi Runtime 库文件".to_string()
+            "无法编译 Qi Runtime 库文件".to_string(),
         )))
     }
 
@@ -1390,10 +1427,9 @@ impl Cli {
     fn get_compiler_library_path(&self) -> Result<std::path::PathBuf, CliError> {
         // Get the compiler executable path
         let compiler_exe_path = std::env::current_exe()?;
-        let compiler_dir = compiler_exe_path.parent()
-            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
-                "无法确定编译器目录".to_string()
-            )))?;
+        let compiler_dir = compiler_exe_path.parent().ok_or_else(|| {
+            CliError::Compilation(crate::CompilerError::Codegen("无法确定编译器目录".to_string()))
+        })?;
 
         // Platform-specific library name
         let lib_name = if cfg!(windows) {
@@ -1409,11 +1445,14 @@ impl Cli {
         }
 
         // Second try: target/debug relative to project root (for development builds)
-        let project_root = compiler_dir.parent()
+        let project_root = compiler_dir
+            .parent()
             .and_then(|p| p.parent())
-            .ok_or_else(|| CliError::Compilation(crate::CompilerError::Codegen(
-                "无法确定项目根目录".to_string()
-            )))?;
+            .ok_or_else(|| {
+                CliError::Compilation(crate::CompilerError::Codegen(
+                    "无法确定项目根目录".to_string(),
+                ))
+            })?;
 
         let lib_path = project_root.join("target").join("debug").join(lib_name);
         if lib_path.exists() {
@@ -1427,9 +1466,10 @@ impl Cli {
             return Ok(lib_path);
         }
 
-        Err(CliError::Compilation(crate::CompilerError::Codegen(
-            format!("无法找到 Qi Compiler 库文件: {:?}", lib_path)
-        )))
+        Err(CliError::Compilation(crate::CompilerError::Codegen(format!(
+            "无法找到 Qi Compiler 库文件: {:?}",
+            lib_path
+        ))))
     }
 }
 

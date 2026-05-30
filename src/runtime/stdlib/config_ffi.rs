@@ -53,12 +53,10 @@ pub extern "C" fn qi_config_write_toml(path: *const c_char, json: *const c_char)
             Ok(value) => {
                 // 转换为 TOML
                 match toml::to_string_pretty(&value) {
-                    Ok(toml_str) => {
-                        match fs::write(path_str.as_ref(), toml_str) {
-                            Ok(_) => 0,
-                            Err(_) => -1,
-                        }
-                    }
+                    Ok(toml_str) => match fs::write(path_str.as_ref(), toml_str) {
+                        Ok(_) => 0,
+                        Err(_) => -1,
+                    },
                     Err(_) => -1,
                 }
             }
@@ -108,8 +106,8 @@ pub extern "C" fn qi_config_write_ini(path: *const c_char, json: *const c_char) 
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let json_str = CStr::from_ptr(json).to_string_lossy();
 
-        use std::collections::HashMap;
         use configparser::ini::Ini;
+        use std::collections::HashMap;
 
         match serde_json::from_str::<HashMap<String, HashMap<String, String>>>(&json_str) {
             Ok(map) => {

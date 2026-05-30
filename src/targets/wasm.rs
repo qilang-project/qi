@@ -13,12 +13,8 @@ impl WasmTarget {
     pub fn new() -> Self {
         Self {
             target_triple: "wasm32-unknown-unknown".to_string(),
-            cpu_features: vec![
-                "bulk-memory", "mutable-globals"
-            ],
-            linker_flags: vec![
-                "--no-entry", "--export-all", "--allow-undefined"
-            ],
+            cpu_features: vec!["bulk-memory", "mutable-globals"],
+            linker_flags: vec!["--no-entry", "--export-all", "--allow-undefined"],
         }
     }
 }

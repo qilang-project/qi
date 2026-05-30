@@ -51,11 +51,9 @@ extern "C" fn handler(_sig: c_int) {
 pub extern "C" fn qi_signal_install_shutdown() -> i64 {
     use std::sync::Once;
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        unsafe {
-            libc::signal(libc::SIGINT, handler as libc::sighandler_t);
-            libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
-        }
+    ONCE.call_once(|| unsafe {
+        libc::signal(libc::SIGINT, handler as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
     });
     0
 }

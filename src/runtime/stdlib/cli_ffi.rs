@@ -1,7 +1,6 @@
 /// CLI参数解析FFI层
 ///
 /// 基于Rust的clap库实现，为Qi语言提供强大的命令行参数解析功能
-
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -13,7 +12,8 @@ use std::sync::Mutex;
 /// 全局存储，用于管理应用、参数和匹配结果的生命周期
 static APPS: Lazy<Mutex<HashMap<usize, QiCliApp>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static ARGS: Lazy<Mutex<HashMap<usize, QiCliArg>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-static MATCHES: Lazy<Mutex<HashMap<usize, QiCliMatches>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static MATCHES: Lazy<Mutex<HashMap<usize, QiCliMatches>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 static NEXT_ID: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(1));
 
@@ -52,9 +52,7 @@ pub extern "C" fn qi_cli_create_app(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let app = QiCliApp {
-            command: Command::new(name_static),
-        };
+        let app = QiCliApp { command: Command::new(name_static) };
 
         let id = next_id();
         APPS.lock().unwrap().insert(id, app);
@@ -75,7 +73,8 @@ pub extern "C" fn qi_cli_set_version(app_id: i64, version: *const c_char) -> i64
         let mut apps = APPS.lock().unwrap();
 
         if let Some(app) = apps.get_mut(&(app_id as usize)) {
-            app.command = std::mem::replace(&mut app.command, Command::new("")).version(version_static);
+            app.command =
+                std::mem::replace(&mut app.command, Command::new("")).version(version_static);
             1
         } else {
             -1
@@ -96,7 +95,8 @@ pub extern "C" fn qi_cli_set_author(app_id: i64, author: *const c_char) -> i64 {
         let mut apps = APPS.lock().unwrap();
 
         if let Some(app) = apps.get_mut(&(app_id as usize)) {
-            app.command = std::mem::replace(&mut app.command, Command::new("")).author(author_static);
+            app.command =
+                std::mem::replace(&mut app.command, Command::new("")).author(author_static);
             1
         } else {
             -1
@@ -138,7 +138,8 @@ pub extern "C" fn qi_cli_set_long_about(app_id: i64, detail: *const c_char) -> i
         let mut apps = APPS.lock().unwrap();
 
         if let Some(app) = apps.get_mut(&(app_id as usize)) {
-            app.command = std::mem::replace(&mut app.command, Command::new("")).long_about(detail_static);
+            app.command =
+                std::mem::replace(&mut app.command, Command::new("")).long_about(detail_static);
             1
         } else {
             -1
@@ -159,7 +160,8 @@ pub extern "C" fn qi_cli_set_override_usage(app_id: i64, usage: *const c_char) -
         let mut apps = APPS.lock().unwrap();
 
         if let Some(app) = apps.get_mut(&(app_id as usize)) {
-            app.command = std::mem::replace(&mut app.command, Command::new("")).override_usage(usage_static);
+            app.command =
+                std::mem::replace(&mut app.command, Command::new("")).override_usage(usage_static);
             1
         } else {
             -1
@@ -180,7 +182,8 @@ pub extern "C" fn qi_cli_set_after_help(app_id: i64, help: *const c_char) -> i64
         let mut apps = APPS.lock().unwrap();
 
         if let Some(app) = apps.get_mut(&(app_id as usize)) {
-            app.command = std::mem::replace(&mut app.command, Command::new("")).after_help(help_static);
+            app.command =
+                std::mem::replace(&mut app.command, Command::new("")).after_help(help_static);
             1
         } else {
             -1
@@ -200,9 +203,7 @@ pub extern "C" fn qi_cli_create_arg(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let arg = QiCliArg {
-            arg: Arg::new(name_static),
-        };
+        let arg = QiCliArg { arg: Arg::new(name_static) };
 
         let id = next_id();
         ARGS.lock().unwrap().insert(id, arg);
@@ -243,7 +244,8 @@ pub extern "C" fn qi_cli_arg_set_long(arg_id: i64, long: *const c_char) -> i64 {
         let mut args = ARGS.lock().unwrap();
 
         if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
-            arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).long(long_static);
+            arg_wrapper.arg =
+                std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).long(long_static);
             1
         } else {
             -1
@@ -264,7 +266,8 @@ pub extern "C" fn qi_cli_arg_set_help(arg_id: i64, help: *const c_char) -> i64 {
         let mut args = ARGS.lock().unwrap();
 
         if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
-            arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).help(help_static);
+            arg_wrapper.arg =
+                std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).help(help_static);
             1
         } else {
             -1
@@ -282,7 +285,8 @@ pub extern "C" fn qi_cli_arg_set_required(arg_id: i64, required: i64) -> i64 {
     let mut args = ARGS.lock().unwrap();
 
     if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
-        arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).required(required != 0);
+        arg_wrapper.arg =
+            std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).required(required != 0);
         1
     } else {
         -1
@@ -302,7 +306,8 @@ pub extern "C" fn qi_cli_arg_set_default(arg_id: i64, default: *const c_char) ->
         let mut args = ARGS.lock().unwrap();
 
         if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
-            arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).default_value(default_static);
+            arg_wrapper.arg =
+                std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).default_value(default_static);
             1
         } else {
             -1
@@ -320,7 +325,8 @@ pub extern "C" fn qi_cli_arg_set_flag(arg_id: i64) -> i64 {
     let mut args = ARGS.lock().unwrap();
 
     if let Some(arg_wrapper) = args.get_mut(&(arg_id as usize)) {
-        arg_wrapper.arg = std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).action(ArgAction::SetTrue);
+        arg_wrapper.arg =
+            std::mem::replace(&mut arg_wrapper.arg, Arg::new("")).action(ArgAction::SetTrue);
         1
     } else {
         -1
@@ -384,7 +390,8 @@ pub extern "C" fn qi_cli_app_add_arg(app_id: i64, arg_id: i64) -> i64 {
     if let (Some(app), Some(arg_wrapper)) =
         (apps.get_mut(&(app_id as usize)), args.get(&(arg_id as usize)))
     {
-        app.command = std::mem::replace(&mut app.command, Command::new("")).arg(arg_wrapper.arg.clone());
+        app.command =
+            std::mem::replace(&mut app.command, Command::new("")).arg(arg_wrapper.arg.clone());
         1
     } else {
         -1
@@ -403,9 +410,7 @@ pub extern "C" fn qi_cli_create_subcommand(name: *const c_char) -> i64 {
     unsafe {
         let name_string = CStr::from_ptr(name).to_string_lossy().into_owned();
         let name_static: &'static str = Box::leak(name_string.into_boxed_str());
-        let app = QiCliApp {
-            command: Command::new(name_static),
-        };
+        let app = QiCliApp { command: Command::new(name_static) };
 
         let id = next_id();
         APPS.lock().unwrap().insert(id, app);
@@ -616,9 +621,7 @@ pub extern "C" fn qi_cli_get_subcommand(matches_id: i64, name: *const c_char) ->
 
         if let Some(m) = matches.get(&(matches_id as usize)) {
             if let Some(sub_matches) = m.matches.subcommand_matches(&name_str) {
-                let sub_wrapper = QiCliMatches {
-                    matches: sub_matches.clone(),
-                };
+                let sub_wrapper = QiCliMatches { matches: sub_matches.clone() };
                 let id = next_id();
                 drop(matches); // 释放锁
                 MATCHES.lock().unwrap().insert(id, sub_wrapper);

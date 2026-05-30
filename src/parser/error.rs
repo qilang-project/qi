@@ -1,9 +1,9 @@
 //! Parsing error handling for Qi language
 //! 解析器错误处理和恢复机制
 
-use crate::lexer::{Token, TokenKind, Span};
+use crate::lexer::{Span, Token, TokenKind};
 use crate::parser::ast::BasicType;
-use crate::utils::diagnostics::{DiagnosticManager, DiagnosticLevel};
+use crate::utils::diagnostics::{DiagnosticLevel, DiagnosticManager};
 
 /// Parsing errors
 #[derive(Debug, thiserror::Error)]
@@ -310,7 +310,8 @@ impl ParserErrorRecovery {
         let expected_str = if context.expected.is_empty() {
             "未知".to_string()
         } else {
-            context.expected
+            context
+                .expected
                 .iter()
                 .map(|k| format!("'{}'", self.token_kind_to_string(k)))
                 .collect::<Vec<_>>()
@@ -323,13 +324,19 @@ impl ParserErrorRecovery {
             "function_declaration" => (
                 "E008".to_string(),
                 format!("函数声明语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Function declaration syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Function declaration syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查函数声明语法是否正确: 函数名后面应该跟着括号和参数列表".to_string(),
             ),
             "variable_declaration" => (
                 "E009".to_string(),
                 format!("变量声明语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Variable declaration syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Variable declaration syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查变量声明语法: 变量名后面应该跟冒号和类型，或者直接赋值".to_string(),
             ),
             "expression" => (
@@ -347,25 +354,37 @@ impl ParserErrorRecovery {
             "type_annotation" => (
                 "E012".to_string(),
                 format!("类型注解语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Type annotation syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Type annotation syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查类型注解语法，确保类型名称正确".to_string(),
             ),
             "function_call" => (
                 "E013".to_string(),
                 format!("函数调用语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Function call syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Function call syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查函数调用语法: 函数名后面应该跟着括号和参数列表".to_string(),
             ),
             "block_statement" => (
                 "E014".to_string(),
                 format!("块语句语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("Block statement syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "Block statement syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查块语句语法: 确保左大括号和右大括号匹配".to_string(),
             ),
             "if_statement" => (
                 "E015".to_string(),
                 format!("如果语句语法错误: 期望 {}, 找到 {}", expected_str, actual_str),
-                format!("If statement syntax error: expected {}, found {}", expected_str, actual_str),
+                format!(
+                    "If statement syntax error: expected {}, found {}",
+                    expected_str, actual_str
+                ),
                 "检查如果语句语法: 如果 (条件) { 语句体 }".to_string(),
             ),
             "while_loop" => (
@@ -405,12 +424,8 @@ impl ParserErrorRecovery {
                     RecoveryStrategy::SkipToNextLine
                 }
             }
-            "block_statement" => {
-                RecoveryStrategy::SkipToMatchingBracket
-            }
-            "function_call" => {
-                RecoveryStrategy::SkipToNextToken
-            }
+            "block_statement" => RecoveryStrategy::SkipToMatchingBracket,
+            "function_call" => RecoveryStrategy::SkipToNextToken,
             _ => {
                 // Default strategy: skip to next semicolon or line end
                 if context.actual.kind == TokenKind::分号 {
@@ -574,33 +589,38 @@ impl ParserErrorRecovery {
 
     /// Attempt to recover from an error using the specified strategy
     /// 尝试使用指定策略从错误中恢复
-    pub fn recover_from_error(&self, tokens: &[Token], current_position: usize, strategy: RecoveryStrategy) -> usize {
+    pub fn recover_from_error(
+        &self,
+        tokens: &[Token],
+        current_position: usize,
+        strategy: RecoveryStrategy,
+    ) -> usize {
         match strategy {
             RecoveryStrategy::SkipToSemicolon => {
                 self.skip_to_token(tokens, current_position, &[TokenKind::分号])
             }
-            RecoveryStrategy::SkipToNextLine => {
-                self.skip_to_next_line(tokens, current_position)
-            }
-            RecoveryStrategy::SkipToNextToken => {
-                self.skip_to_next_token(tokens, current_position)
-            }
+            RecoveryStrategy::SkipToNextLine => self.skip_to_next_line(tokens, current_position),
+            RecoveryStrategy::SkipToNextToken => self.skip_to_next_token(tokens, current_position),
             RecoveryStrategy::SkipToMatchingBracket => {
                 self.skip_to_matching_bracket(tokens, current_position)
             }
             RecoveryStrategy::SkipToNextStatement => {
                 self.skip_to_next_statement(tokens, current_position)
             }
-            RecoveryStrategy::PanicMode => {
-                self.panic_mode_recovery(tokens, current_position)
-            }
+            RecoveryStrategy::PanicMode => self.panic_mode_recovery(tokens, current_position),
         }
     }
 
     /// Skip tokens until finding one of the target kinds
     /// 跳过token直到找到目标类型之一
-    fn skip_to_token(&self, tokens: &[Token], start_pos: usize, target_kinds: &[TokenKind]) -> usize {
-        for i in start_pos..tokens.len().min(start_pos + 50) { // Limit lookahead to prevent infinite loops
+    fn skip_to_token(
+        &self,
+        tokens: &[Token],
+        start_pos: usize,
+        target_kinds: &[TokenKind],
+    ) -> usize {
+        for i in start_pos..tokens.len().min(start_pos + 50) {
+            // Limit lookahead to prevent infinite loops
             if target_kinds.contains(&tokens[i].kind) {
                 return i + 1; // Return position after the found token
             }
@@ -678,9 +698,14 @@ impl ParserErrorRecovery {
         // If no recovery point, skip to next significant token
         for i in start_pos..tokens.len().min(start_pos + 100) {
             match tokens[i].kind {
-                TokenKind::函数 | TokenKind::变量 | TokenKind::常量 |
-                TokenKind::如果 | TokenKind::当 | TokenKind::对于 |
-                TokenKind::右大括号 | TokenKind::文件结束 => {
+                TokenKind::函数
+                | TokenKind::变量
+                | TokenKind::常量
+                | TokenKind::如果
+                | TokenKind::当
+                | TokenKind::对于
+                | TokenKind::右大括号
+                | TokenKind::文件结束 => {
                     return i;
                 }
                 _ => {}

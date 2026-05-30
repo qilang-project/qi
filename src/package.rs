@@ -134,10 +134,7 @@ impl PackageId {
         Self {
             name: PackageName::parse(name),
             version: None,
-            source: PackageSource {
-                kind: PackageSourceKind::Anonymous,
-                path: None,
-            },
+            source: PackageSource { kind: PackageSourceKind::Anonymous, path: None },
         }
     }
 }
@@ -183,7 +180,10 @@ impl ResolvedPackageManifest {
         let start_dir = if start_path.is_dir() {
             start_path.to_path_buf()
         } else {
-            start_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf()
+            start_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf()
         };
 
         let mut current = start_dir;
@@ -197,11 +197,7 @@ impl ResolvedPackageManifest {
                     .map_err(|e| format!("解析 qi.toml 失败 {}: {}", manifest_path.display(), e))?;
                 let root_dir = current.canonicalize().unwrap_or(current.clone());
                 let manifest_path = manifest_path.canonicalize().unwrap_or(manifest_path);
-                return Ok(Some(Self {
-                    manifest_path,
-                    root_dir,
-                    manifest,
-                }));
+                return Ok(Some(Self { manifest_path, root_dir, manifest }));
             }
 
             if !current.pop() {
@@ -213,18 +209,22 @@ impl ResolvedPackageManifest {
     }
 
     pub fn package_name(&self) -> Option<&str> {
-        self.manifest.package.as_ref().and_then(|pkg| pkg.name.as_deref())
+        self.manifest
+            .package
+            .as_ref()
+            .and_then(|pkg| pkg.name.as_deref())
     }
 
     pub fn package_id(&self, source_kind: PackageSourceKind) -> Option<PackageId> {
         let name = self.package_name()?;
         Some(PackageId {
             name: PackageName::parse(name),
-            version: self.manifest.package.as_ref().and_then(|pkg| pkg.version.clone()),
-            source: PackageSource {
-                kind: source_kind,
-                path: Some(self.root_dir.clone()),
-            },
+            version: self
+                .manifest
+                .package
+                .as_ref()
+                .and_then(|pkg| pkg.version.clone()),
+            source: PackageSource { kind: source_kind, path: Some(self.root_dir.clone()) },
         })
     }
 
@@ -233,7 +233,12 @@ impl ResolvedPackageManifest {
             .source
             .as_ref()
             .and_then(|src| src.entry.clone())
-            .or_else(|| self.manifest.package.as_ref().and_then(|pkg| pkg.entry.clone()))
+            .or_else(|| {
+                self.manifest
+                    .package
+                    .as_ref()
+                    .and_then(|pkg| pkg.entry.clone())
+            })
             .unwrap_or_else(|| format!("{}.qi", fallback_name))
     }
 
@@ -248,7 +253,9 @@ impl ResolvedPackageManifest {
         if dirs.is_empty() {
             vec![self.root_dir.clone()]
         } else {
-            dirs.into_iter().map(|dir| self.root_dir.join(dir)).collect()
+            dirs.into_iter()
+                .map(|dir| self.root_dir.join(dir))
+                .collect()
         }
     }
 
@@ -268,9 +275,7 @@ impl ResolvedPackageManifest {
         };
 
         if submodule_parts.is_empty() {
-            let entry_name = self
-                .package_name()
-                .unwrap_or(package_alias);
+            let entry_name = self.package_name().unwrap_or(package_alias);
             let entry_file_name = self.entry_file_name(entry_name);
             for source_dir in self.source_dirs() {
                 let candidate = source_dir.join(&entry_file_name);
@@ -293,7 +298,9 @@ impl ResolvedPackageManifest {
 
             if submodule_parts.len() == 1 {
                 let nested_name = &submodule_parts[0];
-                let nested_entry = source_dir.join(nested_name).join(format!("{}.qi", nested_name));
+                let nested_entry = source_dir
+                    .join(nested_name)
+                    .join(format!("{}.qi", nested_name));
                 if nested_entry.exists() {
                     return Some(nested_entry);
                 }
@@ -306,13 +313,13 @@ impl ResolvedPackageManifest {
     pub fn resolve_dependency(&self, alias: &str) -> Option<ResolvedDependency> {
         let dependency = self.manifest.dependencies.get(alias)?;
         let rel_path = dependency.path()?;
-        let root_dir = self.root_dir.join(rel_path).canonicalize().unwrap_or_else(|_| self.root_dir.join(rel_path));
+        let root_dir = self
+            .root_dir
+            .join(rel_path)
+            .canonicalize()
+            .unwrap_or_else(|_| self.root_dir.join(rel_path));
         let manifest = Self::discover(&root_dir).ok().flatten();
-        Some(ResolvedDependency {
-            alias: alias.to_string(),
-            root_dir,
-            manifest,
-        })
+        Some(ResolvedDependency { alias: alias.to_string(), root_dir, manifest })
     }
 
     pub fn write_lock_file_for_entry(entry_file: &Path) -> Result<Option<PathBuf>, String> {
@@ -335,11 +342,7 @@ fn build_lock_file(root_manifest: &ResolvedPackageManifest) -> Result<LockFile, 
     let mut packages = Vec::new();
     let root_package = collect_lock_package(root_manifest, true, &mut visited, &mut packages)?;
     packages.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
-    Ok(LockFile {
-        format_version: 1,
-        root_package,
-        packages,
-    })
+    Ok(LockFile { format_version: 1, root_package, packages })
 }
 
 fn collect_lock_package(
@@ -348,7 +351,10 @@ fn collect_lock_package(
     visited: &mut HashSet<PathBuf>,
     packages: &mut Vec<LockPackageEntry>,
 ) -> Result<LockPackageEntry, String> {
-    let root_key = manifest.root_dir.canonicalize().unwrap_or_else(|_| manifest.root_dir.clone());
+    let root_key = manifest
+        .root_dir
+        .canonicalize()
+        .unwrap_or_else(|_| manifest.root_dir.clone());
     let was_new = visited.insert(root_key.clone());
 
     let mut dependency_items: Vec<_> = manifest.manifest.dependencies.iter().collect();
@@ -371,7 +377,9 @@ fn collect_lock_package(
             let dep_path = Some(resolved.root_dir.display().to_string());
             (dep_name, dep_version, dep_path, dep_manifest)
         } else {
-            let dep_path = dep.path().map(|path| manifest.root_dir.join(path).display().to_string());
+            let dep_path = dep
+                .path()
+                .map(|path| manifest.root_dir.join(path).display().to_string());
             (alias.clone(), dep.version().map(|v| v.to_string()), dep_path, None)
         };
 
@@ -383,7 +391,10 @@ fn collect_lock_package(
         });
 
         if let Some(dep_manifest) = dep_manifest {
-            let dep_key = dep_manifest.root_dir.canonicalize().unwrap_or_else(|_| dep_manifest.root_dir.clone());
+            let dep_key = dep_manifest
+                .root_dir
+                .canonicalize()
+                .unwrap_or_else(|_| dep_manifest.root_dir.clone());
             if !visited.contains(&dep_key) {
                 let entry = collect_lock_package(&dep_manifest, false, visited, packages)?;
                 packages.push(entry);
@@ -395,7 +406,11 @@ fn collect_lock_package(
 
     Ok(LockPackageEntry {
         name: manifest.package_name().unwrap_or("未命名包").to_string(),
-        version: manifest.manifest.package.as_ref().and_then(|pkg| pkg.version.clone()),
+        version: manifest
+            .manifest
+            .package
+            .as_ref()
+            .and_then(|pkg| pkg.version.clone()),
         source: if is_root {
             "workspace".to_string()
         } else {
@@ -417,25 +432,20 @@ fn normalize_manifest_text(raw: &str) -> String {
         }
     });
 
-    let top_level_key_regex = Regex::new(
-        r#"(?m)^(\s*)([^"\s=\[\]#][^=]*?)(\s*=)"#,
-    )
-    .unwrap();
-    let normalized_keys = top_level_key_regex.replace_all(&normalized_tables, |caps: &regex::Captures| {
-        let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        let key = caps.get(2).map(|m| m.as_str().trim()).unwrap_or_default();
-        let suffix = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
-        if needs_quoted_manifest_key(key) {
-            format!(r#"{prefix}"{key}"{suffix}"#)
-        } else {
-            caps.get(0).unwrap().as_str().to_string()
-        }
-    });
+    let top_level_key_regex = Regex::new(r#"(?m)^(\s*)([^"\s=\[\]#][^=]*?)(\s*=)"#).unwrap();
+    let normalized_keys =
+        top_level_key_regex.replace_all(&normalized_tables, |caps: &regex::Captures| {
+            let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let key = caps.get(2).map(|m| m.as_str().trim()).unwrap_or_default();
+            let suffix = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
+            if needs_quoted_manifest_key(key) {
+                format!(r#"{prefix}"{key}"{suffix}"#)
+            } else {
+                caps.get(0).unwrap().as_str().to_string()
+            }
+        });
 
-    let inline_key_regex = Regex::new(
-        r#"([\{,]\s*)([^"\s=\{\},][^=]*?)(\s*=)"#,
-    )
-    .unwrap();
+    let inline_key_regex = Regex::new(r#"([\{,]\s*)([^"\s=\{\},][^=]*?)(\s*=)"#).unwrap();
     inline_key_regex
         .replace_all(&normalized_keys, |caps: &regex::Captures| {
             let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();

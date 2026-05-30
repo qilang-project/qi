@@ -1,11 +1,11 @@
 //! Coroutine scheduler for the async runtime
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::runtime::{RuntimeResult, RuntimeError};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 use super::task::{TaskId, TaskMetadata};
 
@@ -52,12 +52,9 @@ impl Scheduler {
     /// Register a task with the scheduler
     pub fn register_task(&self, metadata: TaskMetadata) -> RuntimeResult<()> {
         let mut tasks = self.tasks.lock().map_err(|_| {
-            RuntimeError::lock_error(
-                "无法获取任务锁".to_string(),
-                "锁错误".to_string(),
-            )
+            RuntimeError::lock_error("无法获取任务锁".to_string(), "锁错误".to_string())
         })?;
-        
+
         tasks.insert(metadata.id, metadata);
         self.scheduled_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -66,12 +63,9 @@ impl Scheduler {
     /// Unregister a task from the scheduler
     pub fn unregister_task(&self, task_id: TaskId) -> RuntimeResult<()> {
         let mut tasks = self.tasks.lock().map_err(|_| {
-            RuntimeError::lock_error(
-                "无法获取任务锁".to_string(),
-                "锁错误".to_string(),
-            )
+            RuntimeError::lock_error("无法获取任务锁".to_string(), "锁错误".to_string())
         })?;
-        
+
         tasks.remove(&task_id);
         self.completed_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -116,8 +110,8 @@ impl std::fmt::Debug for Scheduler {
 
 #[cfg(test)]
 mod tests {
+    use super::super::task::{TaskId, TaskMetadata, TaskPriority};
     use super::*;
-    use super::super::task::{TaskPriority, TaskId, TaskMetadata};
 
     #[tokio::test]
     async fn test_scheduler_creation() {
@@ -131,10 +125,10 @@ mod tests {
         let scheduler = Scheduler::new(SchedulerConfig::default()).unwrap();
         let task_id = TaskId::new();
         let metadata = TaskMetadata::new(task_id, TaskPriority::Normal);
-        
+
         assert!(scheduler.register_task(metadata).is_ok());
         assert_eq!(scheduler.active_task_count(), 1);
-        
+
         assert!(scheduler.unregister_task(task_id).is_ok());
         assert_eq!(scheduler.active_task_count(), 0);
     }

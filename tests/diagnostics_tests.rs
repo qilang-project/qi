@@ -143,7 +143,6 @@ fn test_comment_handling_no_diagnostics() {
 
 #[test]
 fn test_diagnostic_manager_creation() {
-  
     let manager = DiagnosticManager::new();
     assert_eq!(manager.error_count(), 0);
     assert_eq!(manager.warning_count(), 0);

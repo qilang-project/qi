@@ -47,12 +47,60 @@ extern "C" {
     fn qi_gui_renderer_create_impl(window_id: u64) -> u64;
     fn qi_gui_renderer_clear_impl(renderer_id: u64, r: u8, g: u8, b: u8);
     fn qi_gui_renderer_draw_pixel_impl(renderer_id: u64, x: u32, y: u32, r: u8, g: u8, b: u8);
-    fn qi_gui_renderer_draw_rect_impl(renderer_id: u64, x: u32, y: u32, width: u32, height: u32, r: u8, g: u8, b: u8);
-    fn qi_gui_renderer_draw_line_impl(renderer_id: u64, x0: i32, y0: i32, x1: i32, y1: i32, r: u8, g: u8, b: u8);
-    fn qi_gui_renderer_draw_circle_impl(renderer_id: u64, cx: i32, cy: i32, radius: u32, r: u8, g: u8, b: u8);
-    fn qi_gui_renderer_draw_image_impl(renderer_id: u64, file_path: *const c_char, x: u32, y: u32) -> i32;
-    fn qi_gui_renderer_draw_text_impl(renderer_id: u64, text: *const c_char, x: i32, y: i32, r: u8, g: u8, b: u8);
-    fn qi_gui_renderer_draw_text_scaled_impl(renderer_id: u64, text: *const c_char, x: i32, y: i32, scale: u32, r: u8, g: u8, b: u8);
+    fn qi_gui_renderer_draw_rect_impl(
+        renderer_id: u64,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+    );
+    fn qi_gui_renderer_draw_line_impl(
+        renderer_id: u64,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        r: u8,
+        g: u8,
+        b: u8,
+    );
+    fn qi_gui_renderer_draw_circle_impl(
+        renderer_id: u64,
+        cx: i32,
+        cy: i32,
+        radius: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+    );
+    fn qi_gui_renderer_draw_image_impl(
+        renderer_id: u64,
+        file_path: *const c_char,
+        x: u32,
+        y: u32,
+    ) -> i32;
+    fn qi_gui_renderer_draw_text_impl(
+        renderer_id: u64,
+        text: *const c_char,
+        x: i32,
+        y: i32,
+        r: u8,
+        g: u8,
+        b: u8,
+    );
+    fn qi_gui_renderer_draw_text_scaled_impl(
+        renderer_id: u64,
+        text: *const c_char,
+        x: i32,
+        y: i32,
+        scale: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+    );
     fn qi_gui_renderer_free_impl(renderer_id: u64);
 }
 
@@ -63,9 +111,7 @@ pub extern "C" fn qi_gui_create_window(title: *const c_char, width: i64, height:
         if title.is_null() {
             return 0;
         }
-        unsafe {
-            qi_gui_create_window_impl(title, width as u32, height as u32) as i64
-        }
+        unsafe { qi_gui_create_window_impl(title, width as u32, height as u32) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -118,9 +164,7 @@ pub extern "C" fn qi_gui_get_title(window_id: i64) -> *mut c_char {
         if window_id <= 0 {
             return std::ptr::null_mut();
         }
-        unsafe {
-            qi_gui_get_title_impl(window_id as u64)
-        }
+        unsafe { qi_gui_get_title_impl(window_id as u64) }
     }
 
     #[cfg(not(has_gui))]
@@ -173,9 +217,7 @@ pub extern "C" fn qi_gui_is_visible(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_is_visible_impl(window_id as u64) as i64
-        }
+        unsafe { qi_gui_is_visible_impl(window_id as u64) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -228,9 +270,7 @@ pub extern "C" fn qi_gui_get_position_x(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_get_position_x_impl(window_id as u64)
-        }
+        unsafe { qi_gui_get_position_x_impl(window_id as u64) }
     }
 
     #[cfg(not(has_gui))]
@@ -247,9 +287,7 @@ pub extern "C" fn qi_gui_get_position_y(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_get_position_y_impl(window_id as u64)
-        }
+        unsafe { qi_gui_get_position_y_impl(window_id as u64) }
     }
 
     #[cfg(not(has_gui))]
@@ -284,9 +322,7 @@ pub extern "C" fn qi_gui_get_width(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_get_width_impl(window_id as u64)
-        }
+        unsafe { qi_gui_get_width_impl(window_id as u64) }
     }
 
     #[cfg(not(has_gui))]
@@ -303,9 +339,7 @@ pub extern "C" fn qi_gui_get_height(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_get_height_impl(window_id as u64)
-        }
+        unsafe { qi_gui_get_height_impl(window_id as u64) }
     }
 
     #[cfg(not(has_gui))]
@@ -352,9 +386,7 @@ pub extern "C" fn qi_gui_run() {
 pub extern "C" fn qi_gui_version() -> *mut c_char {
     #[cfg(has_gui)]
     {
-        unsafe {
-            qi_gui_version_impl()
-        }
+        unsafe { qi_gui_version_impl() }
     }
 
     #[cfg(not(has_gui))]
@@ -390,9 +422,7 @@ pub extern "C" fn qi_gui_audio_load(file_path: *const c_char) -> i64 {
         if file_path.is_null() {
             return 0;
         }
-        unsafe {
-            qi_gui_audio_load_impl(file_path) as i64
-        }
+        unsafe { qi_gui_audio_load_impl(file_path) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -481,9 +511,7 @@ pub extern "C" fn qi_gui_audio_is_playing(audio_id: i64) -> i64 {
         if audio_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_audio_is_playing_impl(audio_id as u64) as i64
-        }
+        unsafe { qi_gui_audio_is_playing_impl(audio_id as u64) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -500,9 +528,7 @@ pub extern "C" fn qi_gui_audio_is_finished(audio_id: i64) -> i64 {
         if audio_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_audio_is_finished_impl(audio_id as u64) as i64
-        }
+        unsafe { qi_gui_audio_is_finished_impl(audio_id as u64) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -539,9 +565,7 @@ pub extern "C" fn qi_gui_renderer_create(window_id: i64) -> i64 {
         if window_id <= 0 {
             return 0;
         }
-        unsafe {
-            qi_gui_renderer_create_impl(window_id as u64) as i64
-        }
+        unsafe { qi_gui_renderer_create_impl(window_id as u64) as i64 }
     }
 
     #[cfg(not(has_gui))]
@@ -570,14 +594,28 @@ pub extern "C" fn qi_gui_renderer_clear(renderer_id: i64, r: i64, g: i64, b: i64
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_pixel(renderer_id: i64, x: i64, y: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_pixel(
+    renderer_id: i64,
+    x: i64,
+    y: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_pixel_impl(renderer_id as u64, x as u32, y as u32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_pixel_impl(
+                renderer_id as u64,
+                x as u32,
+                y as u32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 
@@ -588,14 +626,32 @@ pub extern "C" fn qi_gui_renderer_draw_pixel(renderer_id: i64, x: i64, y: i64, r
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_rect(renderer_id: i64, x: i64, y: i64, width: i64, height: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_rect(
+    renderer_id: i64,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_rect_impl(renderer_id as u64, x as u32, y as u32, width as u32, height as u32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_rect_impl(
+                renderer_id as u64,
+                x as u32,
+                y as u32,
+                width as u32,
+                height as u32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 
@@ -606,14 +662,32 @@ pub extern "C" fn qi_gui_renderer_draw_rect(renderer_id: i64, x: i64, y: i64, wi
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_line(renderer_id: i64, x0: i64, y0: i64, x1: i64, y1: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_line(
+    renderer_id: i64,
+    x0: i64,
+    y0: i64,
+    x1: i64,
+    y1: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_line_impl(renderer_id as u64, x0 as i32, y0 as i32, x1 as i32, y1 as i32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_line_impl(
+                renderer_id as u64,
+                x0 as i32,
+                y0 as i32,
+                x1 as i32,
+                y1 as i32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 
@@ -624,14 +698,30 @@ pub extern "C" fn qi_gui_renderer_draw_line(renderer_id: i64, x0: i64, y0: i64, 
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_circle(renderer_id: i64, cx: i64, cy: i64, radius: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_circle(
+    renderer_id: i64,
+    cx: i64,
+    cy: i64,
+    radius: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_circle_impl(renderer_id as u64, cx as i32, cy as i32, radius as u32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_circle_impl(
+                renderer_id as u64,
+                cx as i32,
+                cy as i32,
+                radius as u32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 
@@ -642,14 +732,20 @@ pub extern "C" fn qi_gui_renderer_draw_circle(renderer_id: i64, cx: i64, cy: i64
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_image(renderer_id: i64, file_path: *const c_char, x: i64, y: i64) -> i64 {
+pub extern "C" fn qi_gui_renderer_draw_image(
+    renderer_id: i64,
+    file_path: *const c_char,
+    x: i64,
+    y: i64,
+) -> i64 {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 || file_path.is_null() {
             return -1;
         }
         unsafe {
-            qi_gui_renderer_draw_image_impl(renderer_id as u64, file_path, x as u32, y as u32) as i64
+            qi_gui_renderer_draw_image_impl(renderer_id as u64, file_path, x as u32, y as u32)
+                as i64
         }
     }
 
@@ -661,14 +757,30 @@ pub extern "C" fn qi_gui_renderer_draw_image(renderer_id: i64, file_path: *const
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_text(renderer_id: i64, text: *const c_char, x: i64, y: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_text(
+    renderer_id: i64,
+    text: *const c_char,
+    x: i64,
+    y: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 || text.is_null() {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_text_impl(renderer_id as u64, text, x as i32, y as i32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_text_impl(
+                renderer_id as u64,
+                text,
+                x as i32,
+                y as i32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 
@@ -679,14 +791,32 @@ pub extern "C" fn qi_gui_renderer_draw_text(renderer_id: i64, text: *const c_cha
 }
 
 #[no_mangle]
-pub extern "C" fn qi_gui_renderer_draw_text_scaled(renderer_id: i64, text: *const c_char, x: i64, y: i64, scale: i64, r: i64, g: i64, b: i64) {
+pub extern "C" fn qi_gui_renderer_draw_text_scaled(
+    renderer_id: i64,
+    text: *const c_char,
+    x: i64,
+    y: i64,
+    scale: i64,
+    r: i64,
+    g: i64,
+    b: i64,
+) {
     #[cfg(has_gui)]
     {
         if renderer_id <= 0 || text.is_null() {
             return;
         }
         unsafe {
-            qi_gui_renderer_draw_text_scaled_impl(renderer_id as u64, text, x as i32, y as i32, scale as u32, r as u8, g as u8, b as u8);
+            qi_gui_renderer_draw_text_scaled_impl(
+                renderer_id as u64,
+                text,
+                x as i32,
+                y as i32,
+                scale as u32,
+                r as u8,
+                g as u8,
+                b as u8,
+            );
         }
     }
 

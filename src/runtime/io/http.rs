@@ -3,10 +3,10 @@
 //! This module provides network operations including HTTP requests,
 //! TCP connections, and network timeout management.
 
+use super::{IoError, IoResult, IoStatistics};
+use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
-use std::io::{Read, Write};
-use super::{IoResult, IoError, IoStatistics};
 
 /// HTTP request methods
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,7 +239,10 @@ impl TcpConnection {
 
     /// Connect with timeout on Unix systems
     #[cfg(unix)]
-    fn connect_with_timeout_unix(addr: &std::net::SocketAddr, timeout: Duration) -> IoResult<TcpStream> {
+    fn connect_with_timeout_unix(
+        addr: &std::net::SocketAddr,
+        timeout: Duration,
+    ) -> IoResult<TcpStream> {
         use std::os::unix::io::AsRawFd;
 
         let stream = TcpStream::connect(addr).map_err(|e| IoError::NetworkOperationFailed {
@@ -248,18 +251,16 @@ impl TcpConnection {
         })?;
 
         // Set non-blocking
-        stream.set_nonblocking(true).map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: addr.to_string(),
-            message: format!("设置非阻塞失败: {}", e),
-        })?;
+        stream
+            .set_nonblocking(true)
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: addr.to_string(),
+                message: format!("设置非阻塞失败: {}", e),
+            })?;
 
         // Wait for connection with timeout
         let fd = stream.as_raw_fd();
-        let mut pollfds = libc::pollfd {
-            fd,
-            events: libc::POLLOUT,
-            revents: 0,
-        };
+        let mut pollfds = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
 
         let timeout_ms = timeout.as_millis() as i32;
         let result = unsafe { libc::poll(&mut pollfds, 1, timeout_ms) };
@@ -283,10 +284,12 @@ impl TcpConnection {
         }
 
         // Set back to blocking
-        stream.set_nonblocking(false).map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: addr.to_string(),
-            message: format!("设置阻塞模式失败: {}", e),
-        })?;
+        stream
+            .set_nonblocking(false)
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: addr.to_string(),
+                message: format!("设置阻塞模式失败: {}", e),
+            })?;
 
         Ok(stream)
     }
@@ -321,10 +324,12 @@ impl TcpConnection {
 
     /// Flush pending writes
     pub fn flush(&mut self) -> IoResult<()> {
-        self.stream.flush().map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: format!("{}:{}", self.config.host, self.config.port),
-            message: format!("刷新缓冲区失败: {}", e),
-        })
+        self.stream
+            .flush()
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: format!("{}:{}", self.config.host, self.config.port),
+                message: format!("刷新缓冲区失败: {}", e),
+            })
     }
 
     /// Get connection duration
@@ -344,18 +349,22 @@ impl TcpConnection {
 
     /// Get local address
     pub fn local_addr(&self) -> IoResult<std::net::SocketAddr> {
-        self.stream.local_addr().map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: format!("{}:{}", self.config.host, self.config.port),
-            message: format!("获取本地地址失败: {}", e),
-        })
+        self.stream
+            .local_addr()
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: format!("{}:{}", self.config.host, self.config.port),
+                message: format!("获取本地地址失败: {}", e),
+            })
     }
 
     /// Get remote address
     pub fn remote_addr(&self) -> IoResult<std::net::SocketAddr> {
-        self.stream.peer_addr().map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: format!("{}:{}", self.config.host, self.config.port),
-            message: format!("获取远程地址失败: {}", e),
-        })
+        self.stream
+            .peer_addr()
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: format!("{}:{}", self.config.host, self.config.port),
+                message: format!("获取远程地址失败: {}", e),
+            })
     }
 
     /// Create TcpConnection from existing TcpStream (用于服务器接受的连接)
@@ -364,10 +373,12 @@ impl TcpConnection {
         // 失败不致命，记一下日志继续即可。
         let _ = stream.set_nodelay(true);
 
-        let peer_addr = stream.peer_addr().map_err(|e| IoError::NetworkOperationFailed {
-            endpoint: "unknown".to_string(),
-            message: format!("获取对端地址失败: {}", e),
-        })?;
+        let peer_addr = stream
+            .peer_addr()
+            .map_err(|e| IoError::NetworkOperationFailed {
+                endpoint: "unknown".to_string(),
+                message: format!("获取对端地址失败: {}", e),
+            })?;
 
         let config = TcpConnectionConfig {
             host: peer_addr.ip().to_string(),
@@ -438,7 +449,10 @@ impl HttpClient {
         match &response {
             Ok(_) => {
                 let mut stats = self.statistics.lock().unwrap();
-                stats.record_read(response.as_ref().unwrap().body.len() as u64, elapsed.as_millis() as f64);
+                stats.record_read(
+                    response.as_ref().unwrap().body.len() as u64,
+                    elapsed.as_millis() as f64,
+                );
             }
             Err(_) => {
                 let mut stats = self.statistics.lock().unwrap();

@@ -62,7 +62,8 @@ fn test_chinese_identifiers() {
     let tokens = lexer.tokenize().unwrap();
 
     // All Chinese characters should be recognized as identifiers
-    for token in &tokens[..tokens.len()-1] { // Skip EOF token
+    for token in &tokens[..tokens.len() - 1] {
+        // Skip EOF token
         assert_eq!(token.kind, TokenKind::标识符);
     }
 }
@@ -110,12 +111,12 @@ fn test_numeric_literals() {
     let tokens = lexer.tokenize().unwrap();
 
     assert_eq!(tokens[0].kind, TokenKind::整数字面量(42));
-    
+
     // Test floats separately
     let source2 = "3.14";
     let mut lexer2 = Lexer::new(source2.to_string());
     let tokens2 = lexer2.tokenize().unwrap();
-    
+
     assert!(matches!(tokens2[0].kind, TokenKind::浮点数字面量));
 }
 

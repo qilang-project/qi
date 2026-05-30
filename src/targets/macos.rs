@@ -13,11 +13,11 @@ impl MacOSTarget {
     pub fn new() -> Self {
         Self {
             target_triple: "x86_64-apple-macosx".to_string(),
-            cpu_features: vec![
-                "sse2", "sse4.1", "sse4.2", "avx", "avx2"
-            ],
+            cpu_features: vec!["sse2", "sse4.1", "sse4.2", "avx", "avx2"],
             linker_flags: vec![
-                "-lSystem", "-syslibroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+                "-lSystem",
+                "-syslibroot",
+                "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
             ],
         }
     }

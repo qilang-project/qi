@@ -1,7 +1,7 @@
 //! Tests for package and module system with import/export visibility
 
+use qi_compiler::parser::ast::{AstNode, Visibility};
 use qi_compiler::{lexer::Lexer, parser::Parser};
-use qi_compiler::parser::ast::{Visibility, AstNode};
 
 #[test]
 fn test_package_declaration() {
@@ -175,7 +175,7 @@ fn test_module_system_integration() {
     use qi_compiler::semantic::module::ModuleRegistry;
 
     let registry = ModuleRegistry::new();
-    
+
     // This test ensures the module system can be instantiated
     assert!(registry.current_module().is_none());
 }

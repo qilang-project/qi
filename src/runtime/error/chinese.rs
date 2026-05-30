@@ -52,10 +52,7 @@ impl ChineseErrorMessages {
         messages.insert("invalid_input".to_string(), "无效输入".to_string());
         messages.insert("buffer_overflow".to_string(), "缓冲区溢出".to_string());
 
-        Self {
-            messages,
-            language: "zh-CN".to_string(),
-        }
+        Self { messages, language: "zh-CN".to_string() }
     }
 
     /// Get localized message for error key
@@ -167,9 +164,7 @@ impl ChineseKeywords {
         keywords.insert("not".to_string(), "非".to_string());
         keywords.insert("xor".to_string(), "异或".to_string());
 
-        Self {
-            keywords,
-        }
+        Self { keywords }
     }
 
     /// Get Chinese keyword for English keyword
@@ -189,7 +184,8 @@ impl ChineseKeywords {
 
     /// Add or update keyword mapping
     pub fn add_keyword(&mut self, english: &str, chinese: &str) {
-        self.keywords.insert(english.to_string(), chinese.to_string());
+        self.keywords
+            .insert(english.to_string(), chinese.to_string());
     }
 
     /// Get all keywords
@@ -256,11 +252,13 @@ impl MessageLocalizer {
     /// Localize keyword
     pub fn localize_keyword(&self, keyword: &str) -> String {
         if self.locale.starts_with("zh") {
-            self.keywords.get_chinese_keyword(keyword)
+            self.keywords
+                .get_chinese_keyword(keyword)
                 .cloned()
                 .unwrap_or_else(|| keyword.to_string())
         } else {
-            self.keywords.get_english_keyword(keyword)
+            self.keywords
+                .get_english_keyword(keyword)
                 .cloned()
                 .unwrap_or_else(|| keyword.to_string())
         }
@@ -328,7 +326,10 @@ mod tests {
     fn test_chinese_error_messages() {
         let messages = ChineseErrorMessages::new();
 
-        assert_eq!(messages.get_message("memory_allocation_failed"), Some(&"内存分配失败".to_string()));
+        assert_eq!(
+            messages.get_message("memory_allocation_failed"),
+            Some(&"内存分配失败".to_string())
+        );
         assert_eq!(messages.get_message("nonexistent"), None);
 
         let formatted = messages.format_message("io_operation_failed", "file.txt");
@@ -386,7 +387,10 @@ mod tests {
         localizer.add_error_message("custom_error", "自定义错误");
         localizer.add_keyword("custom", "自定义");
 
-        assert_eq!(localizer.error_messages().get_message("custom_error"), Some(&"自定义错误".to_string()));
+        assert_eq!(
+            localizer.error_messages().get_message("custom_error"),
+            Some(&"自定义错误".to_string())
+        );
         assert_eq!(localizer.keywords().get_chinese_keyword("custom"), Some(&"自定义".to_string()));
     }
 

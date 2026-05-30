@@ -142,11 +142,7 @@ async fn read_request_body(mut body: h2::RecvStream) -> Vec<u8> {
     buf
 }
 
-fn call_qi_handler(
-    process_fn_addr: usize,
-    app_addr: usize,
-    raw_text: String,
-) -> Option<String> {
+fn call_qi_handler(process_fn_addr: usize, app_addr: usize, raw_text: String) -> Option<String> {
     // panic 隔离
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let raw_c = CString::new(raw_text).ok()?;
@@ -172,9 +168,7 @@ fn call_qi_handler(
 fn fallback_500() -> (u16, Vec<(String, String)>, Vec<u8>) {
     (
         500,
-        vec![
-            ("content-type".into(), "text/plain; charset=utf-8".into()),
-        ],
+        vec![("content-type".into(), "text/plain; charset=utf-8".into())],
         b"Internal Server Error".to_vec(),
     )
 }
@@ -197,12 +191,11 @@ async fn handle_h2_stream(
     let body_bytes = read_request_body(body).await;
     let raw_text = build_http1_text(&method, &path_q, &parts.headers, body_bytes).await;
 
-    let qi_resp = tokio::task::spawn_blocking(move || {
-        call_qi_handler(process_fn_addr, app_addr, raw_text)
-    })
-    .await
-    .ok()
-    .flatten();
+    let qi_resp =
+        tokio::task::spawn_blocking(move || call_qi_handler(process_fn_addr, app_addr, raw_text))
+            .await
+            .ok()
+            .flatten();
 
     let (status, headers, body) = match qi_resp.as_deref().and_then(parse_http1_response) {
         Some(t) => t,

@@ -2,7 +2,7 @@
 //!
 //! 为 Qi 语言提供 C 接口的文件操作函数
 
-use super::file::{文件模块, 文件操作};
+use super::file::{文件操作, 文件模块};
 use crate::runtime::stdlib::StdlibValue;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -39,9 +39,9 @@ pub extern "C" fn qi_io_read_file(path: *const c_char) -> *mut c_char {
 
         let 模块 = 获取文件模块();
         match 模块.执行操作(文件操作::读取, &参数) {
-            Ok(StdlibValue::String(内容)) => {
-                CString::new(内容).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
-            }
+            Ok(StdlibValue::String(内容)) => CString::new(内容)
+                .unwrap_or_else(|_| CString::new("").unwrap())
+                .into_raw(),
             _ => empty(),
         }
     }
@@ -57,10 +57,7 @@ pub extern "C" fn qi_io_write_file(path: *const c_char, content: *const c_char) 
     unsafe {
         let 路径 = CStr::from_ptr(path).to_string_lossy().to_string();
         let 内容 = CStr::from_ptr(content).to_string_lossy().to_string();
-        let 参数 = vec![
-            StdlibValue::String(路径),
-            StdlibValue::String(内容),
-        ];
+        let 参数 = vec![StdlibValue::String(路径), StdlibValue::String(内容)];
 
         let 模块 = 获取文件模块();
         match 模块.执行操作(文件操作::写入, &参数) {
@@ -80,10 +77,7 @@ pub extern "C" fn qi_io_append_file(path: *const c_char, content: *const c_char)
     unsafe {
         let 路径 = CStr::from_ptr(path).to_string_lossy().to_string();
         let 内容 = CStr::from_ptr(content).to_string_lossy().to_string();
-        let 参数 = vec![
-            StdlibValue::String(路径),
-            StdlibValue::String(内容),
-        ];
+        let 参数 = vec![StdlibValue::String(路径), StdlibValue::String(内容)];
 
         let 模块 = 获取文件模块();
         match 模块.执行操作(文件操作::追加, &参数) {
@@ -144,7 +138,13 @@ pub extern "C" fn qi_io_file_exists(path: *const c_char) -> i64 {
 
         let 模块 = 获取文件模块();
         match 模块.执行操作(文件操作::存在, &参数) {
-            Ok(StdlibValue::Boolean(exists)) => if exists { 1 } else { 0 },
+            Ok(StdlibValue::Boolean(exists)) => {
+                if exists {
+                    1
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }

@@ -2,9 +2,9 @@
 //!
 //! Simple string operations for the Qi runtime.
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::sync::Arc;
 use std::sync::Mutex;
-use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// String encoding types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,7 +137,7 @@ impl StringInterface {
         if start >= text.len() {
             return Err(RuntimeError::validation_error(
                 "字符串操作错误",
-                &format!("起始位置 {} 超出字符串长度 {}", start, text.len())
+                &format!("起始位置 {} 超出字符串长度 {}", start, text.len()),
             ));
         }
 
@@ -145,7 +145,7 @@ impl StringInterface {
         if start >= chars.len() {
             return Err(RuntimeError::validation_error(
                 "字符串操作错误",
-                &format!("起始位置 {} 超出字符长度 {}", start, chars.len())
+                &format!("起始位置 {} 超出字符长度 {}", start, chars.len()),
             ));
         }
 
@@ -245,7 +245,7 @@ impl StringInterface {
         if total_length > config.max_string_length {
             return Err(RuntimeError::validation_error(
                 "字符串长度错误",
-                &format!("字符串总长度 {} 超过最大限制 {}", total_length, config.max_string_length)
+                &format!("字符串总长度 {} 超过最大限制 {}", total_length, config.max_string_length),
             ));
         }
 

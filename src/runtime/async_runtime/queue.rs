@@ -17,9 +17,7 @@ pub struct TaskQueue {
 impl TaskQueue {
     /// Create a new empty queue
     pub fn new() -> QueueHandle {
-        Arc::new(Self {
-            inner: Mutex::new(VecDeque::new()),
-        })
+        Arc::new(Self { inner: Mutex::new(VecDeque::new()) })
     }
 
     /// Push a task into the queue
@@ -31,12 +29,18 @@ impl TaskQueue {
 
     /// Pop the next task from the queue
     pub fn pop(&self) -> Option<(TaskId, TaskPriority)> {
-        self.inner.lock().ok().and_then(|mut guard| guard.pop_front())
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.pop_front())
     }
 
     /// Check if the queue is empty
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().map(|guard| guard.is_empty()).unwrap_or(true)
+        self.inner
+            .lock()
+            .map(|guard| guard.is_empty())
+            .unwrap_or(true)
     }
 
     /// Get the number of tasks in the queue

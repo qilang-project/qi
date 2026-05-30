@@ -1,9 +1,9 @@
 //! Compilation cache for Qi language
 
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 
 /// Cache entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,11 +49,7 @@ impl CompilationCache {
     pub fn with_cache_dir(cache_dir: PathBuf) -> Result<Self, CacheError> {
         std::fs::create_dir_all(&cache_dir)?;
 
-        let mut cache = Self {
-            entries: HashMap::new(),
-            cache_dir,
-            max_entries: 1000,
-        };
+        let mut cache = Self { entries: HashMap::new(), cache_dir, max_entries: 1000 };
 
         cache.load_cache_index()?;
         Ok(cache)
@@ -68,8 +64,15 @@ impl CompilationCache {
         None
     }
 
-    pub fn put(&mut self, key: String, source_hash: String, compiled_data: Vec<u8>,
-               dependencies: Vec<PathBuf>, target_triple: String, optimization_level: String) -> Result<(), CacheError> {
+    pub fn put(
+        &mut self,
+        key: String,
+        source_hash: String,
+        compiled_data: Vec<u8>,
+        dependencies: Vec<PathBuf>,
+        target_triple: String,
+        optimization_level: String,
+    ) -> Result<(), CacheError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -157,7 +160,9 @@ impl CompilationCache {
         }
 
         // Sort entries by timestamp (oldest first)
-        let entries: Vec<_> = self.entries.iter()
+        let entries: Vec<_> = self
+            .entries
+            .iter()
             .map(|(k, v)| (k.clone(), v.timestamp))
             .collect();
 
@@ -166,7 +171,8 @@ impl CompilationCache {
 
         // Remove oldest entries
         let to_remove = sorted_entries.len() - self.max_entries;
-        let keys_to_remove: Vec<String> = sorted_entries.iter()
+        let keys_to_remove: Vec<String> = sorted_entries
+            .iter()
             .take(to_remove)
             .map(|(key, _)| key.clone())
             .collect();
@@ -184,7 +190,10 @@ impl CompilationCache {
         dependencies.iter().any(|dep| {
             if let Ok(metadata) = std::fs::metadata(dep) {
                 if let Ok(modified) = metadata.modified() {
-                    let dep_timestamp = modified.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                    let dep_timestamp = modified
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
                     return dep_timestamp > timestamp;
                 }
             }

@@ -2,13 +2,13 @@
 //!
 //! 提供 gzip, deflate 压缩解压功能
 
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::raw::c_char;
-use flate2::Compression;
-use flate2::read::{GzDecoder};
-use flate2::write::GzEncoder;
 
 /// 压缩文件（gzip）
 #[no_mangle]
@@ -105,7 +105,7 @@ pub extern "C" fn qi_compress_gzip_string(data: *const c_char) -> *mut c_char {
 
         match encoder.finish() {
             Ok(compressed) => {
-                use base64::{Engine as _, engine::general_purpose};
+                use base64::{engine::general_purpose, Engine as _};
                 let encoded = general_purpose::STANDARD.encode(&compressed);
 
                 match CString::new(encoded) {
@@ -128,7 +128,7 @@ pub extern "C" fn qi_compress_gunzip_string(data: *const c_char) -> *mut c_char 
     unsafe {
         let data_str = CStr::from_ptr(data).to_string_lossy();
 
-        use base64::{Engine as _, engine::general_purpose};
+        use base64::{engine::general_purpose, Engine as _};
         let compressed = match general_purpose::STANDARD.decode(data_str.as_ref()) {
             Ok(d) => d,
             Err(_) => return std::ptr::null_mut(),

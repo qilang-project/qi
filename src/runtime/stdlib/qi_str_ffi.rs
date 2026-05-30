@@ -49,7 +49,10 @@ pub extern "C" fn qi_str_from_bytes(ptr: *const u8, len: i64) -> QiStr {
 pub extern "C" fn qi_str_to_cstring(s: QiStr) -> *mut c_char {
     let bytes = as_bytes(&s);
     // 按 lossy 路径：内嵌 NUL 字节替换为空格（C 字符串不能含 NUL）
-    let safe: Vec<u8> = bytes.iter().map(|b| if *b == 0 { b' ' } else { *b }).collect();
+    let safe: Vec<u8> = bytes
+        .iter()
+        .map(|b| if *b == 0 { b' ' } else { *b })
+        .collect();
     match CString::new(safe) {
         Ok(c) => c.into_raw(),
         Err(_) => CString::new("").unwrap().into_raw(),
@@ -213,18 +216,10 @@ pub extern "C" fn qi_str_substring(s: QiStr, start: i64, len: i64) -> QiStr {
 
     if s.base.is_null() {
         // literal / borrow → 子串也是 literal，无 refcount
-        QiStr {
-            ptr: new_ptr,
-            len: new_len,
-            base: std::ptr::null(),
-        }
+        QiStr { ptr: new_ptr, len: new_len, base: std::ptr::null() }
     } else {
         // owned → 子串共享父 base，refcount++
-        clone(QiStr {
-            ptr: new_ptr,
-            len: new_len,
-            base: s.base,
-        })
+        clone(QiStr { ptr: new_ptr, len: new_len, base: s.base })
     }
 }
 

@@ -2,9 +2,9 @@
 //!
 //! 本模块提供加密功能，包括哈希、编码和消息认证码操作。
 
-use super::{StdlibResult, StdlibError, StdlibValue};
-use sha2::{Sha256, Sha512, Digest};
+use super::{StdlibError, StdlibResult, StdlibValue};
 use md5::Md5;
+use sha2::{Digest, Sha256, Sha512};
 
 /// 加密操作类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,16 +45,12 @@ pub enum 编码格式 {
 impl 加密模块 {
     /// 创建新的加密模块
     pub fn 创建() -> Self {
-        Self {
-            编码格式: 编码格式::十六进制,
-        }
+        Self { 编码格式: 编码格式::十六进制 }
     }
 
     /// 使用指定编码格式创建加密模块
     pub fn 使用编码格式(编码格式: 编码格式) -> Self {
-        Self {
-            编码格式,
-        }
+        Self { 编码格式 }
     }
 
     /// 初始化加密模块
@@ -68,7 +64,9 @@ impl 加密模块 {
     }
 
     /// 执行加密操作
-    pub fn 执行操作(&self, 操作: 加密操作, 参数: &[StdlibValue]) -> StdlibResult<StdlibValue> {
+    pub fn 执行操作(
+        &self, 操作: 加密操作, 参数: &[StdlibValue]
+    ) -> StdlibResult<StdlibValue> {
         match 操作 {
             加密操作::MD5哈希 => self.md5哈希(参数),
             加密操作::SHA256哈希 => self.sha256哈希(参数),
@@ -105,7 +103,9 @@ impl 加密模块 {
 
         let 哈希值 = match self.编码格式 {
             编码格式::十六进制 => format!("{:x}", 结果),
-            编码格式::Base64 => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果),
+            编码格式::Base64 => {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果)
+            }
         };
 
         Ok(StdlibValue::String(哈希值))
@@ -136,7 +136,9 @@ impl 加密模块 {
 
         let 哈希值 = match self.编码格式 {
             编码格式::十六进制 => format!("{:x}", 结果),
-            编码格式::Base64 => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果),
+            编码格式::Base64 => {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果)
+            }
         };
 
         Ok(StdlibValue::String(哈希值))
@@ -167,7 +169,9 @@ impl 加密模块 {
 
         let 哈希值 = match self.编码格式 {
             编码格式::十六进制 => format!("{:x}", 结果),
-            编码格式::Base64 => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果),
+            编码格式::Base64 => {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 结果)
+            }
         };
 
         Ok(StdlibValue::String(哈希值))
@@ -221,11 +225,10 @@ impl 加密模块 {
                 message: format!("Base64解码失败: {}", e),
             })?;
 
-        let 结果 = String::from_utf8(解码字节)
-            .map_err(|e| StdlibError::CryptoError {
-                operation: "base64解码".to_string(),
-                message: format!("UTF-8转换失败: {}", e),
-            })?;
+        let 结果 = String::from_utf8(解码字节).map_err(|e| StdlibError::CryptoError {
+            operation: "base64解码".to_string(),
+            message: format!("UTF-8转换失败: {}", e),
+        })?;
 
         Ok(StdlibValue::String(结果))
     }
@@ -262,11 +265,10 @@ impl 加密模块 {
         use hmac::{Hmac, Mac};
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(密钥)
-            .map_err(|e| StdlibError::CryptoError {
-                operation: "hmac_sha256".to_string(),
-                message: format!("HMAC初始化失败: {}", e),
-            })?;
+        let mut mac = HmacSha256::new_from_slice(密钥).map_err(|e| StdlibError::CryptoError {
+            operation: "hmac_sha256".to_string(),
+            message: format!("HMAC初始化失败: {}", e),
+        })?;
 
         mac.update(消息);
         let 结果 = mac.finalize();
@@ -274,7 +276,9 @@ impl 加密模块 {
 
         let 哈希值 = match self.编码格式 {
             编码格式::十六进制 => format!("{:x}", 认证码字节),
-            编码格式::Base64 => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 认证码字节),
+            编码格式::Base64 => {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 认证码字节)
+            }
         };
 
         Ok(StdlibValue::String(哈希值))
@@ -312,11 +316,10 @@ impl 加密模块 {
         use hmac::{Hmac, Mac};
         type HmacSha512 = Hmac<Sha512>;
 
-        let mut mac = HmacSha512::new_from_slice(密钥)
-            .map_err(|e| StdlibError::CryptoError {
-                operation: "hmac_sha512".to_string(),
-                message: format!("HMAC初始化失败: {}", e),
-            })?;
+        let mut mac = HmacSha512::new_from_slice(密钥).map_err(|e| StdlibError::CryptoError {
+            operation: "hmac_sha512".to_string(),
+            message: format!("HMAC初始化失败: {}", e),
+        })?;
 
         mac.update(消息);
         let 结果 = mac.finalize();
@@ -324,7 +327,9 @@ impl 加密模块 {
 
         let 哈希值 = match self.编码格式 {
             编码格式::十六进制 => format!("{:x}", 认证码字节),
-            编码格式::Base64 => base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 认证码字节),
+            编码格式::Base64 => {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, 认证码字节)
+            }
         };
 
         Ok(StdlibValue::String(哈希值))
@@ -363,7 +368,10 @@ mod tests {
 
         match 结果 {
             StdlibValue::String(哈希值) => {
-                assert_eq!(哈希值, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+                assert_eq!(
+                    哈希值,
+                    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                );
             }
             _ => panic!("期望字符串结果"),
         }

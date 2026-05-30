@@ -3,11 +3,11 @@
 //! This module provides comprehensive variable inspection capabilities for debugging,
 //! including type information, memory layout, and value visualization for Qi runtime values.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::fmt;
-use serde::{Serialize, Deserialize};
 use crate::runtime::stdlib::DebugModule;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 /// Variable inspector for runtime debugging
 #[derive(Debug)]
@@ -86,36 +86,15 @@ pub struct VariableInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VariableMetadata {
     /// Integer metadata
-    Integer {
-        signed: bool,
-        bits: u8,
-        min: Option<i64>,
-        max: Option<u64>,
-    },
+    Integer { signed: bool, bits: u8, min: Option<i64>, max: Option<u64> },
     /// Float metadata
-    Float {
-        bits: u8,
-        precision: u8,
-        min: Option<f64>,
-        max: Option<f64>,
-    },
+    Float { bits: u8, precision: u8, min: Option<f64>, max: Option<f64> },
     /// String metadata
-    String {
-        length: usize,
-        encoding: String,
-        is_utf8: bool,
-    },
+    String { length: usize, encoding: String, is_utf8: bool },
     /// Array metadata
-    Array {
-        element_type: String,
-        length: usize,
-        capacity: usize,
-    },
+    Array { element_type: String, length: usize, capacity: usize },
     /// Struct metadata
-    Struct {
-        fields: Vec<String>,
-        field_types: HashMap<String, String>,
-    },
+    Struct { fields: Vec<String>, field_types: HashMap<String, String> },
     /// Function metadata
     Function {
         parameters: Vec<String>,
@@ -196,24 +175,13 @@ pub enum TypeCategory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypeDetails {
     /// Primitive details
-    Primitive {
-        signed: bool,
-        bits: u8,
-    },
+    Primitive { signed: bool, bits: u8 },
     /// Array details
-    Array {
-        element_type: String,
-        fixed_length: Option<usize>,
-    },
+    Array { element_type: String, fixed_length: Option<usize> },
     /// Struct details
-    Struct {
-        fields: HashMap<String, String>,
-    },
+    Struct { fields: HashMap<String, String> },
     /// Function details
-    Function {
-        parameters: Vec<String>,
-        return_type: String,
-    },
+    Function { parameters: Vec<String>, return_type: String },
     /// No specific details
     None,
 }
@@ -283,7 +251,8 @@ impl VariableInspector {
             registry.insert(name.to_string(), info);
         }
 
-        self.debug.debug(&format!("Registered variable: {}", name))?;
+        self.debug
+            .debug(&format!("Registered variable: {}", name))?;
         Ok(())
     }
 
@@ -316,7 +285,11 @@ impl VariableInspector {
     }
 
     /// Inspect a value directly
-    pub fn inspect_value(&self, name: &str, value: &dyn VariableValue) -> RuntimeResult<InspectionResult> {
+    pub fn inspect_value(
+        &self,
+        name: &str,
+        value: &dyn VariableValue,
+    ) -> RuntimeResult<InspectionResult> {
         let info = self.create_variable_info(name, value)?;
         self.create_inspection_result(&info, 0)
     }
@@ -385,7 +358,8 @@ impl VariableInspector {
         let mut registry = self.variable_registry.lock().unwrap();
 
         if registry.remove(name).is_some() {
-            self.debug.debug(&format!("Unregistered variable: {}", name))?;
+            self.debug
+                .debug(&format!("Unregistered variable: {}", name))?;
             Ok(())
         } else {
             Err(crate::runtime::error::Error::user_error(
@@ -396,7 +370,11 @@ impl VariableInspector {
     }
 
     /// Create variable information from value
-    fn create_variable_info(&self, name: &str, value: &dyn VariableValue) -> RuntimeResult<VariableInfo> {
+    fn create_variable_info(
+        &self,
+        name: &str,
+        value: &dyn VariableValue,
+    ) -> RuntimeResult<VariableInfo> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -417,7 +395,11 @@ impl VariableInspector {
     }
 
     /// Create inspection result from variable info
-    fn create_inspection_result(&self, variable: &VariableInfo, depth: usize) -> RuntimeResult<InspectionResult> {
+    fn create_inspection_result(
+        &self,
+        variable: &VariableInfo,
+        depth: usize,
+    ) -> RuntimeResult<InspectionResult> {
         if depth > self.config.max_depth {
             return Err(crate::runtime::error::Error::user_error(
                 "Maximum inspection depth exceeded",
@@ -442,7 +424,11 @@ impl VariableInspector {
     }
 
     /// Format variable for display
-    fn format_variable_display(&self, variable: &VariableInfo, depth: usize) -> RuntimeResult<String> {
+    fn format_variable_display(
+        &self,
+        variable: &VariableInfo,
+        depth: usize,
+    ) -> RuntimeResult<String> {
         let indent = "  ".repeat(depth);
         let mut result = String::new();
 
@@ -490,7 +476,11 @@ impl VariableInspector {
     }
 
     /// Inspect nested variables for complex types
-    fn inspect_nested_variables(&self, variable: &VariableInfo, depth: usize) -> RuntimeResult<HashMap<String, InspectionResult>> {
+    fn inspect_nested_variables(
+        &self,
+        variable: &VariableInfo,
+        depth: usize,
+    ) -> RuntimeResult<HashMap<String, InspectionResult>> {
         let mut nested = HashMap::new();
 
         match &variable.metadata {
@@ -509,7 +499,7 @@ impl VariableInspector {
                             metadata: VariableMetadata::Unknown,
                             scope: VariableScope::Member {
                                 parent: variable.name.clone(),
-                                field: field.clone()
+                                field: field.clone(),
                             },
                             history: Vec::new(),
                             created_at: variable.modified_at,
@@ -544,7 +534,11 @@ impl VariableInspector {
                             created_at: variable.modified_at,
                             modified_at: variable.modified_at,
                         },
-                        display: format!("{}{} = <element value>", "  ".repeat(depth), element_name),
+                        display: format!(
+                            "{}{} = <element value>",
+                            "  ".repeat(depth),
+                            element_name
+                        ),
                         nested: HashMap::new(),
                         metadata: InspectionMetadata {
                             depth,
@@ -567,7 +561,8 @@ impl VariableInspector {
         let mut registry = self.variable_registry.lock().unwrap();
         let count = registry.len();
         registry.clear();
-        self.debug.info(&format!("Cleared {} registered variables", count))?;
+        self.debug
+            .info(&format!("Cleared {} registered variables", count))?;
         Ok(())
     }
 
@@ -635,10 +630,18 @@ pub type RuntimeResult<T> = Result<T, crate::runtime::error::Error>;
 
 // Implement VariableValue for common types
 impl VariableValue for i32 {
-    fn get_type_name(&self) -> &str { "i32" }
-    fn to_string(&self) -> String { format!("{}", self) }
-    fn get_address(&self) -> Option<usize> { Some(self as *const i32 as usize) }
-    fn get_size(&self) -> Option<usize> { Some(4) }
+    fn get_type_name(&self) -> &str {
+        "i32"
+    }
+    fn to_string(&self) -> String {
+        format!("{}", self)
+    }
+    fn get_address(&self) -> Option<usize> {
+        Some(self as *const i32 as usize)
+    }
+    fn get_size(&self) -> Option<usize> {
+        Some(4)
+    }
     fn get_metadata(&self) -> VariableMetadata {
         VariableMetadata::Integer {
             signed: true,
@@ -650,10 +653,18 @@ impl VariableValue for i32 {
 }
 
 impl VariableValue for String {
-    fn get_type_name(&self) -> &str { "String" }
-    fn to_string(&self) -> String { self.clone() }
-    fn get_address(&self) -> Option<usize> { Some(self.as_ptr() as usize) }
-    fn get_size(&self) -> Option<usize> { Some(self.len()) }
+    fn get_type_name(&self) -> &str {
+        "String"
+    }
+    fn to_string(&self) -> String {
+        self.clone()
+    }
+    fn get_address(&self) -> Option<usize> {
+        Some(self.as_ptr() as usize)
+    }
+    fn get_size(&self) -> Option<usize> {
+        Some(self.len())
+    }
     fn get_metadata(&self) -> VariableMetadata {
         VariableMetadata::String {
             length: self.len(),
@@ -664,10 +675,18 @@ impl VariableValue for String {
 }
 
 impl VariableValue for Vec<String> {
-    fn get_type_name(&self) -> &str { "Vec<String>" }
-    fn to_string(&self) -> String { format!("{:?}", self) }
-    fn get_address(&self) -> Option<usize> { Some(self.as_ptr() as usize) }
-    fn get_size(&self) -> Option<usize> { Some(std::mem::size_of::<Self>()) }
+    fn get_type_name(&self) -> &str {
+        "Vec<String>"
+    }
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
+    fn get_address(&self) -> Option<usize> {
+        Some(self.as_ptr() as usize)
+    }
+    fn get_size(&self) -> Option<usize> {
+        Some(std::mem::size_of::<Self>())
+    }
     fn get_metadata(&self) -> VariableMetadata {
         VariableMetadata::Array {
             element_type: "String".to_string(),

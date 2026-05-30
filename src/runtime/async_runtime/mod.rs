@@ -32,28 +32,28 @@
 //! ```
 
 pub mod executor;
-pub mod scheduler;
-pub mod task;
-pub mod pool;
-pub mod queue;
-pub mod state;
 pub mod ffi;
 pub mod future;
+pub mod pool;
+pub mod queue;
+pub mod scheduler;
+pub mod state;
 pub mod state_machine;
 pub mod state_machine_poc;
+pub mod task;
 
 // Re-export core types
 pub use executor::{Executor, ExecutorHandle};
-pub use scheduler::{Scheduler, SchedulerConfig};
-pub use task::{TaskId, TaskHandle, TaskStatus, TaskPriority};
-pub use pool::{WorkerPool, PoolConfig};
-pub use queue::{TaskQueue, QueueHandle};
-pub use state::{AsyncState, StateManager};
 pub use future::Future;
+pub use pool::{PoolConfig, WorkerPool};
+pub use queue::{QueueHandle, TaskQueue};
+pub use scheduler::{Scheduler, SchedulerConfig};
+pub use state::{AsyncState, StateManager};
+pub use task::{TaskHandle, TaskId, TaskPriority, TaskStatus};
 
+use crate::runtime::RuntimeResult;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::runtime::RuntimeResult;
 
 /// Async runtime configuration
 #[derive(Debug, Clone)]
@@ -113,20 +113,11 @@ impl Runtime {
             poll_interval: config.poll_interval,
         })?);
 
-        let executor = Arc::new(Executor::new(
-            Arc::clone(&pool),
-            Arc::clone(&scheduler),
-        )?);
+        let executor = Arc::new(Executor::new(Arc::clone(&pool), Arc::clone(&scheduler))?);
 
         let state_manager = Arc::new(StateManager::new());
 
-        Ok(Self {
-            config,
-            executor,
-            scheduler,
-            pool,
-            state_manager,
-        })
+        Ok(Self { config, executor, scheduler, pool, state_manager })
     }
 
     /// Spawn a new async task

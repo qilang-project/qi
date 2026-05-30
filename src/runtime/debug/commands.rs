@@ -4,9 +4,9 @@
 //! the Qi runtime, including variable inspection, stack trace analysis, and
 //! system monitoring commands with Chinese language support.
 
+use super::{DebugSystem, VariableValue};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use super::{DebugSystem, VariableValue};
 
 /// Debug command processor
 pub struct DebugCommandProcessor {
@@ -38,7 +38,11 @@ pub struct CommandResult {
 /// Trait for debug command handlers
 pub trait DebugCommandHandler: Send + Sync {
     /// Execute the command
-    fn execute(&self, args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult>;
+    fn execute(
+        &self,
+        args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult>;
 
     /// Get command help
     fn help(&self) -> &'static str;
@@ -117,11 +121,17 @@ impl DebugCommandProcessor {
     /// Register a command
     pub fn register_command(&mut self, name: &str, handler: Box<dyn DebugCommandHandler>) {
         self.commands.insert(name.to_string(), handler);
-        self.debug_module.debug(&format!("Registered debug command: {}", name)).unwrap();
+        self.debug_module
+            .debug(&format!("Registered debug command: {}", name))
+            .unwrap();
     }
 
     /// Process a command string
-    pub fn process_command(&self, command: &str, debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    pub fn process_command(
+        &self,
+        command: &str,
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         let start_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -137,7 +147,11 @@ impl DebugCommandProcessor {
         }
 
         // Parse command
-        let parts: Vec<String> = command.trim().split_whitespace().map(|s| s.to_string()).collect();
+        let parts: Vec<String> = command
+            .trim()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
         if parts.is_empty() {
             return Ok(CommandResult {
                 success: false,
@@ -170,10 +184,7 @@ impl DebugCommandProcessor {
             .unwrap()
             .as_micros() as u64;
 
-        Ok(CommandResult {
-            execution_time_us: end_time - start_time,
-            ..result
-        })
+        Ok(CommandResult { execution_time_us: end_time - start_time, ..result })
     }
 
     /// Get command history
@@ -202,7 +213,11 @@ impl DebugCommandProcessor {
 struct HelpCommand;
 
 impl DebugCommandHandler for HelpCommand {
-    fn execute(&self, args: &[String], _debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        _debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         let help_text = if args.is_empty() {
             format!(
                 "Qi 运行时调试命令帮助:\n\
@@ -257,7 +272,11 @@ impl DebugCommandHandler for HelpCommand {
 struct StackTraceCommand;
 
 impl DebugCommandHandler for StackTraceCommand {
-    fn execute(&self, _args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         match debug_system.get_formatted_stack_trace() {
             Ok(trace) => Ok(CommandResult {
                 success: true,
@@ -286,7 +305,11 @@ impl DebugCommandHandler for StackTraceCommand {
 struct InspectCommand;
 
 impl DebugCommandHandler for InspectCommand {
-    fn execute(&self, args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         if args.is_empty() {
             return Ok(CommandResult {
                 success: false,
@@ -329,7 +352,11 @@ impl DebugCommandHandler for InspectCommand {
 struct ListCommand;
 
 impl DebugCommandHandler for ListCommand {
-    fn execute(&self, _args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         match debug_system.list_variables() {
             Ok(variables) => {
                 let count = variables.len();
@@ -367,7 +394,11 @@ impl DebugCommandHandler for ListCommand {
 struct RegisterCommand;
 
 impl DebugCommandHandler for RegisterCommand {
-    fn execute(&self, args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         if args.len() < 2 {
             return Ok(CommandResult {
                 success: false,
@@ -424,7 +455,11 @@ impl DebugCommandHandler for RegisterCommand {
 struct UnregisterCommand;
 
 impl DebugCommandHandler for UnregisterCommand {
-    fn execute(&self, args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         if args.is_empty() {
             return Ok(CommandResult {
                 success: false,
@@ -434,7 +469,10 @@ impl DebugCommandHandler for UnregisterCommand {
             });
         }
 
-        match debug_system.variable_inspector.unregister_variable(&args[0]) {
+        match debug_system
+            .variable_inspector
+            .unregister_variable(&args[0])
+        {
             Ok(()) => Ok(CommandResult {
                 success: true,
                 message: format!("变量 '{}' 已注销", args[0]),
@@ -462,7 +500,11 @@ impl DebugCommandHandler for UnregisterCommand {
 struct ClearCommand;
 
 impl DebugCommandHandler for ClearCommand {
-    fn execute(&self, _args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         match debug_system.clear_all_data() {
             Ok(()) => Ok(CommandResult {
                 success: true,
@@ -491,7 +533,11 @@ impl DebugCommandHandler for ClearCommand {
 struct StatsCommand;
 
 impl DebugCommandHandler for StatsCommand {
-    fn execute(&self, _args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         match debug_system.get_statistics() {
             Ok(stats) => {
                 let display = format!(
@@ -546,11 +592,17 @@ impl DebugCommandHandler for StatsCommand {
 struct EnableCommand;
 
 impl DebugCommandHandler for EnableCommand {
-    fn execute(&self, args: &[String], _debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        _debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         if args.is_empty() {
             return Ok(CommandResult {
                 success: false,
-                message: "用法: enable <feature>\n可用功能: stack_traces, variable_inspection, profiling".to_string(),
+                message:
+                    "用法: enable <feature>\n可用功能: stack_traces, variable_inspection, profiling"
+                        .to_string(),
                 data: None,
                 execution_time_us: 0,
             });
@@ -578,7 +630,11 @@ impl DebugCommandHandler for EnableCommand {
 struct ProfileCommand;
 
 impl DebugCommandHandler for ProfileCommand {
-    fn execute(&self, args: &[String], debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        args: &[String],
+        debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         if args.is_empty() {
             return Ok(CommandResult {
                 success: false,
@@ -627,25 +683,23 @@ impl DebugCommandHandler for ProfileCommand {
                     }),
                 }
             }
-            "list" => {
-                match debug_system.get_profile_data() {
-                    Ok(profiles) => {
-                        let count = profiles.len();
-                        Ok(CommandResult {
-                            success: true,
-                            message: format!("找到 {} 个性能分析数据", count),
-                            data: Some(serde_json::json!({ "profiles": count })),
-                            execution_time_us: 0,
-                        })
-                    }
-                    Err(e) => Ok(CommandResult {
-                        success: false,
-                        message: format!("无法获取性能分析数据: {}", e),
-                        data: None,
+            "list" => match debug_system.get_profile_data() {
+                Ok(profiles) => {
+                    let count = profiles.len();
+                    Ok(CommandResult {
+                        success: true,
+                        message: format!("找到 {} 个性能分析数据", count),
+                        data: Some(serde_json::json!({ "profiles": count })),
                         execution_time_us: 0,
-                    }),
+                    })
                 }
-            }
+                Err(e) => Ok(CommandResult {
+                    success: false,
+                    message: format!("无法获取性能分析数据: {}", e),
+                    data: None,
+                    execution_time_us: 0,
+                }),
+            },
             _ => Ok(CommandResult {
                 success: false,
                 message: "未知的性能分析命令。使用: start, stop, 或 list".to_string(),
@@ -667,7 +721,11 @@ impl DebugCommandHandler for ProfileCommand {
 struct MemoryCommand;
 
 impl DebugCommandHandler for MemoryCommand {
-    fn execute(&self, _args: &[String], _debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        _debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         // This is a simplified implementation
         // In a real implementation, you'd gather actual memory usage information
         let memory_info = format!(
@@ -706,7 +764,11 @@ impl DebugCommandHandler for MemoryCommand {
 struct SystemCommand;
 
 impl DebugCommandHandler for SystemCommand {
-    fn execute(&self, _args: &[String], _debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        _debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         let system_info = format!(
             "系统信息:\n\
             \n\
@@ -748,7 +810,11 @@ impl DebugCommandHandler for SystemCommand {
 struct ExitCommand;
 
 impl DebugCommandHandler for ExitCommand {
-    fn execute(&self, _args: &[String], _debug_system: &DebugSystem) -> super::RuntimeResult<CommandResult> {
+    fn execute(
+        &self,
+        _args: &[String],
+        _debug_system: &DebugSystem,
+    ) -> super::RuntimeResult<CommandResult> {
         Ok(CommandResult {
             success: true,
             message: "退出调试模式".to_string(),
@@ -768,10 +834,18 @@ impl DebugCommandHandler for ExitCommand {
 
 // Implement VariableValue for common types used in commands
 impl VariableValue for f64 {
-    fn get_type_name(&self) -> &str { "f64" }
-    fn to_string(&self) -> String { format!("{:?}", self) }
-    fn get_address(&self) -> Option<usize> { Some(self as *const f64 as usize) }
-    fn get_size(&self) -> Option<usize> { Some(8) }
+    fn get_type_name(&self) -> &str {
+        "f64"
+    }
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
+    fn get_address(&self) -> Option<usize> {
+        Some(self as *const f64 as usize)
+    }
+    fn get_size(&self) -> Option<usize> {
+        Some(8)
+    }
     fn get_metadata(&self) -> super::VariableMetadata {
         super::VariableMetadata::Float {
             bits: 64,
@@ -783,10 +857,18 @@ impl VariableValue for f64 {
 }
 
 impl VariableValue for bool {
-    fn get_type_name(&self) -> &str { "bool" }
-    fn to_string(&self) -> String { format!("{:?}", self) }
-    fn get_address(&self) -> Option<usize> { Some(self as *const bool as usize) }
-    fn get_size(&self) -> Option<usize> { Some(1) }
+    fn get_type_name(&self) -> &str {
+        "bool"
+    }
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
+    fn get_address(&self) -> Option<usize> {
+        Some(self as *const bool as usize)
+    }
+    fn get_size(&self) -> Option<usize> {
+        Some(1)
+    }
     fn get_metadata(&self) -> super::VariableMetadata {
         super::VariableMetadata::Unknown
     }
@@ -825,7 +907,9 @@ mod tests {
         let processor = DebugCommandProcessor::new(debug_module);
         let debug_system = DebugSystem::new().unwrap();
 
-        let result = processor.process_command("unknown_command", &debug_system).unwrap();
+        let result = processor
+            .process_command("unknown_command", &debug_system)
+            .unwrap();
         assert!(!result.success);
         assert!(result.message.contains("Unknown command"));
     }

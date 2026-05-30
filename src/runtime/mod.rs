@@ -23,14 +23,14 @@
 //! // runtime.execute_program(program_data).unwrap();
 //! ```
 
+pub mod async_runtime;
+pub mod debug;
 pub mod environment;
-pub mod memory;
-pub mod io;
-pub mod stdlib;
 pub mod error;
 pub mod executor;
-pub mod debug;
-pub mod async_runtime;
+pub mod io;
+pub mod memory;
+pub mod stdlib;
 
 // Legacy modules for backward compatibility
 pub mod strings;
@@ -39,15 +39,17 @@ pub mod strings;
 // pub mod lib;
 
 // Re-export core components for convenience
-pub use environment::{RuntimeEnvironment, RuntimeState, RuntimeConfig};
-pub use memory::{MemoryManager, AllocationStrategy};
+pub use async_runtime::{
+    Runtime as AsyncRuntime, RuntimeConfig as AsyncRuntimeConfig, RuntimeStats as AsyncRuntimeStats,
+};
+pub use debug::{create_debug_system, DebugSystem, DebugSystemConfig};
+pub use environment::{RuntimeConfig, RuntimeEnvironment, RuntimeState};
+pub use error::{ChineseErrorMessages, ErrorHandler};
 pub use io::{FileSystemInterface, NetworkManager};
-pub use stdlib::{StandardLibrary, StringModule, MathModule};
-pub use error::{ErrorHandler, ChineseErrorMessages};
-pub use debug::{DebugSystem, DebugSystemConfig, create_debug_system};
-pub use async_runtime::{Runtime as AsyncRuntime, RuntimeConfig as AsyncRuntimeConfig, RuntimeStats as AsyncRuntimeStats};
+pub use memory::{AllocationStrategy, MemoryManager};
+pub use stdlib::{MathModule, StandardLibrary, StringModule};
 // Re-export async runtime FFI functions
-pub use async_runtime::ffi::{qi_runtime_create_task, qi_runtime_await, qi_runtime_spawn_task};
+pub use async_runtime::ffi::{qi_runtime_await, qi_runtime_create_task, qi_runtime_spawn_task};
 
 /// Runtime version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -106,7 +108,6 @@ impl RuntimeLibrary {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,7 +151,12 @@ mod tests {
         assert_eq!(strings.length("Hello").unwrap(), 5);
 
         // Test string concatenation
-        assert_eq!(strings.concat(&[String::from("你好"), String::from("世界")]).unwrap(), "你好世界");
+        assert_eq!(
+            strings
+                .concat(&[String::from("你好"), String::from("世界")])
+                .unwrap(),
+            "你好世界"
+        );
 
         // Test string comparison
         assert_eq!(strings.compare("你好", "你好").unwrap(), 0);

@@ -4,12 +4,12 @@
 
 #![allow(non_snake_case)]
 
+use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::io::Read;
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
-use std::collections::{HashMap, VecDeque};
-use serde_json::{json, Value};
 
 // LLM 会话池
 static LLM会话池: OnceLock<Mutex<HashMap<i64, LLM会话>>> = OnceLock::new();
@@ -164,7 +164,9 @@ impl LLM会话 {
 
         if !响应.status().is_success() {
             let 状态码 = 响应.status();
-            let 错误文本 = 响应.text().unwrap_or_else(|_| "无法读取错误响应".to_string());
+            let 错误文本 = 响应
+                .text()
+                .unwrap_or_else(|_| "无法读取错误响应".to_string());
             return Err(format!("API返回错误 {}: {}", 状态码, 错误文本));
         }
 
@@ -191,7 +193,8 @@ impl LLM会话 {
     /// 发送HTTP请求到LLM API
     fn 调用API(&self, 提示: &str) -> Result<String, String> {
         let 请求体 = self.构建请求体(提示, false, false);
-        let 响应体: Value = self.发送请求体(请求体)?
+        let 响应体: Value = self
+            .发送请求体(请求体)?
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
@@ -202,7 +205,8 @@ impl LLM会话 {
     /// 带工具定义发送请求，返回完整 assistant message JSON
     fn 调用工具API(&self, 提示: &str) -> Result<Value, String> {
         let 请求体 = self.构建请求体(提示, false, true);
-        let 响应体: Value = self.发送请求体(请求体)?
+        let 响应体: Value = self
+            .发送请求体(请求体)?
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
@@ -212,7 +216,8 @@ impl LLM会话 {
     /// 继续工具对话，通常在添加 tool 结果后调用
     fn 继续工具API(&self) -> Result<Value, String> {
         let 请求体 = self.构建继续请求体(true);
-        let 响应体: Value = self.发送请求体(请求体)?
+        let 响应体: Value = self
+            .发送请求体(请求体)?
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
@@ -261,7 +266,9 @@ impl LLM流 {
             }
 
             let mut 字节 = [0u8; 4096];
-            let 数量 = self.响应.read(&mut 字节)
+            let 数量 = self
+                .响应
+                .read(&mut 字节)
                 .map_err(|e| format!("读取流失败: {}", e))?;
 
             if 数量 == 0 {
@@ -323,10 +330,13 @@ impl LLM流 {
                 }
 
                 if let Some(工具调用) = delta.and_then(|d| d.get("tool_calls")) {
-                    self.待返回.push_back(json!({
-                        "类型": "工具调用片段",
-                        "数据": 工具调用
-                    }).to_string());
+                    self.待返回.push_back(
+                        json!({
+                            "类型": "工具调用片段",
+                            "数据": 工具调用
+                        })
+                        .to_string(),
+                    );
                 }
             }
         }
@@ -342,7 +352,9 @@ fn 转为C字符串指针(文本: String) -> *mut c_char {
 
 fn 工具安全名称(名称: &str) -> String {
     if !名称.is_empty()
-        && 名称.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && 名称
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
         return 名称.to_string();
     }
@@ -425,10 +437,7 @@ pub extern "C" fn qi_llm_create_session(
 ///
 /// 返回: LLM响应文本 (需要调用 qi_llm_free_string 释放)
 #[no_mangle]
-pub extern "C" fn qi_llm_chat(
-    session_handle: i64,
-    prompt: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn qi_llm_chat(session_handle: i64, prompt: *const c_char) -> *mut c_char {
     if prompt.is_null() {
         return std::ptr::null_mut();
     }
@@ -468,10 +477,7 @@ pub extern "C" fn qi_llm_chat(
 ///
 /// 返回: 流句柄 (>0 成功, <0 失败)
 #[no_mangle]
-pub extern "C" fn qi_llm_stream_chat(
-    session_handle: i64,
-    prompt: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_llm_stream_chat(session_handle: i64, prompt: *const c_char) -> i64 {
     if prompt.is_null() {
         return -1;
     }
@@ -553,8 +559,12 @@ pub extern "C" fn qi_llm_register_tool(
     if let Some(会话) = 会话池.get_mut(&session_handle) {
         unsafe {
             let 工具名 = CStr::from_ptr(tool_name).to_string_lossy().to_string();
-            let 工具描述 = CStr::from_ptr(tool_description).to_string_lossy().to_string();
-            let 参数文本 = CStr::from_ptr(parameters_json).to_string_lossy().to_string();
+            let 工具描述 = CStr::from_ptr(tool_description)
+                .to_string_lossy()
+                .to_string();
+            let 参数文本 = CStr::from_ptr(parameters_json)
+                .to_string_lossy()
+                .to_string();
             let 安全工具名 = 工具安全名称(&工具名);
             let 参数结构 = serde_json::from_str::<Value>(&参数文本)
                 .unwrap_or_else(|_| json!({"type": "object", "properties": {}}));
@@ -641,14 +651,20 @@ fn 解析工具调用(assistant_message_json: *const c_char) -> Option<Value> {
 
 /// 按 index 取 tool_calls[index]。支持 parallel tool_calls：模型一次返
 /// N 个工具调用时，harness 循环 0..N 各取一个 dispatch。
-fn 解析工具调用按索引(assistant_message_json: *const c_char, index: usize) -> Option<Value> {
+fn 解析工具调用按索引(
+    assistant_message_json: *const c_char,
+    index: usize,
+) -> Option<Value> {
     if assistant_message_json.is_null() {
         return None;
     }
     unsafe {
-        let 文本 = CStr::from_ptr(assistant_message_json).to_string_lossy().to_string();
+        let 文本 = CStr::from_ptr(assistant_message_json)
+            .to_string_lossy()
+            .to_string();
         let 消息: Value = serde_json::from_str(&文本).ok()?;
-        消息.get("tool_calls")
+        消息
+            .get("tool_calls")
             .and_then(|calls| calls.get(index))
             .cloned()
     }
@@ -661,12 +677,15 @@ pub extern "C" fn qi_llm_get_tool_call_count(assistant_message_json: *const c_ch
         return 0;
     }
     unsafe {
-        let 文本 = CStr::from_ptr(assistant_message_json).to_string_lossy().to_string();
+        let 文本 = CStr::from_ptr(assistant_message_json)
+            .to_string_lossy()
+            .to_string();
         let 消息: Value = match serde_json::from_str(&文本) {
             Ok(v) => v,
             Err(_) => return 0,
         };
-        消息.get("tool_calls")
+        消息
+            .get("tool_calls")
             .and_then(|v| v.as_array())
             .map(|a| a.len() as i64)
             .unwrap_or(0)
@@ -683,7 +702,11 @@ pub extern "C" fn qi_llm_get_tool_call_id_at(
         Some(c) => c,
         None => return std::ptr::null_mut(),
     };
-    let id = 调用.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+    let id = 调用
+        .get("id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("")
+        .to_string();
     转为C字符串指针(id)
 }
 
@@ -789,15 +812,15 @@ pub extern "C" fn qi_llm_get_tool_call_name(
 
 /// 获取第一个工具调用参数 JSON。
 #[no_mangle]
-pub extern "C" fn qi_llm_get_tool_call_arguments(assistant_message_json: *const c_char) -> *mut c_char {
+pub extern "C" fn qi_llm_get_tool_call_arguments(
+    assistant_message_json: *const c_char,
+) -> *mut c_char {
     let 调用 = match 解析工具调用(assistant_message_json) {
         Some(调用) => 调用,
         None => return std::ptr::null_mut(),
     };
 
-    let 参数 = 调用
-        .get("function")
-        .and_then(|func| func.get("arguments"));
+    let 参数 = 调用.get("function").and_then(|func| func.get("arguments"));
 
     let 参数文本 = match 参数 {
         Some(Value::String(s)) => s.clone(),
@@ -951,8 +974,8 @@ pub extern "C" fn qi_llm_free_string(s: *mut c_char) {
 // 异步 LLM API
 // ============================================================================
 
-use std::thread;
 use crate::runtime::async_runtime::future::Future;
+use std::thread;
 
 /// 异步发送消息到LLM (返回 未来<字符串>)
 ///
@@ -962,10 +985,7 @@ use crate::runtime::async_runtime::future::Future;
 ///
 /// 返回: Future 指针 (需要使用 等待 关键字获取结果)
 #[no_mangle]
-pub extern "C" fn qi_llm_chat_async(
-    session_handle: i64,
-    prompt: *const c_char,
-) -> *mut Future {
+pub extern "C" fn qi_llm_chat_async(session_handle: i64, prompt: *const c_char) -> *mut Future {
     if prompt.is_null() {
         return std::ptr::null_mut();
     }
@@ -984,7 +1004,7 @@ pub extern "C" fn qi_llm_chat_async(
 
         // 创建一个 pending Future
         let future_state = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::runtime::async_runtime::future::FutureState::Pending
+            crate::runtime::async_runtime::future::FutureState::Pending,
         ));
         let future_value = std::sync::Arc::new(std::sync::Mutex::new(None));
         let future_error = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1013,9 +1033,8 @@ pub extern "C" fn qi_llm_chat_async(
                     }
 
                     // 更新 Future 状态
-                    *value_clone.lock().unwrap() = Some(
-                        crate::runtime::async_runtime::future::FutureValue::String(响应)
-                    );
+                    *value_clone.lock().unwrap() =
+                        Some(crate::runtime::async_runtime::future::FutureValue::String(响应));
                     *state_clone.lock().unwrap() =
                         crate::runtime::async_runtime::future::FutureState::Completed;
                 }

@@ -1,15 +1,15 @@
 //! Task executor for the async runtime
 
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::future::Future;
 
 use crate::runtime::RuntimeResult;
 
-use super::task::{TaskId, TaskHandle, TaskPriority, TaskInner, TaskMetadata};
 #[allow(unused_imports)]
-use super::pool::{WorkerPool, PoolConfig};
+use super::pool::{PoolConfig, WorkerPool};
 use super::scheduler::Scheduler;
+use super::task::{TaskHandle, TaskId, TaskInner, TaskMetadata, TaskPriority};
 
 #[derive(Default)]
 struct ExecutorMetrics {
@@ -120,15 +120,12 @@ impl std::fmt::Debug for Executor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::scheduler::SchedulerConfig;
+    use super::*;
 
     #[tokio::test]
     async fn test_executor_spawn() {
-        let pool_config = PoolConfig {
-            worker_count: 2,
-            ..Default::default()
-        };
+        let pool_config = PoolConfig { worker_count: 2, ..Default::default() };
         let pool = Arc::new(WorkerPool::new(pool_config).unwrap());
         let scheduler = Arc::new(Scheduler::new(SchedulerConfig::default()).unwrap());
         let executor = Executor::new(pool, scheduler).unwrap();
@@ -142,10 +139,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_shutdown() {
-        let pool_config = PoolConfig {
-            worker_count: 2,
-            ..Default::default()
-        };
+        let pool_config = PoolConfig { worker_count: 2, ..Default::default() };
         let pool = Arc::new(WorkerPool::new(pool_config).unwrap());
         let scheduler = Arc::new(Scheduler::new(SchedulerConfig::default()).unwrap());
         let executor = Executor::new(pool, scheduler).unwrap();

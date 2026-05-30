@@ -2,7 +2,7 @@
 //!
 //! 提供文件读写、创建、删除等操作
 
-use crate::runtime::stdlib::{StdlibResult, StdlibValue, StdlibError};
+use crate::runtime::stdlib::{StdlibError, StdlibResult, StdlibValue};
 use std::fs;
 use std::path::Path;
 
@@ -86,7 +86,9 @@ impl 文件模块 {
     }
 
     /// 执行文件操作
-    pub fn 执行操作(&self, 操作: 文件操作, 参数: &[StdlibValue]) -> StdlibResult<StdlibValue> {
+    pub fn 执行操作(
+        &self, 操作: 文件操作, 参数: &[StdlibValue]
+    ) -> StdlibResult<StdlibValue> {
         match 操作 {
             文件操作::读取 => self.读取文件(参数),
             文件操作::写入 => self.写入文件(参数),
@@ -107,11 +109,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("读取文件需要1个参数：文件路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        let 内容 = fs::read_to_string(&路径)
-            .map_err(IO错误::from)?;
+        let 内容 = fs::read_to_string(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::String(内容))
     }
@@ -122,14 +124,15 @@ impl 文件模块 {
             return Err(IO错误::通用错误("写入文件需要2个参数：文件路径、内容".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        let 内容 = 参数[1].as_string()
+        let 内容 = 参数[1]
+            .as_string()
             .ok_or_else(|| IO错误::写入错误("写入内容必须是字符串".to_string()))?;
 
-        fs::write(&路径, 内容)
-            .map_err(IO错误::from)?;
+        fs::write(&路径, 内容).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Boolean(true))
     }
@@ -140,10 +143,12 @@ impl 文件模块 {
             return Err(IO错误::通用错误("追加文件需要2个参数：文件路径、内容".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        let 内容 = 参数[1].as_string()
+        let 内容 = 参数[1]
+            .as_string()
             .ok_or_else(|| IO错误::写入错误("追加内容必须是字符串".to_string()))?;
 
         use std::io::Write;
@@ -153,7 +158,8 @@ impl 文件模块 {
             .open(&路径)
             .map_err(IO错误::from)?;
 
-        文件.write_all(内容.as_bytes())
+        文件
+            .write_all(内容.as_bytes())
             .map_err(|e| IO错误::写入错误(e.to_string()))?;
 
         Ok(StdlibValue::Boolean(true))
@@ -165,11 +171,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("删除文件需要1个参数：文件路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        fs::remove_file(&路径)
-            .map_err(IO错误::from)?;
+        fs::remove_file(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Boolean(true))
     }
@@ -180,11 +186,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("创建文件需要1个参数：文件路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        fs::File::create(&路径)
-            .map_err(IO错误::from)?;
+        fs::File::create(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Boolean(true))
     }
@@ -195,7 +201,8 @@ impl 文件模块 {
             return Err(IO错误::通用错误("检查文件存在需要1个参数：文件路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
         let 存在 = Path::new(&路径).exists();
@@ -208,11 +215,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("获取文件大小需要1个参数：文件路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("文件路径必须是字符串".to_string()))?;
 
-        let 元数据 = fs::metadata(&路径)
-            .map_err(IO错误::from)?;
+        let 元数据 = fs::metadata(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Integer(元数据.len() as i64))
     }
@@ -223,11 +230,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("创建目录需要1个参数：目录路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("目录路径必须是字符串".to_string()))?;
 
-        fs::create_dir_all(&路径)
-            .map_err(IO错误::from)?;
+        fs::create_dir_all(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Boolean(true))
     }
@@ -238,11 +245,11 @@ impl 文件模块 {
             return Err(IO错误::通用错误("删除目录需要1个参数：目录路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("目录路径必须是字符串".to_string()))?;
 
-        fs::remove_dir_all(&路径)
-            .map_err(IO错误::from)?;
+        fs::remove_dir_all(&路径).map_err(IO错误::from)?;
 
         Ok(StdlibValue::Boolean(true))
     }
@@ -253,17 +260,14 @@ impl 文件模块 {
             return Err(IO错误::通用错误("列出目录需要1个参数：目录路径".to_string()).into());
         }
 
-        let 路径 = 参数[0].as_string()
+        let 路径 = 参数[0]
+            .as_string()
             .ok_or_else(|| IO错误::无效路径("目录路径必须是字符串".to_string()))?;
 
         let 条目: Vec<StdlibValue> = fs::read_dir(&路径)
             .map_err(IO错误::from)?
             .filter_map(|entry| entry.ok())
-            .map(|entry| {
-                StdlibValue::String(
-                    entry.file_name().to_string_lossy().to_string()
-                )
-            })
+            .map(|entry| StdlibValue::String(entry.file_name().to_string_lossy().to_string()))
             .collect();
 
         Ok(StdlibValue::Array(条目))

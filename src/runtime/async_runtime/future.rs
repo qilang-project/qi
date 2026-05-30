@@ -2,30 +2,30 @@
 //!
 //! Provides Future<T> support for async operations
 
-use std::sync::{Arc, Mutex};
-use std::os::raw::c_char;
 #[cfg(test)]
 use std::ffi::CStr;
+use std::os::raw::c_char;
+use std::sync::{Arc, Mutex};
 
 /// Future state enumeration
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum FutureState {
-    Pending,     // 等待中
-    Completed,   // 已完成
-    Failed,      // 已失败
+    Pending,   // 等待中
+    Completed, // 已完成
+    Failed,    // 已失败
 }
 
 /// Value types that Future can hold
 /// Future 可以持有的值类型
 #[derive(Debug, Clone)]
 pub enum FutureValue {
-    Integer(i64),           // 整数
-    Float(f64),             // 浮点数
-    Boolean(bool),          // 布尔值
-    String(String),         // 字符串
-    Pointer(*mut u8),       // 指针（用于结构体等）
-    None,                   // 无值
+    Integer(i64),     // 整数
+    Float(f64),       // 浮点数
+    Boolean(bool),    // 布尔值
+    String(String),   // 字符串
+    Pointer(*mut u8), // 指针（用于结构体等）
+    None,             // 无值
 }
 
 // SAFETY: FutureValue is Send-safe when used with String/Integer/Float/Boolean variants.
@@ -161,7 +161,12 @@ impl Future {
                 let state = self.state.lock().unwrap();
                 match *state {
                     FutureState::Completed => {
-                        return Ok(self.value.lock().unwrap().clone().unwrap_or(FutureValue::None));
+                        return Ok(self
+                            .value
+                            .lock()
+                            .unwrap()
+                            .clone()
+                            .unwrap_or(FutureValue::None));
                     }
                     FutureState::Failed => {
                         return Err(self
@@ -187,8 +192,7 @@ impl Future {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             tokio::task::block_in_place(|| handle.block_on(self.await_value_async()))
         } else {
-            crate::runtime::async_runtime::ffi::全局异步运行时()
-                .block_on(self.await_value_async())
+            crate::runtime::async_runtime::ffi::全局异步运行时().block_on(self.await_value_async())
         }
     }
 
@@ -334,7 +338,13 @@ pub extern "C" fn qi_future_await_bool(future: *mut Future) -> i32 {
     unsafe {
         let future_ref = &*future;
         match future_ref.await_value() {
-            Ok(FutureValue::Boolean(value)) => if value { 1 } else { 0 },
+            Ok(FutureValue::Boolean(value)) => {
+                if value {
+                    1
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }
@@ -402,7 +412,11 @@ pub extern "C" fn qi_future_is_completed(future: *mut Future) -> i32 {
 
     unsafe {
         let future_ref = &*future;
-        if future_ref.is_completed() { 1 } else { 0 }
+        if future_ref.is_completed() {
+            1
+        } else {
+            0
+        }
     }
 }
 

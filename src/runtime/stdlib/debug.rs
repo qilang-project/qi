@@ -3,10 +3,10 @@
 //! This module provides debugging utilities, logging, and development
 //! tools with Chinese language support.
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// Log level enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -53,12 +53,12 @@ impl LogLevel {
     /// Get color code for log level
     pub fn color_code(&self) -> &'static str {
         match self {
-            LogLevel::Trace => "\x1b[37m",     // White
-            LogLevel::Debug => "\x1b[36m",     // Cyan
-            LogLevel::Info => "\x1b[32m",      // Green
-            LogLevel::Warning => "\x1b[33m",   // Yellow
-            LogLevel::Error => "\x1b[31m",     // Red
-            LogLevel::Fatal => "\x1b[35m",     // Magenta
+            LogLevel::Trace => "\x1b[37m",   // White
+            LogLevel::Debug => "\x1b[36m",   // Cyan
+            LogLevel::Info => "\x1b[32m",    // Green
+            LogLevel::Warning => "\x1b[33m", // Yellow
+            LogLevel::Error => "\x1b[31m",   // Red
+            LogLevel::Fatal => "\x1b[35m",   // Magenta
         }
     }
 }
@@ -167,7 +167,13 @@ impl DebugModule {
     }
 
     /// Log a message
-    pub fn log(&self, level: LogLevel, message: &str, file: Option<&str>, line: Option<u32>) -> RuntimeResult<()> {
+    pub fn log(
+        &self,
+        level: LogLevel,
+        message: &str,
+        file: Option<&str>,
+        line: Option<u32>,
+    ) -> RuntimeResult<()> {
         let config = self.config.lock().unwrap();
 
         if level < config.min_level {
@@ -176,7 +182,12 @@ impl DebugModule {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| RuntimeError::debug_error(format!("获取时间戳失败: {}", e), "获取时间戳失败".to_string()))?
+            .map_err(|e| {
+                RuntimeError::debug_error(
+                    format!("获取时间戳失败: {}", e),
+                    "获取时间戳失败".to_string(),
+                )
+            })?
             .as_secs();
 
         let entry = LogEntry {
@@ -256,7 +267,12 @@ impl DebugModule {
     pub fn start_timer(&self, name: &str) -> RuntimeResult<()> {
         let start_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| RuntimeError::debug_error(format!("获取时间戳失败: {}", e), "获取时间戳失败".to_string()))?
+            .map_err(|e| {
+                RuntimeError::debug_error(
+                    format!("获取时间戳失败: {}", e),
+                    "获取时间戳失败".to_string(),
+                )
+            })?
             .as_micros() as u64;
 
         let mut timers = self.active_timers.lock().unwrap();
@@ -269,13 +285,22 @@ impl DebugModule {
     pub fn end_timer(&self, name: &str) -> RuntimeResult<u64> {
         let end_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| RuntimeError::debug_error(format!("获取时间戳失败: {}", e), "获取时间戳失败".to_string()))?
+            .map_err(|e| {
+                RuntimeError::debug_error(
+                    format!("获取时间戳失败: {}", e),
+                    "获取时间戳失败".to_string(),
+                )
+            })?
             .as_micros() as u64;
 
         let mut timers = self.active_timers.lock().unwrap();
 
-        let start_time = timers.remove(name)
-            .ok_or_else(|| RuntimeError::debug_error(format!("计时器 '{}' 不存在", name), "计时器不存在".to_string()))?;
+        let start_time = timers.remove(name).ok_or_else(|| {
+            RuntimeError::debug_error(
+                format!("计时器 '{}' 不存在", name),
+                "计时器不存在".to_string(),
+            )
+        })?;
 
         let duration = end_time - start_time;
 
@@ -315,7 +340,10 @@ impl DebugModule {
     pub fn assert(&self, condition: bool, message: &str) -> RuntimeResult<()> {
         let config = self.config.lock().unwrap();
         if config.debug_enabled && !condition {
-            return Err(RuntimeError::assertion_error(format!("断言失败: {}", message), "断言失败".to_string()));
+            return Err(RuntimeError::assertion_error(
+                format!("断言失败: {}", message),
+                "断言失败".to_string(),
+            ));
         }
         Ok(())
     }
@@ -385,8 +413,12 @@ impl DebugModule {
 
     /// Write log entry to file
     fn write_to_file(&self, entry: &LogEntry, config: &DebugConfig) -> RuntimeResult<()> {
-        let log_path = config.log_file_path.as_ref()
-            .ok_or_else(|| RuntimeError::debug_error("日志文件路径未配置".to_string(), "日志文件路径未配置".to_string()))?;
+        let log_path = config.log_file_path.as_ref().ok_or_else(|| {
+            RuntimeError::debug_error(
+                "日志文件路径未配置".to_string(),
+                "日志文件路径未配置".to_string(),
+            )
+        })?;
 
         let level_name = if config.chinese_levels {
             entry.level.chinese_name()
@@ -405,10 +437,19 @@ impl DebugModule {
             .create(true)
             .append(true)
             .open(log_path)
-            .map_err(|e| RuntimeError::debug_error(format!("打开日志文件失败: {}", e), "打开日志文件失败".to_string()))?;
+            .map_err(|e| {
+                RuntimeError::debug_error(
+                    format!("打开日志文件失败: {}", e),
+                    "打开日志文件失败".to_string(),
+                )
+            })?;
 
-        file.write_all(log_line.as_bytes())
-            .map_err(|e| RuntimeError::debug_error(format!("写入日志文件失败: {}", e), "写入日志文件失败".to_string()))?;
+        file.write_all(log_line.as_bytes()).map_err(|e| {
+            RuntimeError::debug_error(
+                format!("写入日志文件失败: {}", e),
+                "写入日志文件失败".to_string(),
+            )
+        })?;
 
         Ok(())
     }
@@ -422,7 +463,8 @@ impl DebugModule {
     /// Get log entries filtered by level
     pub fn get_log_entries_by_level(&self, level: LogLevel) -> RuntimeResult<Vec<LogEntry>> {
         let entries = self.log_entries.lock().unwrap();
-        let filtered: Vec<LogEntry> = entries.iter()
+        let filtered: Vec<LogEntry> = entries
+            .iter()
             .filter(|entry| entry.level >= level)
             .cloned()
             .collect();
@@ -572,10 +614,12 @@ mod tests {
         assert!(duration >= 10000); // 10ms in microseconds
 
         // Test measurement
-        let result = debug.measure("test_measurement", || {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            42
-        }).unwrap();
+        let result = debug
+            .measure("test_measurement", || {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                42
+            })
+            .unwrap();
 
         assert_eq!(result, 42);
     }
@@ -606,7 +650,9 @@ mod tests {
         assert!(debug.assert(true, "This should pass").is_ok());
 
         // False assertion with debug disabled should pass
-        assert!(debug.assert(false, "This should pass when debug disabled").is_ok());
+        assert!(debug
+            .assert(false, "This should pass when debug disabled")
+            .is_ok());
 
         // Enable debug and test failing assertion
         debug.set_debug_enabled(true).unwrap();

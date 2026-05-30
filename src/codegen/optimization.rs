@@ -91,35 +91,41 @@ impl OptimizationManager {
         // 加法：x = add i64 5, 3 -> x = add i64 0, 8
         let re = Regex::new(r"(\w+)\s*=\s*add\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
-            let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            // 生成有效的LLVM IR: add i64 0, result
-            format!("{} = add i64 0, {}", dest, a + b)
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
+                let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
+                // 生成有效的LLVM IR: add i64 0, result
+                format!("{} = add i64 0, {}", dest, a + b)
+            })
+            .to_string();
 
         // 减法：x = sub i64 10, 3 -> x = add i64 0, 7
         let re = Regex::new(r"(\w+)\s*=\s*sub\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
-            let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            // 生成有效的LLVM IR: add i64 0, result
-            format!("{} = add i64 0, {}", dest, a - b)
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
+                let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
+                // 生成有效的LLVM IR: add i64 0, result
+                format!("{} = add i64 0, {}", dest, a - b)
+            })
+            .to_string();
 
         // 乘法：x = mul i64 6, 7 -> x = add i64 0, 42
         let re = Regex::new(r"(\w+)\s*=\s*mul\s+i64\s+(\d+),\s*(\d+)")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
-            let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
-            // 生成有效的LLVM IR: add i64 0, result
-            format!("{} = add i64 0, {}", dest, a * b)
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let a: i64 = caps.get(2).unwrap().as_str().parse().unwrap();
+                let b: i64 = caps.get(3).unwrap().as_str().parse().unwrap();
+                // 生成有效的LLVM IR: add i64 0, result
+                format!("{} = add i64 0, {}", dest, a * b)
+            })
+            .to_string();
 
         Ok(result)
     }
@@ -186,53 +192,64 @@ impl OptimizationManager {
         // x + 0 -> x
         let re = Regex::new(r"(\w+)\s*=\s*add\s+i64\s+(\w+),\s*0\b")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let src = caps.get(2).unwrap().as_str();
-            if dest == src {
-                // 如果目标是源变量，这个指令可以删除
-                String::new()
-            } else {
-                format!("{} = {}", dest, src)
-            }
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let src = caps.get(2).unwrap().as_str();
+                if dest == src {
+                    // 如果目标是源变量，这个指令可以删除
+                    String::new()
+                } else {
+                    format!("{} = {}", dest, src)
+                }
+            })
+            .to_string();
 
         // x - 0 -> x
         let re = Regex::new(r"(\w+)\s*=\s*sub\s+i64\s+(\w+),\s*0\b")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let src = caps.get(2).unwrap().as_str();
-            if dest == src {
-                String::new()
-            } else {
-                format!("{} = {}", dest, src)
-            }
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let src = caps.get(2).unwrap().as_str();
+                if dest == src {
+                    String::new()
+                } else {
+                    format!("{} = {}", dest, src)
+                }
+            })
+            .to_string();
 
         // x * 0 -> 0
         let re = Regex::new(r"(\w+)\s*=\s*mul\s+i64\s+\w+,\s*0\b")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            format!("{} = 0", dest)
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                format!("{} = 0", dest)
+            })
+            .to_string();
 
         // x * 1 -> x
         let re = Regex::new(r"(\w+)\s*=\s*mul\s+i64\s+(\w+),\s*1\b")
             .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?;
-        result = re.replace_all(&result, |caps: &regex::Captures| {
-            let dest = caps.get(1).unwrap().as_str();
-            let src = caps.get(2).unwrap().as_str();
-            if dest == src {
-                String::new()
-            } else {
-                format!("{} = {}", dest, src)
-            }
-        }).to_string();
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let dest = caps.get(1).unwrap().as_str();
+                let src = caps.get(2).unwrap().as_str();
+                if dest == src {
+                    String::new()
+                } else {
+                    format!("{} = {}", dest, src)
+                }
+            })
+            .to_string();
 
         // 移除空行
-        let lines: Vec<&str> = result.lines().filter(|line| !line.trim().is_empty()).collect();
+        let lines: Vec<&str> = result
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
         Ok(lines.join("\n"))
     }
 
@@ -245,7 +262,11 @@ impl OptimizationManager {
             let trimmed = line.trim();
 
             // 跳过空行和注释
-            if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with("define") || trimmed.starts_with("}") {
+            if trimmed.is_empty()
+                || trimmed.starts_with(';')
+                || trimmed.starts_with("define")
+                || trimmed.starts_with("}")
+            {
                 optimized_lines.push(line);
                 continue;
             }
@@ -266,7 +287,11 @@ impl OptimizationManager {
             let trimmed = line.trim();
 
             // 跳过空行和注释
-            if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with("define") || trimmed.starts_with("}") {
+            if trimmed.is_empty()
+                || trimmed.starts_with(';')
+                || trimmed.starts_with("define")
+                || trimmed.starts_with("}")
+            {
                 optimized_lines.push(line.to_string());
                 continue;
             }
@@ -274,7 +299,8 @@ impl OptimizationManager {
             // 检测常量赋值: x = 42 或 x = add i64 5, 3 (已折叠)
             if let Some(caps) = Regex::new(r"(\w+)\s*=\s*(-?\d+)")
                 .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?
-                .captures(trimmed) {
+                .captures(trimmed)
+            {
                 let var_name = caps.get(1).unwrap().as_str();
                 let value = caps.get(2).unwrap().as_str();
                 constant_values.insert(var_name.to_string(), value.to_string());
@@ -285,7 +311,8 @@ impl OptimizationManager {
             // 检测变量赋值（可能覆盖常量）
             if Regex::new(r"(\w+)\s*=\s*\w+")
                 .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?
-                .is_match(trimmed) {
+                .is_match(trimmed)
+            {
                 let var_name = trimmed.split('=').next().unwrap().trim();
                 constant_values.remove(var_name);
                 optimized_lines.push(line.to_string());
@@ -340,10 +367,11 @@ impl OptimizationManager {
             }
 
             // 检测算术表达式: dest = add i64 op1, op2
-            if let Some(caps) = Regex::new(r"(\w+)\s*=\s*(add|sub|mul|div|shl|shr)\s+i64\s+(\w+),\s*(\w+)")
-                .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?
-                .captures(trimmed) {
-
+            if let Some(caps) =
+                Regex::new(r"(\w+)\s*=\s*(add|sub|mul|div|shl|shr)\s+i64\s+(\w+),\s*(\w+)")
+                    .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?
+                    .captures(trimmed)
+            {
                 let dest = caps.get(1).unwrap().as_str();
                 let op = caps.get(2).unwrap().as_str();
                 let op1 = caps.get(3).unwrap().as_str();
@@ -365,8 +393,8 @@ impl OptimizationManager {
             // 检测内存加载: dest = load i64, ptr
             if let Some(caps) = Regex::new(r"(\w+)\s*=\s*load\s+i64,\s*(\w+)")
                 .map_err(|e| OptimizationError::Failed(format!("正则表达式错误: {}", e)))?
-                .captures(trimmed) {
-
+                .captures(trimmed)
+            {
                 let dest = caps.get(1).unwrap().as_str();
                 let ptr = caps.get(2).unwrap().as_str();
                 let expression_key = format!("load_{}", ptr);

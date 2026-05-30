@@ -3,7 +3,7 @@
 //! This module provides comprehensive string manipulation functions
 //! with full Unicode and Chinese language support.
 
-use super::{StdlibResult, StdlibError, StdlibValue};
+use super::{StdlibError, StdlibResult, StdlibValue};
 
 /// String operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +74,11 @@ impl StringModule {
     }
 
     /// Execute string operation
-    pub fn execute_operation(&self, operation: StringOperation, args: &[StdlibValue]) -> StdlibResult<StdlibValue> {
+    pub fn execute_operation(
+        &self,
+        operation: StringOperation,
+        args: &[StdlibValue],
+    ) -> StdlibResult<StdlibValue> {
         match operation {
             StringOperation::Concat => self.concat(args),
             StringOperation::Substring => self.substring(args),
@@ -332,42 +336,48 @@ impl StringModule {
             "".to_string()
         };
 
-        let strings: Vec<String> = if args.len() == 2 && matches!(&args[0], StdlibValue::String(_)) && matches!(&args[1], StdlibValue::Array(_)) {
+        let strings: Vec<String> = if args.len() == 2
+            && matches!(&args[0], StdlibValue::String(_))
+            && matches!(&args[1], StdlibValue::Array(_))
+        {
             // Pattern: separator + array of strings
             match &args[1] {
-                StdlibValue::Array(arr) => arr.iter().map(|arg| {
-                    match arg {
+                StdlibValue::Array(arr) => arr
+                    .iter()
+                    .map(|arg| match arg {
                         StdlibValue::String(s) => Ok(s.clone()),
                         _ => Err(StdlibError::StringOperationError {
                             operation: "join".to_string(),
                             message: "数组元素必须是字符串".to_string(),
                         }),
-                    }
-                }).collect::<Result<Vec<String>, StdlibError>>()?,
+                    })
+                    .collect::<Result<Vec<String>, StdlibError>>()?,
                 _ => unreachable!(), // We already checked this pattern
             }
         } else if args.len() > 1 {
-            args[1..].iter().map(|arg| {
-                match arg {
+            args[1..]
+                .iter()
+                .map(|arg| match arg {
                     StdlibValue::String(s) => Ok(s.clone()),
                     _ => Err(StdlibError::StringOperationError {
                         operation: "join".to_string(),
                         message: "数组元素必须是字符串".to_string(),
                     }),
-                }
-            }).collect::<Result<Vec<String>, StdlibError>>()?
+                })
+                .collect::<Result<Vec<String>, StdlibError>>()?
         } else if args.len() == 1 && matches!(&args[0], StdlibValue::Array(_)) {
             // Pattern: just array of strings
             match &args[0] {
-                StdlibValue::Array(arr) => arr.iter().map(|arg| {
-                    match arg {
+                StdlibValue::Array(arr) => arr
+                    .iter()
+                    .map(|arg| match arg {
                         StdlibValue::String(s) => Ok(s.clone()),
                         _ => Err(StdlibError::StringOperationError {
                             operation: "join".to_string(),
                             message: "数组元素必须是字符串".to_string(),
                         }),
-                    }
-                }).collect::<Result<Vec<String>, StdlibError>>()?,
+                    })
+                    .collect::<Result<Vec<String>, StdlibError>>()?,
                 _ => unreachable!(), // We already checked this pattern
             }
         } else if args.len() == 1 && matches!(&args[0], StdlibValue::String(_)) {

@@ -5,8 +5,8 @@ use crate::lexer::tokens::Span;
 /// Visibility modifier for declarations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
-    公开,  // public
-    私有,  // private (default)
+    公开, // public
+    私有, // private (default)
 }
 
 impl Default for Visibility {
@@ -82,10 +82,10 @@ pub struct Program {
 /// Import statement
 #[derive(Debug, Clone)]
 pub struct ImportStatement {
-    pub module_path: Vec<String>,  // Changed to Vec for module paths like "标准库.输入输出"
-    pub items: Option<Vec<String>>,  // Optional specific items to import
+    pub module_path: Vec<String>, // Changed to Vec for module paths like "标准库.输入输出"
+    pub items: Option<Vec<String>>, // Optional specific items to import
     pub alias: Option<String>,
-    pub is_public: bool,  // 是否是公开导入（重新导出）
+    pub is_public: bool, // 是否是公开导入（重新导出）
     pub span: Span,
 }
 
@@ -107,7 +107,7 @@ pub struct FunctionDeclaration {
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
     pub visibility: Visibility,
-    pub is_inline: bool,  // 是否为内联函数
+    pub is_inline: bool, // 是否为内联函数
     /// 异步函数标志：编译器把 body 转状态机，等待 表达式是真 yield 点。
     /// 仅当返回类型是 未来<T> 时有意义。详见 docs/编译器异步状态机里程碑.md
     pub is_async: bool,
@@ -246,9 +246,19 @@ pub struct BinaryExpression {
 /// Binary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
-    加, 减, 乘, 除, 取余,
-    等于, 不等于, 大于, 小于, 大于等于, 小于等于,
-    与, 或,
+    加,
+    减,
+    乘,
+    除,
+    取余,
+    等于,
+    不等于,
+    大于,
+    小于,
+    大于等于,
+    小于等于,
+    与,
+    或,
 }
 
 /// Unary expression
@@ -262,9 +272,9 @@ pub struct UnaryExpression {
 /// Unary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
-    非,  // ! or 非 - logical not
-    负,  // - - negation
-    正,  // + - positive (unary plus)
+    非, // ! or 非 - logical not
+    负, // - - negation
+    正, // + - positive (unary plus)
 }
 
 /// Type cast expression (e.g., x 作为 整数)
@@ -296,7 +306,7 @@ pub struct MethodCallExpression {
 /// Assignment expression
 #[derive(Debug, Clone)]
 pub struct AssignmentExpression {
-    pub target: Box<AstNode>,  // Changed from String to Box<AstNode> to support complex LValues
+    pub target: Box<AstNode>, // Changed from String to Box<AstNode> to support complex LValues
     pub value: Box<AstNode>,
     pub span: Span,
 }
@@ -316,39 +326,39 @@ pub enum TypeNode {
     指针类型(PointerType),
     引用类型(ReferenceType),
     未来类型(Box<TypeNode>), // Future<T> - 异步操作的返回类型
-    结果类型(ResultType),     // Result<T, E> - 结果类型
-    选项类型(OptionType),     // Option<T> - 选项类型
-    泛型类型(GenericType),    // Generic<T1, T2, ...> - 泛型类型
-    联合体类型(UnionType),    // Union type
-    自定义类型(String), // 引用已定义的自定义类型(结构体或枚举)
+    结果类型(ResultType),    // Result<T, E> - 结果类型
+    选项类型(OptionType),    // Option<T> - 选项类型
+    泛型类型(GenericType),   // Generic<T1, T2, ...> - 泛型类型
+    联合体类型(UnionType),   // Union type
+    自定义类型(String),      // 引用已定义的自定义类型(结构体或枚举)
 }
 
 /// Basic types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BasicType {
     // 数值类型
-    整数,      // i32
-    长整数,    // i64
-    短整数,    // i16
-    字节,      // u8
-    浮点数,    // f64
+    整数,   // i32
+    长整数, // i64
+    短整数, // i16
+    字节,   // u8
+    浮点数, // f64
 
     // 逻辑和文本类型
-    布尔,      // bool
-    字符,      // char
-    字符串,    // String
-    空,        // void/unit
+    布尔,   // bool
+    字符,   // char
+    字符串, // String
+    空,     // void/unit
 
     // 容器类型
-    数组,      // array
-    字典,      // map/dict
-    列表,      // Vec/List
-    集合,      // Set
+    数组, // array
+    字典, // map/dict
+    列表, // Vec/List
+    集合, // Set
 
     // 指针和引用类型
-    指针,      // pointer
-    引用,      // reference
-    可变引用,  // mutable reference
+    指针,     // pointer
+    引用,     // reference
+    可变引用, // mutable reference
 }
 
 /// Function type
@@ -411,13 +421,13 @@ pub struct StructField {
 /// Method declaration (associated with a struct)
 #[derive(Debug, Clone)]
 pub struct MethodDeclaration {
-    pub receiver_name: String,        // 接收者变量名，如 "自己"
-    pub receiver_type: String,        // 接收者类型名
-    pub is_receiver_mutable: bool,    // 接收者是否可变
-    pub method_name: String,          // 方法名
-    pub parameters: Vec<Parameter>,   // 方法参数
+    pub receiver_name: String,         // 接收者变量名，如 "自己"
+    pub receiver_type: String,         // 接收者类型名
+    pub is_receiver_mutable: bool,     // 接收者是否可变
+    pub method_name: String,           // 方法名
+    pub parameters: Vec<Parameter>,    // 方法参数
     pub return_type: Option<TypeNode>, // 返回类型
-    pub body: Vec<AstNode>,           // 方法体
+    pub body: Vec<AstNode>,            // 方法体
     pub visibility: Visibility,
     pub span: Span,
 }
@@ -454,7 +464,7 @@ pub struct TraitMethod {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
-    pub has_default_impl: bool,       // 是否有默认实现
+    pub has_default_impl: bool,             // 是否有默认实现
     pub default_body: Option<Vec<AstNode>>, // 默认实现体
     pub span: Span,
 }
@@ -462,8 +472,8 @@ pub struct TraitMethod {
 /// Implementation block (实现块)
 #[derive(Debug, Clone)]
 pub struct ImplementationBlock {
-    pub trait_name: Option<String>,   // 如果是 "实现 特性 对于 类型"，则有值
-    pub target_type: String,          // 被实现的类型名
+    pub trait_name: Option<String>, // 如果是 "实现 特性 对于 类型"，则有值
+    pub target_type: String,        // 被实现的类型名
     pub methods: Vec<MethodDeclaration>,
     pub span: Span,
 }
@@ -644,8 +654,8 @@ pub struct TryStatement {
 /// Catch clause (捕获子句)
 #[derive(Debug, Clone)]
 pub struct CatchClause {
-    pub error_var: Option<String>,      // 错误变量名
-    pub error_type: Option<TypeNode>,   // 错误类型
+    pub error_var: Option<String>,    // 错误变量名
+    pub error_type: Option<TypeNode>, // 错误类型
     pub body: Vec<AstNode>,
     pub span: Span,
 }
@@ -663,7 +673,7 @@ pub struct ClosureExpression {
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
-    pub captures: Vec<String>,  // 捕获的外部变量
+    pub captures: Vec<String>, // 捕获的外部变量
     pub span: Span,
 }
 
@@ -679,7 +689,7 @@ pub struct MatchExpression {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: MatchPattern,
-    pub guard: Option<Box<AstNode>>,  // 可选的守卫条件
+    pub guard: Option<Box<AstNode>>, // 可选的守卫条件
     pub body: Vec<AstNode>,
     pub span: Span,
 }
@@ -696,13 +706,21 @@ pub enum MatchPattern {
     /// Struct pattern: Point { x, y }
     结构体模式 { struct_name: String, fields: Vec<(String, MatchPattern)> },
     /// Enum variant pattern: Some(x), None
-    枚举变体模式 { enum_name: Option<String>, variant_name: String, bindings: Vec<MatchPattern> },
+    枚举变体模式 {
+        enum_name: Option<String>,
+        variant_name: String,
+        bindings: Vec<MatchPattern>,
+    },
     /// Tuple pattern: (x, y)
     元组模式(Vec<MatchPattern>),
     /// Array pattern: [a, b, c]
     数组模式(Vec<MatchPattern>),
     /// Range pattern: 1..10
-    范围模式 { start: Option<Box<AstNode>>, end: Option<Box<AstNode>>, inclusive: bool },
+    范围模式 {
+        start: Option<Box<AstNode>>,
+        end: Option<Box<AstNode>>,
+        inclusive: bool,
+    },
     /// Or pattern: A | B
     或模式(Vec<MatchPattern>),
 }
@@ -754,7 +772,7 @@ pub enum FormatStringPart {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParameter {
     pub name: String,
-    pub bounds: Vec<String>,  // 类型约束 (特性名)
+    pub bounds: Vec<String>, // 类型约束 (特性名)
     pub default: Option<TypeNode>,
 }
 
@@ -870,10 +888,7 @@ pub fn parse_format_string(content: &str) -> AstNode {
                     span: Default::default(),
                 });
 
-                parts.push(FormatStringPart::表达式 {
-                    expr: Box::new(expr),
-                    format: None,
-                });
+                parts.push(FormatStringPart::表达式 { expr: Box::new(expr), format: None });
                 i += 1;
             }
             continue;
@@ -888,8 +903,5 @@ pub fn parse_format_string(content: &str) -> AstNode {
         parts.push(FormatStringPart::文本(current_text));
     }
 
-    AstNode::格式字符串表达式(FormatStringExpression {
-        parts,
-        span: Default::default(),
-    })
+    AstNode::格式字符串表达式(FormatStringExpression { parts, span: Default::default() })
 }

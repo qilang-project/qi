@@ -3,8 +3,8 @@
 //! This module provides comprehensive type conversion operations including
 //! string to number conversions, formatting, and Chinese language support.
 
+use crate::runtime::{RuntimeError, RuntimeResult};
 use std::collections::HashMap;
-use crate::runtime::{RuntimeResult, RuntimeError};
 
 /// Conversion configuration
 #[derive(Debug, Clone)]
@@ -98,7 +98,10 @@ impl ConversionModule {
 
         if processed_input.is_empty() {
             if self.config.strict_parsing {
-                return Err(RuntimeError::conversion_error("空字符串无法转换为整数".to_string(), "空字符串无法转换为整数".to_string()));
+                return Err(RuntimeError::conversion_error(
+                    "空字符串无法转换为整数".to_string(),
+                    "空字符串无法转换为整数".to_string(),
+                ));
             } else {
                 return Ok(0);
             }
@@ -115,10 +118,10 @@ impl ConversionModule {
         match processed_input.parse::<i64>() {
             Ok(value) => Ok(value),
             Err(_) if !self.config.strict_parsing => Ok(0),
-            Err(e) => Err(RuntimeError::conversion_error(format!(
-                "无法将字符串 '{}' 转换为整数: {}",
-                processed_input, e
-            ), "字符串转整数失败".to_string())),
+            Err(e) => Err(RuntimeError::conversion_error(
+                format!("无法将字符串 '{}' 转换为整数: {}", processed_input, e),
+                "字符串转整数失败".to_string(),
+            )),
         }
     }
 
@@ -141,7 +144,10 @@ impl ConversionModule {
 
         if processed_input.is_empty() {
             if self.config.strict_parsing {
-                return Err(RuntimeError::conversion_error("空字符串无法转换为浮点数".to_string(), "空字符串无法转换为浮点数".to_string()));
+                return Err(RuntimeError::conversion_error(
+                    "空字符串无法转换为浮点数".to_string(),
+                    "空字符串无法转换为浮点数".to_string(),
+                ));
             } else {
                 return Ok(0.0);
             }
@@ -158,10 +164,10 @@ impl ConversionModule {
         match processed_input.parse::<f64>() {
             Ok(value) => Ok(value),
             Err(_) if !self.config.strict_parsing => Ok(0.0),
-            Err(e) => Err(RuntimeError::conversion_error(format!(
-                "无法将字符串 '{}' 转换为浮点数: {}",
-                processed_input, e
-            ), "字符串转浮点数失败".to_string())),
+            Err(e) => Err(RuntimeError::conversion_error(
+                format!("无法将字符串 '{}' 转换为浮点数: {}", processed_input, e),
+                "字符串转浮点数失败".to_string(),
+            )),
         }
     }
 
@@ -186,10 +192,10 @@ impl ConversionModule {
             "true" | "真" | "是" | "1" | "yes" | "on" => Ok(true),
             "false" | "假" | "否" | "0" | "no" | "off" => Ok(false),
             _ if !self.config.strict_parsing => Ok(processed_input != ""),
-            _ => Err(RuntimeError::conversion_error(format!(
-                "无法将字符串 '{}' 转换为布尔值",
-                input
-            ), "字符串转布尔值失败".to_string())),
+            _ => Err(RuntimeError::conversion_error(
+                format!("无法将字符串 '{}' 转换为布尔值", input),
+                "字符串转布尔值失败".to_string(),
+            )),
         }
     }
 
@@ -212,7 +218,10 @@ impl ConversionModule {
 
         if processed_input.is_empty() {
             if self.config.strict_parsing {
-                return Err(RuntimeError::conversion_error("空字符串无法转换为整数".to_string(), "空字符串无法转换为整数".to_string()));
+                return Err(RuntimeError::conversion_error(
+                    "空字符串无法转换为整数".to_string(),
+                    "空字符串无法转换为整数".to_string(),
+                ));
             } else {
                 return Ok(0);
             }
@@ -221,10 +230,10 @@ impl ConversionModule {
         match i64::from_str_radix(processed_input, base) {
             Ok(value) => Ok(value),
             Err(_) if !self.config.strict_parsing => Ok(0),
-            Err(e) => Err(RuntimeError::conversion_error(format!(
-                "无法将字符串 '{}' 以 {} 进制转换为整数: {}",
-                processed_input, base, e
-            ), "进制转换失败".to_string())),
+            Err(e) => Err(RuntimeError::conversion_error(
+                format!("无法将字符串 '{}' 以 {} 进制转换为整数: {}", processed_input, base, e),
+                "进制转换失败".to_string(),
+            )),
         }
     }
 
@@ -235,10 +244,10 @@ impl ConversionModule {
         }
 
         if base < 2 || base > 36 {
-            return Err(RuntimeError::conversion_error(format!(
-                "无效的进制: {}, 支持范围 2-36",
-                base
-            ), "无效进制".to_string()));
+            return Err(RuntimeError::conversion_error(
+                format!("无效的进制: {}, 支持范围 2-36", base),
+                "无效进制".to_string(),
+            ));
         }
 
         if value == 0 {
@@ -296,10 +305,10 @@ impl ConversionModule {
                     temp = 0;
                 }
             } else {
-                return Err(RuntimeError::conversion_error(format!(
-                    "无法识别的中文字符: '{}'",
-                    ch
-                ), "无法识别的中文字符".to_string()));
+                return Err(RuntimeError::conversion_error(
+                    format!("无法识别的中文字符: '{}'", ch),
+                    "无法识别的中文字符".to_string(),
+                ));
             }
         }
 
@@ -338,8 +347,16 @@ impl ConversionModule {
                 let digit_char = match digit {
                     1 if position == 1 && result.is_empty() => "", // 特殊处理"十"
                     _ => match digit {
-                        1 => "一", 2 => "二", 3 => "三", 4 => "四", 5 => "五",
-                        6 => "六", 7 => "七", 8 => "八", 9 => "九", _ => "零",
+                        1 => "一",
+                        2 => "二",
+                        3 => "三",
+                        4 => "四",
+                        5 => "五",
+                        6 => "六",
+                        7 => "七",
+                        8 => "八",
+                        9 => "九",
+                        _ => "零",
                     },
                 };
                 result = format!("{}{}{}", digit_char, units[position], result);
@@ -365,7 +382,12 @@ impl ConversionModule {
             return "非数字".to_string();
         }
         if value.is_infinite() {
-            return if value > 0.0 { "正无穷" } else { "负无穷" }.to_string();
+            return if value > 0.0 {
+                "正无穷"
+            } else {
+                "负无穷"
+            }
+            .to_string();
         }
 
         let int_part = value as i64;
@@ -376,7 +398,8 @@ impl ConversionModule {
         if float_part > 0.0 {
             result.push_str("点");
             let mut temp_float = float_part;
-            for _ in 0..6 { // Limit to 6 decimal places
+            for _ in 0..6 {
+                // Limit to 6 decimal places
                 temp_float *= 10.0;
                 let digit = temp_float as i64;
                 if digit > 0 {
@@ -440,10 +463,10 @@ impl ConversionModule {
         };
 
         processed_input.parse::<T>().map_err(|e| {
-            RuntimeError::conversion_error(format!(
-                "无法将字符串 '{}' 转换为目标类型: {}",
-                processed_input, e
-            ), "类型转换失败".to_string())
+            RuntimeError::conversion_error(
+                format!("无法将字符串 '{}' 转换为目标类型: {}", processed_input, e),
+                "类型转换失败".to_string(),
+            )
         })
     }
 

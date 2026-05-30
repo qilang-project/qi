@@ -85,10 +85,8 @@ extern "C" fn poll_加一异步(frame_ptr: *mut u8) {
 
                 // pending —— transition 到 state 1，注册 waker
                 frame.state = 1;
-                let waker = StateMachineWaker {
-                    poll_fn: poll_加一异步,
-                    frame: frame_ptr as usize,
-                };
+                let waker =
+                    StateMachineWaker { poll_fn: poll_加一异步, frame: frame_ptr as usize };
                 unsafe {
                     (*fut).register_sm_waker(waker);
                 }
@@ -242,7 +240,9 @@ mod tests {
                     _ => -1,
                 }
             };
-            unsafe { drop(Box::from_raw(ret_fut)); }
+            unsafe {
+                drop(Box::from_raw(ret_fut));
+            }
 
             // counter > 0 表示主 task 不是被 block 的；elapsed >= 5ms 是 sleep 实际等了
             (value, counter, elapsed)

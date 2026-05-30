@@ -23,14 +23,11 @@ pub extern "C-unwind" fn qi_web_call_handler_safe(
     let handler_addr = handler_fn as usize;
     let ctx_addr = ctx_ptr as usize;
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        unsafe {
-            let func = std::mem::transmute::<
-                usize,
-                extern "C-unwind" fn(*const c_void) -> *const c_void,
-            >(handler_addr);
-            func(ctx_addr as *const c_void)
-        }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let func = std::mem::transmute::<usize, extern "C-unwind" fn(*const c_void) -> *const c_void>(
+            handler_addr,
+        );
+        func(ctx_addr as *const c_void)
     }));
 
     match result {
@@ -66,14 +63,12 @@ pub extern "C-unwind" fn qi_web_safe_process_request(
     let app_addr = app_ptr as usize;
     let raw_addr = raw_request_ptr as usize;
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        unsafe {
-            let func = std::mem::transmute::<
-                usize,
-                extern "C-unwind" fn(*const c_void, *const c_char) -> *const c_char,
-            >(process_addr);
-            func(app_addr as *const c_void, raw_addr as *const c_char)
-        }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let func = std::mem::transmute::<
+            usize,
+            extern "C-unwind" fn(*const c_void, *const c_char) -> *const c_char,
+        >(process_addr);
+        func(app_addr as *const c_void, raw_addr as *const c_char)
     }));
 
     match result {
@@ -235,9 +230,8 @@ pub extern "C" fn qi_web_parse_request_cstr(s: *const c_char) -> *mut RequestPar
 
 fn parse_http_request(bytes: &[u8]) -> RequestParts {
     // 找第一个 \r\n（或 \n）— 请求行结束
-    let line_end = find_subslice(bytes, b"\r\n").unwrap_or_else(|| {
-        find_subslice(bytes, b"\n").unwrap_or(bytes.len())
-    });
+    let line_end = find_subslice(bytes, b"\r\n")
+        .unwrap_or_else(|| find_subslice(bytes, b"\n").unwrap_or(bytes.len()));
     let request_line = &bytes[..line_end];
 
     // request_line: METHOD SP PATH SP HTTP-VERSION
@@ -381,7 +375,8 @@ pub extern "C" fn qi_web_request_is_complete(bytes_handle: i64) -> i64 {
                 }
             }
         }
-    }).unwrap_or(0)
+    })
+    .unwrap_or(0)
 }
 
 /// 在 ASCII headers 字节串里 case-insensitive 找 Content-Length 数值
@@ -413,7 +408,9 @@ fn find_content_length(headers: &[u8]) -> Option<usize> {
             let mut n: usize = 0;
             let mut got = false;
             while j < headers.len() && headers[j].is_ascii_digit() {
-                n = n.saturating_mul(10).saturating_add((headers[j] - b'0') as usize);
+                n = n
+                    .saturating_mul(10)
+                    .saturating_add((headers[j] - b'0') as usize);
                 j += 1;
                 got = true;
             }
@@ -442,38 +439,50 @@ fn empty_cptr() -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn qi_web_request_method(p: *const RequestParts) -> *const c_char {
-    if p.is_null() { return empty_cptr(); }
+    if p.is_null() {
+        return empty_cptr();
+    }
     unsafe { (*p).method.as_ptr() }
 }
 
 #[no_mangle]
 pub extern "C" fn qi_web_request_path(p: *const RequestParts) -> *const c_char {
-    if p.is_null() { return empty_cptr(); }
+    if p.is_null() {
+        return empty_cptr();
+    }
     unsafe { (*p).path.as_ptr() }
 }
 
 #[no_mangle]
 pub extern "C" fn qi_web_request_query(p: *const RequestParts) -> *const c_char {
-    if p.is_null() { return empty_cptr(); }
+    if p.is_null() {
+        return empty_cptr();
+    }
     unsafe { (*p).query.as_ptr() }
 }
 
 #[no_mangle]
 pub extern "C" fn qi_web_request_headers(p: *const RequestParts) -> *const c_char {
-    if p.is_null() { return empty_cptr(); }
+    if p.is_null() {
+        return empty_cptr();
+    }
     unsafe { (*p).headers.as_ptr() }
 }
 
 #[no_mangle]
 pub extern "C" fn qi_web_request_body(p: *const RequestParts) -> *const c_char {
-    if p.is_null() { return empty_cptr(); }
+    if p.is_null() {
+        return empty_cptr();
+    }
     unsafe { (*p).body.as_ptr() }
 }
 
 /// 是否保持连接：1 = keep-alive，0 = close。预解析过的字段，O(1)。
 #[no_mangle]
 pub extern "C" fn qi_web_request_keep_alive(p: *const RequestParts) -> i64 {
-    if p.is_null() { return 1; }
+    if p.is_null() {
+        return 1;
+    }
     unsafe { (*p).keep_alive }
 }
 
@@ -482,7 +491,9 @@ pub extern "C" fn qi_web_request_keep_alive(p: *const RequestParts) -> i64 {
 #[no_mangle]
 pub extern "C" fn qi_web_request_parts_free(p: *mut RequestParts) -> i64 {
     if !p.is_null() {
-        unsafe { drop(Box::from_raw(p)); }
+        unsafe {
+            drop(Box::from_raw(p));
+        }
     }
     0
 }
@@ -634,7 +645,11 @@ pub extern "C" fn qi_web_router_match(
         }
     }
     // 走到底 = 路径命中
-    let handler_index = if mi >= 0 { cur.handlers[mi as usize] } else { -1 };
+    let handler_index = if mi >= 0 {
+        cur.handlers[mi as usize]
+    } else {
+        -1
+    };
     let mut method_mask: u8 = 0;
     for i in 0..7 {
         if cur.handlers[i] >= 0 {
@@ -696,10 +711,7 @@ pub extern "C" fn qi_web_match_free(m: *mut MatchResult) -> i64 {
 /// prefix 为空 → "qi-{ms}"；否则 "{prefix}-{ms}"
 /// 返回 *mut c_char，调用方负责 qi_string_free 释放
 #[no_mangle]
-pub extern "C" fn qi_web_build_request_id(
-    prefix_ptr: *const c_char,
-    ms: i64,
-) -> *mut c_char {
+pub extern "C" fn qi_web_build_request_id(prefix_ptr: *const c_char, ms: i64) -> *mut c_char {
     let prefix = if prefix_ptr.is_null() {
         b"qi" as &[u8]
     } else {

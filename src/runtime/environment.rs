@@ -3,15 +3,17 @@
 //! This module provides the core runtime environment that manages program lifecycle,
 //! memory, I/O operations, and system resources for Qi program execution.
 
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
-use crate::runtime::{RuntimeResult, RuntimeError};
-use crate::runtime::memory::MemoryManager;
-use crate::runtime::io::{FileSystemInterface, NetworkManager};
-use crate::runtime::stdlib::{StringModule, MathModule, SystemModule, ConversionModule, DebugModule};
 use crate::runtime::error::ErrorHandler;
+use crate::runtime::io::{FileSystemInterface, NetworkManager};
+use crate::runtime::memory::MemoryManager;
+use crate::runtime::stdlib::{
+    ConversionModule, DebugModule, MathModule, StringModule, SystemModule,
+};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 /// Runtime environment states
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -191,7 +193,7 @@ impl RuntimeEnvironment {
         // Initialize subsystems
         let memory_manager = MemoryManager::new(config.max_memory_mb, config.gc_threshold_percent)?;
         let file_system = FileSystemInterface::new(config.io_buffer_size)?;
-              let network_manager = NetworkManager::new();
+        let network_manager = NetworkManager::new();
         let string_module = StringModule::new();
         let math_module = MathModule::new();
         let system_module = SystemModule::new();
@@ -230,7 +232,6 @@ impl RuntimeEnvironment {
         // Initialize network manager
         self.network_manager.initialize()?;
 
-        
         // Initialize error handler
         self.error_handler.initialize()?;
 
@@ -243,11 +244,8 @@ impl RuntimeEnvironment {
         use std::sync::atomic::Ordering::Relaxed;
         if self.state != RuntimeState::Ready {
             return Err(RuntimeError::program_execution_error(
-                format!(
-                    "运行时状态不正确，当前状态: {:?}，期望状态: Ready",
-                    self.state
-                ),
-                "程序执行错误".to_string()
+                format!("运行时状态不正确，当前状态: {:?}，期望状态: Ready", self.state),
+                "程序执行错误".to_string(),
             ));
         }
 
@@ -304,12 +302,11 @@ impl RuntimeEnvironment {
             if f64::from_bits(prev) >= cur {
                 break;
             }
-            match self.metrics.peak_memory_mb_bits.compare_exchange_weak(
-                prev,
-                cur_bits,
-                Relaxed,
-                Relaxed,
-            ) {
+            match self
+                .metrics
+                .peak_memory_mb_bits
+                .compare_exchange_weak(prev, cur_bits, Relaxed, Relaxed)
+            {
                 Ok(_) => break,
                 Err(p) => prev = p,
             }

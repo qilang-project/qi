@@ -46,10 +46,7 @@ impl MemoryManager {
     /// Create a new memory manager
     pub fn new(max_memory_mb: usize, gc_threshold: f64) -> MemoryResult<Self> {
         if max_memory_mb == 0 {
-            return Err(MemoryError::AllocationFailed {
-                requested: 0,
-                available: 0,
-            });
+            return Err(MemoryError::AllocationFailed { requested: 0, available: 0 });
         }
 
         let max_memory_bytes = max_memory_mb * 1024 * 1024;
@@ -98,11 +95,7 @@ impl MemoryManager {
         let align = 8;
         let ptr = unsafe { self.allocate_raw(size, align)? };
 
-        let info = AllocationInfo {
-            size,
-            align,
-            allocator_type,
-        };
+        let info = AllocationInfo { size, align, allocator_type };
 
         self.allocations.insert(ptr as *const u8, info);
         self.gc.add_root(ptr as *const u8)?;
@@ -128,9 +121,7 @@ impl MemoryManager {
             .allocations
             .remove(&(ptr as *const u8))
             .map(|(_, v)| v)
-            .ok_or(MemoryError::DeallocationFailed {
-                address: ptr as *const u8,
-            })?;
+            .ok_or(MemoryError::DeallocationFailed { address: ptr as *const u8 })?;
 
         unsafe { self.deallocate_raw_with_layout(ptr, info.size, info.align)? };
         self.gc.forget_object(ptr as *const u8)?;
@@ -216,7 +207,8 @@ impl MemoryManager {
 
     /// Get available memory bytes
     pub fn get_available_memory(&self) -> usize {
-        self.max_memory_bytes.saturating_sub(self.get_in_use_bytes())
+        self.max_memory_bytes
+            .saturating_sub(self.get_in_use_bytes())
     }
 
     /// Get memory usage statistics — slow path，构造一次 snapshot
@@ -250,9 +242,11 @@ impl MemoryManager {
     }
 
     unsafe fn allocate_raw(&self, size: usize, align: usize) -> MemoryResult<*mut u8> {
-        let layout = std::alloc::Layout::from_size_align(size, align).map_err(|_| MemoryError::AllocationFailed {
-            requested: size,
-            available: self.get_available_memory(),
+        let layout = std::alloc::Layout::from_size_align(size, align).map_err(|_| {
+            MemoryError::AllocationFailed {
+                requested: size,
+                available: self.get_available_memory(),
+            }
         })?;
 
         let ptr = std::alloc::alloc(layout);
@@ -266,12 +260,18 @@ impl MemoryManager {
         Ok(ptr)
     }
 
-    unsafe fn deallocate_raw_with_layout(&self, ptr: *mut u8, size: usize, align: usize) -> MemoryResult<()> {
+    unsafe fn deallocate_raw_with_layout(
+        &self,
+        ptr: *mut u8,
+        size: usize,
+        align: usize,
+    ) -> MemoryResult<()> {
         if ptr.is_null() {
             return Ok(());
         }
 
-        let layout = std::alloc::Layout::from_size_align(size, align).map_err(|_| MemoryError::CorruptedMemory)?;
+        let layout = std::alloc::Layout::from_size_align(size, align)
+            .map_err(|_| MemoryError::CorruptedMemory)?;
         std::alloc::dealloc(ptr, layout);
         Ok(())
     }
@@ -289,7 +289,8 @@ impl Drop for MemoryManager {
 
         for (ptr, info) in remaining {
             let _ = self.gc.forget_object(ptr);
-            let _ = unsafe { self.deallocate_raw_with_layout(ptr as *mut u8, info.size, info.align) };
+            let _ =
+                unsafe { self.deallocate_raw_with_layout(ptr as *mut u8, info.size, info.align) };
         }
     }
 }

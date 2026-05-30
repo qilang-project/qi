@@ -3,10 +3,10 @@
 //! This module provides file system operations with UTF-8 support,
 //! Chinese language integration, and cross-platform compatibility.
 
-use std::path::{Path, PathBuf};
+use super::{IoError, IoResult, IoStatistics};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, BufReader, BufWriter};
-use super::{IoResult, IoError, IoStatistics};
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// File character encoding
@@ -323,10 +323,12 @@ impl FileSystemInterface {
         let mut reader = BufReader::new(file);
         let mut content = String::new();
 
-        reader.read_to_string(&mut content).map_err(|e| IoError::FileOperationFailed {
-            path: operation.path.to_string_lossy().to_string(),
-            message: format!("读取文件内容失败: {}", e),
-        })?;
+        reader
+            .read_to_string(&mut content)
+            .map_err(|e| IoError::FileOperationFailed {
+                path: operation.path.to_string_lossy().to_string(),
+                message: format!("读取文件内容失败: {}", e),
+            })?;
 
         // Handle encoding conversion if needed
         match operation.encoding {
@@ -371,10 +373,12 @@ impl FileSystemInterface {
             })?;
 
         let mut writer = BufWriter::new(file);
-        writer.write_all(content.as_bytes()).map_err(|e| IoError::FileOperationFailed {
-            path: operation.path.to_string_lossy().to_string(),
-            message: format!("写入文件内容失败: {}", e),
-        })?;
+        writer
+            .write_all(content.as_bytes())
+            .map_err(|e| IoError::FileOperationFailed {
+                path: operation.path.to_string_lossy().to_string(),
+                message: format!("写入文件内容失败: {}", e),
+            })?;
 
         writer.flush().map_err(|e| IoError::FileOperationFailed {
             path: operation.path.to_string_lossy().to_string(),
@@ -408,10 +412,12 @@ impl FileSystemInterface {
             })?;
 
         let mut writer = BufWriter::new(file);
-        writer.write_all(content.as_bytes()).map_err(|e| IoError::FileOperationFailed {
-            path: operation.path.to_string_lossy().to_string(),
-            message: format!("追加文件内容失败: {}", e),
-        })?;
+        writer
+            .write_all(content.as_bytes())
+            .map_err(|e| IoError::FileOperationFailed {
+                path: operation.path.to_string_lossy().to_string(),
+                message: format!("追加文件内容失败: {}", e),
+            })?;
 
         writer.flush().map_err(|e| IoError::FileOperationFailed {
             path: operation.path.to_string_lossy().to_string(),

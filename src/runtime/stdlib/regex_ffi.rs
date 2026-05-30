@@ -2,9 +2,9 @@
 //!
 //! 提供正则表达式匹配、查找、替换等功能
 
+use regex::Regex;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use regex::Regex;
 
 /// 匹配正则表达式
 #[no_mangle]
@@ -107,7 +107,9 @@ pub extern "C" fn qi_regex_replace_all(
 
         match Regex::new(&pattern_str) {
             Ok(re) => {
-                let result = re.replace_all(&text_str, replacement_str.as_ref()).to_string();
+                let result = re
+                    .replace_all(&text_str, replacement_str.as_ref())
+                    .to_string();
                 match CString::new(result) {
                     Ok(c_str) => c_str.into_raw(),
                     Err(_) => std::ptr::null_mut(),
@@ -131,10 +133,7 @@ pub extern "C" fn qi_regex_split(pattern: *const c_char, text: *const c_char) ->
 
         match Regex::new(&pattern_str) {
             Ok(re) => {
-                let parts: Vec<String> = re
-                    .split(&text_str)
-                    .map(|s| s.to_string())
-                    .collect();
+                let parts: Vec<String> = re.split(&text_str).map(|s| s.to_string()).collect();
 
                 let json = serde_json::to_string(&parts).unwrap_or_else(|_| "[]".to_string());
                 match CString::new(json) {

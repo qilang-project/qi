@@ -2,9 +2,9 @@
 //!
 //! 提供随机数生成功能
 
+use rand::Rng;
 use std::ffi::CString;
 use std::os::raw::c_char;
-use rand::Rng;
 use uuid::Uuid;
 
 /// 生成随机整数 [min, max)
@@ -33,7 +33,11 @@ pub extern "C" fn qi_random_float(min: f64, max: f64) -> f64 {
 #[no_mangle]
 pub extern "C" fn qi_random_bool() -> i32 {
     let mut rng = rand::thread_rng();
-    if rng.gen_bool(0.5) { 1 } else { 0 }
+    if rng.gen_bool(0.5) {
+        1
+    } else {
+        0
+    }
 }
 
 /// 生成随机字符串

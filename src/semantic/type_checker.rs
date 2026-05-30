@@ -1,6 +1,6 @@
 //! Type checking and inference for Qi language
 
-use crate::parser::ast::{AstNode, TypeNode, BasicType};
+use crate::parser::ast::{AstNode, BasicType, TypeNode};
 use crate::semantic::symbol_table::SymbolTable;
 
 /// Type checker
@@ -14,18 +14,11 @@ pub struct TypeChecker {
 pub enum TypeError {
     /// Type mismatch
     #[error("类型不匹配: 期望 {expected}, 实际 {actual}")]
-    TypeMismatch {
-        expected: String,
-        actual: String,
-        span: crate::lexer::Span,
-    },
+    TypeMismatch { expected: String, actual: String, span: crate::lexer::Span },
 
     /// Undefined variable
     #[error("未定义的变量: {name}")]
-    UndefinedVariable {
-        name: String,
-        span: crate::lexer::Span,
-    },
+    UndefinedVariable { name: String, span: crate::lexer::Span },
 
     /// Invalid operation
     #[error("无效的操作: {operation} 对于类型 {type_name}")]
@@ -37,32 +30,20 @@ pub enum TypeError {
 
     /// Function call error
     #[error("函数调用错误: {message}")]
-    FunctionCallError {
-        message: String,
-        span: crate::lexer::Span,
-    },
+    FunctionCallError { message: String, span: crate::lexer::Span },
 
     /// Generic type error
     #[error("类型错误: {message}")]
-    General {
-        message: String,
-        span: crate::lexer::Span,
-    },
+    General { message: String, span: crate::lexer::Span },
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
-        Self {
-            symbol_table: SymbolTable::new(),
-            errors: Vec::new(),
-        }
+        Self { symbol_table: SymbolTable::new(), errors: Vec::new() }
     }
 
     pub fn with_symbol_table(symbol_table: SymbolTable) -> Self {
-        Self {
-            symbol_table,
-            errors: Vec::new(),
-        }
+        Self { symbol_table, errors: Vec::new() }
     }
 
     pub fn check(&mut self, ast: &AstNode) -> Result<TypeNode, TypeError> {
@@ -77,17 +58,27 @@ impl TypeChecker {
             AstNode::赋值表达式(assignment) => self.check_assignment(assignment),
             AstNode::变量声明(decl) => self.check_variable_declaration(decl),
             AstNode::函数声明(func) => self.check_function_declaration(func),
-            AstNode::结构体实例化表达式(struct_literal) => self.check_struct_literal(struct_literal),
+            AstNode::结构体实例化表达式(struct_literal) => {
+                self.check_struct_literal(struct_literal)
+            }
             AstNode::字段访问表达式(field_access) => self.check_field_access(field_access),
             AstNode::数组访问表达式(array_access) => self.check_array_access(array_access),
-            AstNode::数组字面量表达式(array_literal) => self.check_array_literal(array_literal),
-            AstNode::字符串连接表达式(string_concat) => self.check_string_concat(string_concat),
+            AstNode::数组字面量表达式(array_literal) => {
+                self.check_array_literal(array_literal)
+            }
+            AstNode::字符串连接表达式(string_concat) => {
+                self.check_string_concat(string_concat)
+            }
             AstNode::如果语句(if_stmt) => self.check_if_statement(if_stmt),
             AstNode::当语句(while_stmt) => self.check_while_statement(while_stmt),
             AstNode::对于语句(for_stmt) => self.check_for_statement(for_stmt),
             AstNode::返回语句(return_stmt) => self.check_return_statement(return_stmt),
-            AstNode::跳出语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::继续语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::跳出语句(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::继续语句(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
             AstNode::表达式语句(expr_stmt) => self.check_expression_statement(expr_stmt),
             AstNode::程序(program) => self.check_program(program),
             AstNode::结构体声明(struct_decl) => self.check_struct_declaration(struct_decl),
@@ -96,39 +87,67 @@ impl TypeChecker {
             AstNode::块语句(block_stmt) => self.check_block_statement(block_stmt),
             AstNode::方法声明(method_decl) => self.check_method_declaration(method_decl),
             AstNode::方法调用表达式(method_call) => self.check_method_call(method_call),
-            AstNode::协程启动表达式(goroutine_expr) => self.check_goroutine_spawn(goroutine_expr),
+            AstNode::协程启动表达式(goroutine_expr) => {
+                self.check_goroutine_spawn(goroutine_expr)
+            }
             AstNode::通道创建表达式(channel_expr) => self.check_channel_create(channel_expr),
             AstNode::通道发送表达式(send_expr) => self.check_channel_send(send_expr),
             AstNode::通道接收表达式(recv_expr) => self.check_channel_receive(recv_expr),
             AstNode::选择表达式(select_expr) => self.check_select(select_expr),
             AstNode::取地址表达式(addr_of_expr) => self.check_address_of(addr_of_expr),
             AstNode::解引用表达式(deref_expr) => self.check_dereference(deref_expr),
-            AstNode::特性声明(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::特性声明(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
             AstNode::实现块(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
             // New language features - type checking placeholder
-            AstNode::联合体声明(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::尝试语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::抛出语句(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::异步块表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::闭包表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
-            AstNode::匹配表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空)),
+            AstNode::联合体声明(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::尝试语句(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::抛出语句(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::异步块表达式(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::闭包表达式(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
+            AstNode::匹配表达式(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
             // Format string expression returns a string type
-            AstNode::格式字符串表达式(_) => Ok(TypeNode::基础类型(crate::parser::ast::BasicType::字符串)),
+            AstNode::格式字符串表达式(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::字符串))
+            }
         }
     }
 
-    fn check_literal(&self, literal: &crate::parser::ast::LiteralExpression) -> Result<TypeNode, TypeError> {
+    fn check_literal(
+        &self,
+        literal: &crate::parser::ast::LiteralExpression,
+    ) -> Result<TypeNode, TypeError> {
         let type_node = match literal.value {
             crate::parser::ast::LiteralValue::整数(_) => TypeNode::基础类型(BasicType::整数),
-            crate::parser::ast::LiteralValue::浮点数(_) => TypeNode::基础类型(BasicType::浮点数),
-            crate::parser::ast::LiteralValue::字符串(_) => TypeNode::基础类型(BasicType::字符串),
+            crate::parser::ast::LiteralValue::浮点数(_) => {
+                TypeNode::基础类型(BasicType::浮点数)
+            }
+            crate::parser::ast::LiteralValue::字符串(_) => {
+                TypeNode::基础类型(BasicType::字符串)
+            }
             crate::parser::ast::LiteralValue::布尔(_) => TypeNode::基础类型(BasicType::布尔),
             crate::parser::ast::LiteralValue::字符(_) => TypeNode::基础类型(BasicType::字符),
         };
         Ok(type_node)
     }
 
-    fn check_identifier(&self, identifier: &crate::parser::ast::IdentifierExpression) -> Result<TypeNode, TypeError> {
+    fn check_identifier(
+        &self,
+        identifier: &crate::parser::ast::IdentifierExpression,
+    ) -> Result<TypeNode, TypeError> {
         match self.symbol_table.lookup_symbol(&identifier.name) {
             Some(symbol) => Ok(symbol.type_node.clone()),
             None => Err(TypeError::UndefinedVariable {
@@ -138,19 +157,22 @@ impl TypeChecker {
         }
     }
 
-    fn check_binary(&mut self, binary: &crate::parser::ast::BinaryExpression) -> Result<TypeNode, TypeError> {
+    fn check_binary(
+        &mut self,
+        binary: &crate::parser::ast::BinaryExpression,
+    ) -> Result<TypeNode, TypeError> {
         let left_type = self.check(&binary.left)?;
         let right_type = self.check(&binary.right)?;
 
         // Check operator and determine result type
         match binary.operator {
             // Comparison operators always return boolean
-            crate::parser::ast::BinaryOperator::大于 |
-            crate::parser::ast::BinaryOperator::小于 |
-            crate::parser::ast::BinaryOperator::大于等于 |
-            crate::parser::ast::BinaryOperator::小于等于 |
-            crate::parser::ast::BinaryOperator::等于 |
-            crate::parser::ast::BinaryOperator::不等于 => {
+            crate::parser::ast::BinaryOperator::大于
+            | crate::parser::ast::BinaryOperator::小于
+            | crate::parser::ast::BinaryOperator::大于等于
+            | crate::parser::ast::BinaryOperator::小于等于
+            | crate::parser::ast::BinaryOperator::等于
+            | crate::parser::ast::BinaryOperator::不等于 => {
                 // Check that operands are compatible (both numeric or both strings for equality)
                 if self.are_comparable_types(&left_type, &right_type) {
                     Ok(TypeNode::基础类型(BasicType::布尔))
@@ -189,10 +211,10 @@ impl TypeChecker {
                     })
                 }
             }
-            crate::parser::ast::BinaryOperator::减 |
-            crate::parser::ast::BinaryOperator::乘 |
-            crate::parser::ast::BinaryOperator::除 |
-            crate::parser::ast::BinaryOperator::取余 => {
+            crate::parser::ast::BinaryOperator::减
+            | crate::parser::ast::BinaryOperator::乘
+            | crate::parser::ast::BinaryOperator::除
+            | crate::parser::ast::BinaryOperator::取余 => {
                 if left_type == right_type {
                     Ok(left_type)
                 } else {
@@ -204,25 +226,25 @@ impl TypeChecker {
                 }
             }
             // Logical operators work with boolean operands and return boolean
-            crate::parser::ast::BinaryOperator::与 |
-            crate::parser::ast::BinaryOperator::或 => {
+            crate::parser::ast::BinaryOperator::与 | crate::parser::ast::BinaryOperator::或 => {
                 match (&left_type, &right_type) {
                     (TypeNode::基础类型(BasicType::布尔), TypeNode::基础类型(BasicType::布尔)) => {
                         Ok(TypeNode::基础类型(BasicType::布尔))
                     }
-                    _ => {
-                        Err(TypeError::TypeMismatch {
-                            expected: "布尔".to_string(),
-                            actual: format!("{:?} 和 {:?}", left_type, right_type),
-                            span: binary.span,
-                        })
-                    }
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: "布尔".to_string(),
+                        actual: format!("{:?} 和 {:?}", left_type, right_type),
+                        span: binary.span,
+                    }),
                 }
             }
         }
     }
 
-    fn check_unary(&mut self, unary: &crate::parser::ast::UnaryExpression) -> Result<TypeNode, TypeError> {
+    fn check_unary(
+        &mut self,
+        unary: &crate::parser::ast::UnaryExpression,
+    ) -> Result<TypeNode, TypeError> {
         let operand_type = self.check(&unary.operand)?;
 
         match unary.operator {
@@ -236,7 +258,7 @@ impl TypeChecker {
                         operation: "一元运算符".to_string(),
                         type_name: format!("{:?}", operand_type),
                         span: unary.span,
-                    })
+                    }),
                 }
             }
             crate::parser::ast::UnaryOperator::非 => {
@@ -247,21 +269,46 @@ impl TypeChecker {
         }
     }
 
-    fn check_type_cast(&mut self, cast: &crate::parser::ast::TypeCastExpression) -> Result<TypeNode, TypeError> {
+    fn check_type_cast(
+        &mut self,
+        cast: &crate::parser::ast::TypeCastExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Check the expression being cast
         let source_type = self.check(&cast.expression)?;
 
         // Validate that the conversion is allowed
         let can_cast = match (&source_type, &cast.target_type) {
             // Numeric to numeric conversions are always allowed
-            (TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节 | BasicType::浮点数),
-             TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节 | BasicType::浮点数)) => true,
+            (
+                TypeNode::基础类型(
+                    BasicType::整数
+                    | BasicType::长整数
+                    | BasicType::短整数
+                    | BasicType::字节
+                    | BasicType::浮点数,
+                ),
+                TypeNode::基础类型(
+                    BasicType::整数
+                    | BasicType::长整数
+                    | BasicType::短整数
+                    | BasicType::字节
+                    | BasicType::浮点数,
+                ),
+            ) => true,
 
             // Boolean to integer and vice versa
-            (TypeNode::基础类型(BasicType::布尔),
-             TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节)) => true,
-            (TypeNode::基础类型(BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节),
-             TypeNode::基础类型(BasicType::布尔)) => true,
+            (
+                TypeNode::基础类型(BasicType::布尔),
+                TypeNode::基础类型(
+                    BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节,
+                ),
+            ) => true,
+            (
+                TypeNode::基础类型(
+                    BasicType::整数 | BasicType::长整数 | BasicType::短整数 | BasicType::字节,
+                ),
+                TypeNode::基础类型(BasicType::布尔),
+            ) => true,
 
             // Same type (no-op cast, but allowed)
             (s, t) if s == t => true,
@@ -294,8 +341,12 @@ impl TypeChecker {
             }
 
             // Basic type compatibility with implicit conversions
-            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::浮点数)) => true,
-            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::整数)) => true,
+            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::浮点数)) => {
+                true
+            }
+            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::整数)) => {
+                true
+            }
 
             // Function type compatibility
             (TypeNode::函数类型(expected_func), TypeNode::函数类型(actual_func)) => {
@@ -304,7 +355,11 @@ impl TypeChecker {
                 }
 
                 // Check parameter types (contravariant)
-                for (exp_param, act_param) in expected_func.parameters.iter().zip(actual_func.parameters.iter()) {
+                for (exp_param, act_param) in expected_func
+                    .parameters
+                    .iter()
+                    .zip(actual_func.parameters.iter())
+                {
                     if !self.are_types_compatible(act_param, exp_param) {
                         return false;
                     }
@@ -322,20 +377,35 @@ impl TypeChecker {
     fn are_comparable_types(&self, left: &TypeNode, right: &TypeNode) -> bool {
         match (left, right) {
             // Numbers can be compared with each other
-            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::整数)) => true,
-            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::浮点数)) => true,
-            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::浮点数)) => true,
-            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::整数)) => true,
+            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::整数)) => {
+                true
+            }
+            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::浮点数)) => {
+                true
+            }
+            (TypeNode::基础类型(BasicType::整数), TypeNode::基础类型(BasicType::浮点数)) => {
+                true
+            }
+            (TypeNode::基础类型(BasicType::浮点数), TypeNode::基础类型(BasicType::整数)) => {
+                true
+            }
             // Strings can be compared with each other (for equality)
-            (TypeNode::基础类型(BasicType::字符串), TypeNode::基础类型(BasicType::字符串)) => true,
+            (TypeNode::基础类型(BasicType::字符串), TypeNode::基础类型(BasicType::字符串)) => {
+                true
+            }
             // Booleans can be compared with each other
-            (TypeNode::基础类型(BasicType::布尔), TypeNode::基础类型(BasicType::布尔)) => true,
+            (TypeNode::基础类型(BasicType::布尔), TypeNode::基础类型(BasicType::布尔)) => {
+                true
+            }
             // Otherwise not comparable
             _ => false,
         }
     }
 
-    pub fn check_function_call(&self, call: &crate::parser::ast::FunctionCallExpression) -> Result<TypeNode, TypeError> {
+    pub fn check_function_call(
+        &self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<TypeNode, TypeError> {
         match self.symbol_table.lookup_symbol(&call.callee) {
             Some(symbol) => {
                 if let crate::semantic::symbol_table::SymbolKind::函数(func_info) = &symbol.kind {
@@ -355,7 +425,10 @@ impl TypeChecker {
         }
     }
 
-    fn check_assignment(&mut self, assignment: &crate::parser::ast::AssignmentExpression) -> Result<TypeNode, TypeError> {
+    fn check_assignment(
+        &mut self,
+        assignment: &crate::parser::ast::AssignmentExpression,
+    ) -> Result<TypeNode, TypeError> {
         let value_type = self.check(&assignment.value)?;
 
         // Check the target (LValue) and get its type
@@ -372,7 +445,7 @@ impl TypeChecker {
                             });
                         }
                         Ok(symbol.type_node.clone())
-                    },
+                    }
                     None => Err(TypeError::UndefinedVariable {
                         name: ident.name.clone(),
                         span: assignment.span,
@@ -409,7 +482,10 @@ impl TypeChecker {
         }
     }
 
-    pub fn check_variable_declaration(&mut self, decl: &crate::parser::ast::VariableDeclaration) -> Result<TypeNode, TypeError> {
+    pub fn check_variable_declaration(
+        &mut self,
+        decl: &crate::parser::ast::VariableDeclaration,
+    ) -> Result<TypeNode, TypeError> {
         let declared_type = decl.type_annotation.clone();
 
         let initializer_type = if let Some(initializer) = &decl.initializer {
@@ -456,7 +532,10 @@ impl TypeChecker {
         Ok(final_type)
     }
 
-    pub fn check_function_declaration(&mut self, func: &crate::parser::ast::FunctionDeclaration) -> Result<TypeNode, TypeError> {
+    pub fn check_function_declaration(
+        &mut self,
+        func: &crate::parser::ast::FunctionDeclaration,
+    ) -> Result<TypeNode, TypeError> {
         // §4-2 异步函数 语义检查（docs/编译器异步状态机里程碑.md）：
         // 1. 异步函数 必须返回 未来<T>（裸值不行）
         // 2. 异步 + 内联 互斥（内联函数被展开，没有状态机帧）
@@ -498,7 +577,10 @@ impl TypeChecker {
         // Create function info
         let function_info = crate::semantic::symbol_table::FunctionInfo {
             parameters: func.parameters.clone(),
-            return_type: func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
+            return_type: func
+                .return_type
+                .clone()
+                .unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
             is_defined: true,
         };
 
@@ -506,7 +588,10 @@ impl TypeChecker {
         let function_symbol = crate::semantic::symbol_table::Symbol {
             name: func.name.clone(),
             kind: crate::semantic::symbol_table::SymbolKind::函数(function_info),
-            type_node: func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
+            type_node: func
+                .return_type
+                .clone()
+                .unwrap_or_else(|| TypeNode::基础类型(BasicType::空)),
             scope_level: self.symbol_table.current_scope(),
             span: func.span,
             is_mutable: false,
@@ -524,7 +609,9 @@ impl TypeChecker {
 
         // Process parameters and add them to function scope
         for param in &func.parameters {
-            let param_type = param.type_annotation.clone()
+            let param_type = param
+                .type_annotation
+                .clone()
                 .unwrap_or_else(|| TypeNode::基础类型(BasicType::空));
 
             let param_symbol = crate::semantic::symbol_table::Symbol {
@@ -555,10 +642,16 @@ impl TypeChecker {
         self.symbol_table.exit_scope();
 
         // Return function type
-        Ok(func.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
+        Ok(func
+            .return_type
+            .clone()
+            .unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
     }
 
-    fn check_array_access(&mut self, array_access: &crate::parser::ast::ArrayAccessExpression) -> Result<TypeNode, TypeError> {
+    fn check_array_access(
+        &mut self,
+        array_access: &crate::parser::ast::ArrayAccessExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Check array type
         let array_type = self.check(&array_access.array)?;
 
@@ -592,7 +685,10 @@ impl TypeChecker {
         Ok(element_type)
     }
 
-    fn check_array_literal(&mut self, array_literal: &crate::parser::ast::ArrayLiteralExpression) -> Result<TypeNode, TypeError> {
+    fn check_array_literal(
+        &mut self,
+        array_literal: &crate::parser::ast::ArrayLiteralExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Empty array: infer as empty integer array for now
         if array_literal.elements.is_empty() {
             return Ok(TypeNode::数组类型(crate::parser::ast::ArrayType {
@@ -622,7 +718,10 @@ impl TypeChecker {
         }))
     }
 
-    fn check_string_concat(&mut self, string_concat: &crate::parser::ast::StringConcatExpression) -> Result<TypeNode, TypeError> {
+    fn check_string_concat(
+        &mut self,
+        string_concat: &crate::parser::ast::StringConcatExpression,
+    ) -> Result<TypeNode, TypeError> {
         let left_type = self.check(&string_concat.left)?;
         let right_type = self.check(&string_concat.right)?;
 
@@ -642,20 +741,21 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::字符串))
     }
 
-    fn check_struct_literal(&mut self, struct_literal: &crate::parser::ast::StructLiteralExpression) -> Result<TypeNode, TypeError> {
+    fn check_struct_literal(
+        &mut self,
+        struct_literal: &crate::parser::ast::StructLiteralExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Look up struct type definition
         let struct_type = match self.symbol_table.lookup_symbol(&struct_literal.struct_name) {
-            Some(symbol) => {
-                match &symbol.type_node {
-                    TypeNode::结构体类型(struct_type) => struct_type.clone(),
-                    _ => {
-                        return Err(TypeError::General {
-                            message: format!("'{}' 不是一个结构体类型", struct_literal.struct_name),
-                            span: struct_literal.span,
-                        });
-                    }
+            Some(symbol) => match &symbol.type_node {
+                TypeNode::结构体类型(struct_type) => struct_type.clone(),
+                _ => {
+                    return Err(TypeError::General {
+                        message: format!("'{}' 不是一个结构体类型", struct_literal.struct_name),
+                        span: struct_literal.span,
+                    });
                 }
-            }
+            },
             None => {
                 return Err(TypeError::General {
                     message: format!("未定义的结构体类型 '{}'", struct_literal.struct_name),
@@ -666,12 +766,14 @@ impl TypeChecker {
 
         // Check that all required fields are provided
         for field in &struct_type.fields {
-            let provided = struct_literal.fields.iter()
-                .any(|f| f.name == field.name);
+            let provided = struct_literal.fields.iter().any(|f| f.name == field.name);
 
             if !provided {
                 return Err(TypeError::General {
-                    message: format!("结构体 '{}' 缺少必填字段 '{}'", struct_literal.struct_name, field.name),
+                    message: format!(
+                        "结构体 '{}' 缺少必填字段 '{}'",
+                        struct_literal.struct_name, field.name
+                    ),
                     span: struct_literal.span,
                 });
             }
@@ -679,7 +781,9 @@ impl TypeChecker {
 
         // Check field types
         for provided_field in &struct_literal.fields {
-            let expected_field = struct_type.fields.iter()
+            let expected_field = struct_type
+                .fields
+                .iter()
                 .find(|f| f.name == provided_field.name);
 
             if let Some(expected_field) = expected_field {
@@ -693,7 +797,10 @@ impl TypeChecker {
                 }
             } else {
                 return Err(TypeError::General {
-                    message: format!("结构体 '{}' 没有字段 '{}'", struct_literal.struct_name, provided_field.name),
+                    message: format!(
+                        "结构体 '{}' 没有字段 '{}'",
+                        struct_literal.struct_name, provided_field.name
+                    ),
                     span: provided_field.span,
                 });
             }
@@ -703,7 +810,10 @@ impl TypeChecker {
         Ok(TypeNode::结构体类型(struct_type))
     }
 
-    fn check_field_access(&mut self, field_access: &crate::parser::ast::FieldAccessExpression) -> Result<TypeNode, TypeError> {
+    fn check_field_access(
+        &mut self,
+        field_access: &crate::parser::ast::FieldAccessExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Check object type
         let object_type = self.check(&field_access.object)?;
 
@@ -711,27 +821,35 @@ impl TypeChecker {
         match object_type {
             TypeNode::结构体类型(struct_type) => {
                 // Check that field exists
-                if let Some(field) = struct_type.fields.iter().find(|f| f.name == field_access.field) {
+                if let Some(field) = struct_type
+                    .fields
+                    .iter()
+                    .find(|f| f.name == field_access.field)
+                {
                     // Return the field's type
                     Ok(field.type_annotation.clone())
                 } else {
                     Err(TypeError::General {
-                        message: format!("结构体 '{}' 没有字段 '{}'", struct_type.name, field_access.field),
+                        message: format!(
+                            "结构体 '{}' 没有字段 '{}'",
+                            struct_type.name, field_access.field
+                        ),
                         span: field_access.span,
                     })
                 }
             }
-            _ => {
-                Err(TypeError::InvalidOperation {
-                    operation: "字段访问".to_string(),
-                    type_name: format!("{:?}", object_type),
-                    span: field_access.span,
-                })
-            }
+            _ => Err(TypeError::InvalidOperation {
+                operation: "字段访问".to_string(),
+                type_name: format!("{:?}", object_type),
+                span: field_access.span,
+            }),
         }
     }
 
-    fn check_if_statement(&mut self, if_stmt: &crate::parser::ast::IfStatement) -> Result<TypeNode, TypeError> {
+    fn check_if_statement(
+        &mut self,
+        if_stmt: &crate::parser::ast::IfStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Check condition type
         let condition_type = self.check(&if_stmt.condition)?;
         match condition_type {
@@ -767,7 +885,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_while_statement(&mut self, while_stmt: &crate::parser::ast::WhileStatement) -> Result<TypeNode, TypeError> {
+    fn check_while_statement(
+        &mut self,
+        while_stmt: &crate::parser::ast::WhileStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Check condition type
         let condition_type = self.check(&while_stmt.condition)?;
         match condition_type {
@@ -800,7 +921,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_for_statement(&mut self, for_stmt: &crate::parser::ast::ForStatement) -> Result<TypeNode, TypeError> {
+    fn check_for_statement(
+        &mut self,
+        for_stmt: &crate::parser::ast::ForStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Check range type
         let range_type = self.check(&for_stmt.range)?;
 
@@ -857,7 +981,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_return_statement(&mut self, return_stmt: &crate::parser::ast::ReturnStatement) -> Result<TypeNode, TypeError> {
+    fn check_return_statement(
+        &mut self,
+        return_stmt: &crate::parser::ast::ReturnStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Type check return value if present
         if let Some(value) = &return_stmt.value {
             let value_type = self.check(value)?;
@@ -869,12 +996,18 @@ impl TypeChecker {
         }
     }
 
-    fn check_expression_statement(&mut self, expr_stmt: &crate::parser::ast::ExpressionStatement) -> Result<TypeNode, TypeError> {
+    fn check_expression_statement(
+        &mut self,
+        expr_stmt: &crate::parser::ast::ExpressionStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the expression
         self.check(&expr_stmt.expression)
     }
 
-    fn check_block_statement(&mut self, block_stmt: &crate::parser::ast::BlockStatement) -> Result<TypeNode, TypeError> {
+    fn check_block_statement(
+        &mut self,
+        block_stmt: &crate::parser::ast::BlockStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Enter new scope for block
         self.symbol_table.enter_scope();
 
@@ -892,7 +1025,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_program(&mut self, program: &crate::parser::ast::Program) -> Result<TypeNode, TypeError> {
+    fn check_program(
+        &mut self,
+        program: &crate::parser::ast::Program,
+    ) -> Result<TypeNode, TypeError> {
         // Enter global scope
         self.symbol_table.enter_scope();
 
@@ -909,7 +1045,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_struct_declaration(&mut self, struct_decl: &crate::parser::ast::StructDeclaration) -> Result<TypeNode, TypeError> {
+    fn check_struct_declaration(
+        &mut self,
+        struct_decl: &crate::parser::ast::StructDeclaration,
+    ) -> Result<TypeNode, TypeError> {
         // Create struct type
         let struct_type = TypeNode::结构体类型(crate::parser::ast::StructType {
             name: struct_decl.name.clone(),
@@ -943,7 +1082,10 @@ impl TypeChecker {
         Ok(struct_type)
     }
 
-    fn check_enum_declaration(&mut self, enum_decl: &crate::parser::ast::EnumDeclaration) -> Result<TypeNode, TypeError> {
+    fn check_enum_declaration(
+        &mut self,
+        enum_decl: &crate::parser::ast::EnumDeclaration,
+    ) -> Result<TypeNode, TypeError> {
         // Create enum type
         let enum_type = TypeNode::枚举类型(crate::parser::ast::EnumType {
             name: enum_decl.name.clone(),
@@ -976,8 +1118,10 @@ impl TypeChecker {
         Ok(enum_type)
     }
 
-
-    fn check_loop_statement(&mut self, loop_stmt: &crate::parser::ast::LoopStatement) -> Result<TypeNode, TypeError> {
+    fn check_loop_statement(
+        &mut self,
+        loop_stmt: &crate::parser::ast::LoopStatement,
+    ) -> Result<TypeNode, TypeError> {
         // Enter new scope for loop body
         self.symbol_table.enter_scope();
 
@@ -999,9 +1143,16 @@ impl TypeChecker {
         &self.errors
     }
 
-    fn check_method_declaration(&mut self, method_decl: &crate::parser::ast::MethodDeclaration) -> Result<TypeNode, TypeError> {
+    fn check_method_declaration(
+        &mut self,
+        method_decl: &crate::parser::ast::MethodDeclaration,
+    ) -> Result<TypeNode, TypeError> {
         // 1. 验证接收者类型存在
-        if self.symbol_table.lookup_symbol(&method_decl.receiver_type).is_none() {
+        if self
+            .symbol_table
+            .lookup_symbol(&method_decl.receiver_type)
+            .is_none()
+        {
             return Err(TypeError::General {
                 message: format!("接收者类型 '{}' 未定义", method_decl.receiver_type),
                 span: method_decl.span,
@@ -1030,7 +1181,9 @@ impl TypeChecker {
 
         // 添加方法参数到作用域
         for param in &method_decl.parameters {
-            let param_type = param.type_annotation.clone()
+            let param_type = param
+                .type_annotation
+                .clone()
                 .unwrap_or_else(|| TypeNode::基础类型(BasicType::空));
 
             let param_symbol = crate::semantic::symbol_table::Symbol {
@@ -1063,10 +1216,16 @@ impl TypeChecker {
         // 这需要在符号表中维护类型的方法信息
 
         // 返回方法返回类型
-        Ok(method_decl.return_type.clone().unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
+        Ok(method_decl
+            .return_type
+            .clone()
+            .unwrap_or_else(|| TypeNode::基础类型(BasicType::空)))
     }
 
-    fn check_method_call(&mut self, method_call: &crate::parser::ast::MethodCallExpression) -> Result<TypeNode, TypeError> {
+    fn check_method_call(
+        &mut self,
+        method_call: &crate::parser::ast::MethodCallExpression,
+    ) -> Result<TypeNode, TypeError> {
         // 1. 检查对象类型
         let object_type = self.check(&method_call.object)?;
 
@@ -1088,17 +1247,18 @@ impl TypeChecker {
                 // 目前简化：返回整数类型
                 Ok(TypeNode::基础类型(BasicType::整数))
             }
-            _ => {
-                Err(TypeError::InvalidOperation {
-                    operation: format!("方法调用 '{}'", method_call.method_name),
-                    type_name: format!("{:?}", object_type),
-                    span: method_call.span,
-                })
-            }
+            _ => Err(TypeError::InvalidOperation {
+                operation: format!("方法调用 '{}'", method_call.method_name),
+                type_name: format!("{:?}", object_type),
+                span: method_call.span,
+            }),
         }
     }
 
-    fn check_await_expression(&mut self, await_expr: &crate::parser::ast::AwaitExpression) -> Result<TypeNode, TypeError> {
+    fn check_await_expression(
+        &mut self,
+        await_expr: &crate::parser::ast::AwaitExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the awaited expression
         let awaited_type = self.check(&await_expr.expression)?;
 
@@ -1107,7 +1267,10 @@ impl TypeChecker {
         Ok(awaited_type)
     }
 
-    fn check_goroutine_spawn(&mut self, goroutine_expr: &crate::parser::ast::GoroutineSpawnExpression) -> Result<TypeNode, TypeError> {
+    fn check_goroutine_spawn(
+        &mut self,
+        goroutine_expr: &crate::parser::ast::GoroutineSpawnExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the goroutine expression
         self.check(&goroutine_expr.expression)?;
 
@@ -1115,7 +1278,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_channel_create(&mut self, channel_expr: &crate::parser::ast::ChannelCreateExpression) -> Result<TypeNode, TypeError> {
+    fn check_channel_create(
+        &mut self,
+        channel_expr: &crate::parser::ast::ChannelCreateExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the capacity if present
         if let Some(capacity) = &channel_expr.capacity {
             self.check(capacity)?;
@@ -1126,7 +1292,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::字符串)) // Temporary placeholder
     }
 
-    fn check_channel_send(&mut self, send_expr: &crate::parser::ast::ChannelSendExpression) -> Result<TypeNode, TypeError> {
+    fn check_channel_send(
+        &mut self,
+        send_expr: &crate::parser::ast::ChannelSendExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the channel
         self.check(&send_expr.channel)?;
 
@@ -1137,7 +1306,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_channel_receive(&mut self, recv_expr: &crate::parser::ast::ChannelReceiveExpression) -> Result<TypeNode, TypeError> {
+    fn check_channel_receive(
+        &mut self,
+        recv_expr: &crate::parser::ast::ChannelReceiveExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the channel
         self.check(&recv_expr.channel)?;
 
@@ -1146,7 +1318,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::整数)) // Temporary placeholder
     }
 
-    fn check_select(&mut self, select_expr: &crate::parser::ast::SelectExpression) -> Result<TypeNode, TypeError> {
+    fn check_select(
+        &mut self,
+        select_expr: &crate::parser::ast::SelectExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check each select case
         for case in &select_expr.cases {
             match &case.kind {
@@ -1193,7 +1368,10 @@ impl TypeChecker {
         Ok(TypeNode::基础类型(BasicType::空))
     }
 
-    fn check_address_of(&mut self, addr_of_expr: &crate::parser::ast::AddressOfExpression) -> Result<TypeNode, TypeError> {
+    fn check_address_of(
+        &mut self,
+        addr_of_expr: &crate::parser::ast::AddressOfExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the inner expression
         let inner_type = self.check(&addr_of_expr.expression)?;
 
@@ -1203,7 +1381,10 @@ impl TypeChecker {
         }))
     }
 
-    fn check_dereference(&mut self, deref_expr: &crate::parser::ast::DereferenceExpression) -> Result<TypeNode, TypeError> {
+    fn check_dereference(
+        &mut self,
+        deref_expr: &crate::parser::ast::DereferenceExpression,
+    ) -> Result<TypeNode, TypeError> {
         // Type check the pointer expression
         let ptr_type = self.check(&deref_expr.expression)?;
 
@@ -1223,4 +1404,3 @@ impl Default for TypeChecker {
         Self::new()
     }
 }
-

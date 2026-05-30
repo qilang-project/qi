@@ -3,16 +3,16 @@
 //! This module provides comprehensive memory management for the Qi runtime,
 //! including allocation strategies, garbage collection, and resource tracking.
 
-pub mod manager;
 pub mod allocator;
 pub mod gc;
 pub mod interface;
+pub mod manager;
 
 // Re-export main components
-pub use manager::{MemoryManager};
-pub use allocator::{AllocationStrategy, BumpAllocator, ArenaAllocator, HybridAllocator};
+pub use allocator::{AllocationStrategy, ArenaAllocator, BumpAllocator, HybridAllocator};
 pub use gc::{GarbageCollector, GcConfig, GcStats, GcStrategy};
 pub use interface::{MemoryInterface, MemoryLimits, MemoryStats};
+pub use manager::MemoryManager;
 
 /// Memory allocation result type
 pub type MemoryResult<T> = Result<T, MemoryError>;
@@ -21,10 +21,7 @@ pub type MemoryResult<T> = Result<T, MemoryError>;
 #[derive(Debug, thiserror::Error)]
 pub enum MemoryError {
     #[error("内存分配失败: 请求 {requested} 字节，可用 {available} 字节")]
-    AllocationFailed {
-        requested: usize,
-        available: usize,
-    },
+    AllocationFailed { requested: usize, available: usize },
 
     #[error("内存释放失败: 地址 {address:p} 无效")]
     DeallocationFailed { address: *const u8 },

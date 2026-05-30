@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use dashmap::{DashMap, DashSet};
 
-use super::{MemoryResult};
+use super::MemoryResult;
 
 /// Garbage collection strategies
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +221,8 @@ impl GarbageCollector {
     }
 
     pub fn current_cycle(&self) -> u64 {
-        self.current_cycle.load(std::sync::atomic::Ordering::Relaxed)
+        self.current_cycle
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn collect(&self, heap: &HashMap<*const u8, usize>) -> MemoryResult<GcResult> {
@@ -252,10 +253,11 @@ impl GarbageCollector {
             collected_objects,
         };
 
-        self.stats
-            .lock()
-            .unwrap()
-            .record_collection(result.objects_collected, result.bytes_collected, time_ms);
+        self.stats.lock().unwrap().record_collection(
+            result.objects_collected,
+            result.bytes_collected,
+            time_ms,
+        );
 
         Ok(result)
     }

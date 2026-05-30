@@ -8,7 +8,10 @@ use std::process::Command;
 
 /// 执行命令并等待完成（返回 JSON: {status, stdout, stderr}）
 #[no_mangle]
-pub extern "C" fn qi_process_execute(command: *const c_char, args_json: *const c_char) -> *mut c_char {
+pub extern "C" fn qi_process_execute(
+    command: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
     if command.is_null() {
         return std::ptr::null_mut();
     }
@@ -25,9 +28,7 @@ pub extern "C" fn qi_process_execute(command: *const c_char, args_json: *const c
         };
 
         // 执行命令
-        let output = Command::new(cmd_str.as_ref())
-            .args(&args)
-            .output();
+        let output = Command::new(cmd_str.as_ref()).args(&args).output();
 
         match output {
             Ok(out) => {

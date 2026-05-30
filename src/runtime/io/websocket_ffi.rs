@@ -4,12 +4,12 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::os::raw::c_char;
+use std::sync::Mutex;
 
 use std::sync::OnceLock;
 
@@ -68,15 +68,15 @@ pub struct WebSocketConnection {
 impl WebSocketConnection {
     /// 从已升级的 TCP 连接创建 WebSocket 连接
     pub fn from_upgraded_stream(stream: TcpStream, is_server: bool) -> Self {
-        WebSocketConnection {
-            stream,
-            is_server,
-            is_connected: true,
-        }
+        WebSocketConnection { stream, is_server, is_connected: true }
     }
 
     /// 发送 WebSocket 帧
-    pub fn send_frame(&mut self, opcode: WebSocketOpcode, payload: &[u8]) -> Result<(), std::io::Error> {
+    pub fn send_frame(
+        &mut self,
+        opcode: WebSocketOpcode,
+        payload: &[u8],
+    ) -> Result<(), std::io::Error> {
         let mut frame = Vec::new();
 
         // 第一字节: FIN + opcode
@@ -121,8 +121,9 @@ impl WebSocketConnection {
         self.stream.read_exact(&mut header)?;
 
         let fin = (header[0] & 0x80) != 0;
-        let opcode = WebSocketOpcode::from_u8(header[0] & 0x0F)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid opcode"))?;
+        let opcode = WebSocketOpcode::from_u8(header[0] & 0x0F).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid opcode")
+        })?;
 
         let masked = (header[1] & 0x80) != 0;
         let mut payload_len = (header[1] & 0x7F) as u64;
@@ -210,7 +211,7 @@ fn rand_mask_key() -> [u8; 4] {
 
 /// 计算 WebSocket Accept Key (使用 SHA-1)
 fn compute_accept_key(client_key: &str) -> String {
-    use sha1::{Sha1, Digest};
+    use sha1::{Digest, Sha1};
 
     const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     let mut hasher = Sha1::new();
@@ -265,9 +266,10 @@ pub extern "C" fn qi_websocket_is_upgrade_request(request_headers: *const c_char
     let headers = unsafe { CStr::from_ptr(request_headers).to_string_lossy() };
     let headers_lower = headers.to_lowercase();
 
-    if headers_lower.contains("upgrade: websocket") &&
-       headers_lower.contains("connection:") &&
-       headers_lower.contains("upgrade") {
+    if headers_lower.contains("upgrade: websocket")
+        && headers_lower.contains("connection:")
+        && headers_lower.contains("upgrade")
+    {
         1
     } else {
         0
@@ -402,7 +404,7 @@ pub extern "C" fn qi_websocket_accept(host: *const c_char, port: u16) -> i64 {
 pub extern "C" fn qi_websocket_upgrade_connection(
     host: *const c_char,
     port: u16,
-    client_key: *const c_char
+    client_key: *const c_char,
 ) -> i64 {
     if host.is_null() || client_key.is_null() {
         return -1;
@@ -612,11 +614,7 @@ pub extern "C" fn qi_websocket_recv(handle: i64, buffer: *mut u8, buffer_size: i
             Ok(frame) => {
                 let copy_len = std::cmp::min(frame.payload.len(), buffer_size as usize);
                 unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        frame.payload.as_ptr(),
-                        buffer,
-                        copy_len,
-                    );
+                    std::ptr::copy_nonoverlapping(frame.payload.as_ptr(), buffer, copy_len);
                 }
 
                 // 自动回复 ping
@@ -722,7 +720,11 @@ pub extern "C" fn qi_websocket_free_string(s: *mut c_char) {
 pub extern "C" fn qi_websocket_is_connected(handle: i64) -> i64 {
     let ws_pool = 获取WS连接池().lock().unwrap();
     if let Some(conn) = ws_pool.get(&handle) {
-        if conn.is_connected { 1 } else { 0 }
+        if conn.is_connected {
+            1
+        } else {
+            0
+        }
     } else {
         0
     }

@@ -154,4 +154,5 @@ impl Default for KeywordTable {
 }
 
 /// Global keyword lookup table
-pub static KEYWORDS: once_cell::sync::Lazy<KeywordTable> = once_cell::sync::Lazy::new(KeywordTable::new);
+pub static KEYWORDS: once_cell::sync::Lazy<KeywordTable> =
+    once_cell::sync::Lazy::new(KeywordTable::new);

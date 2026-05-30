@@ -2,8 +2,8 @@
 //!
 //! 为 Qi 语言提供 C 接口的加密函数
 
-use super::crypto::{加密模块, 加密操作};
-use super::{StdlibValue};
+use super::crypto::{加密操作, 加密模块};
+use super::StdlibValue;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
@@ -34,9 +34,7 @@ pub extern "C" fn qi_crypto_md5(input: *const c_char) -> *mut c_char {
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::MD5哈希, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }
@@ -55,9 +53,7 @@ pub extern "C" fn qi_crypto_sha256(input: *const c_char) -> *mut c_char {
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::SHA256哈希, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }
@@ -76,9 +72,7 @@ pub extern "C" fn qi_crypto_sha512(input: *const c_char) -> *mut c_char {
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::SHA512哈希, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }
@@ -97,9 +91,7 @@ pub extern "C" fn qi_crypto_base64_encode(input: *const c_char) -> *mut c_char {
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::Base64编码, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }
@@ -118,9 +110,7 @@ pub extern "C" fn qi_crypto_base64_decode(input: *const c_char) -> *mut c_char {
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::Base64解码, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }
@@ -136,16 +126,11 @@ pub extern "C" fn qi_crypto_hmac_sha256(message: *const c_char, key: *const c_ch
     unsafe {
         let 消息 = CStr::from_ptr(message).to_string_lossy().to_string();
         let 密钥 = CStr::from_ptr(key).to_string_lossy().to_string();
-        let 参数 = vec![
-            StdlibValue::String(消息),
-            StdlibValue::String(密钥),
-        ];
+        let 参数 = vec![StdlibValue::String(消息), StdlibValue::String(密钥)];
 
         let 模块 = 获取加密模块();
         match 模块.执行操作(加密操作::HMAC_SHA256, &参数) {
-            Ok(StdlibValue::String(结果)) => {
-                CString::new(结果).unwrap().into_raw()
-            }
+            Ok(StdlibValue::String(结果)) => CString::new(结果).unwrap().into_raw(),
             _ => std::ptr::null_mut(),
         }
     }

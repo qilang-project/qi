@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::runtime::{RuntimeResult, RuntimeError};
-use super::{MemoryManager, GcConfig, MemoryUsage};
+use super::{GcConfig, MemoryManager, MemoryUsage};
+use crate::runtime::{RuntimeError, RuntimeResult};
 
 /// Unified memory interface that provides access to all memory management functionality
 #[derive(Debug)]
@@ -38,10 +38,10 @@ pub struct MemoryLimits {
 impl Default for MemoryLimits {
     fn default() -> Self {
         Self {
-            max_memory_bytes: 1024 * 1024 * 1024, // 1GB
+            max_memory_bytes: 1024 * 1024 * 1024,   // 1GB
             max_allocation_size: 100 * 1024 * 1024, // 100MB
-            gc_threshold: 0.8, // 80%
-            emergency_threshold: 0.95, // 95%
+            gc_threshold: 0.8,                      // 80%
+            emergency_threshold: 0.95,              // 95%
         }
     }
 }
@@ -82,7 +82,7 @@ impl MemoryInterface {
             if size > limits.max_allocation_size {
                 return Err(RuntimeError::memory_error(
                     "内存分配错误",
-                    &format!("请求的内存大小 {} 超过最大限制 {}", size, limits.max_allocation_size)
+                    &format!("请求的内存大小 {} 超过最大限制 {}", size, limits.max_allocation_size),
                 ));
             }
         }
@@ -113,7 +113,6 @@ impl MemoryInterface {
         result.map_err(|e| RuntimeError::from(e))
     }
 
-    
     /// Run garbage collection
     pub fn run_gc(&self) -> RuntimeResult<usize> {
         let mut manager = self.manager.lock().unwrap();
@@ -342,7 +341,10 @@ impl MemoryStats {
 
     /// Get allocation rate (allocations per second)
     pub fn get_allocation_rate(&self) -> f64 {
-        let elapsed = self.last_update.duration_since(self.start_time).as_secs_f64();
+        let elapsed = self
+            .last_update
+            .duration_since(self.start_time)
+            .as_secs_f64();
         if elapsed > 0.0 {
             self.total_allocations as f64 / elapsed
         } else {
@@ -352,7 +354,10 @@ impl MemoryStats {
 
     /// Get deallocation rate (deallocations per second)
     pub fn get_deallocation_rate(&self) -> f64 {
-        let elapsed = self.last_update.duration_since(self.start_time).as_secs_f64();
+        let elapsed = self
+            .last_update
+            .duration_since(self.start_time)
+            .as_secs_f64();
         if elapsed > 0.0 {
             self.total_deallocations as f64 / elapsed
         } else {
@@ -362,7 +367,8 @@ impl MemoryStats {
 
     /// Get current memory usage (allocated - deallocated)
     pub fn get_current_usage(&self) -> u64 {
-        self.total_bytes_allocated.saturating_sub(self.total_bytes_deallocated)
+        self.total_bytes_allocated
+            .saturating_sub(self.total_bytes_deallocated)
     }
 
     /// Get GC efficiency (memory collected per cycle)
@@ -377,11 +383,7 @@ impl MemoryStats {
     /// Reset all statistics
     pub fn reset(&mut self) {
         let now = std::time::Instant::now();
-        *self = Self {
-            start_time: now,
-            last_update: now,
-            ..Default::default()
-        };
+        *self = Self { start_time: now, last_update: now, ..Default::default() };
     }
 }
 

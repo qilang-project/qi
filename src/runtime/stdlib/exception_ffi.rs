@@ -83,7 +83,9 @@ pub extern "C-unwind" fn qi_exc_throw(msg: *const c_char) -> ! {
     let msg_str = if msg.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(msg) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(msg) }
+            .to_string_lossy()
+            .into_owned()
     };
     LAST_ERROR.with(|e| *e.borrow_mut() = msg_str.clone());
 
@@ -100,7 +102,9 @@ pub extern "C-unwind" fn qi_exc_throw(msg: *const c_char) -> ! {
 #[no_mangle]
 pub extern "C" fn qi_exc_message() -> *mut c_char {
     let msg = LAST_ERROR.with(|e| e.borrow().clone());
-    CString::new(msg).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
+    CString::new(msg)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 /// 清空当前线程的异常消息（catch 处理完 后调用，避免污染下次）

@@ -300,7 +300,6 @@ fn test_return_statement_analysis() {
     assert!(result.is_ok() || result.is_err());
 }
 
-
 #[test]
 fn test_analyzer_warnings() {
     let analyzer = SemanticAnalyzer::new();

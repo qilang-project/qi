@@ -113,8 +113,8 @@ fn client_capabilities() -> Json {
 
 /// stdio 子进程状态（共享给后台读线程 + 主线程写）
 struct StdioChild {
-    _child: Child,                           // 保持子进程存活
-    stdin: ChildStdin,                       // 写端（序列化用，须持锁）
+    _child: Child,     // 保持子进程存活
+    stdin: ChildStdin, // 写端（序列化用，须持锁）
     /// 按 id 存储的响应队列（有 id 的消息，即 response）
     responses: Arc<Mutex<HashMap<i64, Json>>>,
     eof: Arc<AtomicBool>,
@@ -135,12 +135,8 @@ struct HttpConn {
 }
 
 enum Transport {
-    Stdio {
-        child_state: Arc<Mutex<StdioChild>>,
-    },
-    Http {
-        http: Arc<Mutex<HttpConn>>,
-    },
+    Stdio { child_state: Arc<Mutex<StdioChild>> },
+    Http { http: Arc<Mutex<HttpConn>> },
 }
 
 struct Connection {
@@ -265,7 +261,11 @@ fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
         }
         None => (authority.to_string(), 80u16),
     };
-    let path = if path.is_empty() { "/".to_string() } else { path.to_string() };
+    let path = if path.is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    };
     Ok((host, port, path))
 }
 
@@ -305,8 +305,8 @@ fn read_one_http_response(stream: &mut TcpStream) -> Result<(String, String), St
     };
 
     let headers_text = String::from_utf8_lossy(&buf[..header_end - 4]).to_string();
-    let content_length: Option<usize> = find_header_value(&headers_text, "Content-Length")
-        .and_then(|v| v.trim().parse().ok());
+    let content_length: Option<usize> =
+        find_header_value(&headers_text, "Content-Length").and_then(|v| v.trim().parse().ok());
     let is_chunked = find_header_value(&headers_text, "Transfer-Encoding")
         .map(|v| v.to_ascii_lowercase().contains("chunked"))
         .unwrap_or(false);
@@ -416,10 +416,7 @@ fn http_post_keepalive(
         let _ = stream.set_read_timeout(t);
         let _ = stream.set_write_timeout(t);
 
-        let write_ok = stream
-            .write_all(&wire)
-            .and_then(|_| stream.flush())
-            .is_ok();
+        let write_ok = stream.write_all(&wire).and_then(|_| stream.flush()).is_ok();
         if !write_ok {
             // 连接坏了，丢弃后重连重试
             conn.stream = None;
@@ -442,7 +439,10 @@ fn http_post_keepalive(
     Err(last_err)
 }
 
-fn http_extract_session(base_url: &str, body: &str) -> Result<(String, String, Option<TcpStream>), String> {
+fn http_extract_session(
+    base_url: &str,
+    body: &str,
+) -> Result<(String, String, Option<TcpStream>), String> {
     let mut conn = HttpConn {
         base_url: base_url.to_string(),
         session_id: String::new(),
@@ -542,10 +542,7 @@ fn handle_server_request(
                     },
                     None => Err((-32603, "采样处理器调用失败".to_string())),
                 },
-                None => Err((
-                    -32601,
-                    "client 未注册采样处理器（无 sampling 能力）".to_string(),
-                )),
+                None => Err((-32601, "client 未注册采样处理器（无 sampling 能力）".to_string())),
             }
         }
         "roots/list" => {
@@ -625,10 +622,7 @@ fn stdio_wait_response(
 /// 启动 stdio MCP 子进程，完成 initialize 握手。
 /// 成功返回 conn_id (>0)，失败返回 -1。
 #[no_mangle]
-pub extern "C" fn qi_mcpc_connect_stdio(
-    cmd: *const c_char,
-    args_json: *const c_char,
-) -> i64 {
+pub extern "C" fn qi_mcpc_connect_stdio(cmd: *const c_char, args_json: *const c_char) -> i64 {
     if cmd.is_null() {
         return -1;
     }
@@ -706,9 +700,7 @@ pub extern "C" fn qi_mcpc_connect_stdio(
     });
 
     let conn = Arc::new(Connection {
-        transport: Transport::Stdio {
-            child_state: child_state.clone(),
-        },
+        transport: Transport::Stdio { child_state: child_state.clone() },
         next_id: AtomicI64::new(1),
     });
 
@@ -761,10 +753,7 @@ pub extern "C" fn qi_mcpc_connect_stdio(
     let conn_id = next_conn_id();
     // 更新 next_id（初始化用了 id=1）
     conn.next_id.fetch_add(1, Ordering::SeqCst); // 下次从 2 开始
-    conn_registry()
-        .lock()
-        .unwrap()
-        .insert(conn_id, conn);
+    conn_registry().lock().unwrap().insert(conn_id, conn);
     conn_id
 }
 
@@ -814,11 +803,7 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
     }
 
     // 复用 initialize 时建立的 keep-alive 连接，保持会话存活
-    let http = Arc::new(Mutex::new(HttpConn {
-        base_url: url,
-        session_id,
-        stream,
-    }));
+    let http = Arc::new(Mutex::new(HttpConn { base_url: url, session_id, stream }));
 
     // 发送 notifications/initialized（同一条连接；忽略 202/空体）
     {
@@ -834,10 +819,7 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
         next_id: AtomicI64::new(2), // id=1 已用于 initialize
     });
 
-    conn_registry()
-        .lock()
-        .unwrap()
-        .insert(conn_id, conn);
+    conn_registry().lock().unwrap().insert(conn_id, conn);
     conn_id
 }
 
@@ -899,9 +881,7 @@ pub extern "C" fn qi_mcpc_request(
                     Ok(g) => g,
                     Err(_) => return empty_cstr(),
                 };
-                if writeln!(st.stdin, "{}", request_str).is_err()
-                    || st.stdin.flush().is_err()
-                {
+                if writeln!(st.stdin, "{}", request_str).is_err() || st.stdin.flush().is_err() {
                     return empty_cstr();
                 }
             }
@@ -1116,17 +1096,22 @@ mod tests {
 
     #[test]
     fn test_find_header_value_case_insensitive() {
-        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nMcp-Session-Id: abc123";
+        let headers =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nMcp-Session-Id: abc123";
         assert_eq!(find_header_value(headers, "mcp-session-id").as_deref(), Some("abc123"));
         assert_eq!(find_header_value(headers, "Content-Length"), None);
     }
 
     #[test]
     fn test_parse_http_url() {
-        assert_eq!(parse_http_url("http://localhost:43570/mcp").unwrap(),
-            ("localhost".to_string(), 43570u16, "/mcp".to_string()));
-        assert_eq!(parse_http_url("http://127.0.0.1:8/x/y").unwrap(),
-            ("127.0.0.1".to_string(), 8u16, "/x/y".to_string()));
+        assert_eq!(
+            parse_http_url("http://localhost:43570/mcp").unwrap(),
+            ("localhost".to_string(), 43570u16, "/mcp".to_string())
+        );
+        assert_eq!(
+            parse_http_url("http://127.0.0.1:8/x/y").unwrap(),
+            ("127.0.0.1".to_string(), 8u16, "/x/y".to_string())
+        );
         assert!(parse_http_url("https://x/y").is_err());
     }
 
@@ -1141,7 +1126,8 @@ mod tests {
     #[test]
     fn test_parse_sse_body_event_message() {
         // 标准 SSE 格式
-        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
+        let body =
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
         let out = parse_sse_body(body);
         assert!(out.contains("tools"));
     }
@@ -1274,7 +1260,10 @@ mod tests {
     fn debug_http_big_eval() {
         use std::ffi::{CStr, CString};
         let url = std::env::var("QI_TEST_MCP_URL").unwrap_or_default();
-        if url.is_empty() { eprintln!("跳过：未设 QI_TEST_MCP_URL"); return; }
+        if url.is_empty() {
+            eprintln!("跳过：未设 QI_TEST_MCP_URL");
+            return;
+        }
         let cu = CString::new(url).unwrap();
         let conn = qi_mcpc_connect_http(cu.as_ptr());
         eprintln!("[dbg] conn={}", conn);
@@ -1310,7 +1299,8 @@ mod tests {
   const wordCount = bodyText.split(' ').filter(w => w.length > 0).length;
   return JSON.stringify({ title, metaDescription: metaDesc, h1Count: h1s, h2Count: h2s, h3Count: h3s, jsonldCount: jsonlds, ogTitle: !!ogTitle, ogDesc: !!ogDesc, ogImage: !!ogImage, twitterCard: !!twitterCard, twitterTitle: !!twitterTitle, twitterDesc: !!twitterDesc, viewport, imgAltCoverage, wordCount });
 }"##;
-        let big = serde_json::json!({"name":"browser_evaluate","arguments":{"function": func}}).to_string();
+        let big = serde_json::json!({"name":"browser_evaluate","arguments":{"function": func}})
+            .to_string();
         eprintln!("[dbg] big params bytes={}", big.len());
         let res = call(&big);
         eprintln!("[dbg] BIG EVAL RESULT len={} : {}", res.len(), &res[..res.len().min(400)]);

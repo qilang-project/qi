@@ -261,16 +261,15 @@ fn test_control_flow_codegen() {
 
     let parser = Parser::new();
     let result = parser.parse(tokens);
-    
+
     if let Err(e) = &result {
         eprintln!("Parse error: {:?}", e);
     }
-    
+
     let program = result.unwrap();
 
-    let mut generator = qi_compiler::codegen::CodeGenerator::new(
-        qi_compiler::config::CompilationTarget::Linux
-    );
+    let mut generator =
+        qi_compiler::codegen::CodeGenerator::new(qi_compiler::config::CompilationTarget::Linux);
     let result = generator.generate(&AstNode::程序(program));
 
     // Should generate code for control flow
@@ -293,9 +292,12 @@ fn test_control_flow_keywords_tokenization() {
 
         // Check that the keyword is properly recognized
         let token_str = format!("{:?}", tokens[0]);
-        assert!(token_str.contains(keyword) ||
-                tokens.iter().any(|t| format!("{:?}", t).contains(keyword)),
-                "Keyword not properly recognized: {}", keyword);
+        assert!(
+            token_str.contains(keyword)
+                || tokens.iter().any(|t| format!("{:?}", t).contains(keyword)),
+            "Keyword not properly recognized: {}",
+            keyword
+        );
     }
 }
 

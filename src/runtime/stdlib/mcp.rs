@@ -5,9 +5,9 @@
 
 #![allow(non_snake_case)]
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 
 /// MCP错误
 #[derive(Debug, thiserror::Error)]
@@ -57,13 +57,7 @@ pub struct 工具参数 {
 impl 工具参数 {
     /// 创建新的工具参数
     pub fn 创建(名称: String, 类型: String, 描述: String, 必需: bool) -> Self {
-        Self {
-            名称,
-            类型,
-            描述,
-            必需,
-            默认值: None,
-        }
+        Self { 名称, 类型, 描述, 必需, 默认值: None }
     }
 
     /// 设置默认值
@@ -74,7 +68,8 @@ impl 工具参数 {
 }
 
 /// 工具回调函数类型
-pub type 工具回调函数 = Box<dyn Fn(&HashMap<String, JsonValue>) -> MCP结果<JsonValue> + Send + Sync>;
+pub type 工具回调函数 =
+    Box<dyn Fn(&HashMap<String, JsonValue>) -> MCP结果<JsonValue> + Send + Sync>;
 
 /// MCP工具定义
 #[derive(Clone)]
@@ -140,7 +135,10 @@ impl MCP工具 {
     }
 
     /// 设置执行函数
-    pub fn 设置执行函数(mut self, 函数: fn(&HashMap<String, JsonValue>) -> MCP结果<JsonValue>) -> Self {
+    pub fn 设置执行函数(
+        mut self,
+        函数: fn(&HashMap<String, JsonValue>) -> MCP结果<JsonValue>,
+    ) -> Self {
         self.执行函数 = Some(函数);
         self
     }
@@ -246,14 +244,7 @@ pub enum 资源内容 {
 impl MCP资源 {
     /// 创建新资源
     pub fn 创建(uri: String, 名称: String, 描述: String, 类型: 资源类型) -> Self {
-        Self {
-            uri,
-            名称,
-            描述,
-            类型,
-            mime类型: None,
-            内容: None,
-        }
+        Self { uri, 名称, 描述, 类型, mime类型: None, 内容: None }
     }
 
     /// 设置MIME类型
@@ -282,7 +273,8 @@ impl MCP资源 {
 
     /// 读取资源内容
     pub fn 读取内容(&self) -> MCP结果<&资源内容> {
-        self.内容.as_ref()
+        self.内容
+            .as_ref()
             .ok_or_else(|| MCP错误::资源错误("资源没有设置内容".to_string()))
     }
 
@@ -360,12 +352,7 @@ pub struct MCP提示 {
 impl MCP提示 {
     /// 创建新提示
     pub fn 创建(名称: String, 描述: String, 模板: String) -> Self {
-        Self {
-            名称,
-            描述,
-            参数列表: Vec::new(),
-            模板,
-        }
+        Self { 名称, 描述, 参数列表: Vec::new(), 模板 }
     }
 
     /// 添加参数
@@ -396,7 +383,9 @@ impl MCP提示 {
 
     /// 转换为JSON格式
     pub fn 转为JSON(&self) -> JsonValue {
-        let arguments: Vec<JsonValue> = self.参数列表.iter()
+        let arguments: Vec<JsonValue> = self
+            .参数列表
+            .iter()
             .map(|p| {
                 serde_json::json!({
                     "name": p.名称,
@@ -497,28 +486,28 @@ impl MCP服务器 {
 
     /// 获取工具列表
     pub fn 获取工具列表(&self) -> Vec<JsonValue> {
-        self.工具表.values()
-            .map(|工具| 工具.转为Schema())
-            .collect()
+        self.工具表.values().map(|工具| 工具.转为Schema()).collect()
     }
 
     /// 获取资源列表
     pub fn 获取资源列表(&self) -> Vec<JsonValue> {
-        self.资源表.values()
-            .map(|资源| 资源.转为JSON())
-            .collect()
+        self.资源表.values().map(|资源| 资源.转为JSON()).collect()
     }
 
     /// 获取提示列表
     pub fn 获取提示列表(&self) -> Vec<JsonValue> {
-        self.提示表.values()
-            .map(|提示| 提示.转为JSON())
-            .collect()
+        self.提示表.values().map(|提示| 提示.转为JSON()).collect()
     }
 
     /// 执行工具
-    pub fn 执行工具(&self, 工具名: &str, 参数: &HashMap<String, JsonValue>) -> MCP结果<JsonValue> {
-        let 工具 = self.工具表.get(工具名)
+    pub fn 执行工具(
+        &self,
+        工具名: &str,
+        参数: &HashMap<String, JsonValue>,
+    ) -> MCP结果<JsonValue> {
+        let 工具 = self
+            .工具表
+            .get(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
 
         工具.执行(参数)
@@ -526,19 +515,25 @@ impl MCP服务器 {
 
     /// 获取资源
     pub fn 获取资源(&self, uri: &str) -> MCP结果<&MCP资源> {
-        self.资源表.get(uri)
+        self.资源表
+            .get(uri)
             .ok_or_else(|| MCP错误::资源错误(format!("资源不存在: {}", uri)))
     }
 
     /// 获取提示
     pub fn 获取提示(&self, 名称: &str) -> MCP结果<&MCP提示> {
-        self.提示表.get(名称)
+        self.提示表
+            .get(名称)
             .ok_or_else(|| MCP错误::提示错误(format!("提示不存在: {}", 名称)))
     }
 
     /// 为工具添加参数
-    pub fn 为工具添加参数(&mut self, 工具名: &str, 参数: 工具参数) -> MCP结果<()> {
-        let 工具 = self.工具表.get_mut(工具名)
+    pub fn 为工具添加参数(
+        &mut self, 工具名: &str, 参数: 工具参数
+    ) -> MCP结果<()> {
+        let 工具 = self
+            .工具表
+            .get_mut(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
 
         工具.参数列表.push(参数);
@@ -547,7 +542,9 @@ impl MCP服务器 {
 
     /// 设置工具回调ID
     pub fn 设置工具回调ID(&mut self, 工具名: &str, 回调ID: String) -> MCP结果<()> {
-        let 工具 = self.工具表.get_mut(工具名)
+        let 工具 = self
+            .工具表
+            .get_mut(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
 
         工具.回调ID = Some(回调ID);
@@ -556,7 +553,9 @@ impl MCP服务器 {
 
     /// 设置工具回调闭包对象指针 (Qi 闭包对象地址)
     pub fn 设置工具回调指针(&mut self, 工具名: &str, 指针: usize) -> MCP结果<()> {
-        let 工具 = self.工具表.get_mut(工具名)
+        let 工具 = self
+            .工具表
+            .get_mut(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
 
         工具.回调指针 = Some(指针);
@@ -565,19 +564,23 @@ impl MCP服务器 {
 
     /// 获取工具
     pub fn 获取工具(&self, 工具名: &str) -> MCP结果<&MCP工具> {
-        self.工具表.get(工具名)
+        self.工具表
+            .get(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))
     }
 
     /// 获取工具（可变）
     pub fn 获取工具_可变(&mut self, 工具名: &str) -> MCP结果<&mut MCP工具> {
-        self.工具表.get_mut(工具名)
+        self.工具表
+            .get_mut(工具名)
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))
     }
 
     /// 设置资源内容（文本）
     pub fn 设置资源文本内容(&mut self, uri: &str, 内容: String) -> MCP结果<()> {
-        let 资源 = self.资源表.get_mut(uri)
+        let 资源 = self
+            .资源表
+            .get_mut(uri)
             .ok_or_else(|| MCP错误::资源错误(format!("资源不存在: {}", uri)))?;
 
         资源.内容 = Some(资源内容::文本(内容));
@@ -586,7 +589,9 @@ impl MCP服务器 {
 
     /// 设置资源内容（二进制）
     pub fn 设置资源二进制内容(&mut self, uri: &str, 内容: Vec<u8>) -> MCP结果<()> {
-        let 资源 = self.资源表.get_mut(uri)
+        let 资源 = self
+            .资源表
+            .get_mut(uri)
             .ok_or_else(|| MCP错误::资源错误(format!("资源不存在: {}", uri)))?;
 
         资源.内容 = Some(资源内容::二进制(内容));
@@ -595,7 +600,9 @@ impl MCP服务器 {
 
     /// 设置资源内容（JSON）
     pub fn 设置资源JSON内容(&mut self, uri: &str, 内容: JsonValue) -> MCP结果<()> {
-        let 资源 = self.资源表.get_mut(uri)
+        let 资源 = self
+            .资源表
+            .get_mut(uri)
             .ok_or_else(|| MCP错误::资源错误(format!("资源不存在: {}", uri)))?;
 
         资源.内容 = Some(资源内容::JSON(内容));
@@ -669,9 +676,7 @@ pub struct MCP服务器模块 {
 impl MCP服务器模块 {
     /// 创建新的MCP服务器模块
     pub fn 创建() -> Self {
-        Self {
-            默认配置: MCP服务器配置::default(),
-        }
+        Self { 默认配置: MCP服务器配置::default() }
     }
 
     /// 创建MCP服务器
@@ -686,7 +691,13 @@ impl MCP服务器模块 {
     }
 
     /// 创建资源
-    pub fn 创建资源(&self, uri: String, 名称: String, 描述: String, 类型: 资源类型) -> MCP资源 {
+    pub fn 创建资源(
+        &self,
+        uri: String,
+        名称: String,
+        描述: String,
+        类型: 资源类型,
+    ) -> MCP资源 {
         MCP资源::创建(uri, 名称, 描述, 类型)
     }
 
@@ -715,8 +726,7 @@ mod tests {
             true,
         );
 
-        let 工具 = MCP工具::创建("测试工具".to_string(), "测试描述".to_string())
-            .添加参数(参数);
+        let 工具 = MCP工具::创建("测试工具".to_string(), "测试描述".to_string()).添加参数(参数);
 
         assert_eq!(工具.名称, "测试工具");
         assert_eq!(工具.参数列表.len(), 1);
@@ -731,8 +741,7 @@ mod tests {
             true,
         );
 
-        let 工具 = MCP工具::创建("echo".to_string(), "回显工具".to_string())
-            .添加参数(参数);
+        let 工具 = MCP工具::创建("echo".to_string(), "回显工具".to_string()).添加参数(参数);
 
         let schema = 工具.转为Schema();
         assert!(schema["name"].as_str().unwrap() == "echo");
@@ -760,7 +769,8 @@ mod tests {
             "写作助手".to_string(),
             "帮助写作".to_string(),
             "请写一篇关于{主题}的文章".to_string(),
-        ).添加参数(参数);
+        )
+        .添加参数(参数);
 
         let mut 参数map = HashMap::new();
         参数map.insert("主题".to_string(), "AI".to_string());

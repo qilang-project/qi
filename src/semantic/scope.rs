@@ -1,7 +1,7 @@
 //! Scope management for Qi language
 
-use crate::semantic::symbol_table::Symbol;
 use crate::lexer::Span;
+use crate::semantic::symbol_table::Symbol;
 
 /// Scope manager
 pub struct ScopeManager {
@@ -20,10 +20,7 @@ pub struct Scope {
 
 impl ScopeManager {
     pub fn new() -> Self {
-        Self {
-            scopes: vec![Scope::new_global()],
-            current_scope: 0,
-        }
+        Self { scopes: vec![Scope::new_global()], current_scope: 0 }
     }
 
     pub fn enter_scope(&mut self, span: Span) {
@@ -61,8 +58,7 @@ impl ScopeManager {
 
         loop {
             if let Some(scope) = self.scopes.get(current_scope) {
-                if let Some(symbol) = scope.symbols.iter()
-                    .find(|sym| sym.name == name) {
+                if let Some(symbol) = scope.symbols.iter().find(|sym| sym.name == name) {
                     return Some(symbol);
                 }
             }

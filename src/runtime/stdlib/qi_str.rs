@@ -80,17 +80,11 @@ pub fn alloc_owned(data: &[u8]) -> QiStr {
             std::alloc::handle_alloc_error(layout);
         }
         // 写 header
-        (raw as *mut BufHeader).write(BufHeader {
-            refcount: AtomicI64::new(1),
-            capacity: data.len() as i64,
-        });
+        (raw as *mut BufHeader)
+            .write(BufHeader { refcount: AtomicI64::new(1), capacity: data.len() as i64 });
         let data_ptr = raw.add(HEADER_SIZE);
         std::ptr::copy_nonoverlapping(data.as_ptr(), data_ptr, data.len());
-        QiStr {
-            ptr: data_ptr,
-            len: data.len() as i64,
-            base: data_ptr,
-        }
+        QiStr { ptr: data_ptr, len: data.len() as i64, base: data_ptr }
     }
 }
 
@@ -103,11 +97,7 @@ pub fn clone(s: QiStr) -> QiStr {
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
-    QiStr {
-        ptr: s.ptr,
-        len: s.len,
-        base: s.base,
-    }
+    QiStr { ptr: s.ptr, len: s.len, base: s.base }
 }
 
 /// 释放：refcount--（如果 owned），归零时 free buffer。literal/borrow 时 no-op
@@ -129,11 +119,7 @@ pub fn drop_str(s: QiStr) {
 }
 
 /// 永远空的字面量字符串，base=null 不需要 free
-pub const EMPTY: QiStr = QiStr {
-    ptr: std::ptr::null(),
-    len: 0,
-    base: std::ptr::null(),
-};
+pub const EMPTY: QiStr = QiStr { ptr: std::ptr::null(), len: 0, base: std::ptr::null() };
 
 /// 从 &str 构造一个 owned QiStr（拷贝数据）
 pub fn from_str(s: &str) -> QiStr {
@@ -208,11 +194,7 @@ mod tests {
     fn substring_shares_backing() {
         let s = from_str("hello world");
         // 模拟 substring: 共享 base，refcount++
-        let sub = clone(QiStr {
-            ptr: unsafe { s.ptr.add(6) },
-            len: 5,
-            base: s.base,
-        });
+        let sub = clone(QiStr { ptr: unsafe { s.ptr.add(6) }, len: 5, base: s.base });
         assert_eq!(unsafe { as_str_unchecked(&sub) }, "world");
         // 父先 drop，sub 仍有效
         drop_str(s);
@@ -222,21 +204,13 @@ mod tests {
 
     #[test]
     fn literal_no_refcount() {
-        let lit = QiStr {
-            ptr: b"static\0".as_ptr(),
-            len: 6,
-            base: std::ptr::null(),
-        };
+        let lit = QiStr { ptr: b"static\0".as_ptr(), len: 6, base: std::ptr::null() };
         // clone / drop 都是 no-op（不动 refcount，不释放）
         let lit2 = clone(lit);
         drop_str(lit);
         drop_str(lit2);
         // 重复 drop 也安全
-        drop_str(QiStr {
-            ptr: b"x".as_ptr(),
-            len: 1,
-            base: std::ptr::null(),
-        });
+        drop_str(QiStr { ptr: b"x".as_ptr(), len: 1, base: std::ptr::null() });
     }
 
     #[test]

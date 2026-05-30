@@ -3,8 +3,8 @@
 //! This module provides comprehensive error handling with context tracking,
 //! recovery strategies, and Chinese language support.
 
-use std::collections::HashMap;
 use super::{Error, ErrorSeverity, ErrorStatistics, StackFrame};
+use std::collections::HashMap;
 
 /// Error context information
 #[derive(Debug, Clone)]
@@ -265,12 +265,13 @@ impl ErrorHandler {
         use std::fs::OpenOptions;
         use std::io::Write;
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
-        let log_entry = format!("{}\n{}\n", context.timestamp.elapsed().unwrap_or_default().as_secs(), context.format());
+        let log_entry = format!(
+            "{}\n{}\n",
+            context.timestamp.elapsed().unwrap_or_default().as_secs(),
+            context.format()
+        );
         file.write_all(log_entry.as_bytes())?;
         file.flush()?;
 

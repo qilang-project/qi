@@ -4,19 +4,18 @@
 
 #![allow(non_snake_case)]
 
+use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::raw::c_char;
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::HashMap;
 use std::sync::mpsc;
-use serde_json::{json, Value as JsonValue};
+use std::sync::{Mutex, OnceLock};
 
 use super::mcp::{
-    MCP服务器模块, MCP服务器, MCP工具, MCP资源, MCP提示,
-    资源类型, MCP服务器配置, 工具参数,
+    MCP工具, MCP提示, MCP服务器, MCP服务器模块, MCP服务器配置, MCP资源, 工具参数, 资源类型,
 };
 
 // MCP 服务器池
@@ -118,10 +117,7 @@ pub extern "C" fn qi_mcp_create_server(
         };
 
         let 配置 = MCP服务器配置 {
-            名称,
-            版本,
-            描述,
-            协议版本: "2025-06-18".to_string(),
+            名称, 版本, 描述, 协议版本: "2025-06-18".to_string()
         };
 
         let 模块 = MCP服务器模块::创建();
@@ -160,7 +156,9 @@ pub extern "C" fn qi_mcp_register_tool(
 
     unsafe {
         let 名称 = CStr::from_ptr(tool_name).to_string_lossy().to_string();
-        let 描述 = CStr::from_ptr(tool_description).to_string_lossy().to_string();
+        let 描述 = CStr::from_ptr(tool_description)
+            .to_string_lossy()
+            .to_string();
 
         let 工具 = MCP工具::创建(名称, 描述);
 
@@ -198,7 +196,11 @@ pub extern "C" fn qi_mcp_add_tool_parameter(
     param_description: *const c_char,
     required: i32,
 ) -> i32 {
-    if tool_name.is_null() || param_name.is_null() || param_type.is_null() || param_description.is_null() {
+    if tool_name.is_null()
+        || param_name.is_null()
+        || param_type.is_null()
+        || param_description.is_null()
+    {
         return -1;
     }
 
@@ -206,7 +208,9 @@ pub extern "C" fn qi_mcp_add_tool_parameter(
         let 工具名 = CStr::from_ptr(tool_name).to_string_lossy().to_string();
         let 参数名 = CStr::from_ptr(param_name).to_string_lossy().to_string();
         let 参数类型 = CStr::from_ptr(param_type).to_string_lossy().to_string();
-        let 参数描述 = CStr::from_ptr(param_description).to_string_lossy().to_string();
+        let 参数描述 = CStr::from_ptr(param_description)
+            .to_string_lossy()
+            .to_string();
         let 是否必需 = required != 0;
 
         let 参数 = 工具参数::创建(参数名, 参数类型, 参数描述, 是否必需);
@@ -248,7 +252,9 @@ pub extern "C" fn qi_mcp_register_resource(
     unsafe {
         let uri = CStr::from_ptr(resource_uri).to_string_lossy().to_string();
         let 名称 = CStr::from_ptr(resource_name).to_string_lossy().to_string();
-        let 描述 = CStr::from_ptr(resource_description).to_string_lossy().to_string();
+        let 描述 = CStr::from_ptr(resource_description)
+            .to_string_lossy()
+            .to_string();
 
         let 类型 = match resource_type {
             0 => 资源类型::文本,
@@ -293,8 +299,12 @@ pub extern "C" fn qi_mcp_register_prompt(
 
     unsafe {
         let 名称 = CStr::from_ptr(prompt_name).to_string_lossy().to_string();
-        let 描述 = CStr::from_ptr(prompt_description).to_string_lossy().to_string();
-        let 模板 = CStr::from_ptr(prompt_template).to_string_lossy().to_string();
+        let 描述 = CStr::from_ptr(prompt_description)
+            .to_string_lossy()
+            .to_string();
+        let 模板 = CStr::from_ptr(prompt_template)
+            .to_string_lossy()
+            .to_string();
 
         let 提示 = MCP提示::创建(名称, 描述, 模板);
 
@@ -657,9 +667,9 @@ pub extern "C" fn qi_mcp_read_resource_text(
         let 服务器池 = 获取服务器池().lock().unwrap();
         if let Some(服务器) = 服务器池.get(&server_id) {
             match 服务器.读取资源文本(&uri) {
-                Ok(text) => {
-                    CString::new(text).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
-                },
+                Ok(text) => CString::new(text)
+                    .unwrap_or_else(|_| CString::new("").unwrap())
+                    .into_raw(),
                 Err(_) => std::ptr::null_mut(),
             }
         } else {
@@ -693,8 +703,10 @@ pub extern "C" fn qi_mcp_read_resource_json(
             match 服务器.读取资源JSON(&uri) {
                 Ok(json) => {
                     let json_str = json.to_string();
-                    CString::new(json_str).unwrap_or_else(|_| CString::new("{}").unwrap()).into_raw()
-                },
+                    CString::new(json_str)
+                        .unwrap_or_else(|_| CString::new("{}").unwrap())
+                        .into_raw()
+                }
                 Err(_) => std::ptr::null_mut(),
             }
         } else {
@@ -923,7 +935,8 @@ fn 生成会话id() -> String {
 /// 返回 (method, path, body_bytes)
 fn parse_http_request(buf: &[u8]) -> Option<(String, String, Vec<u8>)> {
     // 找头/体分割
-    let header_end = buf.windows(4)
+    let header_end = buf
+        .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map(|p| (p, p + 4))
         .or_else(|| {
@@ -941,7 +954,8 @@ fn parse_http_request(buf: &[u8]) -> Option<(String, String, Vec<u8>)> {
     let path = parts.next()?.to_string();
 
     // Content-Length
-    let content_length: usize = header_str.lines()
+    let content_length: usize = header_str
+        .lines()
         .find(|l| l.to_lowercase().starts_with("content-length:"))
         .and_then(|l| l.splitn(2, ':').nth(1))
         .and_then(|v| v.trim().parse().ok())
@@ -974,7 +988,8 @@ fn extract_header<'a>(header_text: &'a str, name: &str) -> Option<&'a str> {
 
 /// 从原始 HTTP 请求字节中提取头部文本
 fn extract_headers_text(buf: &[u8]) -> String {
-    let end = buf.windows(4)
+    let end = buf
+        .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .or_else(|| buf.windows(2).position(|w| w == b"\n\n"))
         .unwrap_or(buf.len());
@@ -1017,22 +1032,22 @@ fn send_202(stream: &mut TcpStream, session_id: &str) {
 
 /// 发送 405 Method Not Allowed
 fn send_405(stream: &mut TcpStream) {
-    let _ = stream.write_all(
-        b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n"
-    );
+    let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
     let _ = stream.flush();
 }
 
 /// 发送 404 Not Found
 fn send_404(stream: &mut TcpStream) {
-    let _ = stream.write_all(
-        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
-    );
+    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
     let _ = stream.flush();
 }
 
 /// 处理单个 HTTP 连接（在调用线程上同步执行）
-fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registry: &Mutex<HashMap<String, bool>>) {
+fn handle_http_connection(
+    server_id: i64,
+    mut stream: TcpStream,
+    session_registry: &Mutex<HashMap<String, bool>>,
+) {
     // 读取请求（最多 64 KB）
     let mut buf = vec![0u8; 65536];
     let mut total = 0usize;
@@ -1048,10 +1063,16 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
                 let content_length: usize = extract_header(&hdr_text, "content-length")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0);
-                let header_end = buf[..total].windows(4)
+                let header_end = buf[..total]
+                    .windows(4)
                     .position(|w| w == b"\r\n\r\n")
                     .map(|p| p + 4)
-                    .or_else(|| buf[..total].windows(2).position(|w| w == b"\n\n").map(|p| p + 2));
+                    .or_else(|| {
+                        buf[..total]
+                            .windows(2)
+                            .position(|w| w == b"\n\n")
+                            .map(|p| p + 2)
+                    });
                 if let Some(body_start) = header_end {
                     if total >= body_start + content_length {
                         break;
@@ -1138,9 +1159,7 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
             match rx.recv_timeout(std::time::Duration::from_secs(15)) {
                 Ok(data) => {
                     let chunk = format!("{:x}\r\n{}\r\n", data.len(), data);
-                    if stream.write_all(chunk.as_bytes()).is_err()
-                        || stream.flush().is_err()
-                    {
+                    if stream.write_all(chunk.as_bytes()).is_err() || stream.flush().is_err() {
                         eprintln!("[qi-mcp-http] SSE 客户端断开 session={}", session_id_get);
                         break;
                     }
@@ -1149,9 +1168,7 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
                     // 发送 keep-alive
                     let ka2 = ": keep-alive\n\n";
                     let chunk2 = format!("{:x}\r\n{}\r\n", ka2.len(), ka2);
-                    if stream.write_all(chunk2.as_bytes()).is_err()
-                        || stream.flush().is_err()
-                    {
+                    if stream.write_all(chunk2.as_bytes()).is_err() || stream.flush().is_err() {
                         break;
                     }
                 }
@@ -1177,8 +1194,7 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
 
     // Extract or assign session ID
     let header_text = extract_headers_text(&buf[..total]);
-    let incoming_session = extract_header(&header_text, "mcp-session-id")
-        .map(|s| s.to_string());
+    let incoming_session = extract_header(&header_text, "mcp-session-id").map(|s| s.to_string());
 
     let session_id = incoming_session.unwrap_or_else(|| 生成会话id());
 
@@ -1253,11 +1269,7 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
 ///
 /// 返回: 0 正常退出, -1 服务器不存在, -2 bind 失败
 #[no_mangle]
-pub extern "C" fn qi_mcp_serve_http(
-    server_id: i64,
-    host: *const c_char,
-    port: i64,
-) -> i32 {
+pub extern "C" fn qi_mcp_serve_http(server_id: i64, host: *const c_char, port: i64) -> i32 {
     // 验证服务器存在
     {
         let 服务器池 = 获取服务器池().lock().unwrap();
@@ -1283,7 +1295,10 @@ pub extern "C" fn qi_mcp_serve_http(
         }
     };
 
-    eprintln!("[qi-mcp-http] HTTP MCP 服务器启动 http://{}:{}/mcp (server_id={})", bind_host, bind_port, server_id);
+    eprintln!(
+        "[qi-mcp-http] HTTP MCP 服务器启动 http://{}:{}/mcp (server_id={})",
+        bind_host, bind_port, server_id
+    );
 
     // 会话注册表（Arc<Mutex<...>> 以便跨线程共享）
     let session_registry = std::sync::Arc::new(Mutex::new(HashMap::<String, bool>::new()));
@@ -1309,7 +1324,12 @@ pub extern "C" fn qi_mcp_serve_http(
 }
 
 /// 处理单个 JSON-RPC 2.0 请求，返回响应 JSON (None = no response)
-fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<JsonValue>) -> Option<JsonValue> {
+fn handle_request(
+    server_id: i64,
+    method: &str,
+    params: &JsonValue,
+    id: &Option<JsonValue>,
+) -> Option<JsonValue> {
     let id_val = id.as_ref().unwrap(); // safe: caller checked
 
     match method {
@@ -1326,7 +1346,10 @@ fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<
                 caps.insert("tools".to_string(), json!({"listChanged": true}));
             }
             if has_resources {
-                caps.insert("resources".to_string(), json!({"listChanged": true, "subscribe": false}));
+                caps.insert(
+                    "resources".to_string(),
+                    json!({"listChanged": true, "subscribe": false}),
+                );
             }
             if has_prompts {
                 caps.insert("prompts".to_string(), json!({"listChanged": true}));
@@ -1352,13 +1375,11 @@ fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<
             }))
         }
 
-        "ping" => {
-            Some(json!({
-                "jsonrpc": "2.0",
-                "id": id_val,
-                "result": {}
-            }))
-        }
+        "ping" => Some(json!({
+            "jsonrpc": "2.0",
+            "id": id_val,
+            "result": {}
+        })),
 
         "tools/list" => {
             let 服务器池 = 获取服务器池().lock().unwrap();
@@ -1511,7 +1532,8 @@ fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<
 
         // P2: logging/setLevel — store level on server, respond {}
         "logging/setLevel" => {
-            let level = params.get("level")
+            let level = params
+                .get("level")
                 .and_then(|l| l.as_str())
                 .unwrap_or("info")
                 .to_string();
@@ -1581,13 +1603,15 @@ fn invoke_tool(server_id: i64, tool_name: &str, arguments: &JsonValue) -> Result
             // 从闭包对象的 offset 0 读出 trampoline 函数指针
             let obj_ptr = obj_addr as *const *const std::ffi::c_void;
             let trampoline_raw = *obj_ptr;
-            eprintln!("[qi-mcp] 调用 Qi 工具回调: obj=0x{:x} trampoline=0x{:x}",
-                obj_addr, trampoline_raw as usize);
+            eprintln!(
+                "[qi-mcp] 调用 Qi 工具回调: obj=0x{:x} trampoline=0x{:x}",
+                obj_addr, trampoline_raw as usize
+            );
 
             // trampoline ABI: fn(env: *const c_void, args: *const c_char) -> *mut c_char
             let trampoline = std::mem::transmute::<
                 *const std::ffi::c_void,
-                extern "C" fn(*const std::ffi::c_void, *const c_char) -> *mut c_char
+                extern "C" fn(*const std::ffi::c_void, *const c_char) -> *mut c_char,
             >(trampoline_raw);
 
             let env_ptr = obj_addr as *const std::ffi::c_void;
@@ -1598,9 +1622,7 @@ fn invoke_tool(server_id: i64, tool_name: &str, arguments: &JsonValue) -> Result
             return Ok("null".to_string());
         }
 
-        let result_str = unsafe {
-            CStr::from_ptr(result_ptr).to_string_lossy().to_string()
-        };
+        let result_str = unsafe { CStr::from_ptr(result_ptr).to_string_lossy().to_string() };
 
         // NOTE: Do NOT free result_ptr here.
         // Qi runtime strings are managed by the Qi GC/allocator;
@@ -1803,11 +1825,7 @@ mod tests {
         let 版本 = CString::new("1.0.0").unwrap();
         let 描述 = CString::new("测试描述").unwrap();
 
-        let 服务器ID = qi_mcp_create_server(
-            名称.as_ptr(),
-            版本.as_ptr(),
-            描述.as_ptr(),
-        );
+        let 服务器ID = qi_mcp_create_server(名称.as_ptr(), 版本.as_ptr(), 描述.as_ptr());
 
         assert!(服务器ID > 0);
 
@@ -1821,20 +1839,12 @@ mod tests {
         let 版本 = CString::new("1.0.0").unwrap();
         let 描述 = CString::new("").unwrap();
 
-        let 服务器ID = qi_mcp_create_server(
-            名称.as_ptr(),
-            版本.as_ptr(),
-            描述.as_ptr(),
-        );
+        let 服务器ID = qi_mcp_create_server(名称.as_ptr(), 版本.as_ptr(), 描述.as_ptr());
 
         let 工具名 = CString::new("echo").unwrap();
         let 工具描述 = CString::new("回显工具").unwrap();
 
-        let 结果 = qi_mcp_register_tool(
-            服务器ID,
-            工具名.as_ptr(),
-            工具描述.as_ptr(),
-        );
+        let 结果 = qi_mcp_register_tool(服务器ID, 工具名.as_ptr(), 工具描述.as_ptr());
 
         assert_eq!(结果, 0);
 
@@ -1848,11 +1858,7 @@ mod tests {
         let 版本 = CString::new("1.0.0").unwrap();
         let 描述 = CString::new("").unwrap();
 
-        let 服务器ID = qi_mcp_create_server(
-            名称.as_ptr(),
-            版本.as_ptr(),
-            描述.as_ptr(),
-        );
+        let 服务器ID = qi_mcp_create_server(名称.as_ptr(), 版本.as_ptr(), 描述.as_ptr());
 
         // 启动服务器
         let 启动结果 = qi_mcp_start_server(服务器ID);
