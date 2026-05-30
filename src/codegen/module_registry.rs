@@ -3127,7 +3127,7 @@ impl ModuleRegistry {
         let mut m = Module::new("子进程");
 
         m.add_function(ModuleFunction::new(
-            "启动",
+            "生成",
             "qi_subprocess_spawn",
             vec!["字符串".to_string(), "字符串".to_string()], // 命令, 参数JSON
             "i64",
