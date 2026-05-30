@@ -399,30 +399,52 @@ pub extern "C" fn qi_runtime_channel_send(channel: *mut c_void, value: i64) -> i
     // Box the i64 value to send through the channel
     let value_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
 
-    if let Some(registry) = CHANNEL_REGISTRY.get() {
-        if let Ok(registry_guard) = registry.lock() {
-            if let Some(channel_instance) = registry_guard.get(&channel_id) {
-                if let Ok(sender) = channel_instance.sender.lock() {
-                    if let Err(_) = sender.send(value_ptr) {
-                        if debug_enabled() {
-                            eprintln!("DEBUG: Failed to send value to channel - channel might be closed");
-                        }
-                        // Clean up the boxed value on error
-                        unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
-                        return -1;
-                    }
-                    if debug_enabled() {
-                        eprintln!("DEBUG: Successfully sent value to channel");
-                    }
-                    return 0; // Success
-                }
-            } else {
+    // Clone the Arc out and drop the registry lock before touching the sender, so
+    // a send never contends with a blocking recv() (which holds only the per-channel
+    // receiver mutex, not the registry).
+    let channel_instance = {
+        let registry = match CHANNEL_REGISTRY.get() {
+            Some(r) => r,
+            None => {
+                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                return -1;
+            }
+        };
+        let registry_guard = match registry.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                return -1;
+            }
+        };
+        match registry_guard.get(&channel_id) {
+            Some(inst) => Arc::clone(inst),
+            None => {
                 if debug_enabled() {
                     eprintln!("DEBUG: Channel not found for ID {}", channel_id);
                 }
+                unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+                return -1;
             }
         }
+        // registry_guard dropped here
+    };
+
+    if let Ok(sender) = channel_instance.sender.lock() {
+        if sender.send(value_ptr).is_err() {
+            if debug_enabled() {
+                eprintln!("DEBUG: Failed to send value to channel - channel might be closed");
+            }
+            // Clean up the boxed value on error
+            unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
+            return -1;
+        }
+        if debug_enabled() {
+            eprintln!("DEBUG: Successfully sent value to channel");
+        }
+        return 0; // Success
     }
+    unsafe { let _ = Box::from_raw(value_ptr as *mut i64); }
     -1 // Error
 }
 
@@ -437,38 +459,56 @@ pub extern "C" fn qi_runtime_channel_receive(channel: *mut c_void, result_ptr: *
 
     let channel_id = channel as u64;
 
-    if let Some(registry) = CHANNEL_REGISTRY.get() {
-        if let Ok(registry_guard) = registry.lock() {
-            if let Some(channel_instance) = registry_guard.get(&channel_id) {
-                if let Ok(receiver) = channel_instance.receiver.lock() {
-                    match receiver.recv() {
-                        Ok(value_ptr) => {
-                            if debug_enabled() {
-                                eprintln!("DEBUG: Received value_ptr {:?} from channel", value_ptr);
-                            }
-                            // Write the received pointer to the output parameter
-                            unsafe {
-                                *result_ptr = value_ptr;
-                            }
-                            return 0; // Success
-                        }
-                        Err(_) => {
-                            if debug_enabled() {
-                                eprintln!("DEBUG: Failed to receive value from channel - channel might be closed");
-                            }
-                            return -1; // Error
-                        }
-                    }
-                }
-            } else {
+    // IMPORTANT: clone the Arc<ChannelInstance> out of the registry and DROP the
+    // registry lock BEFORE the blocking `recv()`. Holding the global
+    // CHANNEL_REGISTRY mutex across a blocking recv() deadlocks: a goroutine doing
+    // `qi_runtime_channel_send` must also lock the same registry to look up the
+    // channel, so it could never deliver the value, and recv() would block forever.
+    let channel_instance = {
+        let registry = match CHANNEL_REGISTRY.get() {
+            Some(r) => r,
+            None => return -1,
+        };
+        let registry_guard = match registry.lock() {
+            Ok(g) => g,
+            Err(_) => return -1,
+        };
+        match registry_guard.get(&channel_id) {
+            Some(inst) => Arc::clone(inst),
+            None => {
                 if debug_enabled() {
                     eprintln!("DEBUG: Channel not found for ID {}", channel_id);
                 }
+                return -1;
             }
         }
-    }
+        // registry_guard dropped here
+    };
 
-    -1 // Error
+    // Lock only the channel's own receiver mutex (independent of the sender mutex),
+    // so a concurrent send can proceed and unblock this recv().
+    let receiver = match channel_instance.receiver.lock() {
+        Ok(r) => r,
+        Err(_) => return -1,
+    };
+    match receiver.recv() {
+        Ok(value_ptr) => {
+            if debug_enabled() {
+                eprintln!("DEBUG: Received value_ptr {:?} from channel", value_ptr);
+            }
+            // Write the received pointer to the output parameter
+            unsafe {
+                *result_ptr = value_ptr;
+            }
+            0 // Success
+        }
+        Err(_) => {
+            if debug_enabled() {
+                eprintln!("DEBUG: Failed to receive value from channel - channel might be closed");
+            }
+            -1 // Error
+        }
+    }
 }
 
 /// Try to receive a value from a channel WITHOUT blocking.

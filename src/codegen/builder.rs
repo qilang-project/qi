@@ -7864,34 +7864,32 @@ impl IrBuilder {
 
                 Ok(temp)
             }
-            AstNode::标识符表达式(ident_expr) => {
-                // For identifiers, we need to load the value and ensure it's a pointer
-                let var_name = format!("%{}", ident_expr.name);
-                let temp = self.generate_temp();
+            AstNode::标识符表达式(_) => {
+                // Resolve the identifier through the normal expression path so that
+                // PARAMETERS (already an i64 value register, name-mangled — e.g. a
+                // 通道<整数> worker's `编号` param) are used directly, while LOCAL
+                // variables get a proper load and GLOBALS resolve to @-symbols.
+                // The previous code naively emitted `load i64, ptr %<raw-name>`,
+                // which produced invalid IR for parameters (unmangled name + an i64
+                // value treated as a pointer) and broke any goroutine/channel
+                // function that sends a parameter value.
+                let value = self.build_node(expr)?;
 
-                // Load the value from the variable
-                self.add_instruction(IrInstruction::加载 {
-                    dest: temp.clone(),
-                    source: var_name.clone(),
-                    load_type: None,
-                });
+                // 通道发送 expects a pointer-to-storage it can `load i64` from, so
+                // box the resolved i64 value into a fresh alloca and hand that back.
+                let var_type = self
+                    .infer_ir_value_type(&value)
+                    .unwrap_or_else(|| "i64".to_string());
 
-                // Allocate storage for the value copy
                 let temp_copy = self.generate_temp();
-                let var_type = self.variable_types.get(&ident_expr.name)
-                    .unwrap_or(&"i64".to_string())
-                    .clone();
-
                 self.add_instruction(IrInstruction::分配 {
                     dest: temp_copy.clone(),
-                    type_name: var_type,
+                    type_name: var_type.clone(),
                 });
-
-                // Store the loaded value
                 self.add_instruction(IrInstruction::存储 {
                     target: temp_copy.clone(),
-                    value: temp,
-                    value_type: None,
+                    value,
+                    value_type: Some(var_type),
                 });
 
                 Ok(temp_copy)
