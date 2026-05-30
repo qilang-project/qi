@@ -144,6 +144,7 @@ impl ModuleRegistry {
         self.register_database_module();
         self.register_web_runtime_module();
         self.register_tls_module();
+        self.register_sync_module();
     }
 
     fn register_tls_module(&mut self) {
@@ -3525,6 +3526,84 @@ impl ModuleRegistry {
 
         self.modules.insert("数据库".to_string(), db_module.clone());
         self.modules.insert("标准库.数据库".to_string(), db_module);
+    }
+
+    /// 注册同步原语模块（标准库.同步）
+    fn register_sync_module(&mut self) {
+        let mut m = Module::new("同步");
+
+        // ── 互斥锁 ──────────────────────────────────────────────────
+        m.add_function(ModuleFunction::new(
+            "创建锁",
+            "qi_sync_mutex_create",
+            vec![],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "加锁",
+            "qi_sync_mutex_lock",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "解锁",
+            "qi_sync_mutex_unlock",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "尝试加锁",
+            "qi_sync_mutex_trylock",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "销毁锁",
+            "qi_sync_mutex_destroy",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+
+        // ── 原子整数 ─────────────────────────────────────────────────
+        m.add_function(ModuleFunction::new(
+            "创建原子",
+            "qi_sync_atomic_create",
+            vec!["i64".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "读原子",
+            "qi_sync_atomic_load",
+            vec!["i64".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "写原子",
+            "qi_sync_atomic_store",
+            vec!["i64".to_string(), "i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "原子加",
+            "qi_sync_atomic_add",
+            vec!["i64".to_string(), "i64".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "原子比较交换",
+            "qi_sync_atomic_cas",
+            vec!["i64".to_string(), "i64".to_string(), "i64".to_string()],
+            "i32",
+        ));
+        m.add_function(ModuleFunction::new(
+            "销毁原子",
+            "qi_sync_atomic_destroy",
+            vec!["i64".to_string()],
+            "i32",
+        ));
+
+        self.modules.insert("同步".to_string(), m.clone());
+        self.modules.insert("标准库.同步".to_string(), m);
     }
 }
 

@@ -1036,6 +1036,21 @@ impl IrBuilder {
         self.external_functions.insert("qi_datetime_sleep_seconds".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_sleep_micros".to_string(), (vec!["i64".to_string()], "void".to_string()));
         self.external_functions.insert("qi_datetime_now_millis".to_string(), (vec![], "i64".to_string()));
+
+        // 同步原语 (标准库.同步) — 互斥锁
+        self.external_functions.insert("qi_sync_mutex_create".to_string(), (vec![], "i64".to_string()));
+        self.external_functions.insert("qi_sync_mutex_lock".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_sync_mutex_unlock".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_sync_mutex_trylock".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_sync_mutex_destroy".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+        // 同步原语 (标准库.同步) — 原子整数
+        self.external_functions.insert("qi_sync_atomic_create".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_sync_atomic_load".to_string(), (vec!["i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_sync_atomic_store".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_sync_atomic_add".to_string(), (vec!["i64".to_string(), "i64".to_string()], "i64".to_string()));
+        self.external_functions.insert("qi_sync_atomic_cas".to_string(), (vec!["i64".to_string(), "i64".to_string(), "i64".to_string()], "i32".to_string()));
+        self.external_functions.insert("qi_sync_atomic_destroy".to_string(), (vec!["i64".to_string()], "i32".to_string()));
+
         self
     }
 
@@ -8101,6 +8116,21 @@ impl IrBuilder {
         ir.push_str("declare void @qi_subprocess_free_string(ptr)\n");
         ir.push_str("\n");
 
+        // Sync primitives (标准库.同步) — mutex + atomic i64
+        ir.push_str("; Sync primitives (标准库.同步)\n");
+        ir.push_str("declare i64 @qi_sync_mutex_create()\n");
+        ir.push_str("declare i32 @qi_sync_mutex_lock(i64)\n");
+        ir.push_str("declare i32 @qi_sync_mutex_unlock(i64)\n");
+        ir.push_str("declare i32 @qi_sync_mutex_trylock(i64)\n");
+        ir.push_str("declare i32 @qi_sync_mutex_destroy(i64)\n");
+        ir.push_str("declare i64 @qi_sync_atomic_create(i64)\n");
+        ir.push_str("declare i64 @qi_sync_atomic_load(i64)\n");
+        ir.push_str("declare i32 @qi_sync_atomic_store(i64, i64)\n");
+        ir.push_str("declare i64 @qi_sync_atomic_add(i64, i64)\n");
+        ir.push_str("declare i32 @qi_sync_atomic_cas(i64, i64, i64)\n");
+        ir.push_str("declare i32 @qi_sync_atomic_destroy(i64)\n");
+        ir.push_str("\n");
+
         // MCP Client core functions (标准库.MCP客户端)
         ir.push_str("; MCP Client core (标准库.MCP客户端)\n");
         ir.push_str("declare i64 @qi_mcpc_connect_stdio(ptr, ptr)\n");
@@ -8536,7 +8566,16 @@ impl IrBuilder {
             // Multipart module
             "qi_multipart_parse", "qi_multipart_extract_boundary", "qi_multipart_count",
             "qi_multipart_name", "qi_multipart_filename", "qi_multipart_content_type",
-            "qi_multipart_body", "qi_multipart_free"
+            "qi_multipart_body", "qi_multipart_free",
+            // Sync primitives — 互斥锁 + 原子整数 (declared in emit_llvm_ir)
+            "qi_sync_mutex_create", "qi_sync_mutex_lock", "qi_sync_mutex_unlock",
+            "qi_sync_mutex_trylock", "qi_sync_mutex_destroy",
+            "qi_sync_atomic_create", "qi_sync_atomic_load", "qi_sync_atomic_store",
+            "qi_sync_atomic_add", "qi_sync_atomic_cas", "qi_sync_atomic_destroy",
+            // Subprocess functions (declared in emit_llvm_ir)
+            "qi_subprocess_spawn", "qi_subprocess_write_line", "qi_subprocess_read_line",
+            "qi_subprocess_read_line_timeout", "qi_subprocess_is_alive", "qi_subprocess_terminate",
+            "qi_subprocess_free_string"
         ]);
 
         if !self.external_functions.is_empty() {
