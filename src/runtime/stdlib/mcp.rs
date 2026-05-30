@@ -87,8 +87,12 @@ pub struct MCP工具 {
     pub 参数列表: Vec<工具参数>,
     /// 工具实现函数 (参数 -> 结果)
     pub 执行函数: Option<fn(&HashMap<String, JsonValue>) -> MCP结果<JsonValue>>,
-    /// 工具回调ID (用于从Qi语言层设置回调)
+    /// 工具回调ID (用于从Qi语言层设置回调, 旧字符串方式)
     pub 回调ID: Option<String>,
+    /// 工具回调闭包对象指针 (Qi 闭包对象地址, 用于stdio服务器直接调用)
+    /// 对象布局: [fn_ptr_at_offset_0, env_slots...]
+    /// 调用: trampoline(env=obj_ptr, args_json) → result_str
+    pub 回调指针: Option<usize>,
 }
 
 impl std::fmt::Debug for MCP工具 {
@@ -99,6 +103,7 @@ impl std::fmt::Debug for MCP工具 {
             .field("参数列表", &self.参数列表)
             .field("执行函数", &self.执行函数.is_some())
             .field("回调ID", &self.回调ID)
+            .field("回调指针", &self.回调指针)
             .finish()
     }
 }
@@ -112,12 +117,19 @@ impl MCP工具 {
             参数列表: Vec::new(),
             执行函数: None,
             回调ID: None,
+            回调指针: None,
         }
     }
 
     /// 设置回调ID
     pub fn 设置回调ID(mut self, 回调ID: String) -> Self {
         self.回调ID = Some(回调ID);
+        self
+    }
+
+    /// 设置回调闭包对象指针 (Qi 闭包对象地址)
+    pub fn 设置回调指针(mut self, 指针: usize) -> Self {
+        self.回调指针 = Some(指针);
         self
     }
 
@@ -536,6 +548,15 @@ impl MCP服务器 {
             .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
 
         工具.回调ID = Some(回调ID);
+        Ok(())
+    }
+
+    /// 设置工具回调闭包对象指针 (Qi 闭包对象地址)
+    pub fn 设置工具回调指针(&mut self, 工具名: &str, 指针: usize) -> MCP结果<()> {
+        let 工具 = self.工具表.get_mut(工具名)
+            .ok_or_else(|| MCP错误::工具错误(format!("工具不存在: {}", 工具名)))?;
+
+        工具.回调指针 = Some(指针);
         Ok(())
     }
 

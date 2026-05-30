@@ -5,6 +5,7 @@
 #![allow(non_snake_case)]
 
 use std::ffi::{CStr, CString};
+use std::io::{BufRead, Write};
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
 use std::collections::HashMap;
@@ -671,6 +672,433 @@ pub extern "C" fn qi_mcp_set_tool_callback(
         } else {
             -1
         }
+    }
+}
+
+/// 设置工具回调闭包对象指针 (Qi closure 对象版本)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+/// - tool_name: 工具名称
+/// - closure_obj: Qi 闭包对象指针 (布局: [fn_ptr, env_slots...])
+///   调用时: fn_ptr(closure_obj, args_json) → result_str
+///
+/// 返回: 0 成功, -1 失败
+#[no_mangle]
+pub extern "C" fn qi_mcp_set_tool_callback_ptr(
+    server_id: i64,
+    tool_name: *const c_char,
+    closure_obj: *const std::ffi::c_void,
+) -> i32 {
+    if tool_name.is_null() || closure_obj.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        let 工具名 = CStr::from_ptr(tool_name).to_string_lossy().to_string();
+        let ptr_val = closure_obj as usize;
+
+        let mut 服务器池 = 获取服务器池().lock().unwrap();
+        if let Some(服务器) = 服务器池.get_mut(&server_id) {
+            match 服务器.设置工具回调指针(&工具名, ptr_val) {
+                Ok(_) => 0,
+                Err(_) => -1,
+            }
+        } else {
+            -1
+        }
+    }
+}
+
+/// JSON-RPC 2.0 stdio 服务器主循环
+///
+/// 从 stdin 读 newline-delimited JSON-RPC 请求，处理后写到 stdout。
+/// 所有诊断信息发往 stderr，stdout 仅走协议。
+/// 阻塞直到 stdin EOF。
+///
+/// 参数:
+/// - server_id: 服务器句柄 (需已通过 qi_mcp_create_server 创建)
+///
+/// 返回: 0 正常退出, -1 服务器不存在
+#[no_mangle]
+pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
+    // 验证服务器存在
+    {
+        let 服务器池 = 获取服务器池().lock().unwrap();
+        if !服务器池.contains_key(&server_id) {
+            eprintln!("[qi-mcp] 服务器 {} 不存在", server_id);
+            return -1;
+        }
+    }
+
+    eprintln!("[qi-mcp] stdio 服务器启动 (server_id={})", server_id);
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut reader = std::io::BufReader::new(stdin.lock());
+    let mut out = std::io::BufWriter::new(stdout.lock());
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[qi-mcp] stdin 读取错误: {}", e);
+                break;
+            }
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // 解析 JSON-RPC 2.0
+        let req: JsonValue = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[qi-mcp] JSON 解析错误: {}", e);
+                let err_resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {"code": -32700, "message": format!("Parse error: {}", e)}
+                });
+                let _ = writeln!(out, "{}", err_resp);
+                let _ = out.flush();
+                continue;
+            }
+        };
+
+        // 提取 id — notifications 无 id
+        let id = req.get("id").cloned();
+        let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+
+        eprintln!("[qi-mcp] 收到请求 method={} id={:?}", method, id);
+
+        // notifications 无需响应
+        if id.is_none() {
+            // 处理 notifications/initialized 等 — 静默忽略
+            continue;
+        }
+
+        let response = handle_request(server_id, method, &params, &id);
+
+        if let Some(resp) = response {
+            let resp_str = resp.to_string();
+            if let Err(e) = writeln!(out, "{}", resp_str) {
+                eprintln!("[qi-mcp] stdout 写入错误: {}", e);
+                break;
+            }
+            if let Err(e) = out.flush() {
+                eprintln!("[qi-mcp] stdout flush 错误: {}", e);
+                break;
+            }
+            eprintln!("[qi-mcp] 已响应 method={}", method);
+        }
+    }
+
+    eprintln!("[qi-mcp] stdio 服务器正常退出");
+    0
+}
+
+/// 处理单个 JSON-RPC 2.0 请求，返回响应 JSON (None = no response)
+fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<JsonValue>) -> Option<JsonValue> {
+    let id_val = id.as_ref().unwrap(); // safe: caller checked
+
+    match method {
+        "initialize" => {
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = 服务器池.get(&server_id)?;
+
+            let has_tools = !服务器.获取工具列表().is_empty();
+            let has_resources = !服务器.获取资源列表().is_empty();
+            let has_prompts = !服务器.获取提示列表().is_empty();
+
+            let mut caps = serde_json::Map::new();
+            if has_tools {
+                caps.insert("tools".to_string(), json!({"listChanged": false}));
+            }
+            if has_resources {
+                caps.insert("resources".to_string(), json!({"listChanged": false, "subscribe": false}));
+            }
+            if has_prompts {
+                caps.insert("prompts".to_string(), json!({"listChanged": false}));
+            }
+
+            let info = 服务器.获取服务器信息();
+            let name = info["name"].as_str().unwrap_or("Qi MCP Server");
+            let version = info["version"].as_str().unwrap_or("0.1.0");
+
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": caps,
+                    "serverInfo": {
+                        "name": name,
+                        "version": version
+                    }
+                }
+            }))
+        }
+
+        "ping" => {
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {}
+            }))
+        }
+
+        "tools/list" => {
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = match 服务器池.get(&server_id) {
+                Some(s) => s,
+                None => return Some(error_response(id_val, -32603, "Server not found")),
+            };
+            let tools = 服务器.获取工具列表();
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {"tools": tools}
+            }))
+        }
+
+        "tools/call" => {
+            let tool_name = match params.get("name").and_then(|n| n.as_str()) {
+                Some(n) => n.to_string(),
+                None => return Some(error_response(id_val, -32602, "Missing tool name")),
+            };
+            let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+
+            // Try Qi fn-ptr callback first, then fall back to Rust 执行函数
+            let result_text = invoke_tool(server_id, &tool_name, &arguments);
+
+            match result_text {
+                Ok(text) => Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {
+                        "content": [{"type": "text", "text": text}],
+                        "isError": false
+                    }
+                })),
+                Err(e) => Some(error_response(id_val, -32602, &e)),
+            }
+        }
+
+        "resources/list" => {
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = match 服务器池.get(&server_id) {
+                Some(s) => s,
+                None => return Some(error_response(id_val, -32603, "Server not found")),
+            };
+            let resources = 服务器.获取资源列表();
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {"resources": resources}
+            }))
+        }
+
+        "resources/read" => {
+            let uri = match params.get("uri").and_then(|u| u.as_str()) {
+                Some(u) => u.to_string(),
+                None => return Some(error_response(id_val, -32602, "Missing uri")),
+            };
+
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = match 服务器池.get(&server_id) {
+                Some(s) => s,
+                None => return Some(error_response(id_val, -32603, "Server not found")),
+            };
+
+            match 服务器.获取资源(&uri) {
+                Ok(res) => {
+                    let content = match &res.内容 {
+                        Some(super::mcp::资源内容::文本(t)) => json!({
+                            "uri": res.uri,
+                            "text": t,
+                            "mimeType": res.mime类型.as_deref().unwrap_or("text/plain")
+                        }),
+                        Some(super::mcp::资源内容::JSON(j)) => json!({
+                            "uri": res.uri,
+                            "text": j.to_string(),
+                            "mimeType": "application/json"
+                        }),
+                        Some(super::mcp::资源内容::二进制(b)) => {
+                            use base64::Engine;
+                            json!({
+                                "uri": res.uri,
+                                "blob": base64::engine::general_purpose::STANDARD.encode(b),
+                                "mimeType": res.mime类型.as_deref().unwrap_or("application/octet-stream")
+                            })
+                        }
+                        None => json!({"uri": res.uri, "text": "", "mimeType": "text/plain"}),
+                    };
+                    Some(json!({
+                        "jsonrpc": "2.0",
+                        "id": id_val,
+                        "result": {"contents": [content]}
+                    }))
+                }
+                Err(e) => Some(error_response(id_val, -32602, &e.to_string())),
+            }
+        }
+
+        "prompts/list" => {
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = match 服务器池.get(&server_id) {
+                Some(s) => s,
+                None => return Some(error_response(id_val, -32603, "Server not found")),
+            };
+            let prompts = 服务器.获取提示列表();
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {"prompts": prompts}
+            }))
+        }
+
+        "prompts/get" => {
+            let name = match params.get("name").and_then(|n| n.as_str()) {
+                Some(n) => n.to_string(),
+                None => return Some(error_response(id_val, -32602, "Missing prompt name")),
+            };
+            let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+
+            // Convert arguments to HashMap<String, String>
+            let mut args_map: HashMap<String, String> = HashMap::new();
+            if let Some(obj) = arguments.as_object() {
+                for (k, v) in obj {
+                    args_map.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
+                }
+            }
+
+            let 服务器池 = 获取服务器池().lock().unwrap();
+            let 服务器 = match 服务器池.get(&server_id) {
+                Some(s) => s,
+                None => return Some(error_response(id_val, -32603, "Server not found")),
+            };
+
+            match 服务器.获取提示(&name) {
+                Ok(提示) => match 提示.填充(&args_map) {
+                    Ok(filled) => Some(json!({
+                        "jsonrpc": "2.0",
+                        "id": id_val,
+                        "result": {
+                            "messages": [{
+                                "role": "user",
+                                "content": {"type": "text", "text": filled}
+                            }]
+                        }
+                    })),
+                    Err(e) => Some(error_response(id_val, -32602, &e.to_string())),
+                },
+                Err(e) => Some(error_response(id_val, -32602, &e.to_string())),
+            }
+        }
+
+        _ => {
+            eprintln!("[qi-mcp] 未知方法: {}", method);
+            Some(error_response(id_val, -32601, &format!("Method not found: {}", method)))
+        }
+    }
+}
+
+/// 构造 JSON-RPC 2.0 错误响应
+fn error_response(id: &JsonValue, code: i64, message: &str) -> JsonValue {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": code, "message": message}
+    })
+}
+
+/// 调用工具: 优先使用 Qi 闭包对象回调，其次使用 Rust 执行函数
+///
+/// Qi 闭包调用约定:
+///   1. closure_obj 是 Qi 闭包对象 (布局: [fn_ptr_at_offset_0, env_slots...])
+///   2. offset 0 存的是 trampoline 函数指针
+///   3. trampoline ABI: extern "C" fn(env: *const c_void, args_json: *const c_char) -> *mut c_char
+///   4. 调用时传 env=closure_obj, args_json=JSON字符串
+fn invoke_tool(server_id: i64, tool_name: &str, arguments: &JsonValue) -> Result<String, String> {
+    // 获取工具的回调指针 (Qi 闭包对象地址)
+    let closure_ptr = {
+        let 服务器池 = 获取服务器池().lock().unwrap();
+        if let Some(服务器) = 服务器池.get(&server_id) {
+            match 服务器.获取工具(tool_name) {
+                Ok(工具) => 工具.回调指针,
+                Err(_) => return Err(format!("Tool not found: {}", tool_name)),
+            }
+        } else {
+            return Err(format!("Server not found: {}", server_id));
+        }
+    };
+
+    if let Some(obj_addr) = closure_ptr {
+        // Qi 闭包调用约定:
+        //   obj_addr 是闭包对象地址
+        //   对象第一个 word (offset 0) 是 trampoline 函数指针
+        //   trampoline: extern "C" fn(env: *const c_void, args_json: *const c_char) -> *mut c_char
+        let args_str = arguments.to_string();
+        let c_args = match CString::new(args_str) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("Arguments encoding error: {}", e)),
+        };
+
+        let result_ptr = unsafe {
+            // 从闭包对象的 offset 0 读出 trampoline 函数指针
+            let obj_ptr = obj_addr as *const *const std::ffi::c_void;
+            let trampoline_raw = *obj_ptr;
+            eprintln!("[qi-mcp] 调用 Qi 工具回调: obj=0x{:x} trampoline=0x{:x}",
+                obj_addr, trampoline_raw as usize);
+
+            // trampoline ABI: fn(env: *const c_void, args: *const c_char) -> *mut c_char
+            let trampoline = std::mem::transmute::<
+                *const std::ffi::c_void,
+                extern "C" fn(*const std::ffi::c_void, *const c_char) -> *mut c_char
+            >(trampoline_raw);
+
+            let env_ptr = obj_addr as *const std::ffi::c_void;
+            trampoline(env_ptr, c_args.as_ptr())
+        };
+
+        if result_ptr.is_null() {
+            return Ok("null".to_string());
+        }
+
+        let result_str = unsafe {
+            CStr::from_ptr(result_ptr).to_string_lossy().to_string()
+        };
+
+        // NOTE: Do NOT free result_ptr here.
+        // Qi runtime strings are managed by the Qi GC/allocator;
+        // calling CString::from_raw would cause double-free/SIGBUS.
+
+        eprintln!("[qi-mcp] 工具回调结果: {}", result_str);
+        return Ok(result_str);
+    }
+
+    // Fall back to Rust 执行函数
+    let params_map: HashMap<String, JsonValue> = if let Some(obj) = arguments.as_object() {
+        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    } else {
+        HashMap::new()
+    };
+
+    let 服务器池 = 获取服务器池().lock().unwrap();
+    if let Some(服务器) = 服务器池.get(&server_id) {
+        match 服务器.执行工具(tool_name, &params_map) {
+            Ok(result) => Ok(result.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Err(format!("Server not found: {}", server_id))
     }
 }
 

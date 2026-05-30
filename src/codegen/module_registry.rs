@@ -2574,6 +2574,22 @@ impl ModuleRegistry {
             "i32",  // 返回状态 (FFI返回i32)
         ));
 
+        // 设置工具回调闭包对象指针 (Qi 闭包对象版本)
+        mcp_module.add_function(ModuleFunction::new(
+            "设置工具回调指针",
+            "qi_mcp_set_tool_callback_ptr",
+            vec!["整数".to_string(), "字符串".to_string(), "指针".to_string()], // 服务器ID, 工具名, Qi闭包对象指针
+            "i32",  // 返回状态 (FFI返回i32)
+        ));
+
+        // stdio JSON-RPC 2.0 服务器主循环 (阻塞直到 stdin EOF)
+        mcp_module.add_function(ModuleFunction::new(
+            "运行stdio",
+            "qi_mcp_serve_stdio",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态
+        ));
+
         // 资源内容管理
         mcp_module.add_function(ModuleFunction::new(
             "设置资源文本内容",
