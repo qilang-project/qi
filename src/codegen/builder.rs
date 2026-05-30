@@ -8029,6 +8029,12 @@ impl IrBuilder {
         ir.push_str("declare ptr @qi_mcp_list_prompts(i64)\n");
         ir.push_str("declare ptr @qi_mcp_get_prompt(i64, ptr)\n");
         ir.push_str("declare void @qi_mcp_free_string(ptr)\n");
+        // P2: 服务器→客户端推送通知
+        ir.push_str("declare i32 @qi_mcp_notify_tools_changed(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_notify_resources_changed(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_notify_prompts_changed(i64)\n");
+        ir.push_str("declare i32 @qi_mcp_log_message(i64, ptr, ptr)\n");
+        ir.push_str("declare i32 @qi_mcp_notify_progress(i64, ptr, i64, i64)\n");
         ir.push_str("\n");
 
         // Regex functions
@@ -9402,6 +9408,10 @@ impl IrBuilder {
                                 "qi_mcp_call_tool" | "qi_mcp_get_prompt" | "qi_mcp_read_resource_text" | "qi_mcp_read_resource_json" => "ptr",  // Return string
                                 "qi_mcp_create_server" => "i64",  // Return server ID
                                 "qi_mcp_free_string" => "void",  // Cleanup function
+                                // P2 notification functions return i32
+                                "qi_mcp_notify_tools_changed" | "qi_mcp_notify_resources_changed" |
+                                "qi_mcp_notify_prompts_changed" | "qi_mcp_log_message" |
+                                "qi_mcp_notify_progress" => "i32",
                                 _ => "i32"  // Most MCP functions return i32 status
                             }
                         // MCP Client core functions

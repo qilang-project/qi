@@ -11,6 +11,7 @@ use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
+use std::sync::mpsc;
 use serde_json::{json, Value as JsonValue};
 
 use super::mcp::{
@@ -21,6 +22,65 @@ use super::mcp::{
 // MCP 服务器池
 static MCP服务器池: OnceLock<Mutex<HashMap<i64, MCP服务器>>> = OnceLock::new();
 static 服务器计数器: OnceLock<Mutex<i64>> = OnceLock::new();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2: 服务器→客户端推送通道
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// stdio 写锁：serve 循环运行时安装，通知函数从此写通知行。
+/// 保护 stdout 不被并发写穿插。
+static STDIO_WRITER: OnceLock<Mutex<Option<Box<dyn Write + Send>>>> = OnceLock::new();
+
+fn 获取stdio写锁() -> &'static Mutex<Option<Box<dyn Write + Send>>> {
+    STDIO_WRITER.get_or_init(|| Mutex::new(None))
+}
+
+/// HTTP SSE 推送通道注册表：session_id → mpsc::Sender<String>
+/// 客户端 GET /mcp 时注册；连接断开时移除。
+static HTTP_SSE_CHANNELS: OnceLock<Mutex<HashMap<String, mpsc::Sender<String>>>> = OnceLock::new();
+
+fn 获取sse通道注册表() -> &'static Mutex<HashMap<String, mpsc::Sender<String>>> {
+    HTTP_SSE_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 向 stdio 客户端发送一条 JSON-RPC 通知（无 id）
+fn 发送stdio通知(notification: &JsonValue) -> bool {
+    let line = notification.to_string();
+    let mut guard = 获取stdio写锁().lock().unwrap();
+    if let Some(w) = guard.as_mut() {
+        if writeln!(w, "{}", line).is_ok() {
+            let _ = w.flush();
+            eprintln!("[qi-mcp-notify] stdio 通知已发送: {}", &line[..line.len().min(120)]);
+            return true;
+        }
+    }
+    eprintln!("[qi-mcp-notify] stdio 写锁无活跃会话，通知丢弃");
+    false
+}
+
+/// 向所有活跃 SSE 会话推送一条通知
+fn 发送http通知(notification: &JsonValue) {
+    let line = notification.to_string();
+    let sse_data = format!("event: message\ndata: {}\n\n", line);
+    let mut reg = 获取sse通道注册表().lock().unwrap();
+    let mut dead: Vec<String> = Vec::new();
+    for (sid, tx) in reg.iter() {
+        if tx.send(sse_data.clone()).is_err() {
+            dead.push(sid.clone());
+        } else {
+            eprintln!("[qi-mcp-notify] HTTP SSE 通知已推送至会话 {}", sid);
+        }
+    }
+    for sid in dead {
+        reg.remove(&sid);
+    }
+}
+
+/// 向所有传输推送通知
+fn 广播通知(notification: &JsonValue) {
+    发送stdio通知(notification);
+    发送http通知(notification);
+}
 
 fn 获取服务器池() -> &'static Mutex<HashMap<i64, MCP服务器>> {
     MCP服务器池.get_or_init(|| Mutex::new(HashMap::new()))
@@ -735,10 +795,20 @@ pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
 
     eprintln!("[qi-mcp] stdio 服务器启动 (server_id={})", server_id);
 
+    // P2: 将 stdout 安装到推送写锁中，供 qi_mcp_notify_* 使用。
+    // 注意：BufWriter<StdoutLock> 无法 'static；改为直接用 Arc<Mutex<Stdout>>
+    // 以便工具回调内（同线程）也能写通知。
+    // 实现：在 serve 循环本体里，所有写操作都通过 STDIO_WRITER 锁完成，
+    // 这样工具回调（也在此线程）同样拿锁写通知，不会穿插。
+    {
+        let mut w = 获取stdio写锁().lock().unwrap();
+        // 使用一个 channel 方式：写入 BufWriter 包装 stdout
+        // 因为 StdoutLock 有生命期限制，使用 std::io::stdout()（没有锁，每次flush前拿临时锁）
+        *w = Some(Box::new(std::io::stdout()));
+    }
+
     let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
     let mut reader = std::io::BufReader::new(stdin.lock());
-    let mut out = std::io::BufWriter::new(stdout.lock());
 
     let mut line = String::new();
     loop {
@@ -767,8 +837,14 @@ pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
                     "id": null,
                     "error": {"code": -32700, "message": format!("Parse error: {}", e)}
                 });
-                let _ = writeln!(out, "{}", err_resp);
-                let _ = out.flush();
+                let err_str = err_resp.to_string();
+                {
+                    let mut w = 获取stdio写锁().lock().unwrap();
+                    if let Some(writer) = w.as_mut() {
+                        let _ = writeln!(writer, "{}", err_str);
+                        let _ = writer.flush();
+                    }
+                }
                 continue;
             }
         };
@@ -780,9 +856,20 @@ pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
 
         eprintln!("[qi-mcp] 收到请求 method={} id={:?}", method, id);
 
-        // notifications 无需响应
+        // notifications (no id): 处理 notifications/cancelled 等, 静默忽略其他
         if id.is_none() {
-            // 处理 notifications/initialized 等 — 静默忽略
+            match method {
+                "notifications/cancelled" => {
+                    // client 取消了一个请求; 服务器忽略即可
+                    eprintln!("[qi-mcp] 收到 notifications/cancelled, 忽略");
+                }
+                "notifications/initialized" => {
+                    eprintln!("[qi-mcp] 客户端已初始化");
+                }
+                _ => {
+                    eprintln!("[qi-mcp] 收到通知 method={}, 忽略", method);
+                }
+            }
             continue;
         }
 
@@ -790,16 +877,25 @@ pub extern "C" fn qi_mcp_serve_stdio(server_id: i64) -> i32 {
 
         if let Some(resp) = response {
             let resp_str = resp.to_string();
-            if let Err(e) = writeln!(out, "{}", resp_str) {
-                eprintln!("[qi-mcp] stdout 写入错误: {}", e);
-                break;
-            }
-            if let Err(e) = out.flush() {
-                eprintln!("[qi-mcp] stdout flush 错误: {}", e);
-                break;
+            let mut w = 获取stdio写锁().lock().unwrap();
+            if let Some(writer) = w.as_mut() {
+                if let Err(e) = writeln!(writer, "{}", resp_str) {
+                    eprintln!("[qi-mcp] stdout 写入错误: {}", e);
+                    break;
+                }
+                if let Err(e) = writer.flush() {
+                    eprintln!("[qi-mcp] stdout flush 错误: {}", e);
+                    break;
+                }
             }
             eprintln!("[qi-mcp] 已响应 method={}", method);
         }
+    }
+
+    // 清理写锁
+    {
+        let mut w = 获取stdio写锁().lock().unwrap();
+        *w = None;
     }
 
     eprintln!("[qi-mcp] stdio 服务器正常退出");
@@ -995,14 +1091,82 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
         return;
     }
 
-    // GET /mcp — server-to-client SSE push channel (P2, not implemented)
-    // Return 200 with an empty SSE comment to satisfy clients that open this.
+    // GET /mcp — P2: 真实 SSE 推送通道 (server→client)
+    // 为该连接分配会话 ID，将 mpsc::Sender 注册到全局表，
+    // 然后阻塞本线程（循环读 receiver），把每条推送消息写到连接上。
     if method == "GET" {
-        eprintln!("[qi-mcp-http] GET /mcp: server→client SSE push not yet implemented (P2), returning empty SSE stream");
-        let _ = stream.write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 14\r\n\r\n: keep-alive\n\n"
+        // 读取请求头文本中的 Mcp-Session-Id（如有）
+        let header_text_get = extract_headers_text(&buf[..total]);
+        let session_id_get = extract_header(&header_text_get, "mcp-session-id")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| 生成会话id());
+
+        eprintln!("[qi-mcp-http] GET /mcp SSE 推送通道已开启, session={}", session_id_get);
+
+        // 发送 SSE 头（不含 Content-Length，chunked / keep-alive）
+        let sse_header = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: text/event-stream\r\n\
+             Cache-Control: no-cache\r\n\
+             Mcp-Session-Id: {}\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             Transfer-Encoding: chunked\r\n\
+             \r\n",
+            session_id_get
         );
+        if stream.write_all(sse_header.as_bytes()).is_err() {
+            return;
+        }
+        // 发送一个初始 keep-alive 注释
+        let ka = ": keep-alive\n\n";
+        let chunk_ka = format!("{:x}\r\n{}\r\n", ka.len(), ka);
+        let _ = stream.write_all(chunk_ka.as_bytes());
         let _ = stream.flush();
+
+        // 创建推送通道并注册
+        let (tx, rx) = mpsc::channel::<String>();
+        {
+            let mut reg = 获取sse通道注册表().lock().unwrap();
+            reg.insert(session_id_get.clone(), tx);
+        }
+
+        // 设置读超时（不支持 set_read_timeout 影响 write；只用于 keep-alive）
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+
+        // 循环把消息写出去（chunk encoding）
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                Ok(data) => {
+                    let chunk = format!("{:x}\r\n{}\r\n", data.len(), data);
+                    if stream.write_all(chunk.as_bytes()).is_err()
+                        || stream.flush().is_err()
+                    {
+                        eprintln!("[qi-mcp-http] SSE 客户端断开 session={}", session_id_get);
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // 发送 keep-alive
+                    let ka2 = ": keep-alive\n\n";
+                    let chunk2 = format!("{:x}\r\n{}\r\n", ka2.len(), ka2);
+                    if stream.write_all(chunk2.as_bytes()).is_err()
+                        || stream.flush().is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    eprintln!("[qi-mcp-http] SSE 通道已关闭 session={}", session_id_get);
+                    break;
+                }
+            }
+        }
+
+        // 清理注册表
+        {
+            let mut reg = 获取sse通道注册表().lock().unwrap();
+            reg.remove(&session_id_get);
+        }
         return;
     }
 
@@ -1060,8 +1224,11 @@ fn handle_http_connection(server_id: i64, mut stream: TcpStream, session_registr
 
     eprintln!("[qi-mcp-http] 收到请求 method={} id={:?}", method_name, id);
 
-    // notifications (no id) — 202
+    // notifications (no id) — 202 (P2: handle notifications/cancelled silently)
     if id.is_none() {
+        if method_name == "notifications/cancelled" {
+            eprintln!("[qi-mcp-http] 收到 notifications/cancelled, 忽略");
+        }
         send_202(&mut stream, &session_id);
         return;
     }
@@ -1118,13 +1285,17 @@ pub extern "C" fn qi_mcp_serve_http(
 
     eprintln!("[qi-mcp-http] HTTP MCP 服务器启动 http://{}:{}/mcp (server_id={})", bind_host, bind_port, server_id);
 
-    // 会话注册表（记录已见过的 session id）
-    let session_registry: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
+    // 会话注册表（Arc<Mutex<...>> 以便跨线程共享）
+    let session_registry = std::sync::Arc::new(Mutex::new(HashMap::<String, bool>::new()));
 
     for stream_result in listener.incoming() {
         match stream_result {
             Ok(stream) => {
-                handle_http_connection(server_id, stream, &session_registry);
+                let reg = session_registry.clone();
+                // 每个连接独立线程：使 GET /mcp SSE 长连接不阻塞后续 POST
+                std::thread::spawn(move || {
+                    handle_http_connection(server_id, stream, &reg);
+                });
             }
             Err(e) => {
                 eprintln!("[qi-mcp-http] accept 错误: {}", e);
@@ -1152,14 +1323,16 @@ fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<
 
             let mut caps = serde_json::Map::new();
             if has_tools {
-                caps.insert("tools".to_string(), json!({"listChanged": false}));
+                caps.insert("tools".to_string(), json!({"listChanged": true}));
             }
             if has_resources {
-                caps.insert("resources".to_string(), json!({"listChanged": false, "subscribe": false}));
+                caps.insert("resources".to_string(), json!({"listChanged": true, "subscribe": false}));
             }
             if has_prompts {
-                caps.insert("prompts".to_string(), json!({"listChanged": false}));
+                caps.insert("prompts".to_string(), json!({"listChanged": true}));
             }
+            // P2: advertise logging capability
+            caps.insert("logging".to_string(), json!({}));
 
             let info = 服务器.获取服务器信息();
             let name = info["name"].as_str().unwrap_or("Qi MCP Server");
@@ -1336,6 +1509,26 @@ fn handle_request(server_id: i64, method: &str, params: &JsonValue, id: &Option<
             }
         }
 
+        // P2: logging/setLevel — store level on server, respond {}
+        "logging/setLevel" => {
+            let level = params.get("level")
+                .and_then(|l| l.as_str())
+                .unwrap_or("info")
+                .to_string();
+            {
+                let mut pool = 获取服务器池().lock().unwrap();
+                if let Some(srv) = pool.get_mut(&server_id) {
+                    srv.日志级别 = level.clone();
+                }
+            }
+            eprintln!("[qi-mcp] logging/setLevel → {}", level);
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id_val,
+                "result": {}
+            }))
+        }
+
         _ => {
             eprintln!("[qi-mcp] 未知方法: {}", method);
             Some(error_response(id_val, -32601, &format!("Method not found: {}", method)))
@@ -1446,6 +1639,157 @@ pub extern "C" fn qi_mcp_free_string(s: *mut c_char) {
             let _ = CString::from_raw(s);
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2: 服务器→客户端推送通知 FFI
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 通知客户端工具列表已变更 (notifications/tools/list_changed)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+///
+/// 返回: 0 成功（服务器存在）, -1 服务器不存在
+#[no_mangle]
+pub extern "C" fn qi_mcp_notify_tools_changed(server_id: i64) -> i32 {
+    {
+        let pool = 获取服务器池().lock().unwrap();
+        if !pool.contains_key(&server_id) {
+            return -1;
+        }
+    }
+    let notif = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/tools/list_changed"
+    });
+    广播通知(&notif);
+    0
+}
+
+/// 通知客户端资源列表已变更 (notifications/resources/list_changed)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+///
+/// 返回: 0 成功, -1 服务器不存在
+#[no_mangle]
+pub extern "C" fn qi_mcp_notify_resources_changed(server_id: i64) -> i32 {
+    {
+        let pool = 获取服务器池().lock().unwrap();
+        if !pool.contains_key(&server_id) {
+            return -1;
+        }
+    }
+    let notif = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/resources/list_changed"
+    });
+    广播通知(&notif);
+    0
+}
+
+/// 通知客户端提示列表已变更 (notifications/prompts/list_changed)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+///
+/// 返回: 0 成功, -1 服务器不存在
+#[no_mangle]
+pub extern "C" fn qi_mcp_notify_prompts_changed(server_id: i64) -> i32 {
+    {
+        let pool = 获取服务器池().lock().unwrap();
+        if !pool.contains_key(&server_id) {
+            return -1;
+        }
+    }
+    let notif = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/prompts/list_changed"
+    });
+    广播通知(&notif);
+    0
+}
+
+/// 发送日志消息通知 (notifications/message)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+/// - level:     日志级别字符串 ("debug"/"info"/"notice"/"warning"/"error"/"critical"/"alert"/"emergency")
+/// - message:   日志内容
+///
+/// 返回: 0 成功, -1 服务器不存在, -2 参数错误
+#[no_mangle]
+pub extern "C" fn qi_mcp_log_message(
+    server_id: i64,
+    level: *const c_char,
+    message: *const c_char,
+) -> i32 {
+    if level.is_null() || message.is_null() {
+        return -2;
+    }
+    {
+        let pool = 获取服务器池().lock().unwrap();
+        if !pool.contains_key(&server_id) {
+            return -1;
+        }
+    }
+    let level_str = unsafe { CStr::from_ptr(level).to_string_lossy().to_string() };
+    let msg_str = unsafe { CStr::from_ptr(message).to_string_lossy().to_string() };
+
+    let notif = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+            "level": level_str,
+            "data": msg_str
+        }
+    });
+    广播通知(&notif);
+    0
+}
+
+/// 发送进度通知 (notifications/progress)
+///
+/// 参数:
+/// - server_id: 服务器句柄
+/// - token:     进度令牌 (字符串)
+/// - progress:  当前进度值 (整数)
+/// - total:     总进度值 (0 表示未知)
+///
+/// 返回: 0 成功, -1 服务器不存在, -2 参数错误
+#[no_mangle]
+pub extern "C" fn qi_mcp_notify_progress(
+    server_id: i64,
+    token: *const c_char,
+    progress: i64,
+    total: i64,
+) -> i32 {
+    if token.is_null() {
+        return -2;
+    }
+    {
+        let pool = 获取服务器池().lock().unwrap();
+        if !pool.contains_key(&server_id) {
+            return -1;
+        }
+    }
+    let token_str = unsafe { CStr::from_ptr(token).to_string_lossy().to_string() };
+
+    let mut params = serde_json::Map::new();
+    params.insert("progressToken".to_string(), json!(token_str));
+    params.insert("progress".to_string(), json!(progress));
+    if total > 0 {
+        params.insert("total".to_string(), json!(total));
+    }
+
+    let notif = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": params
+    });
+    广播通知(&notif);
+    0
 }
 
 #[cfg(test)]

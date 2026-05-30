@@ -451,6 +451,8 @@ pub struct MCP服务器 {
     提示表: HashMap<String, MCP提示>,
     /// 是否正在运行
     运行中: bool,
+    /// 当前日志级别（logging/setLevel 设置）
+    pub 日志级别: String,
 }
 
 impl MCP服务器 {
@@ -462,6 +464,7 @@ impl MCP服务器 {
             资源表: HashMap::new(),
             提示表: HashMap::new(),
             运行中: false,
+            日志级别: "info".to_string(),
         }
     }
 

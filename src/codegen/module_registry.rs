@@ -2638,6 +2638,42 @@ impl ModuleRegistry {
             "void",
         ));
 
+        // P2: 服务器→客户端推送通知
+        mcp_module.add_function(ModuleFunction::new(
+            "通知工具变更",
+            "qi_mcp_notify_tools_changed",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "通知资源变更",
+            "qi_mcp_notify_resources_changed",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "通知提示变更",
+            "qi_mcp_notify_prompts_changed",
+            vec!["整数".to_string()], // 服务器ID
+            "i32",  // 返回状态
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "日志消息",
+            "qi_mcp_log_message",
+            vec!["整数".to_string(), "字符串".to_string(), "字符串".to_string()], // 服务器ID, 级别, 消息
+            "i32",  // 返回状态
+        ));
+
+        mcp_module.add_function(ModuleFunction::new(
+            "通知进度",
+            "qi_mcp_notify_progress",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string(), "整数".to_string()], // 服务器ID, token, progress, total
+            "i32",  // 返回状态
+        ));
+
         // Register module with various names
         self.modules.insert("MCP服务器".to_string(), mcp_module.clone());
         self.modules.insert("标准库.MCP服务器".to_string(), mcp_module.clone());
