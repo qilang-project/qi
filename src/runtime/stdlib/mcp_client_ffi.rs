@@ -148,61 +148,68 @@ fn parse_sse_body(body: &str) -> String {
 // HTTP MCP 请求辅助
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ⚠️ reqwest::blocking 内部自建 tokio runtime。若在已有 tokio runtime 上下文里
+// （如 qi-web 的请求处理线程）直接调用，流式 SSE body 的阻塞读取会被打断、
+// `.text()` 返回空 body（大/流式响应尤甚，小响应碰巧在首个缓冲块里能拿到）。
+// 解决：把整个阻塞 HTTP 调用放到一个独立 OS 线程上执行，确保它没有外层 async runtime。
 fn http_post_mcp(
     base_url: &str,
     session_id: &str,
     body: &str,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    use reqwest::blocking::Client;
-
-    let client = Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("reqwest build: {}", e))?;
-
-    let mut req = client
-        .post(base_url)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json, text/event-stream")
-        .body(body.to_string());
-
-    if !session_id.is_empty() {
-        req = req.header("Mcp-Session-Id", session_id);
-    }
-
-    let resp = req.send().map_err(|e| format!("send: {}", e))?;
-    let text = resp.text().map_err(|e| format!("read body: {}", e))?;
-    Ok(text)
+    let base_url = base_url.to_string();
+    let session_id = session_id.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || -> Result<String, String> {
+        use reqwest::blocking::Client;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build()
+            .map_err(|e| format!("reqwest build: {}", e))?;
+        let mut req = client
+            .post(&base_url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(body);
+        if !session_id.is_empty() {
+            req = req.header("Mcp-Session-Id", &session_id);
+        }
+        let resp = req.send().map_err(|e| format!("send: {}", e))?;
+        resp.text().map_err(|e| format!("read body: {}", e))
+    })
+    .join()
+    .unwrap_or_else(|_| Err("http thread panicked".to_string()))
 }
 
 fn http_extract_session(base_url: &str, body: &str) -> Result<(String, String), String> {
-    use reqwest::blocking::Client;
-
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("reqwest build: {}", e))?;
-
-    let resp = client
-        .post(base_url)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json, text/event-stream")
-        .body(body.to_string())
-        .send()
-        .map_err(|e| format!("send: {}", e))?;
-
-    // 提取 Mcp-Session-Id 响应头（大小写不敏感）
-    let session_id = resp
-        .headers()
-        .get("mcp-session-id")
-        .or_else(|| resp.headers().get("Mcp-Session-Id"))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    let text = resp.text().map_err(|e| format!("read body: {}", e))?;
-    Ok((session_id, text))
+    let base_url = base_url.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || -> Result<(String, String), String> {
+        use reqwest::blocking::Client;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("reqwest build: {}", e))?;
+        let resp = client
+            .post(&base_url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(body)
+            .send()
+            .map_err(|e| format!("send: {}", e))?;
+        let session_id = resp
+            .headers()
+            .get("mcp-session-id")
+            .or_else(|| resp.headers().get("Mcp-Session-Id"))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let text = resp.text().map_err(|e| format!("read body: {}", e))?;
+        Ok((session_id, text))
+    })
+    .join()
+    .unwrap_or_else(|_| Err("http thread panicked".to_string()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -655,5 +662,58 @@ mod tests {
         // 应该返回有 result 的那一条
         assert!(out.contains("result"));
         assert!(!out.contains("notifications/progress") || out.contains("result"));
+    }
+
+    // 复现 HTTP 大 browser_evaluate（带转义引号/换行）失败。
+    // 用法：先 `npx -y @playwright/mcp@latest --port 43560`，再
+    // `QI_TEST_MCP_URL=http://localhost:43560/mcp cargo test debug_http_big_eval -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn debug_http_big_eval() {
+        use std::ffi::{CStr, CString};
+        let url = std::env::var("QI_TEST_MCP_URL").unwrap_or_default();
+        if url.is_empty() { eprintln!("跳过：未设 QI_TEST_MCP_URL"); return; }
+        let cu = CString::new(url).unwrap();
+        let conn = qi_mcpc_connect_http(cu.as_ptr());
+        eprintln!("[dbg] conn={}", conn);
+        assert!(conn > 0);
+        let method = CString::new("tools/call").unwrap();
+        let call = |p: &str| -> String {
+            let cp = CString::new(p).unwrap();
+            let r = qi_mcpc_request(conn, method.as_ptr(), cp.as_ptr());
+            unsafe { CStr::from_ptr(r).to_string_lossy().into_owned() }
+        };
+        let nav = call(r#"{"name":"browser_navigate","arguments":{"url":"https://example.com/"}}"#);
+        eprintln!("[dbg] navigate len={} head={}", nav.len(), &nav[..nav.len().min(80)]);
+        // 真实失败的那段大函数（~1.5KB），用 serde 正确转义构造 params
+        let func = r##"() => {
+  const title = document.title;
+  const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+  const h1s = document.querySelectorAll('h1').length;
+  const h2s = document.querySelectorAll('h2').length;
+  const h3s = document.querySelectorAll('h3').length;
+  const jsonlds = document.querySelectorAll('script[type="application/ld+json"]').length;
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  const ogDesc = document.querySelector('meta[property="og:description"]');
+  const ogImage = document.querySelector('meta[property="og:image"]');
+  const twitterCard = document.querySelector('meta[name="twitter:card"]');
+  const twitterTitle = document.querySelector('meta[name="twitter:title"]');
+  const twitterDesc = document.querySelector('meta[name="twitter:description"]');
+  const viewport = document.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
+  const imgs = document.querySelectorAll('img');
+  let imgsWithAlt = 0;
+  imgs.forEach(img => { if(img.getAttribute('alt') !== null && img.getAttribute('alt') !== '') imgsWithAlt++; });
+  const imgAltCoverage = imgs.length > 0 ? Math.round((imgsWithAlt / imgs.length) * 100) : 100;
+  const bodyText = document.body.innerText.replace(/\s+/g, ' ').trim();
+  const wordCount = bodyText.split(' ').filter(w => w.length > 0).length;
+  return JSON.stringify({ title, metaDescription: metaDesc, h1Count: h1s, h2Count: h2s, h3Count: h3s, jsonldCount: jsonlds, ogTitle: !!ogTitle, ogDesc: !!ogDesc, ogImage: !!ogImage, twitterCard: !!twitterCard, twitterTitle: !!twitterTitle, twitterDesc: !!twitterDesc, viewport, imgAltCoverage, wordCount });
+}"##;
+        let big = serde_json::json!({"name":"browser_evaluate","arguments":{"function": func}}).to_string();
+        eprintln!("[dbg] big params bytes={}", big.len());
+        let res = call(&big);
+        eprintln!("[dbg] BIG EVAL RESULT len={} : {}", res.len(), &res[..res.len().min(400)]);
+        // 看是否还能用（session 是否被搞坏）
+        let snap = call(r#"{"name":"browser_snapshot","arguments":{}}"#);
+        eprintln!("[dbg] snapshot-after len={} head={}", snap.len(), &snap[..snap.len().min(80)]);
     }
 }
