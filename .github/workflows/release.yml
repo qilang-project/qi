@@ -76,7 +76,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install -y llvm --version=15.0.7
+          # GitHub 的 windows runner 预装了更新的 LLVM（如 20.x），
+          # inkwell 的 llvm15-0 特性需要 LLVM 15，choco 默认拒绝降级，
+          # 故显式 --allow-downgrade --force 强制装回 15.0.7。
+          choco install -y llvm --version=15.0.7 --allow-downgrade --force
           echo "LLVM_SYS_150_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build
