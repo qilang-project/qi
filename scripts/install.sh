@@ -2,7 +2,7 @@
 # qi 一键安装脚本（macOS + Linux）
 #
 # 用法：
-#   curl -fsSL https://raw.githubusercontent.com/qilang-project/qi-compiler/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/qilang-project/qi/main/scripts/install.sh | bash
 #   # 或装到自定义目录：
 #   curl -fsSL .../install.sh | INSTALL_DIR=$HOME/bin bash
 #
@@ -13,7 +13,7 @@
 #   4. 跑 qi --version 验证
 set -euo pipefail
 
-REPO="${QI_REPO:-qilang-project/qi-compiler}"
+REPO="${QI_REPO:-qilang-project/qi}"
 VERSION="${QI_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 
