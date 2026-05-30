@@ -38,6 +38,33 @@ pub extern "C" fn qi_http_init() -> i64 {
     1  // 成功
 }
 
+/// 真实的阻塞 HTTP 请求（基于 reqwest，编译器已依赖）。
+/// 失败时返回 Err(错误信息)，调用方转成字符串返回给 Qi。
+#[allow(non_snake_case)]
+fn 执行HTTP请求(方法: reqwest::Method, 地址: &str, JSON体: Option<String>) -> Result<String, String> {
+    use reqwest::blocking::Client;
+    let 客户端 = Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("构建客户端失败: {}", e))?;
+    let mut 构建器 = 客户端.request(方法, 地址);
+    if let Some(体) = JSON体 {
+        构建器 = 构建器
+            .header("Content-Type", "application/json")
+            .body(体);
+    }
+    let 响应 = 构建器.send().map_err(|e| format!("请求失败: {}", e))?;
+    响应.text().map_err(|e| format!("读取响应失败: {}", e))
+}
+
+#[allow(non_snake_case)]
+fn 转为C字符串(文本: String) -> *mut c_char {
+    match CString::new(文本.replace('\0', "")) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// HTTP GET 请求
 /// 返回响应体字符串（需要调用 qi_http_free_string 释放）
 #[no_mangle]
@@ -48,17 +75,9 @@ pub extern "C" fn qi_http_get(url: *const c_char) -> *mut c_char {
 
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
-        let 请求 = HttpRequest::get(地址);
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::GET, &地址, None) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }
@@ -74,18 +93,9 @@ pub extern "C" fn qi_http_post(url: *const c_char, body: *const c_char) -> *mut 
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
         let 请求体 = CStr::from_ptr(body).to_string_lossy().to_string();
-
-        let 请求 = HttpRequest::post(地址, 请求体.into_bytes());
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => {
-                match 响应.body_as_string() {
-                    Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::POST, &地址, Some(请求体)) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }
