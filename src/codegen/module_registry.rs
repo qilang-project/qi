@@ -2716,6 +2716,39 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // P4b: server→client 双向（仅 stdio）
+        // 注册 sampling/createMessage 处理器（Qi 闭包对象指针）
+        m.add_function(ModuleFunction::new(
+            "设置采样处理",
+            "qi_mcpc_set_sampling_handler",
+            vec!["整数".to_string(), "指针".to_string()], // conn_id, Qi 闭包对象指针
+            "整数",
+        ));
+
+        // 注册 elicitation/create 处理器（Qi 闭包对象指针）
+        m.add_function(ModuleFunction::new(
+            "设置询问处理",
+            "qi_mcpc_set_elicitation_handler",
+            vec!["整数".to_string(), "指针".to_string()],
+            "整数",
+        ));
+
+        // 设置 roots/list 返回的 roots 数组（JSON 串）
+        m.add_function(ModuleFunction::new(
+            "设置根目录",
+            "qi_mcpc_set_roots",
+            vec!["整数".to_string(), "字符串".to_string()], // conn_id, roots_json
+            "整数",
+        ));
+
+        // 排空缓冲的 server→client 通知（JSON 数组串）
+        m.add_function(ModuleFunction::new(
+            "取通知",
+            "qi_mcpc_drain_notifications",
+            vec!["整数".to_string()], // conn_id
+            "字符串",
+        ));
+
         // 内存管理（Qi 通常不需要手动调用）
         m.add_function(ModuleFunction::new(
             "释放字符串",

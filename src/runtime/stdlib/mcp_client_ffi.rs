@@ -25,7 +25,7 @@
 
 #![allow(non_snake_case)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -38,6 +38,75 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value as Json};
 
+/// 缓冲的服务器→客户端通知上限（环形缓冲）。
+const MAX_NOTIFICATIONS: usize = 64;
+
+/// 调用 Qi 闭包：传入 params JSON 串，返回结果 JSON 串。
+///
+/// Qi 闭包调用约定（与 mcp_ffi.rs 的 invoke_tool 完全一致）：
+///   - `obj_addr` 是 Qi 闭包对象地址；
+///   - 对象 offset 0 存的是 trampoline 函数指针；
+///   - trampoline ABI: `extern "C" fn(env: *const c_void, args_json: *const c_char) -> *mut c_char`；
+///   - 调用时传 env=obj_addr, args_json=入参 JSON 串，返回结果 JSON 串。
+///
+/// 用 `usize` 存地址：闭包对象地址是 Qi GC 管理的全局，进程生命周期内有效；
+/// 跨线程（后台 reader 线程）调用与 server 侧同构。
+/// `None` 表示未注册或调用失败。
+fn invoke_qi_closure(obj_addr: usize, params_json: &str) -> Option<String> {
+    let c_args = CString::new(params_json.replace('\0', "\u{FFFD}")).ok()?;
+    let result_ptr = unsafe {
+        // 闭包对象 offset 0 = trampoline 函数指针
+        let obj_ptr = obj_addr as *const *const std::ffi::c_void;
+        let trampoline_raw = *obj_ptr;
+        if trampoline_raw.is_null() {
+            return None;
+        }
+        let trampoline = std::mem::transmute::<
+            *const std::ffi::c_void,
+            extern "C" fn(*const std::ffi::c_void, *const c_char) -> *mut c_char,
+        >(trampoline_raw);
+        let env_ptr = obj_addr as *const std::ffi::c_void;
+        trampoline(env_ptr, c_args.as_ptr())
+    };
+    if result_ptr.is_null() {
+        return None;
+    }
+    let s = unsafe { CStr::from_ptr(result_ptr).to_string_lossy().to_string() };
+    // 不释放 result_ptr：Qi runtime 字符串由 Qi GC 管理，CString::from_raw 会双重释放。
+    Some(s)
+}
+
+/// server→client 处理器 + 配置（每连接一份，后台 reader 线程读取）。
+struct ServerHandlers {
+    /// sampling/createMessage 处理器（Qi 闭包对象地址）。
+    sampling: Option<usize>,
+    /// elicitation/create 处理器（Qi 闭包对象地址）。
+    elicitation: Option<usize>,
+    /// roots/list 返回的 roots 数组（JSON）。默认 `[]`。
+    roots: Json,
+    /// 缓冲的通知（环形，capped at MAX_NOTIFICATIONS）。
+    notifications: VecDeque<Json>,
+}
+
+impl Default for ServerHandlers {
+    fn default() -> Self {
+        ServerHandlers {
+            sampling: None,
+            elicitation: None,
+            roots: json!([]),
+            notifications: VecDeque::new(),
+        }
+    }
+}
+
+/// 标准客户端 capabilities：声明支持 sampling 与 roots（listChanged:false）。
+fn client_capabilities() -> Json {
+    json!({
+        "sampling": {},
+        "roots": { "listChanged": false }
+    })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 传输类型
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +118,8 @@ struct StdioChild {
     /// 按 id 存储的响应队列（有 id 的消息，即 response）
     responses: Arc<Mutex<HashMap<i64, Json>>>,
     eof: Arc<AtomicBool>,
+    /// server→client 请求处理器 + 通知缓冲（后台 reader 线程读，FFI 写）
+    handlers: Arc<Mutex<ServerHandlers>>,
 }
 
 /// HTTP(Streamable) MCP 连接状态。
@@ -406,6 +477,118 @@ fn http_delete_keepalive(conn: &mut HttpConn) -> Result<(), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// stdio 入站消息路由（后台 reader 线程）
+//
+// 三类消息：
+//   1) 有 method + 有 id → server→client REQUEST：派发处理器，把 JSON-RPC 响应写回 stdin。
+//   2) 有 method 无 id    → notification：存入环形缓冲（供 取通知 FFI 排空），不破坏关联。
+//   3) 无 method（有 id）  → response：按 id 存入关联 map（原行为）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn route_inbound_stdio(
+    v: Json,
+    responses: &Arc<Mutex<HashMap<i64, Json>>>,
+    handlers: &Arc<Mutex<ServerHandlers>>,
+    child_state: &Arc<Mutex<StdioChild>>,
+) {
+    let has_method = v.get("method").and_then(|m| m.as_str()).is_some();
+    let id_val = v.get("id").cloned();
+
+    if has_method {
+        if let Some(id) = id_val {
+            if !id.is_null() {
+                // server→client REQUEST
+                handle_server_request(&v, id, handlers, child_state);
+                return;
+            }
+        }
+        // notification（method 但无 id / id 为 null）
+        if let Ok(mut h) = handlers.lock() {
+            if h.notifications.len() >= MAX_NOTIFICATIONS {
+                h.notifications.pop_front();
+            }
+            h.notifications.push_back(v);
+        }
+        return;
+    }
+
+    // response（含 result 或 error）
+    if let Some(id_num) = id_val.and_then(|i| i.as_i64()) {
+        if let Ok(mut map) = responses.lock() {
+            map.insert(id_num, v);
+        }
+    }
+}
+
+/// 派发一条 server→client 请求，构造 JSON-RPC 响应写回子进程 stdin。
+fn handle_server_request(
+    req: &Json,
+    id: Json,
+    handlers: &Arc<Mutex<ServerHandlers>>,
+    child_state: &Arc<Mutex<StdioChild>>,
+) {
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let params = req.get("params").cloned().unwrap_or(json!({}));
+
+    let outcome: Result<Json, (i64, String)> = match method {
+        "sampling/createMessage" => {
+            let sampling = handlers.lock().ok().and_then(|h| h.sampling);
+            match sampling {
+                Some(addr) => match invoke_qi_closure(addr, &params.to_string()) {
+                    Some(s) => match serde_json::from_str::<Json>(&s) {
+                        Ok(result) => Ok(result),
+                        // 处理器返回了非 JSON：包成文本结果而非让 server 挂起
+                        Err(_) => Err((-32603, format!("采样处理器返回非法 JSON: {}", s))),
+                    },
+                    None => Err((-32603, "采样处理器调用失败".to_string())),
+                },
+                None => Err((
+                    -32601,
+                    "client 未注册采样处理器（无 sampling 能力）".to_string(),
+                )),
+            }
+        }
+        "roots/list" => {
+            let roots = handlers
+                .lock()
+                .ok()
+                .map(|h| h.roots.clone())
+                .unwrap_or_else(|| json!([]));
+            Ok(json!({ "roots": roots }))
+        }
+        "elicitation/create" => {
+            let elicit = handlers.lock().ok().and_then(|h| h.elicitation);
+            match elicit {
+                Some(addr) => match invoke_qi_closure(addr, &params.to_string()) {
+                    Some(s) => match serde_json::from_str::<Json>(&s) {
+                        Ok(result) => Ok(result),
+                        Err(_) => Ok(json!({ "action": "decline" })),
+                    },
+                    None => Ok(json!({ "action": "decline" })),
+                },
+                None => Ok(json!({ "action": "decline" })),
+            }
+        }
+        _ => Err((-32601, format!("未知 server→client 方法: {}", method))),
+    };
+
+    let response = match outcome {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err((code, msg)) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": code, "message": msg }
+        }),
+    };
+
+    // 写回子进程 stdin（持锁串行化，与请求写共用同一把锁）
+    if let Ok(mut st) = child_state.lock() {
+        let _ = writeln!(st.stdin, "{}", response);
+        let _ = st.stdin.flush();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // stdio 等待 id 关联的响应
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -480,11 +663,23 @@ pub extern "C" fn qi_mcpc_connect_stdio(
         None => return -1,
     };
 
-    // 后台读线程：持续读 stdout，按 id 路由响应
+    // 后台读线程：持续读 stdout，路由消息
     let responses: Arc<Mutex<HashMap<i64, Json>>> = Arc::new(Mutex::new(HashMap::new()));
     let eof: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let handlers: Arc<Mutex<ServerHandlers>> = Arc::new(Mutex::new(ServerHandlers::default()));
+
+    let child_state = Arc::new(Mutex::new(StdioChild {
+        _child: child,
+        stdin,
+        responses: responses.clone(),
+        eof: eof.clone(),
+        handlers: handlers.clone(),
+    }));
+
     let responses_clone = responses.clone();
     let eof_clone = eof.clone();
+    let handlers_clone = handlers.clone();
+    let child_state_for_reader = child_state.clone();
 
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
@@ -496,15 +691,12 @@ pub extern "C" fn qi_mcpc_connect_stdio(
                         continue;
                     }
                     if let Ok(v) = serde_json::from_str::<Json>(trimmed) {
-                        if let Some(id_val) = v.get("id") {
-                            // 有 id → response（含 result 或 error）
-                            if let Some(id_num) = id_val.as_i64() {
-                                if let Ok(mut map) = responses_clone.lock() {
-                                    map.insert(id_num, v);
-                                }
-                            }
-                        }
-                        // notifications (无 id): 静默忽略（P2 扩展）
+                        route_inbound_stdio(
+                            v,
+                            &responses_clone,
+                            &handlers_clone,
+                            &child_state_for_reader,
+                        );
                     }
                 }
                 Err(_) => break,
@@ -512,13 +704,6 @@ pub extern "C" fn qi_mcpc_connect_stdio(
         }
         eof_clone.store(true, Ordering::SeqCst);
     });
-
-    let child_state = Arc::new(Mutex::new(StdioChild {
-        _child: child,
-        stdin,
-        responses: responses.clone(),
-        eof: eof.clone(),
-    }));
 
     let conn = Arc::new(Connection {
         transport: Transport::Stdio {
@@ -535,7 +720,7 @@ pub extern "C" fn qi_mcpc_connect_stdio(
         "method": "initialize",
         "params": {
             "protocolVersion": "2025-06-18",
-            "capabilities": {},
+            "capabilities": client_capabilities(),
             "clientInfo": {"name": "qi-harness", "version": "0.1.0"}
         }
     });
@@ -602,7 +787,7 @@ pub extern "C" fn qi_mcpc_connect_http(base_url: *const c_char) -> i64 {
         "method": "initialize",
         "params": {
             "protocolVersion": "2025-06-18",
-            "capabilities": {},
+            "capabilities": client_capabilities(),
             "clientInfo": {"name": "qi-harness", "version": "0.1.0"}
         }
     })
@@ -798,6 +983,109 @@ pub extern "C" fn qi_mcpc_close(conn_id: i64) -> i64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FFI：注册 server→client 处理器 / 配置（仅 stdio）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 取连接的 stdio handlers（仅 stdio 传输有；HTTP 返回 None）。
+fn stdio_handlers(conn_id: i64) -> Option<Arc<Mutex<ServerHandlers>>> {
+    let conn = get_conn(conn_id)?;
+    match &conn.transport {
+        Transport::Stdio { child_state } => {
+            let st = child_state.lock().ok()?;
+            Some(st.handlers.clone())
+        }
+        Transport::Http { .. } => None,
+    }
+}
+
+/// 注册 sampling/createMessage 处理器（Qi 闭包对象指针）。
+///
+/// closure_ptr 是 Qi 闭包对象地址：offset 0 为 trampoline
+/// `extern "C" fn(env, params_json) -> result_json`。处理器收到 sampling 参数 JSON，
+/// 返回 sampling 结果 JSON（如 `{"role":"assistant","content":{...},"model":...}`）。
+///
+/// 返回 0 成功，-1 失败（连接不存在 / 非 stdio）。
+#[no_mangle]
+pub extern "C" fn qi_mcpc_set_sampling_handler(
+    conn_id: i64,
+    closure_ptr: *const std::ffi::c_void,
+) -> i32 {
+    if closure_ptr.is_null() {
+        return -1;
+    }
+    match stdio_handlers(conn_id) {
+        Some(h) => {
+            if let Ok(mut hh) = h.lock() {
+                hh.sampling = Some(closure_ptr as usize);
+                0
+            } else {
+                -1
+            }
+        }
+        None => -1,
+    }
+}
+
+/// 注册 elicitation/create 处理器（Qi 闭包对象指针）。返回 0/-1。
+#[no_mangle]
+pub extern "C" fn qi_mcpc_set_elicitation_handler(
+    conn_id: i64,
+    closure_ptr: *const std::ffi::c_void,
+) -> i32 {
+    if closure_ptr.is_null() {
+        return -1;
+    }
+    match stdio_handlers(conn_id) {
+        Some(h) => {
+            if let Ok(mut hh) = h.lock() {
+                hh.elicitation = Some(closure_ptr as usize);
+                0
+            } else {
+                -1
+            }
+        }
+        None => -1,
+    }
+}
+
+/// 设置 roots/list 返回的 roots 数组（JSON 串）。返回 0/-1。
+#[no_mangle]
+pub extern "C" fn qi_mcpc_set_roots(conn_id: i64, roots_json: *const c_char) -> i32 {
+    if roots_json.is_null() {
+        return -1;
+    }
+    let s = unsafe { CStr::from_ptr(roots_json).to_string_lossy().to_string() };
+    let parsed: Json = serde_json::from_str(&s).unwrap_or_else(|_| json!([]));
+    match stdio_handlers(conn_id) {
+        Some(h) => {
+            if let Ok(mut hh) = h.lock() {
+                hh.roots = parsed;
+                0
+            } else {
+                -1
+            }
+        }
+        None => -1,
+    }
+}
+
+/// 排空缓冲的通知，返回 JSON 数组串（并清空）。无连接 / 无通知返回 `[]`。
+#[no_mangle]
+pub extern "C" fn qi_mcpc_drain_notifications(conn_id: i64) -> *mut c_char {
+    match stdio_handlers(conn_id) {
+        Some(h) => {
+            if let Ok(mut hh) = h.lock() {
+                let drained: Vec<Json> = hh.notifications.drain(..).collect();
+                to_cstr(Json::Array(drained).to_string())
+            } else {
+                to_cstr("[]".to_string())
+            }
+        }
+        None => to_cstr("[]".to_string()),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FFI：释放字符串
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -884,6 +1172,98 @@ mod tests {
         // 应该返回有 result 的那一条
         assert!(out.contains("result"));
         assert!(!out.contains("notifications/progress") || out.contains("result"));
+    }
+
+    // ── P4b：server→client 双向（sampling/createMessage）端到端验证 ──────────────
+    //
+    // 对官方参考 server `@modelcontextprotocol/server-everything` 验证：
+    //   1) 客户端 initialize 时声明 sampling 能力（client_capabilities）；
+    //   2) server 的 oninitialized 后才注册条件工具 `trigger-sampling-request`
+    //      并发 tools/list_changed；
+    //   3) 调用该工具 → server 回发 `sampling/createMessage` 请求；
+    //   4) 后台 reader 派发到我们注册的【桩 sampling 处理器】，把结果写回 stdin；
+    //   5) server 收到结果后完成 tool 调用，返回 "LLM sampling result: ..."。
+    //
+    // 运行：
+    //   cargo test --lib mcp_client_ffi sampling_roundtrip -- --ignored --nocapture
+    //
+    // 桩处理器：Qi 闭包 ABI 模拟 —— 一个 offset-0 为 extern "C" fn 的小对象。
+    extern "C" fn stub_sampling_trampoline(
+        _env: *const std::ffi::c_void,
+        params: *const c_char,
+    ) -> *mut c_char {
+        let p = unsafe { CStr::from_ptr(params).to_string_lossy().into_owned() };
+        eprintln!("[stub-sampling] 收到 params 字节数={}", p.len());
+        // 返回一条合法的 MCP CreateMessageResult
+        let result = r#"{"role":"assistant","content":{"type":"text","text":"stubbed"},"model":"stub","stopReason":"endTurn"}"#;
+        CString::new(result).unwrap().into_raw()
+    }
+
+    #[test]
+    #[ignore]
+    fn sampling_roundtrip() {
+        // 构造一个「Qi 闭包对象」：offset 0 = trampoline 函数指针。
+        // 用 Box<[*const c_void; 1]> 模拟闭包对象布局，进程生命期内泄漏（测试用）。
+        let trampoline_ptr = stub_sampling_trampoline as *const std::ffi::c_void;
+        let closure_obj: Box<[*const std::ffi::c_void; 1]> = Box::new([trampoline_ptr]);
+        let closure_addr = Box::into_raw(closure_obj) as *const std::ffi::c_void;
+
+        let cmd = CString::new("npx").unwrap();
+        let args = CString::new(r#"["-y","@modelcontextprotocol/server-everything"]"#).unwrap();
+        let conn = qi_mcpc_connect_stdio(cmd.as_ptr(), args.as_ptr());
+        eprintln!("[test] conn={}", conn);
+        assert!(conn > 0, "连接 server-everything 失败");
+
+        // 注册桩 sampling 处理器
+        let set = qi_mcpc_set_sampling_handler(conn, closure_addr);
+        assert_eq!(set, 0, "注册 sampling 处理器失败");
+
+        let method = CString::new("tools/call").unwrap();
+        let call = |p: &str| -> String {
+            let cp = CString::new(p).unwrap();
+            let r = qi_mcpc_request(conn, method.as_ptr(), cp.as_ptr());
+            unsafe { CStr::from_ptr(r).to_string_lossy().into_owned() }
+        };
+
+        // 给 server 的 oninitialized + 条件工具注册一点时间（tools/list_changed）
+        std::thread::sleep(Duration::from_millis(800));
+
+        // 确认 trigger-sampling-request 已注册（条件工具）
+        let list_method = CString::new("tools/list").unwrap();
+        let lp = CString::new("{}").unwrap();
+        let list_raw = qi_mcpc_request(conn, list_method.as_ptr(), lp.as_ptr());
+        let list = unsafe { CStr::from_ptr(list_raw).to_string_lossy().into_owned() };
+        eprintln!(
+            "[test] tools/list 含 trigger-sampling-request: {}",
+            list.contains("trigger-sampling-request")
+        );
+        assert!(
+            list.contains("trigger-sampling-request"),
+            "server 未注册 sampling 工具（client 能力未被识别？）"
+        );
+
+        // 调用 sampling 触发工具 —— 这会让 server 回发 sampling/createMessage
+        let res = call(
+            r#"{"name":"trigger-sampling-request","arguments":{"prompt":"hello from qi","maxTokens":50}}"#,
+        );
+        eprintln!("[test] sampling 工具结果 len={}: {}", res.len(), res);
+
+        // tool 必须完成并返回 result（证明双向往返成功）
+        assert!(!res.is_empty(), "sampling 工具无响应（双向往返失败/挂起）");
+        assert!(res.contains("result"), "sampling 工具返回了 error 而非 result: {}", res);
+        // server 把我们桩返回的文本回显在 "LLM sampling result" 里
+        assert!(
+            res.contains("stubbed") || res.contains("LLM sampling result"),
+            "结果未包含桩 sampling 内容: {}",
+            res
+        );
+
+        // 排空通知（应至少有 tools/list_changed）
+        let notifs_raw = qi_mcpc_drain_notifications(conn);
+        let notifs = unsafe { CStr::from_ptr(notifs_raw).to_string_lossy().into_owned() };
+        eprintln!("[test] 缓冲通知: {}", notifs);
+
+        let _ = qi_mcpc_close(conn);
     }
 
     // 复现 HTTP 大 browser_evaluate（带转义引号/换行）失败。

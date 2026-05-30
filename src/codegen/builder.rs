@@ -8107,6 +8107,10 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_mcpc_connect_http(ptr)\n");
         ir.push_str("declare ptr @qi_mcpc_request(i64, ptr, ptr)\n");
         ir.push_str("declare i64 @qi_mcpc_close(i64)\n");
+        ir.push_str("declare i32 @qi_mcpc_set_sampling_handler(i64, ptr)\n");
+        ir.push_str("declare i32 @qi_mcpc_set_elicitation_handler(i64, ptr)\n");
+        ir.push_str("declare i32 @qi_mcpc_set_roots(i64, ptr)\n");
+        ir.push_str("declare ptr @qi_mcpc_drain_notifications(i64)\n");
         ir.push_str("declare void @qi_mcpc_free_string(ptr)\n");
         ir.push_str("\n");
 
@@ -9419,6 +9423,9 @@ impl IrBuilder {
                             match callee.as_str() {
                                 "qi_mcpc_connect_stdio" | "qi_mcpc_connect_http" | "qi_mcpc_close" => "i64",
                                 "qi_mcpc_request" => "ptr",  // result JSON string
+                                "qi_mcpc_drain_notifications" => "ptr",  // notifications JSON array string
+                                "qi_mcpc_set_sampling_handler" | "qi_mcpc_set_elicitation_handler" |
+                                "qi_mcpc_set_roots" => "i32",
                                 "qi_mcpc_free_string" => "void",
                                 _ => "i64"
                             }
