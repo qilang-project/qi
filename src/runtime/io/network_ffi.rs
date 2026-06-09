@@ -13,6 +13,18 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+// 取 listener 的原始套接字句柄（i32），用于登记进信号关停名单。
+// Unix 下是 RawFd；Windows 下 SOCKET 句柄被官方保证可用 32 位表示
+// （见 MSDN：socket handles fit in 32 bits for interop），故 `as i32` 安全。
+#[cfg(unix)]
+fn 原始套接字<T: std::os::fd::AsRawFd>(s: &T) -> i32 {
+    s.as_raw_fd()
+}
+#[cfg(windows)]
+fn 原始套接字<T: std::os::windows::io::AsRawSocket>(s: &T) -> i32 {
+    s.as_raw_socket() as i32
+}
+
 // 全局网络接口实例
 use std::sync::OnceLock;
 static 全局网络接口: OnceLock<NetworkInterface> = OnceLock::new();
@@ -344,10 +356,9 @@ pub extern "C" fn qi_network_tcp_listen(host: *const c_char, port: u16, _backlog
 
         match TcpListener::bind(&地址) {
             Ok(listener) => {
-                // 登记 listener 的 raw fd —— SIGINT 时 handler 会 shutdown 它，
+                // 登记 listener 的 raw socket —— SIGINT 时 handler 会 shutdown 它，
                 // 让任何阻塞在 accept() 上的线程立即返回 -1。
-                use std::os::fd::AsRawFd;
-                let raw_fd = listener.as_raw_fd();
+                let raw_fd = 原始套接字(&listener);
                 crate::runtime::stdlib::signal_ffi::qi_signal_register_listener_fd(raw_fd);
 
                 let 句柄 = 下一个句柄();
@@ -387,12 +398,11 @@ pub extern "C" fn qi_network_tcp_accept(server_handle: i64) -> i64 {
 /// 返回 1 成功，0 失败
 #[no_mangle]
 pub extern "C" fn qi_network_tcp_server_close(server_handle: i64) -> i64 {
-    use std::os::fd::AsRawFd;
     match 获取服务器池().remove(&server_handle) {
         Some((_, listener)) => {
-            crate::runtime::stdlib::signal_ffi::qi_signal_unregister_listener_fd(
-                listener.as_raw_fd(),
-            );
+            crate::runtime::stdlib::signal_ffi::qi_signal_unregister_listener_fd(原始套接字(
+                &*listener,
+            ));
             1
         }
         None => 0,
@@ -802,8 +812,6 @@ pub extern "C" fn qi_runtime_async_serve(
     handler_fn: *const c_void,
     app_ptr: *const c_void,
 ) -> i64 {
-    use std::os::fd::{AsRawFd, FromRawFd};
-
     // 把 listener 从同步池里取出来 —— tokio 要 owning std listener。
     let listener_arc = match 获取服务器池().remove(&server_handle) {
         Some((_, arc)) => arc,
@@ -811,14 +819,13 @@ pub extern "C" fn qi_runtime_async_serve(
     };
 
     // 由于 Arc 可能还有别的引用（理论上不该，因为我们刚 remove 出来唯一持有方），
-    // 用 try_unwrap，失败就拷一份新 fd。
+    // 用 try_unwrap，失败就 try_clone 一份（跨平台，内部走 dup/WSADuplicateSocket）。
     let std_listener = match std::sync::Arc::try_unwrap(listener_arc) {
         Ok(l) => l,
-        Err(arc) => {
-            // 退路：用 raw fd 复制一个 listener
-            let raw = arc.as_raw_fd();
-            unsafe { std::net::TcpListener::from_raw_fd(libc::dup(raw)) }
-        }
+        Err(arc) => match arc.try_clone() {
+            Ok(l) => l,
+            Err(_) => return -1,
+        },
     };
 
     if std_listener.set_nonblocking(true).is_err() {
@@ -1234,9 +1241,8 @@ pub extern "C" fn qi_network_async_tcp_listen(
         let addr = format!("{}:{}", host_str, port);
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
-                // 登记 raw fd 到信号关停名单（跟 std listener 一样的 SIGINT 处理）
-                use std::os::fd::AsRawFd;
-                let raw_fd = listener.as_raw_fd();
+                // 登记 raw socket 到信号关停名单（跟 std listener 一样的 SIGINT 处理）
+                let raw_fd = 原始套接字(&listener);
                 crate::runtime::stdlib::signal_ffi::qi_signal_register_listener_fd(raw_fd);
                 let handle = next_listener_handle();
                 tokio_listener_pool().insert(handle, std::sync::Arc::new(listener));
@@ -1296,12 +1302,11 @@ pub extern "C" fn qi_network_async_tcp_accept(
 /// 关闭异步 TCP listener
 #[no_mangle]
 pub extern "C" fn qi_network_async_tcp_listener_close(server_handle: i64) -> i64 {
-    use std::os::fd::AsRawFd;
     match tokio_listener_pool().remove(&server_handle) {
         Some((_, listener)) => {
-            crate::runtime::stdlib::signal_ffi::qi_signal_unregister_listener_fd(
-                listener.as_raw_fd(),
-            );
+            crate::runtime::stdlib::signal_ffi::qi_signal_unregister_listener_fd(原始套接字(
+                &*listener,
+            ));
             1
         }
         None => 0,

@@ -67,6 +67,38 @@ jobs:
         # See scripts/run_examples.sh for the list.
         run: bash scripts/run_examples.sh
 
+  build-windows:
+    name: Build + Test (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # GitHub 的 windows runner 预装了更新的 LLVM；inkwell 的 llvm15-0 需要 15，
+      # 用 choco 强制降级装回 15.0.7（与 release.yml 一致）。
+      - name: Install LLVM 15 (Windows)
+        shell: pwsh
+        run: |
+          choco install -y llvm --version=15.0.7 --allow-downgrade --force
+          echo "LLVM_SYS_150_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Library unit tests
+        run: cargo test --release --lib --verbose
+
   clippy:
     name: Clippy (lib)
     runs-on: ubuntu-22.04

@@ -38,10 +38,31 @@ extern "C" fn handler(_sig: c_int) {
     for slot in LISTENER_FDS.iter() {
         let fd = slot.load(Ordering::SeqCst);
         if fd >= 0 {
-            unsafe {
-                libc::shutdown(fd, libc::SHUT_RDWR);
-            }
+            关停套接字(fd);
         }
+    }
+}
+
+/// 对一个原始套接字做双向 shutdown，唤醒阻塞的 accept()。
+#[cfg(unix)]
+#[inline]
+fn 关停套接字(fd: i32) {
+    unsafe {
+        libc::shutdown(fd, libc::SHUT_RDWR);
+    }
+}
+
+/// Windows：libc 不导出 winsock 的 shutdown，直接链 ws2_32。
+/// SD_BOTH = 2；SOCKET 句柄保证可用 32 位表示，i32 → u32 → usize 还原无损。
+#[cfg(windows)]
+#[inline]
+fn 关停套接字(sock: i32) {
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn shutdown(s: usize, how: i32) -> i32;
+    }
+    unsafe {
+        shutdown(sock as u32 as usize, 2);
     }
 }
 
