@@ -12,12 +12,12 @@ use bytes::Bytes;
 use h2::server;
 use http::Response;
 use std::ffi::{c_void, CStr, CString};
-use std::io::{BufReader, Read, Write};
+use std::io::BufReader;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::{ServerConfig, ServerConnection, StreamOwned};
+use rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
 
 /// qi 端 处理原始请求(应用值, 原始请求字符串) -> 响应字符串

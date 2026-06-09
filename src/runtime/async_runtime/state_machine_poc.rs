@@ -139,10 +139,8 @@ extern "C" fn poll_加一异步(frame_ptr: *mut u8) {
 fn 异步获取40() -> *mut Future {
     let fut = Box::new(Future::pending());
     let fut_ptr = Box::into_raw(fut);
-    let fut_arc = unsafe {
-        // 拷一份 Arc 到后台 task
-        Arc::new(Mutex::new(fut_ptr as usize))
-    };
+    // 拷一份 Arc 到后台 task
+    let fut_arc = Arc::new(Mutex::new(fut_ptr as usize));
 
     let fut_addr = fut_ptr as usize;
     tokio::spawn(async move {

@@ -94,7 +94,7 @@ impl MemoryInterface {
         self.check_and_trigger_gc()?;
 
         // Allocate through manager
-        let mut manager = self.manager.lock().unwrap();
+        let manager = self.manager.lock().unwrap();
         let result = manager.allocate(size, None);
 
         if result.is_ok() {
@@ -106,7 +106,7 @@ impl MemoryInterface {
 
     /// Deallocate memory
     pub fn deallocate(&self, ptr: *mut u8, _size: usize) -> RuntimeResult<()> {
-        let mut manager = self.manager.lock().unwrap();
+        let manager = self.manager.lock().unwrap();
         let result = manager.deallocate(ptr);
 
         if result.is_ok() {
@@ -118,7 +118,7 @@ impl MemoryInterface {
 
     /// Run garbage collection
     pub fn run_gc(&self) -> RuntimeResult<usize> {
-        let mut manager = self.manager.lock().unwrap();
+        let manager = self.manager.lock().unwrap();
         let collected = manager.trigger_gc().map_err(|e| RuntimeError::from(e))?;
 
         // Update GC statistics

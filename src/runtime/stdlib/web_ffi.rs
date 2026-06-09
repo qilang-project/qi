@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::Write;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Call a Qi handler `fn(*const Ctx) -> *const Response` with panic isolation.
 /// Returns the handler's response pointer on success, or null on panic.
