@@ -282,7 +282,8 @@ mod tests {
     #[test]
     fn test_file_write_read() {
         let 模块 = 文件模块::创建();
-        let 测试文件 = "/tmp/test_qi_io.txt";
+        let 测试文件路径 = std::env::temp_dir().join("test_qi_io.txt");
+        let 测试文件 = 测试文件路径.to_str().unwrap();
 
         // 写入文件
         let 写入参数 = vec![
@@ -307,7 +308,8 @@ mod tests {
     #[test]
     fn test_file_exists() {
         let 模块 = 文件模块::创建();
-        let 测试文件 = "/tmp/test_qi_exists.txt";
+        let 测试文件路径 = std::env::temp_dir().join("test_qi_exists.txt");
+        let 测试文件 = 测试文件路径.to_str().unwrap();
 
         // 文件不存在
         let 参数 = vec![StdlibValue::String(测试文件.to_string())];
@@ -328,7 +330,8 @@ mod tests {
     #[test]
     fn test_file_size() {
         let 模块 = 文件模块::创建();
-        let 测试文件 = "/tmp/test_qi_size.txt";
+        let 测试文件路径 = std::env::temp_dir().join("test_qi_size.txt");
+        let 测试文件 = 测试文件路径.to_str().unwrap();
 
         // 创建文件
         fs::write(测试文件, "12345").unwrap();

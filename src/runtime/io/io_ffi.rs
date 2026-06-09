@@ -224,7 +224,8 @@ mod tests {
 
     #[test]
     fn test_file_write_read_ffi() {
-        let path = CString::new("/tmp/test_qi_ffi.txt").unwrap();
+        let path_buf = std::env::temp_dir().join("test_qi_ffi.txt");
+        let path = CString::new(path_buf.to_str().unwrap()).unwrap();
         let content = CString::new("测试FFI").unwrap();
 
         // 写入
@@ -241,12 +242,13 @@ mod tests {
         qi_io_free_string(read_result);
 
         // 清理
-        let _ = std::fs::remove_file("/tmp/test_qi_ffi.txt");
+        let _ = std::fs::remove_file(&path_buf);
     }
 
     #[test]
     fn test_file_exists_ffi() {
-        let path = CString::new("/tmp/test_qi_exists_ffi.txt").unwrap();
+        let path_buf = std::env::temp_dir().join("test_qi_exists_ffi.txt");
+        let path = CString::new(path_buf.to_str().unwrap()).unwrap();
 
         // 文件不存在
         let exists = qi_io_file_exists(path.as_ptr());
@@ -261,6 +263,6 @@ mod tests {
         assert_eq!(exists, 1);
 
         // 清理
-        let _ = std::fs::remove_file("/tmp/test_qi_exists_ffi.txt");
+        let _ = std::fs::remove_file(&path_buf);
     }
 }

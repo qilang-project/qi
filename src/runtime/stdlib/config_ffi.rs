@@ -147,7 +147,8 @@ mod tests {
 
     #[test]
     fn test_toml_roundtrip() {
-        let path = "/tmp/test_config.toml";
+        let path_buf = std::env::temp_dir().join("test_config.toml");
+        let path = path_buf.to_str().unwrap();
         let json = CString::new(r#"{"key": "value", "number": 42}"#).unwrap();
         let path_c = CString::new(path).unwrap();
 

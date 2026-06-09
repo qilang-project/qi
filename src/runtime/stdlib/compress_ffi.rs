@@ -222,8 +222,13 @@ mod tests {
 
     #[test]
     fn test_file_compression() {
-        let source = "/tmp/test_compress.txt";
-        let compressed = "/tmp/test_compress.txt.gz";
+        let tmp = std::env::temp_dir();
+        let source_buf = tmp.join("test_compress.txt");
+        let compressed_buf = tmp.join("test_compress.txt.gz");
+        let decompressed_buf = tmp.join("test_decompress.txt");
+        let source = source_buf.to_str().unwrap();
+        let compressed = compressed_buf.to_str().unwrap();
+        let decompressed = decompressed_buf.to_str().unwrap();
 
         // 创建测试文件
         fs::write(source, "Test data for compression").unwrap();
@@ -235,7 +240,6 @@ mod tests {
         assert_eq!(qi_compress_gzip_file(src.as_ptr(), dst.as_ptr()), 0);
 
         // 解压
-        let decompressed = "/tmp/test_decompress.txt";
         let dec = CString::new(decompressed).unwrap();
         assert_eq!(qi_compress_gunzip_file(dst.as_ptr(), dec.as_ptr()), 0);
 
