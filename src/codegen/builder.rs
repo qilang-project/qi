@@ -8534,6 +8534,24 @@ impl IrBuilder {
 
                 if has_return_value {
                     let temp = self.generate_temp();
+                    // 记录方法调用结果的类型，否则下游（如 printf 的格式符/实参类型选择）
+                    // 找不到该临时变量类型会默认成 i64，导致 double 返回值被当 i64 打印而崩溃。
+                    let ret_type = self
+                        .function_return_types
+                        .get(&func_name)
+                        .cloned()
+                        .unwrap_or_else(|| "i64".to_string());
+                    let temp_name = temp.trim_start_matches('%').to_string();
+                    self.variable_types
+                        .insert(temp_name.clone(), ret_type.clone());
+                    // 若方法返回结构体指针，记录其结构体类型（与普通函数调用路径一致）
+                    if ret_type == "ptr" {
+                        if let Some(struct_name) =
+                            self.function_return_struct_types.get(&func_name).cloned()
+                        {
+                            self.variable_struct_types.insert(temp_name, struct_name);
+                        }
+                    }
                     self.add_instruction(IrInstruction::函数调用 {
                         dest: Some(temp.clone()),
                         callee: func_name,

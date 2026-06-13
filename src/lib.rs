@@ -383,7 +383,7 @@ impl QiCompiler {
 
         let parser = crate::parser::Parser::new();
         let program = parser.parse(tokens).map_err(|e| {
-            CompilerError::Parse(format!("解析错误 {}: {}", source_file.display(), e))
+            CompilerError::Parse(format!("{}\n  （文件：{}）", e, source_file.display()))
         })?;
 
         let ast = crate::parser::ast::AstNode::程序(program.clone());
@@ -678,7 +678,7 @@ impl QiCompiler {
 
         let parser = crate::parser::Parser::new();
         let program = parser.parse(tokens).map_err(|e| {
-            CompilerError::Parse(format!("解析错误 {}: {}", file_path.display(), e))
+            CompilerError::Parse(format!("{}\n  （文件：{}）", e, file_path.display()))
         })?;
 
         // Convert program to AST node and extract imports

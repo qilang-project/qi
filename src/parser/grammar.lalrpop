@@ -2163,7 +2163,7 @@ FunctionTypeParameterList: Vec<TypeNode> = {
 // 用于类型名称的标识符，避免与其他Identifier冲突
 TypeName: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> =>? {
         // Simplified check - use individual checks to avoid long match patterns
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
@@ -2172,9 +2172,11 @@ TypeName: String = {
            id == "结构体" || id == "枚举" || id == "实现" || id == "特性" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
            id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
-            panic!("Keyword used as type name: {}", id);
+            return Err(lalrpop_util::ParseError::User {
+                error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作类型名。请换一个名字。").into_boxed_str()),
+            });
         }
-        id.to_string()
+        Ok(id.to_string())
     }
 };
 
@@ -2194,7 +2196,7 @@ BasicTypeKeyword: TypeNode = {
 Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
     "长度" => "长度".to_string(),
-    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> =>? {
         // Check if it's a forbidden keyword using individual checks
         // Note: 自身, 自己, 自我 are allowed as they are used for method receivers
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
@@ -2214,16 +2216,19 @@ Identifier: String = {
            id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
            id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
            id == "指针" || id == "引用" || id == "可变引用" {
-            panic!("Keyword used as identifier: {}", id);
+            // 关键字不能当标识符：返回带关键字名的友好解析错误，而不是 panic 崩溃。
+            return Err(lalrpop_util::ParseError::User {
+                error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作标识符（变量名 / 函数名 / 字段名）。请换一个名字，例如加后缀：`任务` → `任务甲`、`数组` → `数列`。").into_boxed_str()),
+            });
         }
-        id.to_string()
+        Ok(id.to_string())
     },
 };
 
 // 方法接收者标识符 - 允许使用 "自身"、"自己" 等关键字
 ReceiverIdentifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => {
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> =>? {
         // Allow 自身, 自己, 自我 as receiver names
         // Still forbid other keywords
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
@@ -2243,9 +2248,11 @@ ReceiverIdentifier: String = {
            id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
            id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
            id == "指针" || id == "引用" || id == "可变引用" {
-            panic!("Keyword used as receiver identifier: {}", id);
+            return Err(lalrpop_util::ParseError::User {
+                error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作方法接收者名。请换一个名字（如 `自身`、`自己`）。").into_boxed_str()),
+            });
         }
-        id.to_string()
+        Ok(id.to_string())
     },
 };
 

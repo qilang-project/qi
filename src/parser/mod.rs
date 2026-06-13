@@ -77,7 +77,7 @@ where
                 "语法错误：多余的标记 `{tok}`\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  提示：删除多余的标记，或检查上一行是否漏写 `;` / `}}`"
             )
         }
-        LE::User { error } => format!("语法错误（用户错误）：{error}"),
+        LE::User { error } => format!("语法错误：{error}"),
     }
 }
 
@@ -133,12 +133,35 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
     let mut friendly: Vec<String> = Vec::new();
     let mut saw_cjk_ident = false;
     let mut saw_ascii_ident = false;
+    // 把 LALRPOP 的原始正则终结符（如 [0-9]+、"([^"\\]|\\.)*" 等）映射成
+    // 人话名字，否则报错里的「期望：」会直接吐一串难懂的正则。
+    let mut specials: Vec<&str> = Vec::new();
+    let mut push_special = |name: &'static str, bag: &mut Vec<&'static str>| {
+        if !bag.contains(&name) {
+            bag.push(name);
+        }
+    };
     for e in expected {
         let s = e.to_string();
-        if s.contains("u4e00") {
+        let is_regex = s.starts_with("r#") || s.contains("[0-9]") || s.contains("[^");
+        if s.contains("u4e00") || s.contains("\\u4e00") {
             saw_cjk_ident = true;
         } else if s.contains("a-zA-Z") {
             saw_ascii_ident = true;
+        } else if s.contains("\\{") || (s.contains("f\"") && s.contains("[^")) {
+            // 格式字符串 f"...{...}..."
+            push_special("<格式字符串>", &mut specials);
+        } else if s.contains("[^") {
+            // 普通字符串字面量 "..."
+            push_special("<字符串字面量>", &mut specials);
+        } else if s.contains("[0-9]") && s.contains("\\.") {
+            push_special("<浮点数字面量>", &mut specials);
+        } else if s.contains("[0-9]") {
+            push_special("<整数字面量>", &mut specials);
+        } else if s.contains("'.'") || s.contains("'\\") {
+            push_special("<字符字面量>", &mut specials);
+        } else if is_regex {
+            // 兜底：未识别的正则，跳过（不往用户脸上糊正则）
         } else {
             let cleaned = s.trim_start_matches("r#").trim_matches('"').to_string();
             if !cleaned.is_empty() && !friendly.contains(&cleaned) {
@@ -146,11 +169,15 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
             }
         }
     }
+    // 字面量类放在前面，运算符/符号类在后
+    for sp in specials.into_iter().rev() {
+        friendly.insert(0, sp.to_string());
+    }
+    if saw_ascii_ident && !saw_cjk_ident {
+        friendly.insert(0, "<英文标识符>".to_string());
+    }
     if saw_cjk_ident {
         friendly.insert(0, "<标识符>".to_string());
-    }
-    if saw_ascii_ident && !friendly.iter().any(|s| s == "<标识符>") {
-        friendly.insert(0, "<英文标识符>".to_string());
     }
     if friendly.is_empty() {
         return "（无）".to_string();

@@ -41,8 +41,8 @@ pub enum ParseError {
     #[error("意外的输入结束")]
     UnexpectedEof,
 
-    /// Generic parsing error
-    #[error("解析错误: {0}")]
+    /// Generic parsing error（消息本身已是完整的「语法错误：…」描述，不再重复前缀）
+    #[error("{0}")]
     General(String),
 
     /// Parse failed
