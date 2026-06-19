@@ -648,6 +648,12 @@ impl QiCompiler {
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
         visited: &mut std::collections::HashSet<PathBuf>,
     ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+        // 规范化路径：同一个文件可能经由符号链接（如 qi_packages/Web -> qi-web）
+        // 以两种不同路径被解析到。若按原始路径做 key，会把同一模块编译两次，
+        // 链接时报数百个 duplicate symbol。canonicalize 后两条路径塌缩成同一 key。
+        let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.clone());
+        let file_path = &canonical;
+
         // Prevent infinite recursion
         if visited.contains(file_path) {
             return Ok(compiled_modules.get(file_path).cloned().unwrap_or_else(|| {
