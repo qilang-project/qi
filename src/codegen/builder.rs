@@ -8286,6 +8286,22 @@ impl IrBuilder {
                             let is_stdlib = self.module_registry.has_module(module_path);
 
                             if is_stdlib {
+                                // 打印/打印行 走与裸调用一致的 printf 多参格式逻辑（会按各实参
+                                // 类型拼 %lld/%f/%s 等）。否则模块限定写法 IO.打印行("x=", 整数)
+                                // 不构建格式串，会丢掉非字符串实参。
+                                if method_call.method_name == "打印行"
+                                    || method_call.method_name == "打印"
+                                {
+                                    let synthetic = crate::parser::ast::FunctionCallExpression {
+                                        module_qualifier: None,
+                                        callee: method_call.method_name.clone(),
+                                        arguments: method_call.arguments.clone(),
+                                        span: method_call.span.clone(),
+                                    };
+                                    return self.build_node(
+                                        &crate::parser::ast::AstNode::函数调用表达式(synthetic),
+                                    );
+                                }
                                 // 标准库模块：验证函数是否存在并获取运行时函数名和返回类型
                                 let (runtime_func_name, return_type_str) = {
                                     let module_function = self.check_module_function_available(
@@ -8377,6 +8393,20 @@ impl IrBuilder {
                             let is_stdlib = self.module_registry.has_module(module_name);
 
                             if is_stdlib {
+                                // 打印/打印行 走裸调用一致的 printf 多参格式逻辑（同上）。
+                                if method_call.method_name == "打印行"
+                                    || method_call.method_name == "打印"
+                                {
+                                    let synthetic = crate::parser::ast::FunctionCallExpression {
+                                        module_qualifier: None,
+                                        callee: method_call.method_name.clone(),
+                                        arguments: method_call.arguments.clone(),
+                                        span: method_call.span.clone(),
+                                    };
+                                    return self.build_node(
+                                        &crate::parser::ast::AstNode::函数调用表达式(synthetic),
+                                    );
+                                }
                                 // 标准库模块：直接从模块注册表查找函数
                                 let module_function = self
                                     .module_registry
@@ -8523,31 +8553,42 @@ impl IrBuilder {
                 }
 
                 // 5. Call the method
-                // Check if the method has a return value
-                let has_return_value =
-                    if let Some(ret_type) = self.function_return_types.get(&func_name) {
-                        ret_type != "void"
-                    } else {
-                        // Unknown - assume it has a return value
-                        true
-                    };
+                // 解析返回类型：先查本模块函数表，再查外部(跨包/跨文件)函数表。
+                // 跨包接收者方法的签名只存在 external_functions 里，漏查会默认成
+                // i64，使结构体返回(ptr)被当 i64，链接期 call i64 vs ptr 失败。
+                let resolved_ret_type = self
+                    .function_return_types
+                    .get(&func_name)
+                    .cloned()
+                    .or_else(|| {
+                        self.external_functions
+                            .get(&func_name)
+                            .map(|(_p, rt)| rt.clone())
+                    });
+                let has_return_value = resolved_ret_type
+                    .as_deref()
+                    .map(|rt| rt != "void")
+                    .unwrap_or(true);
 
                 if has_return_value {
                     let temp = self.generate_temp();
-                    // 记录方法调用结果的类型，否则下游（如 printf 的格式符/实参类型选择）
-                    // 找不到该临时变量类型会默认成 i64，导致 double 返回值被当 i64 打印而崩溃。
-                    let ret_type = self
-                        .function_return_types
-                        .get(&func_name)
-                        .cloned()
-                        .unwrap_or_else(|| "i64".to_string());
+                    // 记录方法调用结果的类型，否则下游（如 printf 的格式符/实参类型选择、
+                    // 结构体字段访问）找不到该临时变量类型会默认成 i64。
+                    let ret_type = resolved_ret_type.unwrap_or_else(|| "i64".to_string());
                     let temp_name = temp.trim_start_matches('%').to_string();
                     self.variable_types
                         .insert(temp_name.clone(), ret_type.clone());
-                    // 若方法返回结构体指针，记录其结构体类型（与普通函数调用路径一致）
+                    // 若方法返回结构体指针，记录其结构体类型（本模块或外部）
                     if ret_type == "ptr" {
-                        if let Some(struct_name) =
-                            self.function_return_struct_types.get(&func_name).cloned()
+                        if let Some(struct_name) = self
+                            .function_return_struct_types
+                            .get(&func_name)
+                            .cloned()
+                            .or_else(|| {
+                                self.external_function_return_struct_types
+                                    .get(&func_name)
+                                    .cloned()
+                            })
                         {
                             self.variable_struct_types.insert(temp_name, struct_name);
                         }

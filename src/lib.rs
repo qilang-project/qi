@@ -300,6 +300,61 @@ impl QiCompiler {
                 }
             }
 
+            // 注册其它模块里的「接收者方法」(方法声明) 为外部函数声明。
+            // 方法既不在 exports 也不是 函数声明，之前完全漏注册，导致跨包/跨文件
+            // 调用 `值.方法()` 时调用方拿不到方法签名：返回结构体被默认成 i64，
+            // 与实际 ptr 返回不匹配，链接期报 `call i64 ... expected ptr`。
+            // 方法在 IR 里就是普通全局函数 `接收者类型_方法名(ptr 接收者, ...)`。
+            for (other_path, other_ast) in compiled_modules.iter() {
+                if other_path == module_path {
+                    continue;
+                }
+                let other_program = match other_ast {
+                    crate::parser::ast::AstNode::程序(p) => p,
+                    _ => continue,
+                };
+                for stmt in &other_program.statements {
+                    if let crate::parser::ast::AstNode::方法声明(m) = stmt {
+                        let full_name = format!("{}_{}", m.receiver_type, m.method_name);
+                        let mangled_name = self.mangle_function_name(&full_name);
+                        if external_functions.contains_key(&mangled_name) {
+                            continue;
+                        }
+                        // 第一个参数是接收者指针，其余是方法形参
+                        let mut param_types: Vec<String> = vec!["ptr".to_string()];
+                        for p in &m.parameters {
+                            param_types.push(
+                                crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                    &p.type_annotation,
+                                ),
+                            );
+                        }
+                        let return_type =
+                            crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
+                                &m.return_type,
+                            );
+                        if return_type == "ptr" {
+                            if let Some(rt) = m.return_type.as_ref() {
+                                let struct_name = match rt {
+                                    crate::parser::ast::TypeNode::自定义类型(name) => {
+                                        Some(name.clone())
+                                    }
+                                    crate::parser::ast::TypeNode::结构体类型(st) => {
+                                        Some(st.name.clone())
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(name) = struct_name {
+                                    external_fn_return_struct_types
+                                        .insert(mangled_name.clone(), name);
+                                }
+                            }
+                        }
+                        external_functions.insert(mangled_name, (param_types, return_type));
+                    }
+                }
+            }
+
             // Generate LLVM IR for this module
             let mut codegen =
                 crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
