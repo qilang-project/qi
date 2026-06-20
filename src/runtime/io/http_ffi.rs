@@ -112,18 +112,9 @@ pub extern "C" fn qi_http_put(url: *const c_char, body: *const c_char) -> *mut c
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
         let 请求体 = CStr::from_ptr(body).to_string_lossy().to_string();
-
-        let mut 请求 = HttpRequest::get(地址);
-        请求.method = HttpMethod::Put;
-        请求.body = Some(请求体.into_bytes());
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => match 响应.body_as_string() {
-                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::PUT, &地址, Some(请求体)) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }
@@ -137,17 +128,9 @@ pub extern "C" fn qi_http_delete(url: *const c_char) -> *mut c_char {
 
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
-
-        let mut 请求 = HttpRequest::get(地址);
-        请求.method = HttpMethod::Delete;
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => match 响应.body_as_string() {
-                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::DELETE, &地址, None) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }
@@ -192,17 +175,9 @@ pub extern "C" fn qi_http_patch(url: *const c_char, body: *const c_char) -> *mut
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
         let 请求体 = CStr::from_ptr(body).to_string_lossy().to_string();
-
-        let mut 请求 = HttpRequest::post(地址, 请求体.into_bytes());
-        请求.method = HttpMethod::Patch;
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => match 响应.body_as_string() {
-                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::PATCH, &地址, Some(请求体)) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }
@@ -217,17 +192,9 @@ pub extern "C" fn qi_http_options(url: *const c_char) -> *mut c_char {
 
     unsafe {
         let 地址 = CStr::from_ptr(url).to_string_lossy().to_string();
-
-        let mut 请求 = HttpRequest::get(地址);
-        请求.method = HttpMethod::Options;
-
-        let 客户端 = 获取HTTP客户端().lock().unwrap();
-        match 客户端.execute(请求) {
-            Ok(响应) => match 响应.body_as_string() {
-                Ok(响应体) => CString::new(响应体).unwrap().into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
+        match 执行HTTP请求(reqwest::Method::OPTIONS, &地址, None) {
+            Ok(响应体) => 转为C字符串(响应体),
+            Err(错误) => 转为C字符串(format!("HTTP错误: {}", 错误)),
         }
     }
 }

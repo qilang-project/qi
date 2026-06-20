@@ -10578,6 +10578,7 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_gui_get_width(i64)\n");
         ir.push_str("declare i64 @qi_gui_get_height(i64)\n");
         ir.push_str("declare void @qi_gui_set_size(i64, i64, i64)\n");
+        ir.push_str("declare void @qi_gui_on_event(i64, ptr)\n");
         ir.push_str("declare void @qi_gui_run()\n");
         ir.push_str("declare ptr @qi_gui_version()\n");
         ir.push_str("declare void @qi_gui_free_string(ptr)\n");

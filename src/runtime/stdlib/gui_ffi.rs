@@ -5,11 +5,51 @@
 //! This module provides FFI bindings to the qi-gui library when available.
 //! When GUI library is not linked, stub implementations are provided that return errors.
 
+use std::collections::HashMap;
+use std::ffi::c_void;
 use std::os::raw::c_char;
+use std::sync::{Mutex, OnceLock};
 
 /// Event callback function type
 /// Parameters: window_id, event_type, param1, param2
 type EventCallback = extern "C" fn(u64, i32, i64, i64);
+
+/// Qi 事件处理器：按 window_id 存注册的 Qi **闭包对象**地址。
+/// Qi 把函数当值传时会用 qi_closure_create 包成闭包对象：
+///   布局 [offset0 = trampoline 函数指针, env...]；
+///   trampoline ABI: extern "C" fn(env, 形参...)，调用时 env 传闭包对象自身。
+type QiClosureFn = unsafe extern "C-unwind" fn(*const c_void, i64, i64, i64, i64);
+static QI_事件处理器: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
+fn qi_事件处理器表() -> &'static Mutex<HashMap<u64, usize>> {
+    QI_事件处理器.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 固定的 C 回调：事件循环调它，它再按 Qi 闭包约定转调注册的处理函数。
+/// 事件类型：0=关闭 1=尺寸(w,h) 2=按键(键码,修饰) 3=鼠标键(键,按下1/抬起0)
+///           4=光标移动(x,y) 5=滚轮(dx,dy)
+extern "C" fn qi_事件蹦床(window_id: u64, event_type: i32, p1: i64, p2: i64) {
+    // 先取出对象地址再释放锁，避免 Qi 回调里再注册造成重入死锁
+    let obj = {
+        let 表 = qi_事件处理器表().lock().unwrap();
+        表.get(&window_id).copied()
+    };
+    if let Some(obj) = obj {
+        if obj != 0 {
+            unsafe {
+                // 闭包对象 offset 0 取出 trampoline，env 传对象自身
+                let tramp_raw = *(obj as *const *const c_void);
+                let tramp: QiClosureFn = std::mem::transmute(tramp_raw);
+                tramp(
+                    obj as *const c_void,
+                    window_id as i64,
+                    event_type as i64,
+                    p1,
+                    p2,
+                );
+            }
+        }
+    }
+}
 
 // When GUI library is available, link to it
 #[cfg(has_gui)]
@@ -242,6 +282,30 @@ pub extern "C" fn qi_gui_set_event_callback(window_id: i64, callback: EventCallb
     #[cfg(not(has_gui))]
     {
         let _ = (window_id, callback);
+    }
+}
+
+/// Qi 友好版：注册一个 Qi 函数作为窗口事件处理器。
+/// handler 是 Qi 顶层函数 函数(整数,整数,整数,整数) 的函数指针。
+#[no_mangle]
+pub extern "C" fn qi_gui_on_event(window_id: i64, handler: *const c_void) {
+    #[cfg(has_gui)]
+    {
+        if window_id <= 0 || handler.is_null() {
+            return;
+        }
+        qi_事件处理器表()
+            .lock()
+            .unwrap()
+            .insert(window_id as u64, handler as usize);
+        unsafe {
+            qi_gui_set_event_callback_impl(window_id as u64, qi_事件蹦床);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = (window_id, handler);
     }
 }
 

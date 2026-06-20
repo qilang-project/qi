@@ -2025,6 +2025,16 @@ impl ModuleRegistry {
             "void",
         ));
 
+        // 设置事件处理器：handler 为 Qi 函数 函数(窗口,事件类型,参数1,参数2)
+        //   事件类型 0=关闭 1=尺寸(w,h) 2=按键(键码,修饰) 3=鼠标键(键,按下1/抬起0)
+        //            4=光标移动(x,y) 5=滚轮(dx,dy)
+        gui_module.add_function(ModuleFunction::new(
+            "设置事件处理",
+            "qi_gui_on_event",
+            vec!["整数".to_string(), "指针".to_string()],
+            "void",
+        ));
+
         // 运行事件循环
         gui_module.add_function(ModuleFunction::new("运行", "qi_gui_run", vec![], "void"));
 
