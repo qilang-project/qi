@@ -3682,6 +3682,22 @@ impl IrBuilder {
                     (type_str, None)
                 };
 
+                // 显式类型注解是结构体/自定义类型时，权威地记录变量的结构体类型。
+                // 即使初始化器是返回裸 ptr 的函数（如 列表库.获取指针 等 FFI），
+                // 后续 `变量.字段` 也能拿到正确的结构体类型，而不是生成 unknown.type。
+                if type_name == "ptr" {
+                    if let Some(type_ann) = &decl.type_annotation {
+                        let 注解结构体 = match type_ann {
+                            crate::parser::ast::TypeNode::自定义类型(tn) => Some(tn.clone()),
+                            crate::parser::ast::TypeNode::结构体类型(st) => Some(st.name.clone()),
+                            _ => None,
+                        };
+                        if let Some(sn) = 注解结构体 {
+                            self.variable_struct_types.insert(decl.name.clone(), sn);
+                        }
+                    }
+                }
+
                 // Record the variable type for later use (both original and mangled names)
                 let mut mangled_name = if decl.name.chars().any(|c| !c.is_ascii()) {
                     format!(
