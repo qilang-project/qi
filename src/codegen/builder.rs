@@ -10595,6 +10595,8 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_gui_get_height(i64)\n");
         ir.push_str("declare void @qi_gui_set_size(i64, i64, i64)\n");
         ir.push_str("declare void @qi_gui_on_event(i64, ptr)\n");
+        ir.push_str("declare void @qi_gui_set_timer(i64)\n");
+        ir.push_str("declare void @qi_gui_set_fps(i64)\n");
         ir.push_str("declare void @qi_gui_run()\n");
         ir.push_str("declare ptr @qi_gui_version()\n");
         ir.push_str("declare void @qi_gui_free_string(ptr)\n");
@@ -10614,6 +10616,8 @@ impl IrBuilder {
         // GUI Renderer functions
         ir.push_str("; GUI Renderer functions\n");
         ir.push_str("declare i64 @qi_gui_renderer_create(i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_begin_frame(i64)\n");
+        ir.push_str("declare void @qi_gui_renderer_end_frame(i64)\n");
         ir.push_str("declare void @qi_gui_renderer_clear(i64, i64, i64, i64)\n");
         ir.push_str("declare void @qi_gui_renderer_draw_pixel(i64, i64, i64, i64, i64, i64)\n");
         ir.push_str(

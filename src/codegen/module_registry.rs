@@ -2035,6 +2035,25 @@ impl ModuleRegistry {
             "void",
         ));
 
+        // 设置自动刷新定时器（毫秒）；0=关闭。需在 运行 前调用。
+        //   开启后事件循环每隔该间隔向事件回调投递 事件类型=6 的定时器事件。
+        gui_module.add_function(ModuleFunction::new(
+            "设置定时器",
+            "qi_gui_set_timer",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 设置渲染帧率（FPS，如 60/120）；0=关闭。需在 运行 前调用。
+        //   开启后事件循环按该帧率向事件回调投递 事件类型=7 的渲染帧事件
+        //   （参数1=自启动毫秒，参数2=帧间隔毫秒），用于逐帧动画。
+        gui_module.add_function(ModuleFunction::new(
+            "设置帧率",
+            "qi_gui_set_fps",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
         // 运行事件循环
         gui_module.add_function(ModuleFunction::new("运行", "qi_gui_run", vec![], "void"));
 
@@ -2126,6 +2145,22 @@ impl ModuleRegistry {
             "qi_gui_renderer_create",
             vec!["整数".to_string()],
             "整数", // 返回渲染器ID
+        ));
+
+        // 开始绘制：进入双缓冲批处理，后续绘制只写离屏缓冲，不立即上屏
+        gui_module.add_function(ModuleFunction::new(
+            "开始绘制",
+            "qi_gui_renderer_begin_frame",
+            vec!["整数".to_string()],
+            "void",
+        ));
+
+        // 结束绘制：把整帧一次性上屏并退出批处理（双缓冲消闪）
+        gui_module.add_function(ModuleFunction::new(
+            "结束绘制",
+            "qi_gui_renderer_end_frame",
+            vec!["整数".to_string()],
+            "void",
         ));
 
         // 清除画面 (RGB)

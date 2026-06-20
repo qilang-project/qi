@@ -70,6 +70,8 @@ extern "C" {
     fn qi_gui_get_height_impl(window_id: u64) -> i64;
     fn qi_gui_set_size_impl(window_id: u64, width: u32, height: u32);
     fn qi_gui_run_impl();
+    fn qi_gui_set_timer_impl(interval_ms: u64);
+    fn qi_gui_set_fps_impl(fps: u64);
     fn qi_gui_version_impl() -> *mut c_char;
     fn qi_gui_free_string_impl(s: *mut c_char);
 
@@ -85,6 +87,8 @@ extern "C" {
 
     // Renderer functions
     fn qi_gui_renderer_create_impl(window_id: u64) -> u64;
+    fn qi_gui_renderer_begin_frame_impl(renderer_id: u64);
+    fn qi_gui_renderer_end_frame_impl(renderer_id: u64);
     fn qi_gui_renderer_clear_impl(renderer_id: u64, r: u8, g: u8, b: u8);
     fn qi_gui_renderer_draw_pixel_impl(renderer_id: u64, x: u32, y: u32, r: u8, g: u8, b: u8);
     fn qi_gui_renderer_draw_rect_impl(
@@ -446,6 +450,43 @@ pub extern "C" fn qi_gui_run() {
     }
 }
 
+/// 设置自动刷新定时器间隔（毫秒）；0=关闭。需在 运行 之前调用。
+/// 开启后事件循环每隔该间隔向窗口事件回调投递 event_type=6 的定时器事件。
+#[no_mangle]
+pub extern "C" fn qi_gui_set_timer(interval_ms: i64) {
+    #[cfg(has_gui)]
+    {
+        unsafe {
+            qi_gui_set_timer_impl(interval_ms as u64);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = interval_ms;
+        eprintln!("错误: GUI 库未安装。请安装完整版本以使用图形化功能。");
+    }
+}
+
+/// 设置渲染帧率（FPS，如 60/120）；0=关闭。需在 运行 之前调用。
+/// 开启后事件循环按该帧率向窗口事件回调投递 event_type=7 的渲染帧事件
+/// （参数1=自启动毫秒，参数2=帧间隔毫秒），用于逐帧动画。
+#[no_mangle]
+pub extern "C" fn qi_gui_set_fps(fps: i64) {
+    #[cfg(has_gui)]
+    {
+        unsafe {
+            qi_gui_set_fps_impl(fps as u64);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = fps;
+        eprintln!("错误: GUI 库未安装。请安装完整版本以使用图形化功能。");
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn qi_gui_version() -> *mut c_char {
     #[cfg(has_gui)]
@@ -636,6 +677,44 @@ pub extern "C" fn qi_gui_renderer_create(window_id: i64) -> i64 {
     {
         let _ = window_id;
         0
+    }
+}
+
+/// 开始一帧（双缓冲）：之后的绘制只写离屏缓冲、不上屏，配合 结束绘制 消除闪烁。
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_begin_frame(renderer_id: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_begin_frame_impl(renderer_id as u64);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = renderer_id;
+    }
+}
+
+/// 结束一帧（双缓冲）：把整帧一次性上屏并退出批处理模式。
+#[no_mangle]
+pub extern "C" fn qi_gui_renderer_end_frame(renderer_id: i64) {
+    #[cfg(has_gui)]
+    {
+        if renderer_id <= 0 {
+            return;
+        }
+        unsafe {
+            qi_gui_renderer_end_frame_impl(renderer_id as u64);
+        }
+    }
+
+    #[cfg(not(has_gui))]
+    {
+        let _ = renderer_id;
     }
 }
 
