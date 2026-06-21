@@ -584,6 +584,10 @@ pub struct IrBuilder {
     in_async_context: bool,
     /// Track defined functions in current module
     defined_functions: std::collections::HashSet<String>,
+    /// 本模块顶层函数的「裸名」集合（在首遍签名收集前预填）。
+    /// 用于符号修饰：入口（主程序）模块里、本模块自己定义的函数，符号要按包名加前缀，
+    /// 避免与导入库的同名「公开」函数在链接期撞符号（库模块保持裸符号，公开 ABI 不变）。
+    module_function_names: std::collections::HashSet<String>,
     /// Track global variables (both original and mangled names)
     global_variables: std::collections::HashSet<String>,
     /// Track global variable LLVM types (name/mangled -> "ptr"|"i64"|"double"|"i1"|...).
@@ -669,6 +673,7 @@ impl IrBuilder {
             function_pointer_signatures: std::collections::HashMap::new(),
             in_async_context: false,
             defined_functions: std::collections::HashSet::new(),
+            module_function_names: std::collections::HashSet::new(),
             global_variables: std::collections::HashSet::new(),
             global_variable_types: std::collections::HashMap::new(),
             external_functions: std::collections::HashMap::new(),
@@ -2201,6 +2206,17 @@ impl IrBuilder {
         // Note: We don't clear defined_functions and external_functions here
         // so they can be set before calling build()
 
+        // 预遍：记录本模块包名 + 所有顶层函数裸名，供符号修饰判断「入口模块本地函数」。
+        // 必须在首遍签名收集之前，因为签名 key 也走 mangle_function_name，要和定义/调用一致。
+        if let AstNode::程序(program) = ast {
+            self.current_package_name = program.package_name.clone();
+            for stmt in &program.statements {
+                if let AstNode::函数声明(f) = stmt {
+                    self.module_function_names.insert(f.name.clone());
+                }
+            }
+        }
+
         // First pass: collect all function signatures
         self.collect_function_signatures(ast)?;
 
@@ -2956,6 +2972,28 @@ impl IrBuilder {
     }
 
     fn mangle_function_name(&self, name: &str) -> String {
+        // 入口（主程序）模块里、本模块自己定义的函数：符号按包名加前缀。
+        // 否则用户程序定义的同名函数会和导入库的「公开」函数（库符号是裸名）在链接期撞符号
+        // （duplicate symbol）。库模块（非入口）保持裸符号不变，对外 ABI 不受影响。
+        // 因定义 / 调用 / 取地址 / 签名收集都走本函数，加前缀后三者天然一致。
+        // 注意：入口函数 `入口`(→ main) 不修饰；局部变量/形参虽也走本函数，但只有名字恰好
+        // 等于本模块顶层函数名时才会被修饰，而局部引用同样全程走本函数、且用 % 前缀，故自洽。
+        let qualified;
+        let name = if self.is_entry_module
+            && name != "入口"
+            && self.module_function_names.contains(name)
+            && name.chars().any(|c| !c.is_ascii())
+        {
+            if let Some(pkg) = self.current_package_name.as_ref() {
+                qualified = format!("{}_{}", pkg, name);
+                qualified.as_str()
+            } else {
+                name
+            }
+        } else {
+            name
+        };
+
         // ASCII names remain unchanged (except main function special case)
         if name.chars().all(|c| c.is_ascii()) {
             return name.to_string();
@@ -4994,9 +5032,12 @@ impl IrBuilder {
                 self.current_function_name = None;
                 self.current_function_ast_return_type = None;
 
-                // Add module-qualified alias if we have a package name and this is not main
+                // Add module-qualified alias if we have a package name and this is not main.
+                // 入口模块跳过：其本地函数主符号本就已按包名修饰（见 mangle_function_name），
+                // 再发别名会得到 `@pkg_fn = alias ptr @pkg_fn` 自引用。库模块仍需别名以支持
+                // 模块限定调用解析到裸主符号。
                 if let Some(package_name) = &self.current_package_name {
-                    if !is_main {
+                    if !is_main && !self.is_entry_module {
                         // Create an alias: @数学_最大值 = alias i64 (i64, i64), ptr @最大值
                         let alias_name = format!("{}_{}", package_name, &func_decl.name);
                         let alias_mangled = self.mangle_function_name(&alias_name);
