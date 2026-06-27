@@ -229,6 +229,19 @@ impl LLM会话 {
         let 请求体 = self.构建请求体(提示, true, false);
         self.发送请求体(请求体)
     }
+
+    /// 流式 + 工具：流式请求里带上 tools，模型可在流中吐 tool_calls。
+    fn 打开流带工具(&self, 提示: &str) -> Result<reqwest::blocking::Response, String> {
+        let 请求体 = self.构建请求体(提示, true, true);
+        self.发送请求体(请求体)
+    }
+
+    /// 工具结果回写后，流式继续推理（仍带 tools，可继续调工具或给最终答复）。
+    fn 打开续传流(&self) -> Result<reqwest::blocking::Response, String> {
+        let mut 请求体 = self.构建继续请求体(true);
+        请求体["stream"] = json!(true);
+        self.发送请求体(请求体)
+    }
 }
 
 struct LLM流 {
@@ -239,10 +252,21 @@ struct LLM流 {
     待返回: VecDeque<String>,
     完成: bool,
     累计: String,
+    // 流式 + 工具调用：带工具时把分块到达的 tool_calls 按 index 累积成 (id, name, arguments)；
+    // 是续传 = 这条流是 tool 结果后的 continue（历史里已有 user 消息，不再重复 push）。
+    带工具: bool,
+    是续传: bool,
+    工具分块: Vec<(String, String, String)>,
 }
 
 impl LLM流 {
-    fn 创建(会话句柄: i64, 提示: String, 响应: reqwest::blocking::Response) -> Self {
+    fn 创建(
+        会话句柄: i64,
+        提示: String,
+        响应: reqwest::blocking::Response,
+        带工具: bool,
+        是续传: bool,
+    ) -> Self {
         Self {
             会话句柄,
             提示,
@@ -251,6 +275,9 @@ impl LLM流 {
             待返回: VecDeque::new(),
             完成: false,
             累计: String::new(),
+            带工具,
+            是续传,
+            工具分块: Vec::new(),
         }
     }
 
@@ -329,17 +356,62 @@ impl LLM流 {
                     }
                 }
 
-                if let Some(工具调用) = delta.and_then(|d| d.get("tool_calls")) {
-                    self.待返回.push_back(
-                        json!({
-                            "类型": "工具调用片段",
-                            "数据": 工具调用
-                        })
-                        .to_string(),
-                    );
+                // 流式 tool_calls 是增量的：第一块给 index/id/name，后续块拼 arguments。
+                // 按 index 累积进 工具分块，结束后由 组装助手消息 拼成完整 assistant 消息。
+                if let Some(数组) = delta
+                    .and_then(|d| d.get("tool_calls"))
+                    .and_then(|v| v.as_array())
+                {
+                    for tc in 数组 {
+                        let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        while self.工具分块.len() <= idx {
+                            self.工具分块
+                                .push((String::new(), String::new(), String::new()));
+                        }
+                        if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                            if !id.is_empty() {
+                                self.工具分块[idx].0 = id.to_string();
+                            }
+                        }
+                        if let Some(函数) = tc.get("function") {
+                            if let Some(名) = 函数.get("name").and_then(|v| v.as_str()) {
+                                if !名.is_empty() {
+                                    self.工具分块[idx].1 = 名.to_string();
+                                }
+                            }
+                            if let Some(参) = 函数.get("arguments").and_then(|v| v.as_str()) {
+                                self.工具分块[idx].2.push_str(参);
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// 把累积的内容 + 工具分块拼成完整 assistant 消息（OpenAI 格式），供上层派发工具/入历史。
+    fn 组装助手消息(&self) -> Value {
+        let mut 消息 = json!({ "role": "assistant" });
+        if self.累计.is_empty() {
+            消息["content"] = Value::Null;
+        } else {
+            消息["content"] = json!(self.累计);
+        }
+        if !self.工具分块.is_empty() {
+            let 调用: Vec<Value> = self
+                .工具分块
+                .iter()
+                .map(|(id, 名, 参)| {
+                    json!({
+                        "id": id,
+                        "type": "function",
+                        "function": { "name": 名, "arguments": 参 }
+                    })
+                })
+                .collect();
+            消息["tool_calls"] = Value::Array(调用);
+        }
+        消息
     }
 }
 
@@ -367,20 +439,23 @@ fn 工具安全名称(名称: &str) -> String {
 }
 
 fn 保存流历史(流: &LLM流) {
-    if 流.累计.is_empty() {
-        return;
-    }
-
     let mut 会话池 = 获取会话池().lock().unwrap();
     if let Some(会话) = 会话池.get_mut(&流.会话句柄) {
-        会话.历史.push(json!({
-            "role": "user",
-            "content": 流.提示
-        }));
-        会话.历史.push(json!({
-            "role": "assistant",
-            "content": 流.累计
-        }));
+        if 流.带工具 {
+            // 工具流：assistant 消息要带 tool_calls，否则后续 continue / tool 结果无法对齐。
+            // 续传流历史里已有 user 消息，不再重复 push。
+            if !流.是续传 {
+                会话.历史.push(json!({ "role": "user", "content": 流.提示 }));
+            }
+            会话.历史.push(流.组装助手消息());
+        } else {
+            // 纯文本流（流式问）：只存内容。
+            if 流.累计.is_empty() {
+                return;
+            }
+            会话.历史.push(json!({ "role": "user", "content": 流.提示 }));
+            会话.历史.push(json!({ "role": "assistant", "content": 流.累计 }));
+        }
     }
 }
 
@@ -503,10 +578,76 @@ pub extern "C" fn qi_llm_stream_chat(session_handle: i64, prompt: *const c_char)
         let 流句柄 = *计数器;
 
         let mut 流池 = 获取流池().lock().unwrap();
-        流池.insert(流句柄, LLM流::创建(session_handle, 提示, 响应));
+        流池.insert(流句柄, LLM流::创建(session_handle, 提示, 响应, false, false));
 
         流句柄
     }
+}
+
+/// 流式 + 工具：开一个带 tools 的流式对话。内容片段照常通过 读取流 流出，
+/// tool_calls 在 runtime 侧按 index 累积，结束后用 流取助手消息 取完整 assistant 消息。
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_chat_with_tools(session_handle: i64, prompt: *const c_char) -> i64 {
+    if prompt.is_null() {
+        return -1;
+    }
+    unsafe {
+        let 提示 = CStr::from_ptr(prompt).to_string_lossy().to_string();
+        let 会话克隆 = {
+            let 会话池 = 获取会话池().lock().unwrap();
+            match 会话池.get(&session_handle) {
+                Some(会话) => 会话.clone(),
+                None => return -1,
+            }
+        };
+        let 响应 = match 会话克隆.打开流带工具(&提示) {
+            Ok(响应) => 响应,
+            Err(_) => return -1,
+        };
+        let 流句柄 = {
+            let mut 计数器 = 获取流计数器().lock().unwrap();
+            *计数器 += 1;
+            *计数器
+        };
+        let mut 流池 = 获取流池().lock().unwrap();
+        流池.insert(流句柄, LLM流::创建(session_handle, 提示, 响应, true, false));
+        流句柄
+    }
+}
+
+/// 工具结果回写后，流式继续推理。返回新的流句柄。
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_continue_with_tools(session_handle: i64) -> i64 {
+    let 会话克隆 = {
+        let 会话池 = 获取会话池().lock().unwrap();
+        match 会话池.get(&session_handle) {
+            Some(会话) => 会话.clone(),
+            None => return -1,
+        }
+    };
+    let 响应 = match 会话克隆.打开续传流() {
+        Ok(响应) => 响应,
+        Err(_) => return -1,
+    };
+    let 流句柄 = {
+        let mut 计数器 = 获取流计数器().lock().unwrap();
+        *计数器 += 1;
+        *计数器
+    };
+    let mut 流池 = 获取流池().lock().unwrap();
+    流池.insert(流句柄, LLM流::创建(session_handle, String::new(), 响应, true, true));
+    流句柄
+}
+
+/// 取本轮流式对话拼好的 assistant 消息 JSON（含 content + tool_calls）。
+/// 须在该流读到底（读取流 返回空）后调用；可直接喂给 has_tool_call / get_tool_call_* 派发。
+#[no_mangle]
+pub extern "C" fn qi_llm_stream_assistant_message(stream_handle: i64) -> *mut c_char {
+    let 流池 = 获取流池().lock().unwrap();
+    if let Some(流) = 流池.get(&stream_handle) {
+        return 转为C字符串指针(流.组装助手消息().to_string());
+    }
+    转为C字符串指针(String::new())
 }
 
 /// 读取流式对话的下一个片段。结束时返回空字符串。

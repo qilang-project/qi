@@ -1384,6 +1384,30 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 流式工具对话（流 + tool_calls）
+        llm_module.add_function(ModuleFunction::new(
+            "流式工具对话",
+            "qi_llm_stream_chat_with_tools",
+            vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
+            "整数",                                         // 返回流句柄
+        ));
+
+        // 流式继续工具对话（回写工具结果后流式续传）
+        llm_module.add_function(ModuleFunction::new(
+            "流式继续工具对话",
+            "qi_llm_stream_continue_with_tools",
+            vec!["整数".to_string()], // 会话句柄
+            "整数",                   // 返回流句柄
+        ));
+
+        // 取流式 assistant 消息（含 content + tool_calls 的 JSON）
+        llm_module.add_function(ModuleFunction::new(
+            "流取助手消息",
+            "qi_llm_stream_assistant_message",
+            vec!["整数".to_string()], // 流句柄
+            "字符串",
+        ));
+
         // 注册工具
         llm_module.add_function(ModuleFunction::new(
             "注册工具",

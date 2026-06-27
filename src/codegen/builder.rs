@@ -959,6 +959,21 @@ impl IrBuilder {
             (vec!["i64".to_string()], "i64".to_string()),
         );
         self.external_functions.insert(
+            "qi_llm_stream_chat_with_tools".to_string(),
+            (
+                vec!["i64".to_string(), "ptr".to_string()],
+                "i64".to_string(),
+            ),
+        );
+        self.external_functions.insert(
+            "qi_llm_stream_continue_with_tools".to_string(),
+            (vec!["i64".to_string()], "i64".to_string()),
+        );
+        self.external_functions.insert(
+            "qi_llm_stream_assistant_message".to_string(),
+            (vec!["i64".to_string()], "ptr".to_string()),
+        );
+        self.external_functions.insert(
             "qi_llm_register_tool".to_string(),
             (
                 vec![
@@ -12322,13 +12337,16 @@ impl IrBuilder {
                                 | "qi_llm_get_tool_call_arguments"
                                 | "qi_llm_get_tool_call_id_at"
                                 | "qi_llm_get_tool_call_name_at"
-                                | "qi_llm_get_tool_call_arguments_at" => "ptr", // Return LLM response string / Future<String>
+                                | "qi_llm_get_tool_call_arguments_at"
+                                | "qi_llm_stream_assistant_message" => "ptr", // Return LLM response string / Future<String>
                                 "qi_llm_create_session"
                                 | "qi_llm_set_config"
                                 | "qi_llm_clear_history"
                                 | "qi_llm_get_history_count"
                                 | "qi_llm_close_session"
                                 | "qi_llm_stream_chat"
+                                | "qi_llm_stream_chat_with_tools"
+                                | "qi_llm_stream_continue_with_tools"
                                 | "qi_llm_stream_close"
                                 | "qi_llm_register_tool"
                                 | "qi_llm_clear_tools"
