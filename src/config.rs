@@ -32,6 +32,9 @@ impl fmt::Display for OptimizationLevel {
 pub struct CompilerConfig {
     /// Target platform for compilation
     pub target_platform: CompilationTarget,
+    /// 交叉编译目标架构（x86_64 / aarch64）。None = 默认 x86_64。仅交叉到 Linux 时生效。
+    #[serde(default)]
+    pub target_arch: Option<String>,
     /// Optimization level
     pub optimization_level: OptimizationLevel,
     /// Include debug symbols
@@ -54,6 +57,7 @@ impl Default for CompilerConfig {
     fn default() -> Self {
         Self {
             target_platform: CompilationTarget::default(),
+            target_arch: None,
             optimization_level: OptimizationLevel::Basic,
             debug_symbols: false,
             runtime_checks: true,
@@ -111,6 +115,9 @@ impl CompilerConfig {
     pub fn from_cli(cli: &crate::cli::commands::Cli) -> Result<Self, ConfigError> {
         let mut config = Self::default();
 
+        if cli.arch.is_some() {
+            config.target_arch = cli.arch.clone();
+        }
         if let Some(target) = &cli.target {
             config.target_platform = *target;
         }

@@ -39,6 +39,10 @@ pub struct Cli {
     #[arg(short, long, value_enum)]
     pub target: Option<crate::config::CompilationTarget>,
 
+    /// 交叉编译目标架构 | Target arch for cross-compile (x86_64 | aarch64). 默认 x86_64
+    #[arg(long)]
+    pub arch: Option<String>,
+
     /// 优化级别 | Optimization level (none, basic, standard, maximum)
     #[arg(short = 'O', long, value_enum)]
     pub optimization: Option<crate::config::OptimizationLevel>,

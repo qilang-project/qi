@@ -471,9 +471,72 @@ impl QiCompiler {
         format!("_Z_{}", hex_string)
     }
 
+    /// 交叉编译到 Linux？—— 宿主非 Linux 但目标是 Linux 时，走 zig cc 交叉路径。
+    /// （宿主==目标 的本地构建保持原 clang 路径不变，零风险。）
+    fn 交叉到linux(&self) -> bool {
+        !cfg!(target_os = "linux")
+            && self.config.target_platform == config::CompilationTarget::Linux
+    }
+
+    /// 目标架构（x86_64 / aarch64），默认 x86_64。
+    fn 目标架构(&self) -> String {
+        self.config
+            .target_arch
+            .clone()
+            .unwrap_or_else(|| "x86_64".to_string())
+    }
+
+    /// zig 交叉编译用的目标三元组（glibc 2.34，匹配多数发行版）。
+    fn zig目标三元组(&self) -> String {
+        format!("{}-linux-gnu.2.34", self.目标架构())
+    }
+
+    /// 对应的 Rust 目标三元组（cargo zigbuild 用，定位交叉构建的运行时归档）。
+    fn rust目标三元组(&self) -> String {
+        format!("{}-unknown-linux-gnu", self.目标架构())
+    }
+
     /// Compile LLVM IR to object file
     fn compile_ir_to_object(&self, ir_path: &PathBuf) -> Result<PathBuf, CompilerError> {
         let obj_path = ir_path.with_extension("o");
+
+        // 交叉到 Linux：用 zig cc -target 把 IR 编成 Linux 目标文件。
+        // IR 头里嵌的是宿主(macOS)三元组/datalayout，与 -target 冲突 → 先剥掉这两行。
+        if self.交叉到linux() {
+            let ir文本 = std::fs::read_to_string(ir_path).map_err(CompilerError::Io)?;
+            let 剥离: String = ir文本
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    !t.starts_with("target triple") && !t.starts_with("target datalayout")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let 剥离路径 = ir_path.with_extension("linux.ll");
+            std::fs::write(&剥离路径, 剥离).map_err(CompilerError::Io)?;
+
+            // 不传 -x ir（zig cc 不认）；靠 .ll 扩展名让 clang 自动识别为 LLVM IR。
+            let output = std::process::Command::new("zig")
+                .arg("cc")
+                .arg("-target")
+                .arg(self.zig目标三元组())
+                .arg("-c")
+                .arg(&剥离路径)
+                .arg("-o")
+                .arg(&obj_path)
+                .output()
+                .map_err(CompilerError::Io)?;
+            let _ = std::fs::remove_file(&剥离路径);
+
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr);
+                return Err(CompilerError::Codegen(format!(
+                    "zig cc 交叉编译 IR 失败: {}",
+                    error
+                )));
+            }
+            return Ok(obj_path);
+        }
 
         let output = std::process::Command::new("clang")
             .arg("-c")
@@ -502,6 +565,35 @@ impl QiCompiler {
         object_files: &[PathBuf],
         executable_path: &PathBuf,
     ) -> Result<(), CompilerError> {
+        // 交叉到 Linux：用 zig cc -target 链接，归档用交叉构建的 libqi_runtime.a。
+        // rustls + bundled sqlite 已在归档里，无需 -lssl/-lcrypto/-lsqlite3；zig 自带 libc/pthread/m/dl。
+        if self.交叉到linux() {
+            let lib_path = self.find_linux_runtime_library()?;
+            let mut command = std::process::Command::new("zig");
+            command.arg("cc").arg("-target").arg(self.zig目标三元组());
+            command.arg("-o").arg(executable_path);
+            for obj in object_files {
+                command.arg(obj);
+            }
+            command.arg(&lib_path);
+            // Rust std 引用 _Unwind_* 解卷符号 → zig 自带的 libunwind 提供。
+            command
+                .arg("-lunwind")
+                .arg("-lpthread")
+                .arg("-lm")
+                .arg("-ldl");
+
+            let output = command.output().map_err(CompilerError::Io)?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(CompilerError::Codegen(format!(
+                    "zig cc 交叉链接失败: {}",
+                    stderr
+                )));
+            }
+            return Ok(());
+        }
+
         // Find the runtime library path
         let lib_path = self.find_runtime_library()?;
 
@@ -605,6 +697,42 @@ impl QiCompiler {
         }
 
         Ok(())
+    }
+
+    /// 找交叉构建的 Linux 运行时归档 libqi_runtime.a。
+    /// 先看 QI_RUNTIME_LIB_LINUX 环境变量；否则在 workspace 下
+    /// qi-runtime/target/<triple>/{debug,release}/libqi_runtime.a 找。
+    fn find_linux_runtime_library(&self) -> Result<PathBuf, CompilerError> {
+        if let Ok(p) = std::env::var("QI_RUNTIME_LIB_LINUX") {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+        let exe = std::env::current_exe()?;
+        // qilang/target/debug/qi → 上溯到 qilang
+        let workspace = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .ok_or_else(|| CompilerError::Codegen("无法确定 workspace 根".to_string()))?;
+        let triple = self.rust目标三元组();
+        for profile in ["debug", "release"] {
+            let p = workspace
+                .join("qi-runtime/target")
+                .join(&triple)
+                .join(profile)
+                .join("libqi_runtime.a");
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+        Err(CompilerError::Codegen(format!(
+            "找不到 Linux 运行时归档 libqi_runtime.a。先在 qi-runtime/ 跑：\n  \
+             cargo zigbuild --target {} \n\
+             或设 QI_RUNTIME_LIB_LINUX 指向它。",
+            triple
+        )))
     }
 
     /// Find the runtime library using multiple search strategies
