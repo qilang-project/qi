@@ -188,6 +188,32 @@ pub extern "C" fn qi_io_create_dir(path: *const c_char) -> i64 {
     }
 }
 
+/// 创建符号链接：链接路径 → 指向 目标（幂等：若链接已存在先删）。
+/// 成功返回 1，失败返回 0。仅 Unix 实现；其他平台返回 0。
+#[no_mangle]
+pub extern "C" fn qi_io_symlink(target: *const c_char, link_path: *const c_char) -> i64 {
+    if target.is_null() || link_path.is_null() {
+        return 0;
+    }
+    unsafe {
+        let 目标 = CStr::from_ptr(target).to_string_lossy().to_string();
+        let 链接 = CStr::from_ptr(link_path).to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&链接); // 幂等
+        #[cfg(unix)]
+        {
+            match std::os::unix::fs::symlink(&目标, &链接) {
+                Ok(_) => 1,
+                Err(_) => 0,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (目标, 链接);
+            0
+        }
+    }
+}
+
 /// 删除目录
 #[no_mangle]
 pub extern "C" fn qi_io_delete_dir(path: *const c_char) -> i64 {

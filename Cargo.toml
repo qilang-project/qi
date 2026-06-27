@@ -42,8 +42,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.107"
 toml = "0.8.8"
 
-# HTTP client for LLM API calls
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+# HTTP client for LLM API calls.
+# rustls-tls（而非默认 native-tls）：去掉 mac 的 Security.framework / linux 的系统 openssl，
+# 全栈纯 Rust（rustls+ring），是 zig 单机交叉编译的前提（无系统 C TLS 依赖）。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "charset", "http2"] }
 
 # TLS server support (pure-Rust, used by 标准库.TLS)
 rustls = { version = "0.23", features = ["ring", "std", "tls12"] }

@@ -717,6 +717,12 @@ impl ModuleRegistry {
         ));
 
         io_module.add_function(ModuleFunction::new(
+            "创建符号链接",
+            "qi_io_symlink",
+            vec!["字符串".to_string(), "字符串".to_string()], // 目标, 链接路径
+            "整数",
+        ));
+        io_module.add_function(ModuleFunction::new(
             "创建目录",
             "qi_io_create_dir",
             vec!["字符串".to_string()],

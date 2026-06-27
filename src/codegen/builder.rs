@@ -10212,6 +10212,7 @@ impl IrBuilder {
         ir.push_str("declare i64 @qi_io_file_size(ptr)\n");
         ir.push_str("declare i64 @qi_io_create_dir(ptr)\n");
         ir.push_str("declare i64 @qi_io_delete_dir(ptr)\n");
+        ir.push_str("declare i64 @qi_io_symlink(ptr, ptr)\n");
         ir.push_str("declare void @qi_io_free_string(ptr)\n");
         ir.push_str("\n");
 
@@ -12502,14 +12503,23 @@ impl IrBuilder {
                                     } else {
                                         format!("@{}", final_callee)
                                     };
-                                    ir.push_str(&format!(
-                                        "{} = call {} {}({})\n",
-                                        dest_var, ret_type, callee_ref, args_str
-                                    ));
-                                    // Store the return type for this temporary variable
-                                    let var_name = dest_var.trim_start_matches('%');
-                                    self.variable_types
-                                        .insert(var_name.to_string(), ret_type.to_string());
+                                    if ret_type == "void" {
+                                        // void 函数即使语法上出现在「有目标」的位置（如 系统.退出程序(1)
+                                        // 作为语句），也不能绑定结果名 —— `%t = call void ...` 是非法 IR。
+                                        ir.push_str(&format!(
+                                            "call void {}({})\n",
+                                            callee_ref, args_str
+                                        ));
+                                    } else {
+                                        ir.push_str(&format!(
+                                            "{} = call {} {}({})\n",
+                                            dest_var, ret_type, callee_ref, args_str
+                                        ));
+                                        // Store the return type for this temporary variable
+                                        let var_name = dest_var.trim_start_matches('%');
+                                        self.variable_types
+                                            .insert(var_name.to_string(), ret_type.to_string());
+                                    }
                                 }
                                 None => {
                                     let callee_ref = if final_callee.starts_with('%') {

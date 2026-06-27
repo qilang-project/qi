@@ -219,6 +219,22 @@ pub enum Commands {
         #[arg(short, long)]
         targets: bool,
     },
+
+    /// test       测试    | 发现并运行测试文件（*_测.qi）| Discover and run test files
+    #[command(aliases = &["测试"])]
+    Test {
+        /// 测试目录或文件（默认当前目录递归找 *_测.qi）| Test dir or file
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// 只跑名字含该子串的用例（≈ go test -run）| Run only tests whose name contains this
+        #[arg(short, long)]
+        filter: Option<String>,
+
+        /// 详细：连通过的断言也打印 | Verbose: also print passing assertions
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 impl Cli {
@@ -262,6 +278,11 @@ impl Cli {
                 language,
                 targets,
             }) => self.show_info(version, language, targets).await,
+            Some(Commands::Test {
+                path,
+                filter,
+                verbose,
+            }) => self.test_files(path, filter, verbose, config).await,
             None => {
                 // Default compilation behavior when no subcommand is provided
                 if self.source_files.is_empty() {
@@ -815,6 +836,109 @@ impl Cli {
             )));
         }
 
+        Ok(())
+    }
+
+    /// 递归收集目录下所有 *_测.qi 测试文件（按路径排序，结果稳定）
+    fn 收集测试文件(path: &std::path::Path, 结果: &mut Vec<PathBuf>) {
+        if path.is_file() {
+            结果.push(path.to_path_buf());
+            return;
+        }
+        let mut 项: Vec<PathBuf> = match std::fs::read_dir(path) {
+            Ok(读) => 读.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+            Err(_) => return,
+        };
+        项.sort();
+        for p in 项 {
+            if p.is_dir() {
+                // 跳过包镜像 / 构建产物目录
+                let 名 = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                if 名 == "qi_packages" || 名 == "target" || 名.starts_with('.') {
+                    continue;
+                }
+                Self::收集测试文件(&p, 结果);
+            } else if p.extension().map(|e| e == "qi").unwrap_or(false)
+                && p.file_stem()
+                    .map(|s| s.to_string_lossy().ends_with("_测"))
+                    .unwrap_or(false)
+            {
+                结果.push(p);
+            }
+        }
+    }
+
+    /// `qi test` —— 发现并运行测试文件（*_测.qi），逐个编译+运行，聚合结果，有失败则非零退出。
+    /// 每个测试文件自带 入口() + 测试::摘要并退出()，失败时以退出码 1 结束；本命令据此判套件成败。
+    async fn test_files(
+        &self,
+        path: PathBuf,
+        filter: Option<String>,
+        verbose: bool,
+        config: crate::config::CompilerConfig,
+    ) -> Result<(), CliError> {
+        // 过滤 / 详细 通过环境变量传给测试进程（测试框架读 QI_TEST_FILTER / QI_TEST_VERBOSE）
+        if let Some(ref f) = filter {
+            std::env::set_var("QI_TEST_FILTER", f);
+        }
+        if verbose {
+            std::env::set_var("QI_TEST_VERBOSE", "1");
+        }
+
+        let mut 文件: Vec<PathBuf> = Vec::new();
+        Self::收集测试文件(&path, &mut 文件);
+
+        if 文件.is_empty() {
+            eprintln!("没有找到测试文件（约定：*_测.qi）于 {:?}", path);
+            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                "no test files".to_string(),
+            )));
+        }
+
+        let mut 总: usize = 0;
+        let mut 败: usize = 0;
+        for f in &文件 {
+            总 += 1;
+            let 名 = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            println!("▶ {}", 名);
+
+            let compiler = crate::QiCompiler::with_config(config.clone());
+            let 编译 = match compiler.compile(f.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("  ✗ 编译失败: {}", e);
+                    败 += 1;
+                    continue;
+                }
+            };
+
+            let 跑 = self
+                .run_executable(&编译.executable_path, &[], config.clone())
+                .await;
+
+            // 清理中间产物
+            for obj in &编译.object_paths {
+                let _ = std::fs::remove_file(obj);
+            }
+            for ir in &编译.ir_paths {
+                let _ = std::fs::remove_file(ir);
+            }
+            let _ = std::fs::remove_file(&编译.executable_path);
+
+            match 跑 {
+                Ok(()) => println!("  ✓ 套件通过\n"),
+                Err(_) => {
+                    println!("  ✗ 套件失败\n");
+                    败 += 1;
+                }
+            }
+        }
+
+        println!("════════════════════════════");
+        println!("测试套件: {}/{} 通过", 总 - 败, 总);
+        if 败 > 0 {
+            std::process::exit(1);
+        }
         Ok(())
     }
 
