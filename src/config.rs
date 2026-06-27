@@ -35,6 +35,9 @@ pub struct CompilerConfig {
     /// 交叉编译目标架构（x86_64 / aarch64）。None = 默认 x86_64。仅交叉到 Linux 时生效。
     #[serde(default)]
     pub target_arch: Option<String>,
+    /// 交叉链接时优先用 release 运行时归档（产出更小的部署二进制）。默认 false（优先 debug）。
+    #[serde(default)]
+    pub release_runtime: bool,
     /// Optimization level
     pub optimization_level: OptimizationLevel,
     /// Include debug symbols
@@ -58,6 +61,7 @@ impl Default for CompilerConfig {
         Self {
             target_platform: CompilationTarget::default(),
             target_arch: None,
+            release_runtime: false,
             optimization_level: OptimizationLevel::Basic,
             debug_symbols: false,
             runtime_checks: true,
@@ -117,6 +121,9 @@ impl CompilerConfig {
 
         if cli.arch.is_some() {
             config.target_arch = cli.arch.clone();
+        }
+        if cli.release_runtime {
+            config.release_runtime = true;
         }
         if let Some(target) = &cli.target {
             config.target_platform = *target;

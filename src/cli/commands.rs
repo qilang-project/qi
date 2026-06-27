@@ -43,6 +43,10 @@ pub struct Cli {
     #[arg(long)]
     pub arch: Option<String>,
 
+    /// 交叉链接用 release 运行时归档 | Use release runtime archive for cross-link (smaller binary)
+    #[arg(long)]
+    pub release_runtime: bool,
+
     /// 优化级别 | Optimization level (none, basic, standard, maximum)
     #[arg(short = 'O', long, value_enum)]
     pub optimization: Option<crate::config::OptimizationLevel>,

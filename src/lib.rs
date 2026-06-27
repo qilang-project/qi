@@ -717,7 +717,13 @@ impl QiCompiler {
             .and_then(|p| p.parent())
             .ok_or_else(|| CompilerError::Codegen("无法确定 workspace 根".to_string()))?;
         let triple = self.rust目标三元组();
-        for profile in ["debug", "release"] {
+        // --release-runtime 时优先 release（更小的部署二进制），否则优先 debug（开发更快）。
+        let profiles: [&str; 2] = if self.config.release_runtime {
+            ["release", "debug"]
+        } else {
+            ["debug", "release"]
+        };
+        for profile in profiles {
             let p = workspace
                 .join("qi-runtime/target")
                 .join(&triple)
