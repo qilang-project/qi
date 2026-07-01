@@ -46,10 +46,28 @@ impl<'ctx> 后端<'ctx> {
             .函数值签名(idx)
             .cloned()
             .ok_or_else(|| "函数值签名缺失".to_string())?;
-        let mangled = super::mangle_function_name(name);
+        // 目标真函数符号：当前包优先，否则任意包，否则裸符号
+        let mangled = self.解析函数符号名(name);
         let tramp = self.生成trampoline(&mangled, &sig)?;
         let obj = self.创建闭包对象(tramp, 0)?;
         Ok(Some((obj.into(), t)))
+    }
+
+    /// 找一个顶层函数的实际 LLVM 符号名（当前包→任意包→裸）。
+    fn 解析函数符号名(&self, name: &str) -> String {
+        let 当前 = super::包内符号名(self.当前包.as_deref(), name);
+        if self.module.get_function(&当前).is_some() {
+            return 当前;
+        }
+        for (pkg, fname) in self.符号.函数按包.keys() {
+            if fname == name {
+                let sym = super::包内符号名(Some(pkg), name);
+                if self.module.get_function(&sym).is_some() {
+                    return sym;
+                }
+            }
+        }
+        super::mangle_function_name(name)
     }
 
     /// 真闭包表达式 → 合成函数 + fat obj + 填捕获。

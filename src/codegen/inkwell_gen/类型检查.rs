@@ -40,6 +40,8 @@ impl 结构体信息 {
 #[derive(Default)]
 pub struct 符号表 {
     pub 函数: HashMap<String, 函数签名>,
+    /// 包内函数签名：(包名, 函数名) → 签名。用于跨包同名函数消歧。
+    pub 函数按包: HashMap<(String, String), 函数签名>,
     /// 结构体注册表：索引即 Qi类型::结构体(idx) 的 idx。
     pub 结构体: Vec<结构体信息>,
     结构体索引: HashMap<String, u32>,
@@ -49,6 +51,8 @@ pub struct 符号表 {
     pub 函数值签名: Vec<函数签名>,
     /// 顶层函数名 → 其函数值签名索引（登记函数时预填，供「函数名当值」）。
     函数值索引表: HashMap<String, u32>,
+    /// 当前正在生成的函数所属包名（用于跨包同名函数消歧）。
+    pub 当前包: Option<String>,
     作用域: Vec<HashMap<String, Qi类型>>,
 }
 
@@ -56,13 +60,30 @@ impl 符号表 {
     pub fn new() -> Self {
         符号表 {
             函数: HashMap::new(),
+            函数按包: HashMap::new(),
             结构体: Vec::new(),
             结构体索引: HashMap::new(),
             方法: HashMap::new(),
             函数值签名: Vec::new(),
             函数值索引表: HashMap::new(),
+            当前包: None,
             作用域: vec![HashMap::new()],
         }
+    }
+
+    /// 解析函数签名：优先当前包内同名函数，否则回退到任意包（用于导入的函数）。
+    pub fn 解析函数(&self, name: &str) -> Option<&函数签名> {
+        if let Some(pkg) = &self.当前包 {
+            if let Some(sig) = self.函数按包.get(&(pkg.clone(), name.to_string())) {
+                return Some(sig);
+            }
+        }
+        self.函数.get(name)
+    }
+
+    /// 函数是否存在（当前包优先）。
+    pub fn 有函数(&self, name: &str) -> bool {
+        self.解析函数(name).is_some()
     }
 
     /// 登记一个函数值签名，返回索引。
@@ -166,9 +187,9 @@ impl 符号表 {
         }
     }
 
-    /// 从内建/用户函数名推断返回类型。
+    /// 从内建/用户函数名推断返回类型（当前包优先）。
     pub fn 查函数返回(&self, callee: &str) -> Option<Qi类型> {
-        if let Some(sig) = self.函数.get(callee) {
+        if let Some(sig) = self.解析函数(callee) {
             return Some(sig.返回);
         }
         内建返回类型(callee)

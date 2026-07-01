@@ -112,7 +112,23 @@ impl<'ctx> 后端<'ctx> {
                 {
                     return Ok(v);
                 }
-                // 3) 内建打印归一（IO 未导入时的 打印行 兜底）
+                // 3) 用户模块限定调用：别名.函数(...) —— 如 `导入 X.追踪 作为 追踪; 追踪.启用即时打印()`。
+                //    接收者是裸标识符且不是局部变量/结构体 → 把 method 当用户函数解析。
+                if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                    if !self.变量表.contains_key(&id.name)
+                        && !self.全局变量表.contains_key(&id.name)
+                        && self.符号.查函数返回(&mc.method_name).is_some()
+                    {
+                        let call = crate::parser::ast::FunctionCallExpression {
+                            module_qualifier: None,
+                            callee: mc.method_name.clone(),
+                            arguments: mc.arguments.clone(),
+                            span: mc.span.clone(),
+                        };
+                        return self.生成函数调用(&call);
+                    }
+                }
+                // 4) 内建打印归一（IO 未导入时的 打印行 兜底）
                 if let Some(v) = self.生成打印方法(&mc.method_name, &mc.arguments)? {
                     return Ok(v);
                 }
@@ -439,6 +455,40 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 
+    /// 解析用户函数调用目标：当前包同名函数优先，否则任意包。
+    /// 返回 (LLVM 函数, 签名)。
+    fn 解析用户函数(
+        &self,
+        name: &str,
+    ) -> Result<
+        (
+            inkwell::values::FunctionValue<'ctx>,
+            Option<super::类型检查::函数签名>,
+        ),
+        String,
+    > {
+        // 当前包符号
+        let 当前 = super::包内符号名(self.当前包.as_deref(), name);
+        if let Some(f) = self.module.get_function(&当前) {
+            return Ok((f, self.符号.解析函数(name).cloned()));
+        }
+        // 回退：任意已登记包的符号
+        for ((pkg, fname), sig) in self.符号.函数按包.iter() {
+            if fname == name {
+                let sym = super::包内符号名(Some(pkg), name);
+                if let Some(f) = self.module.get_function(&sym) {
+                    return Ok((f, Some(sig.clone())));
+                }
+            }
+        }
+        // 再回退：裸符号（无包）
+        let 裸 = super::mangle_function_name(name);
+        if let Some(f) = self.module.get_function(&裸) {
+            return Ok((f, self.符号.函数.get(name).cloned()));
+        }
+        Err(format!("未定义的函数: {}", name))
+    }
+
     /// 用户函数调用 / 内建函数调用 / 打印调用。
     fn 生成函数调用(
         &mut self,
@@ -459,13 +509,8 @@ impl<'ctx> 后端<'ctx> {
             return Ok(Some(v));
         }
 
-        // 用户函数
-        let mangled = super::mangle_function_name(&call.callee);
-        let f = self
-            .module
-            .get_function(&mangled)
-            .ok_or_else(|| format!("未定义的函数: {}", call.callee))?;
-        let sig = self.符号.函数.get(&call.callee).cloned();
+        // 用户函数（跨包同名消歧：当前包符号优先，否则回退裸/任意包符号）
+        let (f, sig) = self.解析用户函数(&call.callee)?;
 
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         for (i, a) in call.arguments.iter().enumerate() {

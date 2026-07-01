@@ -59,22 +59,27 @@ impl<'ctx> 后端<'ctx> {
             None => self.ctx.void_type().fn_type(&参数llvm, false),
         };
 
-        let mangled = super::mangle_function_name(&f.name);
+        // 包内唯一符号，避免跨包同名（主程序.注册 vs Harness.注册）冲突
+        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name);
         let func = self.module.add_function(&mangled, fn_type, None);
 
-        self.符号.函数.insert(
-            f.name.clone(),
-            函数签名 {
-                参数: 参数类型,
-                返回: 返回类型,
-            },
-        );
+        let sig = 函数签名 {
+            参数: 参数类型,
+            返回: 返回类型,
+        };
+        // 包内签名（消歧优先）+ 扁平签名（fallback / 未标包时）
+        if let Some(pkg) = self.当前包.clone() {
+            self.符号
+                .函数按包
+                .insert((pkg, f.name.clone()), sig.clone());
+        }
+        self.符号.函数.entry(f.name.clone()).or_insert(sig);
         Ok(func)
     }
 
     /// 第二趟：生成一个用户函数的函数体。
     pub(super) fn 生成函数体(&mut self, f: &FunctionDeclaration) -> Result<(), String> {
-        let mangled = super::mangle_function_name(&f.name);
+        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name);
         let func = self
             .module
             .get_function(&mangled)
@@ -82,8 +87,7 @@ impl<'ctx> 后端<'ctx> {
 
         let sig = self
             .符号
-            .函数
-            .get(&f.name)
+            .解析函数(&f.name)
             .cloned()
             .ok_or_else(|| format!("函数签名缺失: {}", f.name))?;
 

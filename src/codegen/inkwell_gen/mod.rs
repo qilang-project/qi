@@ -74,6 +74,16 @@ pub(crate) fn mangle_function_name(name: &str) -> String {
     format!("_Z_{}", hex)
 }
 
+/// 包内用户函数的唯一 LLVM 符号：把 `包名$函数名` 一起 mangle，避免跨包同名冲突
+/// （如 主程序.注册 vs Harness.注册）。`入口` 不修饰（→ main，单独处理）。
+/// 无包名时退回裸 mangle（与旧行为一致）。
+fn 包内符号名(pkg: Option<&str>, name: &str) -> String {
+    match pkg {
+        Some(p) => mangle_function_name(&format!("{}${}", p, name)),
+        None => mangle_function_name(name),
+    }
+}
+
 struct 后端<'ctx> {
     ctx: &'ctx Context,
     module: Module<'ctx>,
@@ -101,6 +111,8 @@ struct 后端<'ctx> {
     闭包计数: u32,
     /// 是否正在生成 入口→main（main 返回 i32，bare `返回` 要 emit ret i32 0）。
     在入口中: bool,
+    /// 当前正在处理的模块包名（跨包同名函数消歧用；与 符号.当前包 同步）。
+    当前包: Option<String>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -122,7 +134,14 @@ impl<'ctx> 后端<'ctx> {
             待合成闭包: Vec::new(),
             闭包计数: 0,
             在入口中: false,
+            当前包: None,
         }
+    }
+
+    /// 设置当前包（同步到符号表，供签名解析）。
+    fn 设当前包(&mut self, pkg: Option<String>) {
+        self.符号.当前包 = pkg.clone();
+        self.当前包 = pkg;
     }
 
     /// 声明阶段7 用到的运行时函数原型。
@@ -258,6 +277,7 @@ impl<'ctx> 后端<'ctx> {
         let bb = self.ctx.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(bb);
 
+        self.设当前包(programs[0].package_name.clone());
         self.变量表.clear();
         self.符号.进入作用域();
         self.当前返回类型 = Qi类型::空;
@@ -328,14 +348,16 @@ pub fn compile_to_object_multi(
         后端值.登记全局变量(p)?;
     }
 
-    // 第二趟：登记所有模块的函数 / 方法签名 + LLVM 原型
+    // 第二趟：登记所有模块的函数 / 方法签名 + LLVM 原型（按包消歧）
     for p in programs {
+        后端值.设当前包(p.package_name.clone());
         后端值.登记函数(p)?;
         后端值.登记方法(p)?;
     }
 
     // 第三趟：生成所有模块的用户函数体（跳过重复的 入口，只 entry 的算数）
-    for (i, p) in programs.iter().enumerate() {
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
         for stmt in &p.statements {
             if let AstNode::函数声明(f) = stmt {
                 if f.name == "入口" {
@@ -344,11 +366,11 @@ pub fn compile_to_object_multi(
                 后端值.生成函数体(f)?;
             }
         }
-        let _ = i;
     }
 
     // 第四趟：生成所有模块的方法体
     for p in programs {
+        后端值.设当前包(p.package_name.clone());
         后端值.生成所有方法体(p)?;
     }
 
