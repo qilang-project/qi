@@ -104,25 +104,25 @@ impl QiCompiler {
             source_file
         };
 
-        // 实验性 inkwell 后端（v2）：QI_BACKEND=inkwell 走类型化 IR 路径，旧文本路径不动。
+        // inkwell 类型化 IR 后端 —— 默认且唯一（旧文本后端已淘汰）。
         #[cfg(feature = "llvm")]
         {
-            if std::env::var("QI_BACKEND").as_deref() == Ok("inkwell") {
-                return self.compile_inkwell(source_file, start_time);
-            }
+            return self.compile_inkwell(source_file, start_time);
         }
 
-        // Multi-file compilation with import resolution
-        let result = self.compile_project(source_file)?;
-
-        let duration = start_time.elapsed().as_millis() as u64;
-        Ok(CompilationResult {
-            executable_path: result.executable_path,
-            ir_paths: result.ir_paths,
-            object_paths: result.object_paths,
-            duration_ms: duration,
-            warnings: result.warnings,
-        })
+        // 仅在无 llvm feature 时回退旧路径（临时保留，随后删除）。
+        #[cfg(not(feature = "llvm"))]
+        {
+            let result = self.compile_project(source_file)?;
+            let duration = start_time.elapsed().as_millis() as u64;
+            Ok(CompilationResult {
+                executable_path: result.executable_path,
+                ir_paths: result.ir_paths,
+                object_paths: result.object_paths,
+                duration_ms: duration,
+                warnings: result.warnings,
+            })
+        }
     }
 
     /// 实验性 inkwell 后端入口：解析 → inkwell 类型化 IR → .o → 复用现有链接。

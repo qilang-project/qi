@@ -132,7 +132,8 @@ lalrpop = "0.22.2"
 cc = "1.1"
 
 [features]
-default = []
+# inkwell 类型化 IR 后端是默认且唯一后端（旧文本后端已淘汰）。llvm 恒开。
+default = ["llvm"]
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
 llvm = ["inkwell"]
