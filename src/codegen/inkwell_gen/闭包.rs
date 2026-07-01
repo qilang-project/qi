@@ -152,6 +152,59 @@ impl<'ctx> 后端<'ctx> {
         Ok((obj.into(), Qi类型::函数值(idx)))
     }
 
+    /// 把一段语句体合成为 **nullary 闭包**（无参无返回），返回其 fat obj 指针。
+    /// 复用闭包机制：扫自由变量 → 登记待合成闭包（body 稍后统一生成）→ 建 fat obj + 填捕获。
+    /// 供 `启动`（协程）复用：协程体就是执行某表达式并丢弃结果。
+    pub(super) fn 合成nullary闭包(
+        &mut self,
+        body: Vec<AstNode>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        // 扫自由变量（捕获）：body 内引用、且当前作用域确有记录、非 body 内声明。
+        let 空参: HashSet<String> = HashSet::new();
+        let mut 本地声明: HashSet<String> = HashSet::new();
+        for s in &body {
+            self.收集本地声明(s, &mut 本地声明);
+        }
+        let mut 自由: Vec<String> = Vec::new();
+        let mut 已见: HashSet<String> = HashSet::new();
+        for s in &body {
+            self.收集自由标识符(s, &空参, &本地声明, &mut 自由, &mut 已见);
+        }
+        let 捕获: Vec<(String, Qi类型)> = 自由
+            .into_iter()
+            .filter_map(|n| self.变量表.get(&n).map(|(_, t)| (n, *t)))
+            .collect();
+
+        let 符号名 = format!("__closure_{}", self.闭包计数);
+        self.闭包计数 += 1;
+        self.待合成闭包.push(待合成闭包 {
+            符号名: 符号名.clone(),
+            参数类型: Vec::new(),
+            参数名: Vec::new(),
+            返回类型: Qi类型::空,
+            捕获: 捕获.clone(),
+            body,
+        });
+
+        let fn_val = self.声明闭包原型(&符号名, &捕获, self.待合成闭包.last().unwrap())?;
+        let obj = self.创建闭包对象(fn_val, 捕获.len() as u64)?;
+
+        for (i, (名, t)) in 捕获.iter().enumerate() {
+            let (ptr, _) = self
+                .变量表
+                .get(名)
+                .cloned()
+                .ok_or_else(|| format!("捕获变量 {} 缺失", 名))?;
+            let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
+            let v = self
+                .builder
+                .build_load(llvmt, ptr, 名)
+                .map_err(|e| e.to_string())?;
+            self.闭包填槽(obj, i as u64, v, *t)?;
+        }
+        Ok(obj)
+    }
+
     /// 间接调用（fat call）：callee 是持 fat obj 的变量/全局/参数。
     pub(super) fn 尝试间接调用(
         &mut self,

@@ -235,6 +235,23 @@ impl<'ctx> 后端<'ctx> {
             None,
         );
 
+        // 协程真并发 spawn（qi-runtime async_runtime/ffi）：
+        //   qi_runtime_spawn_goroutine(fn())            —— fire-and-forget 裸函数
+        //   qi_runtime_spawn_goroutine_with_args(fn(*const i64), *const i64, i64)
+        //     —— runtime 拷贝 args 数组后在线程池调 wrapper(args_ptr)
+        self.module.add_function(
+            "qi_runtime_spawn_goroutine",
+            self.ctx.void_type().fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_runtime_spawn_goroutine_with_args",
+            self.ctx
+                .void_type()
+                .fn_type(&[ptrt.into(), ptrt.into(), i64t.into()], false),
+            None,
+        );
+
         // 闭包 / 函数值 fat 对象 ABI（closure_ffi.rs）
         self.module.add_function(
             "qi_closure_create",

@@ -3,17 +3,17 @@
 //! - `通道<整数>(cap)` → `qi_runtime_create_channel(cap)`，返回 ptr（当整数句柄）。
 //! - `ch <- v`         → `qi_runtime_channel_send(ch, v_i64)`。
 //! - `<- ch`           → 存 slot，`qi_runtime_channel_receive(ch, &slot)`，load slot(i64)。
-//! - `启动 f(args)`    → **同步退化**：直接 `f(args)`（串行执行）。
-//!   harness 的通道是缓冲的（cap=个数+1），worker 先 send 再由主循环 receive，
-//!   串行下 send-then-receive 不死锁，结果正确（只是不并发）。真 goroutine 后置。
+//! - `启动 表达式`    → **真并发**：把表达式包成 nullary 闭包（fat obj），经共享
+//!   trampoline 丢到 `qi_runtime_spawn_goroutine_with_args` 的 tokio 线程池执行。
+//!   fire-and-forget，同步靠通道 / 等待组。见 生成协程启动。
 
 use super::类型::Qi类型;
 use super::后端;
 use crate::parser::ast::{
     AstNode, ChannelCreateExpression, ChannelReceiveExpression, ChannelSendExpression,
-    GoroutineSpawnExpression,
+    ExpressionStatement, GoroutineSpawnExpression,
 };
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, PointerValue};
 use inkwell::AddressSpace;
 
 impl<'ctx> 后端<'ctx> {
@@ -202,16 +202,22 @@ impl<'ctx> 后端<'ctx> {
         Ok((r64.into(), Qi类型::整数))
     }
 
-    /// `<- ch` → slot=alloca i64; receive(ch, &slot); load slot。返回 i64。
+    /// `<- ch` → runtime ABI：`receive(ch, &slot)` 把 slot 填成**指向 boxed i64 的指针**
+    /// （send 侧 `Box::into_raw(Box::new(value))`）。故需两步 load：
+    ///   1) slot(ptr) 里 load 出 boxed 指针 `p`；
+    ///   2) 从 `p` load 出真正的 i64 值。
+    /// 只 load 一层会得到 boxed 指针本身（垃圾整数）——这是历史 bug 的根因。
     pub(super) fn 生成通道接收(
         &mut self,
         r: &ChannelReceiveExpression,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
         let ch = self.求通道指针(&r.channel)?;
         let i64t = self.ctx.i64_type();
+        let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
+        // slot 存 *mut i64（boxed 值的指针）
         let slot = self
             .builder
-            .build_alloca(i64t, "recvslot")
+            .build_alloca(ptrt, "recvslot")
             .map_err(|e| e.to_string())?;
         let f = self
             .module
@@ -220,21 +226,130 @@ impl<'ctx> 后端<'ctx> {
         self.builder
             .build_call(f, &[ch.into(), slot.into()], "chrecv")
             .map_err(|e| e.to_string())?;
+        // 1) load boxed 指针
+        let boxed = self
+            .builder
+            .build_load(ptrt, slot, "recvbox")
+            .map_err(|e| e.to_string())?
+            .into_pointer_value();
+        // 2) deref 得真正 i64 值
         let v = self
             .builder
-            .build_load(i64t, slot, "recvval")
+            .build_load(i64t, boxed, "recvval")
             .map_err(|e| e.to_string())?;
         Ok((v, Qi类型::整数))
     }
 
-    /// `启动 f(args)` —— 同步退化：直接执行表达式（串行）。返回空。
+    /// `启动 表达式` —— 真并发：把表达式包成 nullary 闭包（fat obj），
+    /// 经共享 trampoline 丢到 runtime 线程池执行。fire-and-forget，返回空。
+    ///
+    /// 步骤：
+    /// 1. 把 `表达式` 当作 nullary 闭包体（表达式语句，求值即弃）→ fat obj 指针 `g`
+    ///    （复用 闭包.rs：自由变量扫描 + 捕获 + 待合成）。
+    /// 2. 取共享 trampoline `qi_go_tramp(args: *const i64)`：读 args[0] → inttoptr
+    ///    成 fat obj → 从 fat[0] 取闭包 fn_ptr → 调 fn(fat)（无用户参）。
+    /// 3. 栈上放 `[1 x i64] = [ ptrtoint(g) ]`，调
+    ///    `qi_runtime_spawn_goroutine_with_args(qi_go_tramp, 数组指针, 1)`。
     pub(super) fn 生成协程启动(
         &mut self,
         g: &GoroutineSpawnExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
-        // 退化：直接调用被启动的表达式（通常是函数调用）
-        self.生成表达式(&g.expression)?;
+        let i64t = self.ctx.i64_type();
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+
+        // 1. 表达式 → nullary 闭包体（一条表达式语句：求值并丢弃）
+        let body = vec![AstNode::表达式语句(ExpressionStatement {
+            expression: g.expression.clone(),
+            span: g.span.clone(),
+        })];
+        let 闭包obj = self.合成nullary闭包(body)?;
+
+        // 2. 共享 trampoline
+        let tramp = self.取协程trampoline()?;
+
+        // 3. 栈上 i64 = ptrtoint(闭包obj)；其指针即 1 元素 args 数组（*const i64）。
+        //    runtime 侧会把这 1 个 i64 拷贝走，故用栈 alloca 安全（spawn 时读取即拷贝）。
+        let 数组 = self
+            .builder
+            .build_alloca(i64t, "go_args")
+            .map_err(|e| e.to_string())?;
+        let obj_i = self
+            .builder
+            .build_ptr_to_int(闭包obj, i64t, "obj2i")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(数组, obj_i)
+            .map_err(|e| e.to_string())?;
+
+        // 4. spawn（fire-and-forget）
+        let spawn = self
+            .module
+            .get_function("qi_runtime_spawn_goroutine_with_args")
+            .ok_or_else(|| "运行时函数未声明: qi_runtime_spawn_goroutine_with_args".to_string())?;
+        let one = i64t.const_int(1, false);
+        self.builder
+            .build_call(
+                spawn,
+                &[tramp.into(), 数组.into(), one.into()],
+                "go_spawn",
+            )
+            .map_err(|e| e.to_string())?;
         Ok(None)
+    }
+
+    /// 共享协程 trampoline `fn qi_go_tramp(args: *const i64)`：
+    /// 读 args[0] → inttoptr 成 fat obj → fat[0] 取闭包 fn_ptr → 调 fn(fat)。幂等。
+    fn 取协程trampoline(&mut self) -> Result<PointerValue<'ctx>, String> {
+        const 名: &str = "qi_go_tramp";
+        if let Some(f) = self.module.get_function(名) {
+            return Ok(f.as_global_value().as_pointer_value());
+        }
+        let i64t = self.ctx.i64_type();
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+        let fn_type = self.ctx.void_type().fn_type(&[ptrt.into()], false);
+        let tramp = self.module.add_function(名, fn_type, None);
+
+        let 保存 = self.builder.get_insert_block();
+        let entry = self.ctx.append_basic_block(tramp, "entry");
+        self.builder.position_at_end(entry);
+
+        // args: *const i64（形参0）
+        let args_ptr = tramp.get_nth_param(0).unwrap().into_pointer_value();
+        // 读 args[0]
+        let obj_i = self
+            .builder
+            .build_load(i64t, args_ptr, "go_obj_i")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        // inttoptr → fat obj
+        let obj = self
+            .builder
+            .build_int_to_ptr(obj_i, ptrt, "go_obj")
+            .map_err(|e| e.to_string())?;
+        // fat[0] 取闭包 fn_ptr（与 发射fat调用 一致）
+        let getfn = self
+            .module
+            .get_function("qi_closure_get_fn")
+            .ok_or_else(|| "运行时函数未声明: qi_closure_get_fn".to_string())?;
+        let fptr = self
+            .builder
+            .build_call(getfn, &[obj.into()], "go_getfn")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| "get_fn 未返回".to_string())?
+            .into_pointer_value();
+        // 调 fn(env=fat)（nullary 闭包：仅 env 参，void 返回）
+        let 闭包fn类型 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
+        self.builder
+            .build_indirect_call(闭包fn类型, fptr, &[obj.into()], "go_call")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_return(None).map_err(|e| e.to_string())?;
+
+        if let Some(bb) = 保存 {
+            self.builder.position_at_end(bb);
+        }
+        Ok(tramp.as_global_value().as_pointer_value())
     }
 
     /// 求通道句柄的 ptr 值（Qi 侧句柄是整数，转回 ptr 传给运行时）。
