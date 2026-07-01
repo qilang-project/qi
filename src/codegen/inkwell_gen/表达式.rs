@@ -83,9 +83,9 @@ impl<'ctx> 后端<'ctx> {
             }
 
             AstNode::字符串连接表达式(sc) => {
-                let l = self.生成为字符串(&sc.left)?;
-                let r = self.生成为字符串(&sc.right)?;
-                Ok(Some((self.拼接字符串(l, r)?, Qi类型::字符串)))
+                let (l, l新) = self.生成拼接操作数(&sc.left)?;
+                let (r, r新) = self.生成拼接操作数(&sc.right)?;
+                Ok(Some((self.拼接字符串带释放(l, l新, r, r新)?, Qi类型::字符串)))
             }
 
             AstNode::函数调用表达式(call) => self.生成函数调用(call),
@@ -297,9 +297,9 @@ impl<'ctx> 后端<'ctx> {
             let lt = 推断表达式类型(&b.left, &self.符号);
             let rt = 推断表达式类型(&b.right, &self.符号);
             if lt == Qi类型::字符串 || rt == Qi类型::字符串 {
-                let l = self.生成为字符串(&b.left)?;
-                let r = self.生成为字符串(&b.right)?;
-                return Ok((self.拼接字符串(l, r)?, Qi类型::字符串));
+                let (l, l新) = self.生成拼接操作数(&b.left)?;
+                let (r, r新) = self.生成拼接操作数(&b.right)?;
+                return Ok((self.拼接字符串带释放(l, l新, r, r新)?, Qi类型::字符串));
             }
         }
 
@@ -465,11 +465,29 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         node: &AstNode,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        Ok(self.生成拼接操作数(node)?.0)
+    }
+
+    /// 拼接场景专用：生成字符串操作数，并返回它是否是「本次新建、绝不逃逸的临时值」。
+    ///
+    /// 新建 = true 仅当结构上 100% 确定该指针是本表达式刚 alloc 出来、
+    /// 且只会作为上层拼接的输入被消费一次（拼接读完字节即可安全释放）：
+    ///   - 数值 → int_to_string / float_to_string 的产物
+    ///   - 字符串拼接表达式 / 字符串 `+` 表达式的产物（拼接链中间结果）
+    /// 其余（字面量、变量/字段/函数调用返回的字符串）一律 false —— 可能是活变量、
+    /// 可能逃逸（存进结构体 / session / 全局）、可能被后续再引用，绝不能释放。
+    /// 保守铁律：拿不准就 false（宁泄漏不 over-release）。
+    pub(super) fn 生成拼接操作数(
+        &mut self,
+        node: &AstNode,
+    ) -> Result<(inkwell::values::PointerValue<'ctx>, bool), String> {
+        // 先据 AST 结构判断「若结果是字符串，是否为新建临时」。
+        let 结构上新建 = 是新建字符串表达式(node);
         let (v, t) = self
             .生成表达式(node)?
             .ok_or_else(|| "字符串拼接操作数无值".to_string())?;
         match t {
-            Qi类型::字符串 => Ok(v.into_pointer_value()),
+            Qi类型::字符串 => Ok((v.into_pointer_value(), 结构上新建)),
             Qi类型::整数 | Qi类型::布尔 | Qi类型::未知 => {
                 let iv = v.into_int_value();
                 // 布尔/未知先扩展到 i64
@@ -480,16 +498,35 @@ impl<'ctx> 后端<'ctx> {
                 } else {
                     iv
                 };
-                self.调用返回指针("qi_runtime_int_to_string", &[iv.into()])
+                // int_to_string 产物永远是新建临时
+                Ok((self.调用返回指针("qi_runtime_int_to_string", &[iv.into()])?, true))
             }
-            Qi类型::浮点数 => {
-                self.调用返回指针("qi_runtime_float_to_string", &[v.into_float_value().into()])
-            }
+            Qi类型::浮点数 => Ok((
+                self.调用返回指针("qi_runtime_float_to_string", &[v.into_float_value().into()])?,
+                true,
+            )),
+            _ => Ok((self.生成为字符串_旧(node, v, t)?, 结构上新建)),
+        }
+    }
+
+    /// 旧路径的错误分支（结构体/函数值/数组/未来/空 → 报错），供 生成拼接操作数 复用。
+    fn 生成为字符串_旧(
+        &mut self,
+        _node: &AstNode,
+        v: BasicValueEnum<'ctx>,
+        t: Qi类型,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        match t {
+            Qi类型::字符串 => Ok(v.into_pointer_value()),
             Qi类型::结构体(_) => Err("结构体不能直接拼接为字符串".to_string()),
             Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
             Qi类型::数组(_) => Err("数组不能直接拼接为字符串".to_string()),
             Qi类型::未来(_) => Err("未来不能直接拼接为字符串（先 等待）".to_string()),
             Qi类型::空 => Err("空值不能拼接".to_string()),
+            // 数值类型在 生成拼接操作数 里已转字符串处理，不会走到这里
+            Qi类型::整数 | Qi类型::布尔 | Qi类型::浮点数 | Qi类型::未知 => {
+                Err("数值应先经 生成拼接操作数 转字符串".to_string())
+            }
         }
     }
 
@@ -523,8 +560,37 @@ impl<'ctx> 后端<'ctx> {
         l: inkwell::values::PointerValue<'ctx>,
         r: inkwell::values::PointerValue<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        self.拼接字符串带释放(l, false, r, false)
+    }
+
+    /// 拼两串，并在 concat 读完字节后释放新建的临时操作数。
+    ///
+    /// 安全前提（调用点必须保证）：`l新建`/`r新建` 仅当该指针是本次刚 alloc、
+    /// 只作为这次拼接输入、绝不逃逸也绝不被再引用的临时值时才为 true。
+    /// concat 内部先把两侧字节完整拷进新 buffer 再返回，所以返回后释放操作数安全。
+    fn 拼接字符串带释放(
+        &mut self,
+        l: inkwell::values::PointerValue<'ctx>,
+        l新建: bool,
+        r: inkwell::values::PointerValue<'ctx>,
+        r新建: bool,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
         let p = self.调用返回指针("qi_runtime_string_concat", &[l.into(), r.into()])?;
+        // concat 已完成，操作数字节不再需要 —— 释放本次新建的临时值。
+        if l新建 {
+            self.释放临时串(l);
+        }
+        if r新建 {
+            self.释放临时串(r);
+        }
         Ok(p.into())
+    }
+
+    /// 对一个「确定新建且已消费完毕」的临时字符串发 qi_string_free。
+    fn 释放临时串(&mut self, ptr: inkwell::values::PointerValue<'ctx>) {
+        if let Some(f) = self.module.get_function("qi_string_free") {
+            let _ = self.builder.build_call(f, &[ptr.into()], "");
+        }
     }
 
     /// 调用一个返回 ptr 的运行时函数。
@@ -765,5 +831,26 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
         }
         Ok(Some(None))
+    }
+}
+
+/// 该表达式若结果为字符串，是否是「本次新建、绝不逃逸、只被消费一次」的临时值？
+///
+/// 保守：只认拼接产物（字符串拼接表达式 / 字符串 `+`）。这类中间结果必然是
+/// qi_runtime_string_concat 刚 alloc 的堆串，且在 AST 里只作为上层拼接的输入出现，
+/// 消费完即死，释放绝对安全。
+///
+/// 其它一律 false（宁泄漏不 over-release）：
+///   - 字面量：.rodata，不可 free
+///   - 标识符/字段访问：活变量或可能逃逸的值
+///   - 函数调用返回：所有权语义不明（可能被缓存 / 存进结构体 / 是借引用）
+///
+/// 数值 → int/float_to_string 的新建性不在这里判（在 生成拼接操作数 里直接标 true，
+/// 因为那两个函数的产物一定是新建临时）。
+fn 是新建字符串表达式(node: &AstNode) -> bool {
+    match node {
+        AstNode::字符串连接表达式(_) => true,
+        AstNode::二元操作表达式(b) => b.operator == crate::parser::ast::BinaryOperator::加,
+        _ => false,
     }
 }

@@ -178,6 +178,10 @@ impl<'ctx> 后端<'ctx> {
         // 字符串比较（== / != / </ > 等；返回 <0/0/>0）
         let 比较 = i32t.fn_type(&[ptrt.into(), ptrt.into()], false);
         self.module.add_function("qi_runtime_string_compare", 比较, None);
+        // 释放临时字符串（拼接链中间结果 / int_to_string 临时值）。
+        // 仅对 codegen 结构上确定「新建且不逃逸」的临时值发，绝不对字面量/变量发。
+        let 释放串 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
+        self.module.add_function("qi_string_free", 释放串, None);
 
         // 类型转换
         self.module.add_function(
