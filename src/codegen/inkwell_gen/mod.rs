@@ -8,19 +8,31 @@
 //!   变量声明（整数/浮点/布尔/字符串）、整数/浮点算术与比较、字符串拼接、
 //!   如果/否则、当（while）、用户函数定义与调用、返回、打印族按类型重载。
 //!
+//! 阶段8：结构体 + `(自身)` 方法 + 链式调用。
+//! 阶段9：多文件导入（合并成单模块编译）、标准库分发（复用 ModuleRegistry）、
+//!        函数值（顶层函数名当值传递 + 间接调用）。
+//!
 //! 模块拆分（每文件 <1000 行）：
 //!   类型.rs      —— Qi 类型 ↔ LLVM 类型映射
 //!   类型检查.rs  —— 作用域符号表 + 表达式类型推断
 //!   表达式.rs    —— 表达式降级
 //!   语句.rs      —— 语句 / 控制流降级
 //!   声明.rs      —— 函数声明降级
+//!   结构体.rs    —— 结构体声明/字面量/字段
+//!   方法.rs      —— (自身) 方法 + 方法调用（链式）
+//!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
+//!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
 #[path = "声明.rs"]
 mod 声明;
+#[path = "导入.rs"]
+mod 导入;
 #[path = "方法.rs"]
 mod 方法;
 #[path = "结构体.rs"]
 mod 结构体;
+#[path = "闭包.rs"]
+mod 闭包;
 #[path = "表达式.rs"]
 mod 表达式;
 #[path = "语句.rs"]
@@ -30,6 +42,7 @@ mod 类型;
 #[path = "类型检查.rs"]
 mod 类型检查;
 
+use crate::codegen::module_registry::ModuleRegistry;
 use crate::config::CompilationTarget;
 use crate::parser::ast::{AstNode, Program};
 use inkwell::builder::Builder;
@@ -69,6 +82,10 @@ struct 后端<'ctx> {
     当前返回类型: Qi类型,
     /// 结构体索引 → LLVM 具名 struct 类型（与 符号.结构体 一一对应）。
     结构体llvm: Vec<StructType<'ctx>>,
+    /// 标准库模块注册表（中文模块.方法 → FFI 名 + 签名）。
+    注册表: ModuleRegistry,
+    /// 导入别名 → 标准库模块名。如 `导入 标准库.输入输出 作为 IO` → IO→输入输出。
+    导入别名: HashMap<String, String>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -83,6 +100,8 @@ impl<'ctx> 后端<'ctx> {
             变量表: HashMap::new(),
             当前返回类型: Qi类型::空,
             结构体llvm: Vec::new(),
+            注册表: ModuleRegistry::new(),
+            导入别名: HashMap::new(),
         }
     }
 
@@ -192,38 +211,65 @@ impl<'ctx> 后端<'ctx> {
     }
 }
 
-/// 把 Program 编译成目标文件（.o）。host 默认三元组。
+/// 把单个 Program 编译成目标文件（.o）。保留给单文件调用点。
 pub fn compile_to_object(
     program: &Program,
     out: &Path,
+    target: CompilationTarget,
+) -> Result<(), String> {
+    compile_to_object_multi(std::slice::from_ref(program), out, target)
+}
+
+/// 把多个 Program（entry + 所有用户模块）合并进同一个 LLVM 模块，编成一个 .o。
+/// programs[0] 是 entry（含 入口()）。跨模块符号共享同一 mangle，天然可见。
+pub fn compile_to_object_multi(
+    programs: &[Program],
+    out: &Path,
     _target: CompilationTarget,
 ) -> Result<(), String> {
+    if programs.is_empty() {
+        return Err("没有可编译的模块".to_string());
+    }
     let ctx = Context::create();
     let mut 后端值 = 后端::new(&ctx);
     后端值.声明运行时();
 
-    // 第一趟：登记所有结构体（其它签名会引用结构体类型，必须最先）
-    后端值.登记结构体(program)?;
-
-    // 第二趟：登记函数 / 方法签名 + LLVM 原型（供前向 / 链式调用解析）
-    后端值.登记函数(program)?;
-    后端值.登记方法(program)?;
-
-    // 第三趟：生成用户函数体
-    for stmt in &program.statements {
-        if let AstNode::函数声明(f) = stmt {
-            if f.name == "入口" {
-                continue;
-            }
-            后端值.生成函数体(f)?;
-        }
+    // 收集所有模块的导入别名（标准库导入）
+    for p in programs {
+        后端值.收集导入别名(p);
     }
 
-    // 第四趟：生成方法体（顶层方法声明 + 结构体内嵌方法）
-    后端值.生成所有方法体(program)?;
+    // 第一趟：登记所有模块的结构体（其它签名会引用结构体类型，必须最先）
+    for p in programs {
+        后端值.登记结构体(p)?;
+    }
 
-    // 入口 → main
-    后端值.生成入口(program)?;
+    // 第二趟：登记所有模块的函数 / 方法签名 + LLVM 原型
+    for p in programs {
+        后端值.登记函数(p)?;
+        后端值.登记方法(p)?;
+    }
+
+    // 第三趟：生成所有模块的用户函数体（跳过重复的 入口，只 entry 的算数）
+    for (i, p) in programs.iter().enumerate() {
+        for stmt in &p.statements {
+            if let AstNode::函数声明(f) = stmt {
+                if f.name == "入口" {
+                    continue; // 入口只在最后为 entry 生成 main
+                }
+                后端值.生成函数体(f)?;
+            }
+        }
+        let _ = i;
+    }
+
+    // 第四趟：生成所有模块的方法体
+    for p in programs {
+        后端值.生成所有方法体(p)?;
+    }
+
+    // 入口 → main（只用 entry 程序 programs[0]）
+    后端值.生成入口(&programs[0])?;
 
     后端值
         .module

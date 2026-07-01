@@ -45,6 +45,10 @@ pub struct 符号表 {
     结构体索引: HashMap<String, u32>,
     /// 方法签名：(结构体名, 方法名) → 签名（参数不含接收者）。
     pub 方法: HashMap<(String, String), 函数签名>,
+    /// 函数值签名注册表：索引即 Qi类型::函数值(idx) 的 idx。
+    pub 函数值签名: Vec<函数签名>,
+    /// 顶层函数名 → 其函数值签名索引（登记函数时预填，供「函数名当值」）。
+    函数值索引表: HashMap<String, u32>,
     作用域: Vec<HashMap<String, Qi类型>>,
 }
 
@@ -55,8 +59,38 @@ impl 符号表 {
             结构体: Vec::new(),
             结构体索引: HashMap::new(),
             方法: HashMap::new(),
+            函数值签名: Vec::new(),
+            函数值索引表: HashMap::new(),
             作用域: vec![HashMap::new()],
         }
+    }
+
+    /// 登记一个函数值签名，返回索引。
+    pub fn 登记函数值签名(&mut self, sig: 函数签名) -> u32 {
+        let idx = self.函数值签名.len() as u32;
+        self.函数值签名.push(sig);
+        idx
+    }
+
+    /// 按索引拿函数值签名。
+    pub fn 函数值签名(&self, idx: u32) -> Option<&函数签名> {
+        self.函数值签名.get(idx as usize)
+    }
+
+    /// 为一个顶层函数预登记「作为值」的签名索引（登记函数时调用）。
+    pub fn 预登记函数值(&mut self, name: &str) {
+        if self.函数值索引表.contains_key(name) {
+            return;
+        }
+        if let Some(sig) = self.函数.get(name).cloned() {
+            let idx = self.登记函数值签名(sig);
+            self.函数值索引表.insert(name.to_string(), idx);
+        }
+    }
+
+    /// 顶层函数名 → 其函数值类型（供「函数名当值」用）。immutable。
+    pub fn 函数为值(&self, name: &str) -> Option<Qi类型> {
+        self.函数值索引表.get(name).copied().map(Qi类型::函数值)
     }
 
     pub fn 进入作用域(&mut self) {
@@ -105,14 +139,21 @@ impl 符号表 {
         self.结构体.get(idx as usize)
     }
 
-    /// 解析类型注解为 Qi 类型，自定义类型解析成 结构体(idx)。
-    pub fn 解析类型(&self, t: &crate::parser::ast::TypeNode) -> Qi类型 {
+    /// 解析类型注解为 Qi 类型，自定义类型解析成 结构体(idx)，函数类型解析成 函数值(idx)。
+    /// 需 &mut 因为函数类型会登记新签名。
+    pub fn 解析类型(&mut self, t: &crate::parser::ast::TypeNode) -> Qi类型 {
         use crate::parser::ast::TypeNode;
         match t {
             TypeNode::自定义类型(name) | TypeNode::结构体类型(crate::parser::ast::StructType { name, .. }) => {
                 self.结构体索引(name)
                     .map(Qi类型::结构体)
                     .unwrap_or(Qi类型::未知)
+            }
+            TypeNode::函数类型(ft) => {
+                let 参数: Vec<Qi类型> = ft.parameters.iter().map(|p| self.解析类型(p)).collect();
+                let 返回 = self.解析类型(&ft.return_type);
+                let idx = self.登记函数值签名(函数签名 { 参数, 返回 });
+                Qi类型::函数值(idx)
             }
             _ => Qi类型::从注解(t),
         }
@@ -151,7 +192,10 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             LiteralValue::布尔(_) => Qi类型::布尔,
             LiteralValue::字符(_) => Qi类型::整数,
         },
-        AstNode::标识符表达式(id) => 表.查变量(&id.name).unwrap_or(Qi类型::未知),
+        AstNode::标识符表达式(id) => 表
+            .查变量(&id.name)
+            .or_else(|| 表.函数为值(&id.name)) // 变量没有则看是不是顶层函数名（当值用）
+            .unwrap_or(Qi类型::未知),
         AstNode::二元操作表达式(b) => {
             use BinaryOperator::*;
             match b.operator {
@@ -171,7 +215,17 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
         }
         AstNode::字符串连接表达式(_) => Qi类型::字符串,
         AstNode::一元操作表达式(u) => 推断表达式类型(&u.operand, 表),
-        AstNode::函数调用表达式(call) => 表.查函数返回(&call.callee).unwrap_or(Qi类型::未知),
+        AstNode::函数调用表达式(call) => {
+            // 优先：callee 是局部函数值变量 → 用其签名返回类型（间接调用）
+            if let Some(t) = 表.查变量(&call.callee) {
+                if let Some(idx) = t.函数值索引() {
+                    if let Some(sig) = 表.函数值签名(idx) {
+                        return sig.返回;
+                    }
+                }
+            }
+            表.查函数返回(&call.callee).unwrap_or(Qi类型::未知)
+        }
         AstNode::赋值表达式(a) => 推断表达式类型(&a.value, 表),
         AstNode::结构体实例化表达式(lit) => 表
             .结构体索引(&lit.struct_name)

@@ -19,6 +19,8 @@ pub enum Qi类型 {
     空,     // void
     /// 结构体实例（按指针传递）。u32 是结构体在 结构体注册表 中的索引。
     结构体(u32),
+    /// 函数值 / 函数指针。u32 是签名在 函数值签名 注册表中的索引。按指针传递。
+    函数值(u32),
     /// 尚未确定 / 不关心的类型（如指针语义的复合值）。默认按 i64 处理。
     未知,
 }
@@ -52,6 +54,14 @@ impl Qi类型 {
             _ => None,
         }
     }
+
+    /// 是否函数值，返回其签名索引。
+    pub fn 函数值索引(&self) -> Option<u32> {
+        match self {
+            Qi类型::函数值(i) => Some(*i),
+            _ => None,
+        }
+    }
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -62,7 +72,7 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::整数 | Qi类型::未知 => self.ctx.i64_type().into(),
             Qi类型::浮点数 => self.ctx.f64_type().into(),
             Qi类型::布尔 => self.ctx.bool_type().into(),
-            Qi类型::字符串 | Qi类型::结构体(_) => {
+            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) => {
                 self.ctx.ptr_type(AddressSpace::default()).into()
             }
             Qi类型::空 => return None,

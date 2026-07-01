@@ -20,19 +20,22 @@ impl<'ctx> 后端<'ctx> {
             AstNode::字面量表达式(lit) => Ok(Some(self.生成字面量(&lit.value)?)),
 
             AstNode::标识符表达式(id) => {
-                let (ptr, t) = self
-                    .变量表
-                    .get(&id.name)
-                    .cloned()
-                    .ok_or_else(|| format!("未声明的变量: {}", id.name))?;
-                let llvmt = self
-                    .llvm基础类型(t)
-                    .ok_or_else(|| format!("变量 {} 类型无效", id.name))?;
-                let v = self
-                    .builder
-                    .build_load(llvmt, ptr, &id.name)
-                    .map_err(|e| e.to_string())?;
-                Ok(Some((v, t)))
+                // 局部变量优先
+                if let Some((ptr, t)) = self.变量表.get(&id.name).cloned() {
+                    let llvmt = self
+                        .llvm基础类型(t)
+                        .ok_or_else(|| format!("变量 {} 类型无效", id.name))?;
+                    let v = self
+                        .builder
+                        .build_load(llvmt, ptr, &id.name)
+                        .map_err(|e| e.to_string())?;
+                    return Ok(Some((v, t)));
+                }
+                // 否则可能是「函数名当值」→ 取函数指针
+                if let Some(v) = self.标识符作为函数值(&id.name)? {
+                    return Ok(Some(v));
+                }
+                Err(format!("未声明的变量: {}", id.name))
             }
 
             AstNode::二元操作表达式(b) => self.生成二元(b).map(Some),
@@ -81,14 +84,21 @@ impl<'ctx> 后端<'ctx> {
             AstNode::字段访问表达式(fa) => self.生成字段访问(&fa.object, &fa.field).map(Some),
 
             AstNode::方法调用表达式(mc) => {
-                // 先按结构体方法解析（接收者是结构体，含链式）；不是结构体再归一到打印。
+                // 1) 结构体方法（接收者是结构体，含链式）
                 if let Some(v) = self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)? {
                     return Ok(v);
                 }
+                // 2) 标准库分发（接收者是模块名/别名，如 IO.打印行 / 字符串::字节长度）
+                if let Some(v) =
+                    self.尝试标准库调用(&mc.object, &mc.method_name, &mc.arguments)?
+                {
+                    return Ok(v);
+                }
+                // 3) 内建打印归一（IO 未导入时的 打印行 兜底）
                 if let Some(v) = self.生成打印方法(&mc.method_name, &mc.arguments)? {
                     return Ok(v);
                 }
-                Ok(None)
+                Err(format!("无法解析方法调用: {}", mc.method_name))
             }
 
             AstNode::赋值表达式(a) => {
@@ -289,6 +299,7 @@ impl<'ctx> 后端<'ctx> {
                 self.调用返回指针("qi_runtime_float_to_string", &[v.into_float_value().into()])
             }
             Qi类型::结构体(_) => Err("结构体不能直接拼接为字符串".to_string()),
+            Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
             Qi类型::空 => Err("空值不能拼接".to_string()),
         }
     }
@@ -352,6 +363,11 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // 间接调用：callee 是一个函数值变量（如参数 f: 函数(整数):整数）
+        if let Some(v) = self.尝试间接调用(&call.callee, &call.arguments)? {
+            return Ok(v);
+        }
+
         // 打印
         if let Some(v) = self.生成打印方法(&call.callee, &call.arguments)? {
             return Ok(v);
@@ -475,6 +491,7 @@ impl<'ctx> 后端<'ctx> {
                     (if 换行 { "qi_runtime_println" } else { "qi_runtime_print" }, v.into())
                 }
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
+                Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
                 Qi类型::空 => return Err("不能打印空值".to_string()),
             };
             let f = self

@@ -132,13 +132,41 @@ impl QiCompiler {
         source_file: PathBuf,
         start_time: std::time::Instant,
     ) -> Result<CompilationResult, CompilerError> {
-        let content = std::fs::read_to_string(&source_file).map_err(CompilerError::Io)?;
-        let program = crate::parser::Parser::new()
-            .parse_source(&content)
-            .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
+        // 多文件：收集 entry + 所有被导入的**用户模块**（标准库导入不解析文件）。
+        // 全部合并进同一次 inkwell 编译 → 单个 .o，跨模块函数/结构体/方法用统一 mangle
+        // 天然可见、无需跨对象 extern 声明。
+        let mut module_registry = crate::semantic::module::ModuleRegistry::new();
+        let mut compiled_modules: std::collections::HashMap<PathBuf, crate::parser::ast::AstNode> =
+            std::collections::HashMap::new();
+        self.parse_and_collect_modules(&source_file, &mut module_registry, &mut compiled_modules)?;
+
+        // entry 程序放最前（它有 入口()），其余用户模块随后合并。
+        let entry_key = source_file
+            .canonicalize()
+            .unwrap_or_else(|_| source_file.clone());
+        let mut programs: Vec<crate::parser::ast::Program> = Vec::new();
+        if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(&entry_key) {
+            programs.push(p.clone());
+        } else {
+            // 回退：直接解析 entry（canonicalize 失配时）
+            let content = std::fs::read_to_string(&source_file).map_err(CompilerError::Io)?;
+            let p = crate::parser::Parser::new()
+                .parse_source(&content)
+                .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
+            programs.push(p);
+        }
+        for (path, ast) in &compiled_modules {
+            if *path == entry_key {
+                continue;
+            }
+            if let crate::parser::ast::AstNode::程序(p) = ast {
+                programs.push(p.clone());
+            }
+        }
+
         let obj = source_file.with_extension("o");
-        crate::codegen::inkwell_gen::compile_to_object(
-            &program,
+        crate::codegen::inkwell_gen::compile_to_object_multi(
+            &programs,
             &obj,
             self.config.target_platform,
         )
