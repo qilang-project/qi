@@ -3395,6 +3395,55 @@ impl IrBuilder {
         None
     }
 
+    /// 把字符串拼接链拍平成各叶子片段（左到右），供 builder 一次性构建。
+    fn flatten_string_concat<'a>(&self, node: &'a AstNode, parts: &mut Vec<&'a AstNode>) {
+        if let AstNode::字符串连接表达式(c) = node {
+            self.flatten_string_concat(&c.left, parts);
+            self.flatten_string_concat(&c.right, parts);
+        } else {
+            parts.push(node);
+        }
+    }
+
+    /// 构建一个拼接片段并确保是字符串指针（整数/浮点自动转字符串）。
+    fn build_string_operand(&mut self, node: &AstNode) -> Result<String, String> {
+        let var = self.build_node(node)?;
+        let is_string = var.starts_with('@')
+            || (var.starts_with('%')
+                && self
+                    .variable_types
+                    .get(var.trim_start_matches('%'))
+                    .map(|t| t == "ptr")
+                    .unwrap_or(false));
+        if is_string {
+            return Ok(var);
+        }
+        let conv_temp = self.generate_temp();
+        let ty = if var.starts_with('%') {
+            self.variable_types
+                .get(var.trim_start_matches('%'))
+                .map(|s| s.as_str())
+                .unwrap_or("i64")
+        } else if var.contains('.') {
+            "double"
+        } else {
+            "i64"
+        };
+        let conv_func = if ty == "double" {
+            "qi_runtime_float_to_string"
+        } else {
+            "qi_runtime_int_to_string"
+        };
+        self.variable_types
+            .insert(conv_temp.trim_start_matches('%').to_string(), "ptr".to_string());
+        self.add_instruction(IrInstruction::函数调用 {
+            dest: Some(conv_temp.clone()),
+            callee: conv_func.to_string(),
+            arguments: vec![var],
+        });
+        Ok(conv_temp)
+    }
+
     /// Build IR for an AST node
     #[allow(unreachable_patterns)]
     fn build_node(&mut self, node: &AstNode) -> Result<String, String> {
@@ -7375,108 +7424,52 @@ impl IrBuilder {
                 Ok(temp)
             }
             AstNode::字符串连接表达式(string_concat) => {
-                // Build left and right expressions
-                let left_var = self.build_node(&string_concat.left)?;
-                let right_var = self.build_node(&string_concat.right)?;
+                // 拍平拼接链：a+b+c+… 原来退化成 O(N²) 的嵌套 concat（每步 format!+CString 各一次分配）。
+                // 这里把整棵链收集成各片段，≥3 段走「字符串构建器」一次性 O(N) 构建。
+                let mut parts: Vec<&AstNode> = Vec::new();
+                self.flatten_string_concat(&string_concat.left, &mut parts);
+                self.flatten_string_concat(&string_concat.right, &mut parts);
 
-                // Check if we need to convert left to string
-                let left_str = {
-                    let is_string = left_var.starts_with('@')
-                        || (left_var.starts_with('%')
-                            && self
-                                .variable_types
-                                .get(left_var.trim_start_matches('%'))
-                                .map(|t| t == "ptr")
-                                .unwrap_or(false));
+                if parts.len() <= 2 {
+                    // 两段：保持二元 concat，省去 builder 的 box 分配
+                    let left_str = self.build_string_operand(parts[0])?;
+                    let right_str = self.build_string_operand(parts[1])?;
+                    let temp = self.generate_temp();
+                    self.add_instruction(IrInstruction::字符串连接 {
+                        dest: temp.clone(),
+                        left: left_str,
+                        right: right_str,
+                    });
+                    self.variable_types
+                        .insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
+                    return Ok(temp);
+                }
 
-                    if is_string {
-                        left_var
-                    } else {
-                        // Convert to string
-                        let conv_temp = self.generate_temp();
-                        let left_type = if left_var.starts_with('%') {
-                            self.variable_types
-                                .get(left_var.trim_start_matches('%'))
-                                .map(|s| s.as_str())
-                                .unwrap_or("i64")
-                        } else if left_var.contains('.') {
-                            "double"
-                        } else {
-                            "i64"
-                        };
-                        let conv_func = if left_type == "double" {
-                            "qi_runtime_float_to_string"
-                        } else {
-                            "qi_runtime_int_to_string"
-                        };
-                        self.variable_types.insert(
-                            conv_temp.trim_start_matches('%').to_string(),
-                            "ptr".to_string(),
-                        );
-                        self.add_instruction(IrInstruction::函数调用 {
-                            dest: Some(conv_temp.clone()),
-                            callee: conv_func.to_string(),
-                            arguments: vec![left_var],
-                        });
-                        conv_temp
-                    }
-                };
-
-                // Check if we need to convert right to string
-                let right_str = {
-                    let is_string = right_var.starts_with('@')
-                        || (right_var.starts_with('%')
-                            && self
-                                .variable_types
-                                .get(right_var.trim_start_matches('%'))
-                                .map(|t| t == "ptr")
-                                .unwrap_or(false));
-
-                    if is_string {
-                        right_var
-                    } else {
-                        // Convert to string
-                        let conv_temp = self.generate_temp();
-                        let right_type = if right_var.starts_with('%') {
-                            self.variable_types
-                                .get(right_var.trim_start_matches('%'))
-                                .map(|s| s.as_str())
-                                .unwrap_or("i64")
-                        } else if right_var.contains('.') {
-                            "double"
-                        } else {
-                            "i64"
-                        };
-                        let conv_func = if right_type == "double" {
-                            "qi_runtime_float_to_string"
-                        } else {
-                            "qi_runtime_int_to_string"
-                        };
-                        self.variable_types.insert(
-                            conv_temp.trim_start_matches('%').to_string(),
-                            "ptr".to_string(),
-                        );
-                        self.add_instruction(IrInstruction::函数调用 {
-                            dest: Some(conv_temp.clone()),
-                            callee: conv_func.to_string(),
-                            arguments: vec![right_var],
-                        });
-                        conv_temp
-                    }
-                };
-
-                // Generate string concatenation
-                let temp = self.generate_temp();
-                self.add_instruction(IrInstruction::字符串连接 {
-                    dest: temp.clone(),
-                    left: left_str,
-                    right: right_str,
+                // ≥3 段：new → 逐段 push → finish
+                let b = self.generate_temp();
+                self.variable_types
+                    .insert(b.trim_start_matches('%').to_string(), "ptr".to_string());
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(b.clone()),
+                    callee: "qi_runtime_strbuilder_new".to_string(),
+                    arguments: vec![],
                 });
-
-                // Record that this temporary variable is a string type
+                for p in &parts {
+                    let s = self.build_string_operand(p)?;
+                    self.add_instruction(IrInstruction::函数调用 {
+                        dest: None,
+                        callee: "qi_runtime_strbuilder_push".to_string(),
+                        arguments: vec![b.clone(), s],
+                    });
+                }
+                let temp = self.generate_temp();
                 self.variable_types
                     .insert(temp.trim_start_matches('%').to_string(), "ptr".to_string());
-
+                self.add_instruction(IrInstruction::函数调用 {
+                    dest: Some(temp.clone()),
+                    callee: "qi_runtime_strbuilder_finish".to_string(),
+                    arguments: vec![b.clone()],
+                });
                 Ok(temp)
             }
             AstNode::结构体声明(struct_decl) => {
@@ -10854,6 +10847,9 @@ impl IrBuilder {
         ir.push_str("; String operations\n");
         ir.push_str("declare i64 @qi_runtime_string_length(ptr)\n");
         ir.push_str("declare ptr @qi_runtime_string_concat(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_runtime_strbuilder_new()\n");
+        ir.push_str("declare void @qi_runtime_strbuilder_push(ptr, ptr)\n");
+        ir.push_str("declare ptr @qi_runtime_strbuilder_finish(ptr)\n");
         ir.push_str("declare ptr @qi_runtime_string_slice(ptr, i64, i64)\n");
         ir.push_str("declare i32 @qi_runtime_string_compare(ptr, ptr)\n");
         ir.push_str("declare void @qi_runtime_free_string(ptr)\n");
@@ -12109,6 +12105,8 @@ impl IrBuilder {
                                 || callee == "qi_runtime_condvar_create"
                                 || callee == "qi_runtime_once_create"
                                 || callee == "qi_runtime_timer_create"
+                                || callee == "qi_runtime_strbuilder_new"
+                                || callee == "qi_runtime_strbuilder_finish"
                             {
                                 "ptr"
                             // Math functions return double

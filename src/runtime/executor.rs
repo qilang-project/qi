@@ -439,6 +439,45 @@ pub extern "C" fn qi_runtime_string_concat(s1: *const c_char, s2: *const c_char)
     }
 }
 
+// ── 字符串构建器：把链式 a+b+c+… 从 O(N²) 嵌套 concat 降到 O(N) 单次构建。
+// codegen 把拼接链拍平成各片段，new 一个 builder，逐片段 push，最后 finish 一次成串。
+// 句柄是 Box<String> 的裸指针。
+
+/// 新建字符串构建器，返回句柄。
+#[no_mangle]
+pub extern "C" fn qi_runtime_strbuilder_new() -> *mut std::ffi::c_void {
+    Box::into_raw(Box::new(String::new())) as *mut std::ffi::c_void
+}
+
+/// 往构建器追加一个字符串片段。
+#[no_mangle]
+pub extern "C" fn qi_runtime_strbuilder_push(b: *mut std::ffi::c_void, s: *const c_char) {
+    if b.is_null() || s.is_null() {
+        return;
+    }
+    unsafe {
+        let sb = &mut *(b as *mut String);
+        if let Ok(st) = CStr::from_ptr(s).to_str() {
+            sb.push_str(st);
+        }
+    }
+}
+
+/// 收尾：消费构建器，返回最终 C 字符串（调用方负责释放）。
+#[no_mangle]
+pub extern "C" fn qi_runtime_strbuilder_finish(b: *mut std::ffi::c_void) -> *mut c_char {
+    if b.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let sb = Box::from_raw(b as *mut String);
+        match std::ffi::CString::new(*sb) {
+            Ok(c) => c.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}
+
 /// Get substring (caller must free the result)
 #[no_mangle]
 pub extern "C" fn qi_runtime_string_slice(s: *const c_char, start: i64, end: i64) -> *mut c_char {
