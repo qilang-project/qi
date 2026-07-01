@@ -22,8 +22,8 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 # LALRPOP parser generator
 lalrpop-util = { version = "0.22.2", features = ["lexer"] }
 
-# LLVM bindings for code generation (optional for now)
-inkwell = { version = "0.6.0", features = ["llvm15-0"], optional = true }
+# LLVM bindings for code generation —— inkwell 是唯一后端，强制依赖（需 LLVM 15 / LLVM_SYS_150_PREFIX）
+inkwell = { version = "0.6.0", features = ["llvm15-0"] }
 
 
 # Unicode support for Chinese characters
@@ -132,8 +132,8 @@ lalrpop = "0.22.2"
 cc = "1.1"
 
 [features]
-# inkwell 类型化 IR 后端是默认且唯一后端（旧文本后端已淘汰）。llvm 恒开。
-default = ["llvm"]
+# inkwell 是唯一后端（强制依赖），无需 feature 开关。llvm 保留为空 alias 兼容旧命令行。
+default = []
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
-llvm = ["inkwell"]
+llvm = []

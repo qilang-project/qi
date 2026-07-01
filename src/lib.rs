@@ -65,7 +65,6 @@ pub extern "C" fn _qi_force_link_sync_runtime() {
     }
 }
 
-use crate::semantic::module::ModuleRegistry;
 use std::path::PathBuf;
 
 /// Compiler configuration and settings
@@ -104,29 +103,11 @@ impl QiCompiler {
             source_file
         };
 
-        // inkwell 类型化 IR 后端 —— 默认且唯一（旧文本后端已淘汰）。
-        #[cfg(feature = "llvm")]
-        {
-            return self.compile_inkwell(source_file, start_time);
-        }
-
-        // 仅在无 llvm feature 时回退旧路径（临时保留，随后删除）。
-        #[cfg(not(feature = "llvm"))]
-        {
-            let result = self.compile_project(source_file)?;
-            let duration = start_time.elapsed().as_millis() as u64;
-            Ok(CompilationResult {
-                executable_path: result.executable_path,
-                ir_paths: result.ir_paths,
-                object_paths: result.object_paths,
-                duration_ms: duration,
-                warnings: result.warnings,
-            })
-        }
+        // inkwell 类型化 IR 后端 —— 唯一后端（旧文本后端已淘汰）。
+        self.compile_inkwell(source_file, start_time)
     }
 
-    /// 实验性 inkwell 后端入口：解析 → inkwell 类型化 IR → .o → 复用现有链接。
-    #[cfg(feature = "llvm")]
+    /// inkwell 后端入口：解析 → inkwell 类型化 IR → .o → 复用跨平台链接。
     fn compile_inkwell(
         &self,
         source_file: PathBuf,
@@ -171,35 +152,13 @@ impl QiCompiler {
             self.config.target_platform,
         )
         .map_err(CompilerError::Codegen)?;
-        let exe = source_file.with_extension("");
-        // 链接无 LLVM 的 qi-runtime 归档（不用 libqi_compiler.a —— 它带 LLVM/zlib）。
-        let rt = self.find_host_runtime_library()?;
-        let mut cmd = std::process::Command::new("clang");
-        cmd.arg("-o").arg(&exe).arg(&obj).arg(&rt);
-        cmd.arg("-lpthread").arg("-lm").arg("-ldl");
-        #[cfg(target_os = "macos")]
-        {
-            // rustls 全栈纯 Rust，但 ring/系统调用可能引用少量 framework —— 补上无害。
-            for fw in ["Security", "CoreFoundation", "SystemConfiguration"] {
-                cmd.arg("-framework").arg(fw);
-            }
-        }
-        let out = cmd.output().map_err(CompilerError::Io)?;
-        if !out.status.success() {
-            return Err(CompilerError::Codegen(format!(
-                "链接失败: {}",
-                String::from_utf8_lossy(&out.stderr)
-            )));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(md) = std::fs::metadata(&exe) {
-                let mut p = md.permissions();
-                p.set_mode(0o755);
-                let _ = std::fs::set_permissions(&exe, p);
-            }
-        }
+        let exe = if cfg!(windows) {
+            source_file.with_extension("exe")
+        } else {
+            source_file.with_extension("")
+        };
+        // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
+        self.link_objects(&[obj.clone()], &exe)?;
         Ok(CompilationResult {
             executable_path: exe,
             ir_paths: Vec::new(),
@@ -207,360 +166,6 @@ impl QiCompiler {
             duration_ms: start_time.elapsed().as_millis() as u64,
             warnings: Vec::new(),
         })
-    }
-
-    /// Compile a project with multiple files and import resolution
-    /// This is the core logic for multi-file compilation
-    fn compile_project(&self, entry_file: PathBuf) -> Result<CompilationResult, CompilerError> {
-        let mut module_registry = crate::semantic::module::ModuleRegistry::new();
-        let mut compiled_modules = std::collections::HashMap::new();
-        let warnings = Vec::new();
-
-        // 1. Parse and register all modules
-        self.parse_and_collect_modules(&entry_file, &mut module_registry, &mut compiled_modules)?;
-
-        // 1.5. Process public imports (re-exports)
-        self.process_public_imports(&mut module_registry, &compiled_modules)?;
-        let (
-            external_struct_definitions,
-            external_struct_field_names,
-            external_struct_function_fields,
-        ) = self.collect_struct_layouts(&compiled_modules);
-
-        let mut object_files: Vec<PathBuf> = Vec::new();
-        let mut ir_files: Vec<PathBuf> = Vec::new();
-
-        // 2. Compile each module independently
-        for (module_path, ast) in &compiled_modules {
-            // Get module info by file path (normalize for consistent lookup)
-            let path_key = module_path
-                .canonicalize()
-                .unwrap_or_else(|_| module_path.clone())
-                .to_string_lossy()
-                .to_string();
-            let current_module = module_registry.get_module(&path_key);
-
-            // Collect external function signatures from imported modules
-            let mut external_functions = std::collections::HashMap::new();
-            // Collect import aliases for namespace resolution
-            let mut import_aliases = std::collections::HashMap::new();
-            // Track which external functions return struct pointers
-            let mut external_fn_return_struct_types = std::collections::HashMap::new();
-
-            if let Some(module) = current_module {
-                // Get current module's package name
-                let current_package_name = module.package_name.as_ref();
-
-                for import in &module.imports {
-                    // Check if this is a standard library import
-                    let is_stdlib = import.module_path.get(0).map(|s| s.as_str()) == Some("标准库");
-
-                    if is_stdlib {
-                        // Skip file resolution for standard library imports
-                        // Standard library modules are built-in and handled by ModuleRegistry in codegen
-                        let module_name =
-                            import.module_path.last().unwrap_or(&import.module_path[0]);
-                        let alias_name = import.alias.as_ref().unwrap_or(module_name);
-                        import_aliases.insert(alias_name.clone(), module_name.clone());
-                        continue;
-                    }
-
-                    // Resolve import path to actual module
-                    let import_path = self.resolve_import_path(module_path, &import.module_path)?;
-                    let import_path_key = import_path
-                        .canonicalize()
-                        .unwrap_or_else(|_| import_path.clone())
-                        .to_string_lossy()
-                        .to_string();
-
-                    if let Some(imported_module) = module_registry.get_module(&import_path_key) {
-                        // Use package name for the alias
-                        let import_module_name = imported_module
-                            .package_name
-                            .as_ref()
-                            .unwrap_or(&imported_module.name);
-
-                        // Set up alias mapping
-                        let alias_name = import.alias.as_ref().unwrap_or(import_module_name);
-                        import_aliases.insert(alias_name.clone(), import_module_name.clone());
-
-                        // Add all exported functions from imported module as external
-                        // declarations. Each module compiles to its own .ll/.o, so even
-                        // same-package siblings need extern declarations for cross-file calls.
-                        for (func_name, symbol) in &imported_module.exports {
-                            if symbol.kind == crate::semantic::module::SymbolKind::Function {
-                                if let Some(sig) = &symbol.function_signature {
-                                    // Mangle the function name same way as builder does
-                                    let mangled_name = self.mangle_function_name(func_name);
-                                    let param_types: Vec<String> =
-                                        sig.parameters.iter().map(|(_, ty)| ty.clone()).collect();
-
-                                    // Track struct return types for ptr-returning functions
-                                    // by looking at the original return type annotation in the module AST
-                                    if sig.return_type == "ptr" {
-                                        // Try to find the actual struct type name from the module's AST
-                                        if let Some(struct_name) = get_function_return_struct_name(
-                                            &imported_module,
-                                            func_name,
-                                        ) {
-                                            external_fn_return_struct_types
-                                                .insert(mangled_name.clone(), struct_name);
-                                        }
-                                    }
-
-                                    // Only register the original function name
-                                    external_functions.insert(
-                                        mangled_name,
-                                        (param_types, sig.return_type.clone()),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Register all top-level functions from OTHER same-package modules as
-                // external declarations. Each .qi file generates its own .ll/.o, so any
-                // cross-file call within the same package needs a `declare` in the
-                // caller's IR. This includes private functions, which are still emitted
-                // as global symbols by the codegen.
-                for (other_path, other_ast) in compiled_modules.iter() {
-                    if other_path == module_path {
-                        continue;
-                    }
-                    let other_key = other_path
-                        .canonicalize()
-                        .unwrap_or_else(|_| other_path.clone())
-                        .to_string_lossy()
-                        .to_string();
-                    let other_module = match module_registry.get_module(&other_key) {
-                        Some(m) => m,
-                        None => continue,
-                    };
-                    let same_pkg = match (current_package_name, other_module.package_name.as_ref())
-                    {
-                        (Some(a), Some(b)) => a == b,
-                        (None, None) => true,
-                        _ => false,
-                    };
-                    if !same_pkg {
-                        continue;
-                    }
-                    let other_program = match other_ast {
-                        crate::parser::ast::AstNode::程序(p) => p,
-                        _ => continue,
-                    };
-                    for stmt in &other_program.statements {
-                        if let crate::parser::ast::AstNode::函数声明(func) = stmt {
-                            let mangled_name = self.mangle_function_name(&func.name);
-                            if external_functions.contains_key(&mangled_name) {
-                                continue;
-                            }
-                            let param_types: Vec<String> = func
-                                .parameters
-                                .iter()
-                                .map(|p| {
-                                    crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                        &p.type_annotation,
-                                    )
-                                })
-                                .collect();
-                            let return_type =
-                                crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                    &func.return_type,
-                                );
-                            if return_type == "ptr" {
-                                if let Some(rt) = func.return_type.as_ref() {
-                                    let struct_name = match rt {
-                                        crate::parser::ast::TypeNode::自定义类型(name) => {
-                                            Some(name.clone())
-                                        }
-                                        crate::parser::ast::TypeNode::结构体类型(st) => {
-                                            Some(st.name.clone())
-                                        }
-                                        _ => None,
-                                    };
-                                    if let Some(name) = struct_name {
-                                        external_fn_return_struct_types
-                                            .insert(mangled_name.clone(), name);
-                                    }
-                                }
-                            }
-                            external_functions.insert(mangled_name, (param_types, return_type));
-                        }
-                    }
-                }
-            }
-
-            // 注册其它模块里的「接收者方法」(方法声明) 为外部函数声明。
-            // 方法既不在 exports 也不是 函数声明，之前完全漏注册，导致跨包/跨文件
-            // 调用 `值.方法()` 时调用方拿不到方法签名：返回结构体被默认成 i64，
-            // 与实际 ptr 返回不匹配，链接期报 `call i64 ... expected ptr`。
-            // 方法在 IR 里就是普通全局函数 `接收者类型_方法名(ptr 接收者, ...)`。
-            for (other_path, other_ast) in compiled_modules.iter() {
-                if other_path == module_path {
-                    continue;
-                }
-                let other_program = match other_ast {
-                    crate::parser::ast::AstNode::程序(p) => p,
-                    _ => continue,
-                };
-                for stmt in &other_program.statements {
-                    if let crate::parser::ast::AstNode::方法声明(m) = stmt {
-                        let full_name = format!("{}_{}", m.receiver_type, m.method_name);
-                        let mangled_name = self.mangle_function_name(&full_name);
-                        if external_functions.contains_key(&mangled_name) {
-                            continue;
-                        }
-                        // 第一个参数是接收者指针，其余是方法形参
-                        let mut param_types: Vec<String> = vec!["ptr".to_string()];
-                        for p in &m.parameters {
-                            param_types.push(
-                                crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                    &p.type_annotation,
-                                ),
-                            );
-                        }
-                        let return_type =
-                            crate::semantic::module::ModuleRegistry::type_node_to_llvm_type(
-                                &m.return_type,
-                            );
-                        if return_type == "ptr" {
-                            if let Some(rt) = m.return_type.as_ref() {
-                                let struct_name = match rt {
-                                    crate::parser::ast::TypeNode::自定义类型(name) => {
-                                        Some(name.clone())
-                                    }
-                                    crate::parser::ast::TypeNode::结构体类型(st) => {
-                                        Some(st.name.clone())
-                                    }
-                                    _ => None,
-                                };
-                                if let Some(name) = struct_name {
-                                    external_fn_return_struct_types
-                                        .insert(mangled_name.clone(), name);
-                                }
-                            }
-                        }
-                        external_functions.insert(mangled_name, (param_types, return_type));
-                    }
-                }
-            }
-
-            // Generate LLVM IR for this module
-            let mut codegen =
-                crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
-
-            // Set external functions for this module
-            codegen.set_external_functions(external_functions);
-
-            // Set external function return struct types
-            codegen.set_external_function_return_struct_types(external_fn_return_struct_types);
-
-            codegen.set_external_struct_definitions(
-                external_struct_definitions.clone(),
-                external_struct_field_names.clone(),
-                external_struct_function_fields.clone(),
-            );
-
-            // Set import aliases for namespace resolution
-            codegen.set_import_aliases(import_aliases);
-
-            // Set verbose mode
-            codegen.set_verbose(self.config.verbose);
-
-            // Set whether this is the entry module (only entry file generates @main)
-            let is_entry = module_path
-                .canonicalize()
-                .unwrap_or_else(|_| module_path.clone())
-                == entry_file
-                    .canonicalize()
-                    .unwrap_or_else(|_| entry_file.clone());
-            codegen.set_is_entry_module(is_entry);
-
-            let ir_content = codegen.generate(&ast).map_err(|e| {
-                CompilerError::Codegen(format!("代码生成失败 {}: {:?}", module_path.display(), e))
-            })?;
-
-            // Write LLVM IR to file
-            let ir_path = module_path.with_extension("ll");
-            std::fs::write(&ir_path, ir_content).map_err(CompilerError::Io)?;
-            ir_files.push(ir_path.clone());
-
-            // Compile IR to object file (.o)
-            let obj_path = self.compile_ir_to_object(&ir_path)?;
-            object_files.push(obj_path);
-        }
-
-        // 3. Link all object files
-        let executable_path = if cfg!(windows) {
-            entry_file.with_extension("exe") // e.g., "main.exe"
-        } else {
-            entry_file.with_extension("") // e.g., "main"
-        };
-        self.link_objects(&object_files, &executable_path)?;
-
-        Ok(CompilationResult {
-            executable_path,
-            ir_paths: ir_files,
-            object_paths: object_files,
-            duration_ms: 0, // Will be set by caller
-            warnings,
-        })
-    }
-
-    /// Generate LLVM IR for a single source file without compiling to executable
-    pub fn generate_ir_for_file(&self, source_file: PathBuf) -> Result<String, CompilerError> {
-        // Resolve relative path to absolute path
-        let source_file = if source_file.is_relative() {
-            std::env::current_dir()
-                .map_err(CompilerError::Io)?
-                .join(&source_file)
-        } else {
-            source_file
-        };
-
-        // Read and parse the file
-        let source_code = std::fs::read_to_string(&source_file).map_err(CompilerError::Io)?;
-
-        let mut lexer = crate::lexer::Lexer::new(source_code);
-        let tokens = lexer
-            .tokenize()
-            .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
-
-        let parser = crate::parser::Parser::new();
-        let program = parser.parse(tokens).map_err(|e| {
-            CompilerError::Parse(format!("{}\n  （文件：{}）", e, source_file.display()))
-        })?;
-
-        let ast = crate::parser::ast::AstNode::程序(program.clone());
-
-        // Instantiate codegen
-        let mut codegen = crate::codegen::CodeGenerator::new(self.config.target_platform.clone());
-        codegen.set_verbose(self.config.verbose);
-
-        // Generate and return IR content
-        codegen
-            .generate(&ast)
-            .map_err(|e| CompilerError::Codegen(e.to_string()))
-    }
-
-    /// Mangle function name (same logic as codegen::builder)
-    fn mangle_function_name(&self, name: &str) -> String {
-        // ASCII names remain unchanged
-        if name.chars().all(|c| c.is_ascii()) {
-            return name.to_string();
-        }
-
-        // Convert UTF-8 bytes to hex representation
-        let utf8_bytes = name.as_bytes();
-        let hex_string: String = utf8_bytes
-            .iter()
-            .map(|byte| format!("{:02X}", byte))
-            .collect();
-
-        // Add prefix to prevent symbol conflicts
-        format!("_Z_{}", hex_string)
     }
 
     /// 交叉编译到 Linux？—— 宿主非 Linux 但目标是 Linux 时，走 zig cc 交叉路径。
@@ -586,69 +191,6 @@ impl QiCompiler {
     /// 对应的 Rust 目标三元组（cargo zigbuild 用，定位交叉构建的运行时归档）。
     fn rust目标三元组(&self) -> String {
         format!("{}-unknown-linux-gnu", self.目标架构())
-    }
-
-    /// Compile LLVM IR to object file
-    fn compile_ir_to_object(&self, ir_path: &PathBuf) -> Result<PathBuf, CompilerError> {
-        let obj_path = ir_path.with_extension("o");
-
-        // 交叉到 Linux：用 zig cc -target 把 IR 编成 Linux 目标文件。
-        // IR 头里嵌的是宿主(macOS)三元组/datalayout，与 -target 冲突 → 先剥掉这两行。
-        if self.交叉到linux() {
-            let ir文本 = std::fs::read_to_string(ir_path).map_err(CompilerError::Io)?;
-            let 剥离: String = ir文本
-                .lines()
-                .filter(|l| {
-                    let t = l.trim_start();
-                    !t.starts_with("target triple") && !t.starts_with("target datalayout")
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let 剥离路径 = ir_path.with_extension("linux.ll");
-            std::fs::write(&剥离路径, 剥离).map_err(CompilerError::Io)?;
-
-            // 不传 -x ir（zig cc 不认）；靠 .ll 扩展名让 clang 自动识别为 LLVM IR。
-            let output = std::process::Command::new("zig")
-                .arg("cc")
-                .arg("-target")
-                .arg(self.zig目标三元组())
-                .arg("-c")
-                .arg(&剥离路径)
-                .arg("-o")
-                .arg(&obj_path)
-                .output()
-                .map_err(CompilerError::Io)?;
-            let _ = std::fs::remove_file(&剥离路径);
-
-            if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
-                return Err(CompilerError::Codegen(format!(
-                    "zig cc 交叉编译 IR 失败: {}",
-                    error
-                )));
-            }
-            return Ok(obj_path);
-        }
-
-        let output = std::process::Command::new("clang")
-            .arg("-c")
-            .arg("-x")
-            .arg("ir")
-            .arg(ir_path)
-            .arg("-o")
-            .arg(&obj_path)
-            .output()
-            .map_err(CompilerError::Io)?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(CompilerError::Codegen(format!(
-                "LLVM IR 编译为目标文件失败: {}",
-                error
-            )));
-        }
-
-        Ok(obj_path)
     }
 
     /// Link object files into executable
@@ -686,8 +228,8 @@ impl QiCompiler {
             return Ok(());
         }
 
-        // Find the runtime library path
-        let lib_path = self.find_runtime_library()?;
+        // 链接无 LLVM 的 qi-runtime 归档（libqi_runtime.a）。
+        let lib_path = self.find_host_runtime_library()?;
 
         let mut command = std::process::Command::new("clang");
         command.arg("-o").arg(executable_path);
@@ -718,15 +260,11 @@ impl QiCompiler {
             command.arg("-lpthread");
             command.arg("-lm"); // Link math library (required for pow, sin, cos, etc.)
 
-            // Linux：qi 运行时(libqi_compiler.a)拉入 openssl/sqlite 等原生依赖；
-            // 手动用 clang 链接静态库时需补这些系统库（macOS 走 framework，见下）。
+            // Linux：libqi_runtime.a 已含 rustls(纯 Rust TLS) + bundled sqlite，
+            // 无需 -lssl/-lcrypto/-lsqlite3（与 zig 交叉路径一致）。
             #[cfg(target_os = "linux")]
             {
-                command
-                    .arg("-lssl")
-                    .arg("-lcrypto")
-                    .arg("-lsqlite3")
-                    .arg("-ldl");
+                command.arg("-ldl");
             }
 
             // On macOS, add frameworks required by reqwest and GUI
@@ -834,7 +372,6 @@ impl QiCompiler {
     }
 
     /// 找宿主平台的 qi-runtime 归档（无 LLVM）。inkwell 后端链接它，避免 libqi_compiler.a 拖 LLVM。
-    #[cfg(feature = "llvm")]
     fn find_host_runtime_library(&self) -> Result<PathBuf, CompilerError> {
         if let Ok(p) = std::env::var("QI_RUNTIME_LIB") {
             let path = PathBuf::from(p);
@@ -855,79 +392,6 @@ impl QiCompiler {
         Err(CompilerError::Codegen(
             "找不到 qi-runtime 归档。先在 qi-runtime/ 跑 cargo build，或设 QI_RUNTIME_LIB。".to_string(),
         ))
-    }
-
-    /// Find the runtime library using multiple search strategies
-    fn find_runtime_library(&self) -> Result<PathBuf, CompilerError> {
-        let lib_name = if cfg!(windows) {
-            "qi_compiler.lib"
-        } else {
-            "libqi_compiler.a"
-        };
-
-        // Get the compiler executable location
-        let compiler_exe_path = std::env::current_exe()?;
-        let compiler_dir = compiler_exe_path
-            .parent()
-            .ok_or_else(|| CompilerError::Codegen("无法确定编译器目录".to_string()))?;
-
-        // Search strategies in order of preference:
-        let mut search_paths = vec![
-            // 1. Same directory as compiler executable (for deployed releases)
-            compiler_dir.join(lib_name),
-            // 2. Current working directory (for local development)
-            std::env::current_dir()?.join(lib_name),
-            // 3. target/release/ relative to current directory (for release builds)
-            std::env::current_dir()?
-                .join("target")
-                .join("release")
-                .join(lib_name),
-            // 4. target/debug/ relative to current directory (for debug builds)
-            std::env::current_dir()?
-                .join("target")
-                .join("debug")
-                .join(lib_name),
-            // 5. target/release/ relative to project root (go up from compiler dir)
-            compiler_dir
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|root| root.join("target").join("release").join(lib_name))
-                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
-            // 6. target/debug/ relative to project root (go up from compiler dir)
-            compiler_dir
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|root| root.join("target").join("debug").join(lib_name))
-                .ok_or_else(|| CompilerError::Codegen("无法确定项目根目录".to_string()))?,
-        ];
-
-        // 7. System-wide installation paths
-        if cfg!(windows) {
-            search_paths.push(PathBuf::from(r"C:\Program Files\Qi\lib").join(lib_name));
-        } else {
-            search_paths.push(PathBuf::from("/usr/local/lib/qi").join(lib_name));
-        }
-
-        // Try each path in order
-        for path in &search_paths {
-            if path.exists() {
-                if self.config.verbose {
-                    eprintln!("Found runtime library at: {:?}", path);
-                }
-                return Ok(path.clone());
-            }
-        }
-
-        // If none found, return error with list of attempted paths
-        let paths_str: Vec<String> = search_paths
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
-        Err(CompilerError::Codegen(format!(
-            "找不到运行时库 {}\n尝试的路径:\n{}",
-            lib_name,
-            paths_str.join("\n")
-        )))
     }
 
     /// Parse a file and recursively parse its imports
@@ -1278,102 +742,6 @@ impl QiCompiler {
         None
     }
 
-    fn collect_struct_layouts(
-        &self,
-        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-    ) -> (
-        std::collections::HashMap<String, Vec<String>>,
-        std::collections::HashMap<String, Vec<String>>,
-        std::collections::HashMap<(String, String), (Vec<String>, String)>,
-    ) {
-        let mut definitions = std::collections::HashMap::new();
-        let mut field_names = std::collections::HashMap::new();
-        let mut function_fields = std::collections::HashMap::new();
-
-        for ast_node in compiled_modules.values() {
-            if let crate::parser::ast::AstNode::程序(program) = ast_node {
-                for statement in &program.statements {
-                    if let crate::parser::ast::AstNode::结构体声明(struct_decl) = statement {
-                        definitions.insert(
-                            struct_decl.name.clone(),
-                            struct_decl
-                                .fields
-                                .iter()
-                                .map(|field| self.type_node_to_llvm_type(&field.type_annotation))
-                                .collect(),
-                        );
-                        field_names.insert(
-                            struct_decl.name.clone(),
-                            struct_decl
-                                .fields
-                                .iter()
-                                .map(|field| field.name.clone())
-                                .collect(),
-                        );
-                        for field in &struct_decl.fields {
-                            if let crate::parser::ast::TypeNode::函数类型(function_type) =
-                                &field.type_annotation
-                            {
-                                function_fields.insert(
-                                    (struct_decl.name.clone(), field.name.clone()),
-                                    (
-                                        function_type
-                                            .parameters
-                                            .iter()
-                                            .map(|param| self.type_node_to_llvm_type(param))
-                                            .collect(),
-                                        self.type_node_to_llvm_type(&function_type.return_type),
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        (definitions, field_names, function_fields)
-    }
-
-    fn type_node_to_llvm_type(&self, type_node: &crate::parser::ast::TypeNode) -> String {
-        use crate::parser::ast::{BasicType, TypeNode};
-
-        match type_node {
-            TypeNode::基础类型(BasicType::整数 | BasicType::长整数) => "i64".to_string(),
-            TypeNode::基础类型(BasicType::短整数) => "i16".to_string(),
-            TypeNode::基础类型(BasicType::字节 | BasicType::字符) => "i8".to_string(),
-            TypeNode::基础类型(BasicType::浮点数) => "double".to_string(),
-            TypeNode::基础类型(BasicType::布尔) => "i1".to_string(),
-            TypeNode::基础类型(BasicType::空) => "void".to_string(),
-            TypeNode::基础类型(
-                BasicType::字符串
-                | BasicType::数组
-                | BasicType::字典
-                | BasicType::列表
-                | BasicType::集合
-                | BasicType::指针
-                | BasicType::引用
-                | BasicType::可变引用,
-            )
-            | TypeNode::函数类型(_)
-            | TypeNode::数组类型(_)
-            | TypeNode::结构体类型(_)
-            | TypeNode::自定义类型(_)
-            | TypeNode::指针类型(_)
-            | TypeNode::引用类型(_)
-            | TypeNode::字典类型(_)
-            | TypeNode::列表类型(_)
-            | TypeNode::集合类型(_)
-            | TypeNode::通道类型(_)
-            | TypeNode::未来类型(_)
-            | TypeNode::结果类型(_)
-            | TypeNode::选项类型(_)
-            | TypeNode::泛型类型(_)
-            | TypeNode::联合体类型(_) => "ptr".to_string(),
-            TypeNode::枚举类型(_) => "i64".to_string(),
-        }
-    }
-
     fn resolve_package_internal_module_path(
         &self,
         current_file: &PathBuf,
@@ -1461,70 +829,6 @@ impl QiCompiler {
         None
     }
 
-    /// Discover and parse all files in the same package directory
-    fn discover_and_parse_same_package_files(
-        &self,
-        entry_file: &PathBuf,
-        package_name: &str,
-        module_registry: &mut crate::semantic::module::ModuleRegistry,
-        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-        visited: &mut std::collections::HashSet<PathBuf>,
-    ) -> Result<(), CompilerError> {
-        // Get the directory containing the entry file
-        let dir = entry_file
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."));
-
-        // Read all .qi files in the directory
-        let entries = std::fs::read_dir(dir).map_err(CompilerError::Io)?;
-
-        for entry in entries {
-            let entry = entry.map_err(CompilerError::Io)?;
-            let path = entry.path();
-
-            // Skip directories and non-.qi files
-            if path.is_dir() || path.extension().and_then(|s| s.to_str()) != Some("qi") {
-                continue;
-            }
-
-            // Skip the entry file itself
-            if path == *entry_file {
-                continue;
-            }
-
-            // Try to parse the file to check if it belongs to the same package
-            if let Ok(source_code) = std::fs::read_to_string(&path) {
-                if let Ok(package_info) = self.extract_package_info(&source_code) {
-                    if let Some(file_package_name) = package_info {
-                        if file_package_name == package_name {
-                            // Check if this file contains a main function (入口函数)
-                            // If it does, skip it to avoid duplicate main symbols
-                            let has_main_function = source_code.contains("函数 入口");
-
-                            // Also check if this file has imports to avoid conflicts
-                            let has_imports = source_code.contains("导入 ");
-
-                            if !has_main_function && !has_imports {
-                                // This file belongs to the same package, has no main function, and no imports
-                                // It's safe to auto-include it
-                                if !compiled_modules.contains_key(&path) {
-                                    self.parse_and_collect_modules_internal(
-                                        &path,
-                                        module_registry,
-                                        compiled_modules,
-                                        visited,
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// FIXED VERSION: Discover and parse same-package files without causing external function conflicts
     fn discover_and_parse_same_package_files_fixed(
         &self,
@@ -1609,97 +913,6 @@ impl QiCompiler {
         Ok(None) // No package declaration found
     }
 
-    /// Process public imports to populate re-exports
-    fn process_public_imports(
-        &self,
-        module_registry: &mut ModuleRegistry,
-        compiled_modules: &std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-    ) -> Result<(), CompilerError> {
-        // Collect all modules that need re-export processing
-        let module_paths: Vec<PathBuf> = compiled_modules.keys().cloned().collect();
-
-        for module_path in module_paths {
-            let path_key = module_path
-                .canonicalize()
-                .unwrap_or_else(|_| module_path.clone())
-                .to_string_lossy()
-                .to_string();
-
-            // Get current module (we'll need to modify it)
-            let imports_to_process: Vec<Vec<String>> = {
-                let module = match module_registry.get_module(&path_key) {
-                    Some(m) => m,
-                    None => continue,
-                };
-
-                // Collect public imports
-                module
-                    .imports
-                    .iter()
-                    .filter(|imp| {
-                        // Check if this is a public import by looking at AST
-                        if let Some(ast_node) = compiled_modules.get(&module_path) {
-                            if let crate::parser::ast::AstNode::程序(ast) = ast_node {
-                                ast.imports.iter().any(|ast_imp| {
-                                    ast_imp.is_public && ast_imp.module_path == imp.module_path
-                                })
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    })
-                    .map(|imp| imp.module_path.clone())
-                    .collect()
-            };
-
-            // Process each public import
-            for import_path_parts in imports_to_process {
-                // Skip standard library imports (they are built-in)
-                let is_stdlib = import_path_parts.get(0).map(|s| s.as_str()) == Some("标准库");
-                if is_stdlib {
-                    continue;
-                }
-
-                let import_path = self.resolve_import_path(&module_path, &import_path_parts)?;
-                let import_path_key = import_path
-                    .canonicalize()
-                    .unwrap_or_else(|_| import_path.clone())
-                    .to_string_lossy()
-                    .to_string();
-
-                // Get exports from imported module
-                let exports_to_add: Vec<_> = {
-                    if let Some(imported_module) = module_registry.get_module(&import_path_key) {
-                        imported_module.exports.clone().into_iter().collect()
-                    } else {
-                        Vec::new()
-                    }
-                };
-
-                // Add exports to current module (we need mutable access)
-                module_registry.add_reexports(&path_key, exports_to_add);
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Helper: given a module and function name, extract the struct type name from return type annotation
-fn get_function_return_struct_name(
-    module: &crate::semantic::module::Module,
-    func_name: &str,
-) -> Option<String> {
-    // We need to look at the module's exports to find the function's return type node
-    // The FunctionSignature only has a string, so we need to check if the module has an AST
-    // Since Module doesn't carry the AST, we use a heuristic: if the symbol is a Function
-    // and its return_type is "ptr", we can't easily recover the struct name here.
-    // This requires the module to carry the original AST or a richer type annotation.
-    // For now, this is a placeholder - struct name recovery requires parser AST storage in Module.
-    let _ = (module, func_name);
-    None
 }
 
 /// Result of a compilation operation
