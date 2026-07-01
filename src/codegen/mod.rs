@@ -1,7 +1,9 @@
 //! LLVM IR generation for Qi language
 
 pub mod builder;
-pub mod llvm;
+/// 新 inkwell 后端（类型化 IR）—— v2，逐步替代文本 IR builder。需 --features llvm。
+#[cfg(feature = "llvm")]
+pub mod inkwell_gen;
 pub mod module_registry;
 pub mod optimization;
 

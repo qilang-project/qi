@@ -104,6 +104,14 @@ impl QiCompiler {
             source_file
         };
 
+        // 实验性 inkwell 后端（v2）：QI_BACKEND=inkwell 走类型化 IR 路径，旧文本路径不动。
+        #[cfg(feature = "llvm")]
+        {
+            if std::env::var("QI_BACKEND").as_deref() == Ok("inkwell") {
+                return self.compile_inkwell(source_file, start_time);
+            }
+        }
+
         // Multi-file compilation with import resolution
         let result = self.compile_project(source_file)?;
 
@@ -114,6 +122,62 @@ impl QiCompiler {
             object_paths: result.object_paths,
             duration_ms: duration,
             warnings: result.warnings,
+        })
+    }
+
+    /// 实验性 inkwell 后端入口：解析 → inkwell 类型化 IR → .o → 复用现有链接。
+    #[cfg(feature = "llvm")]
+    fn compile_inkwell(
+        &self,
+        source_file: PathBuf,
+        start_time: std::time::Instant,
+    ) -> Result<CompilationResult, CompilerError> {
+        let content = std::fs::read_to_string(&source_file).map_err(CompilerError::Io)?;
+        let program = crate::parser::Parser::new()
+            .parse_source(&content)
+            .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
+        let obj = source_file.with_extension("o");
+        crate::codegen::inkwell_gen::compile_to_object(
+            &program,
+            &obj,
+            self.config.target_platform,
+        )
+        .map_err(CompilerError::Codegen)?;
+        let exe = source_file.with_extension("");
+        // 链接无 LLVM 的 qi-runtime 归档（不用 libqi_compiler.a —— 它带 LLVM/zlib）。
+        let rt = self.find_host_runtime_library()?;
+        let mut cmd = std::process::Command::new("clang");
+        cmd.arg("-o").arg(&exe).arg(&obj).arg(&rt);
+        cmd.arg("-lpthread").arg("-lm").arg("-ldl");
+        #[cfg(target_os = "macos")]
+        {
+            // rustls 全栈纯 Rust，但 ring/系统调用可能引用少量 framework —— 补上无害。
+            for fw in ["Security", "CoreFoundation", "SystemConfiguration"] {
+                cmd.arg("-framework").arg(fw);
+            }
+        }
+        let out = cmd.output().map_err(CompilerError::Io)?;
+        if !out.status.success() {
+            return Err(CompilerError::Codegen(format!(
+                "链接失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(md) = std::fs::metadata(&exe) {
+                let mut p = md.permissions();
+                p.set_mode(0o755);
+                let _ = std::fs::set_permissions(&exe, p);
+            }
+        }
+        Ok(CompilationResult {
+            executable_path: exe,
+            ir_paths: Vec::new(),
+            object_paths: vec![obj],
+            duration_ms: start_time.elapsed().as_millis() as u64,
+            warnings: Vec::new(),
         })
     }
 
@@ -739,6 +803,30 @@ impl QiCompiler {
              或设 QI_RUNTIME_LIB_LINUX 指向它。",
             triple
         )))
+    }
+
+    /// 找宿主平台的 qi-runtime 归档（无 LLVM）。inkwell 后端链接它，避免 libqi_compiler.a 拖 LLVM。
+    #[cfg(feature = "llvm")]
+    fn find_host_runtime_library(&self) -> Result<PathBuf, CompilerError> {
+        if let Ok(p) = std::env::var("QI_RUNTIME_LIB") {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+        let exe = std::env::current_exe().map_err(CompilerError::Io)?;
+        // qilang/target/debug/qi → 上溯到 qilang
+        if let Some(ws) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            for profile in ["debug", "release"] {
+                let p = ws.join("qi-runtime/target").join(profile).join("libqi_runtime.a");
+                if p.exists() {
+                    return Ok(p);
+                }
+            }
+        }
+        Err(CompilerError::Codegen(
+            "找不到 qi-runtime 归档。先在 qi-runtime/ 跑 cargo build，或设 QI_RUNTIME_LIB。".to_string(),
+        ))
     }
 
     /// Find the runtime library using multiple search strategies
