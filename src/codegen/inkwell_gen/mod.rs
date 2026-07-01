@@ -25,6 +25,8 @@
 
 #[path = "全局.rs"]
 mod 全局;
+#[path = "异步.rs"]
+mod 异步;
 #[path = "数组.rs"]
 mod 数组;
 #[path = "并发.rs"]
@@ -261,6 +263,9 @@ impl<'ctx> 后端<'ctx> {
             self.ctx.void_type().fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false),
             None,
         );
+
+        // future / async（eager future 模型）
+        self.声明future运行时();
     }
 
     /// 生成 入口() → LLVM main。

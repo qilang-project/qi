@@ -47,6 +47,8 @@ pub struct 符号表 {
     结构体索引: HashMap<String, u32>,
     /// 方法签名：(结构体名, 方法名) → 签名（参数不含接收者）。
     pub 方法: HashMap<(String, String), 函数签名>,
+    /// 函数默认参数值 AST：函数名 → 每个形参的可选默认值表达式（供调用少传时补齐）。
+    pub 函数默认值: HashMap<String, Vec<Option<crate::parser::ast::AstNode>>>,
     /// 函数值签名注册表：索引即 Qi类型::函数值(idx) 的 idx。
     pub 函数值签名: Vec<函数签名>,
     /// 顶层函数名 → 其函数值签名索引（登记函数时预填，供「函数名当值」）。
@@ -64,6 +66,7 @@ impl 符号表 {
             结构体: Vec::new(),
             结构体索引: HashMap::new(),
             方法: HashMap::new(),
+            函数默认值: HashMap::new(),
             函数值签名: Vec::new(),
             函数值索引表: HashMap::new(),
             当前包: None,
@@ -193,6 +196,10 @@ impl 符号表 {
             }
             // 通道句柄按整数(i64)传递，收发两端一致
             TypeNode::通道类型(_) => Qi类型::整数,
+            // 未来<T>：eager future 句柄，内部类型 T 记进 Qi类型::未来
+            TypeNode::未来类型(inner) => {
+                Qi类型::未来(super::类型::元素类型::从标量(self.解析类型(inner)))
+            }
             _ => Qi类型::从注解(t),
         }
     }
@@ -307,6 +314,11 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
         // 取地址 → 指针（按 字符串/ptr 语义）；解引用 → 整数（指针演示够用）
         AstNode::取地址表达式(_) => Qi类型::字符串,
         AstNode::解引用表达式(_) => Qi类型::整数,
+        // 等待 fut → fut 的内部类型
+        AstNode::等待表达式(a) => {
+            let ft = 推断表达式类型(&a.expression, 表);
+            ft.未来内部().map(|e| e.标量()).unwrap_or(Qi类型::整数)
+        }
         _ => Qi类型::未知,
     }
 }

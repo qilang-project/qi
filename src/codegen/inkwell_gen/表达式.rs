@@ -99,7 +99,18 @@ impl<'ctx> 后端<'ctx> {
             AstNode::通道接收表达式(r) => self.生成通道接收(r).map(Some),
             AstNode::协程启动表达式(g) => self.生成协程启动(g),
 
-            AstNode::字段访问表达式(fa) => self.生成字段访问(&fa.object, &fa.field).map(Some),
+            AstNode::字段访问表达式(fa) => {
+                // 数组 .长度 属性
+                if fa.field == "长度"
+                    && 推断表达式类型(&fa.object, &self.符号).数组元素().is_some()
+                {
+                    let (av, _) = self
+                        .生成表达式(&fa.object)?
+                        .ok_or_else(|| "数组表达式无值".to_string())?;
+                    return self.生成数组长度(av.into_pointer_value()).map(Some);
+                }
+                self.生成字段访问(&fa.object, &fa.field).map(Some)
+            }
 
             AstNode::数组字面量表达式(arr) => self.生成数组字面量(arr).map(Some),
             AstNode::数组访问表达式(acc) => self.生成数组访问(acc).map(Some),
@@ -141,10 +152,31 @@ impl<'ctx> 后端<'ctx> {
                 Ok(Some((val, Qi类型::整数)))
             }
 
+            AstNode::等待表达式(a) => self.生成等待(&a.expression).map(Some),
+
             AstNode::方法调用表达式(mc) => {
+                // 0) 未来::就绪 / 未来::失败 静态方法
+                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来") {
+                    if let Some(v) =
+                        self.生成未来静态方法(&mc.method_name, &mc.arguments)?
+                    {
+                        return Ok(Some(v));
+                    }
+                }
                 // 1) 结构体方法（接收者是结构体，含链式）
                 if let Some(v) = self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)? {
                     return Ok(v);
+                }
+                // 1.5) IO.打印行/打印：接收者是模块名（非变量）时走通用打印（支持多参 + 各类型重载），
+                //      避免 stdlib 单参 qi_runtime_println 收到多参报错。
+                if matches!(mc.method_name.as_str(), "打印行" | "打印")
+                    && matches!(mc.object.as_ref(), AstNode::标识符表达式(id)
+                        if !self.变量表.contains_key(&id.name)
+                            && !self.全局变量表.contains_key(&id.name))
+                {
+                    if let Some(v) = self.生成打印方法(&mc.method_name, &mc.arguments)? {
+                        return Ok(v);
+                    }
                 }
                 // 2) 标准库分发（接收者是模块名/别名，如 IO.打印行 / 字符串::字节长度）
                 if let Some(v) =
@@ -400,7 +432,7 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let 目标ptr = matches!(
             期望,
-            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_)
+            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_) | Qi类型::未来(_)
         );
         if 期望.是浮点() && !实际.是浮点() && v.is_int_value() {
             return Ok(self.转浮点(v, 实际)?.into());
@@ -456,6 +488,7 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::结构体(_) => Err("结构体不能直接拼接为字符串".to_string()),
             Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
             Qi类型::数组(_) => Err("数组不能直接拼接为字符串".to_string()),
+            Qi类型::未来(_) => Err("未来不能直接拼接为字符串（先 等待）".to_string()),
             Qi类型::空 => Err("空值不能拼接".to_string()),
         }
     }
@@ -602,8 +635,22 @@ impl<'ctx> 后端<'ctx> {
             }
         };
 
+        // 少传实参时用默认参数值补齐（形参个数由签名决定）
+        let 形参数 = sig.as_ref().map(|s| s.参数.len()).unwrap_or(call.arguments.len());
+        let 默认值 = self.符号.函数默认值.get(&call.callee).cloned();
+        let mut 实参: Vec<AstNode> = call.arguments.clone();
+        if 实参.len() < 形参数 {
+            if let Some(defs) = &默认值 {
+                for i in 实参.len()..形参数 {
+                    if let Some(Some(d)) = defs.get(i) {
+                        实参.push(d.clone());
+                    }
+                }
+            }
+        }
+
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
-        for (i, a) in call.arguments.iter().enumerate() {
+        for (i, a) in 实参.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "函数实参无值".to_string())?;
@@ -706,6 +753,7 @@ impl<'ctx> 后端<'ctx> {
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
                 Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
                 Qi类型::数组(_) => return Err("不能直接打印数组".to_string()),
+                Qi类型::未来(_) => return Err("不能直接打印未来（先 等待）".to_string()),
                 Qi类型::空 => return Err("不能打印空值".to_string()),
             };
             let f = self

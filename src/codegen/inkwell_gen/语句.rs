@@ -79,6 +79,10 @@ impl<'ctx> 后端<'ctx> {
                         // 声明返回 void：忽略返回值，emit ret void
                         if rt == Qi类型::空 {
                             self.builder.build_return(None).map_err(|e| e.to_string())?;
+                        } else if rt.未来内部().is_some() && vt.未来内部().is_none() {
+                            // 函数返回 未来<T> 而值不是 future：包成 ready future
+                            let fut = self.包装ready(v, vt)?;
+                            self.builder.build_return(Some(&fut)).map_err(|e| e.to_string())?;
                         } else {
                             let cv = self.协调返回值(v, vt, rt)?;
                             self.builder.build_return(Some(&cv)).map_err(|e| e.to_string())?;
@@ -283,7 +287,7 @@ impl<'ctx> 后端<'ctx> {
         // 目标是否 ptr 语义
         let 目标ptr = matches!(
             期望,
-            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_)
+            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_) | Qi类型::未来(_)
         );
         // 浮点提升
         if 期望.是浮点() && !实际.是浮点() {

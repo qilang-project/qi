@@ -23,6 +23,8 @@ pub enum Qi类型 {
     函数值(u32),
     /// 数组（连续堆分配，按指针传递）。参数是元素类型。
     数组(元素类型),
+    /// 未来<T>（eager future 指针）。参数是内部值类型。按指针传递。
+    未来(元素类型),
     /// 尚未确定 / 不关心的类型（如指针语义的复合值）。默认按 i64 处理。
     未知,
 }
@@ -103,6 +105,14 @@ impl Qi类型 {
             _ => None,
         }
     }
+
+    /// 是否未来，返回其内部值类型。
+    pub fn 未来内部(&self) -> Option<元素类型> {
+        match self {
+            Qi类型::未来(e) => Some(*e),
+            _ => None,
+        }
+    }
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -113,7 +123,11 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::整数 | Qi类型::未知 => self.ctx.i64_type().into(),
             Qi类型::浮点数 => self.ctx.f64_type().into(),
             Qi类型::布尔 => self.ctx.bool_type().into(),
-            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_) => {
+            Qi类型::字符串
+            | Qi类型::结构体(_)
+            | Qi类型::函数值(_)
+            | Qi类型::数组(_)
+            | Qi类型::未来(_) => {
                 self.ctx.ptr_type(AddressSpace::default()).into()
             }
             Qi类型::空 => return None,

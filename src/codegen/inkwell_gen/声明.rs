@@ -74,6 +74,15 @@ impl<'ctx> 后端<'ctx> {
                 .insert((pkg, f.name.clone()), sig.clone());
         }
         self.符号.函数.entry(f.name.clone()).or_insert(sig);
+        // 记录默认参数值（供调用少传时补齐）
+        let 默认: Vec<Option<crate::parser::ast::AstNode>> = f
+            .parameters
+            .iter()
+            .map(|p| p.default_value.as_ref().map(|b| (**b).clone()))
+            .collect();
+        if 默认.iter().any(|d| d.is_some()) {
+            self.符号.函数默认值.entry(f.name.clone()).or_insert(默认);
+        }
         Ok(func)
     }
 
