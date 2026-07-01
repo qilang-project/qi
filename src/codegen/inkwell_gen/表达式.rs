@@ -31,6 +31,17 @@ impl<'ctx> 后端<'ctx> {
                         .map_err(|e| e.to_string())?;
                     return Ok(Some((v, t)));
                 }
+                // 全局变量
+                if let Some((g, t)) = self.全局变量表.get(&id.name).map(|(g, t)| (*g, *t)) {
+                    let llvmt = self
+                        .llvm基础类型(t)
+                        .ok_or_else(|| format!("全局 {} 类型无效", id.name))?;
+                    let v = self
+                        .builder
+                        .build_load(llvmt, g.as_pointer_value(), &id.name)
+                        .map_err(|e| e.to_string())?;
+                    return Ok(Some((v, t)));
+                }
                 // 否则可能是「函数名当值」→ 取函数指针
                 if let Some(v) = self.标识符作为函数值(&id.name)? {
                     return Ok(Some(v));
@@ -81,6 +92,13 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::结构体实例化表达式(lit) => self.生成结构体字面量(lit).map(Some),
 
+            AstNode::闭包表达式(c) => self.生成闭包表达式(c).map(Some),
+
+            AstNode::通道创建表达式(c) => self.生成通道创建(c).map(Some),
+            AstNode::通道发送表达式(s) => self.生成通道发送(s).map(Some),
+            AstNode::通道接收表达式(r) => self.生成通道接收(r).map(Some),
+            AstNode::协程启动表达式(g) => self.生成协程启动(g),
+
             AstNode::字段访问表达式(fa) => self.生成字段访问(&fa.object, &fa.field).map(Some),
 
             AstNode::方法调用表达式(mc) => {
@@ -104,18 +122,36 @@ impl<'ctx> 后端<'ctx> {
             AstNode::赋值表达式(a) => {
                 match a.target.as_ref() {
                     AstNode::标识符表达式(id) => {
-                        let (v, t) = self
+                        let (mut v, vt) = self
                             .生成表达式(&a.value)?
                             .ok_or_else(|| "赋值右值无值".to_string())?;
-                        let (ptr, _) = self
-                            .变量表
-                            .get(&id.name)
-                            .cloned()
-                            .ok_or_else(|| format!("赋值给未声明变量: {}", id.name))?;
+                        // 局部变量优先，否则全局
+                        let (ptr, target_t) =
+                            if let Some((p, t)) = self.变量表.get(&id.name).cloned() {
+                                (p, t)
+                            } else if let Some((g, t)) =
+                                self.全局变量表.get(&id.name).map(|(g, t)| (*g, *t))
+                            {
+                                (g.as_pointer_value(), t)
+                            } else {
+                                return Err(format!("赋值给未声明变量: {}", id.name));
+                            };
+                        // 整数赋给浮点变量：隐式提升
+                        if target_t.是浮点() && !vt.是浮点() {
+                            v = self
+                                .builder
+                                .build_signed_int_to_float(
+                                    v.into_int_value(),
+                                    self.ctx.f64_type(),
+                                    "sitofp",
+                                )
+                                .map_err(|e| e.to_string())?
+                                .into();
+                        }
                         self.builder
                             .build_store(ptr, v)
                             .map_err(|e| e.to_string())?;
-                        Ok(Some((v, t)))
+                        Ok(Some((v, target_t)))
                     }
                     // 字段赋值 x.字段 = 值
                     AstNode::字段访问表达式(fa) => {
@@ -198,6 +234,31 @@ impl<'ctx> 后端<'ctx> {
         let (rv, rt) = self
             .生成表达式(&b.right)?
             .ok_or_else(|| "二元右操作数无值".to_string())?;
+
+        // 字符串比较：== / != / < / <= / > / >= → qi_runtime_string_compare(返回 <0/0/>0)
+        if (lt == Qi类型::字符串 || rt == Qi类型::字符串)
+            && matches!(b.operator, 等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于)
+        {
+            let cmp = self.调用返回i32(
+                "qi_runtime_string_compare",
+                &[lv.into(), rv.into()],
+            )?;
+            let zero = self.ctx.i32_type().const_zero();
+            let pred = match b.operator {
+                等于 => IntPredicate::EQ,
+                不等于 => IntPredicate::NE,
+                大于 => IntPredicate::SGT,
+                小于 => IntPredicate::SLT,
+                大于等于 => IntPredicate::SGE,
+                小于等于 => IntPredicate::SLE,
+                _ => unreachable!(),
+            };
+            let c = self
+                .builder
+                .build_int_compare(pred, cmp, zero, "strcmp")
+                .map_err(|e| e.to_string())?;
+            return Ok((c.into(), Qi类型::布尔));
+        }
 
         let 用浮点 = lt.是浮点() || rt.是浮点();
 
@@ -355,6 +416,26 @@ impl<'ctx> 后端<'ctx> {
         cs.try_as_basic_value()
             .left()
             .map(|v| v.into_pointer_value())
+            .ok_or_else(|| format!("{} 未返回值", rtname))
+    }
+
+    /// 调用一个返回 i32 的运行时函数（如 qi_runtime_string_compare），返回 IntValue。
+    fn 调用返回i32(
+        &mut self,
+        rtname: &str,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        let f = self
+            .module
+            .get_function(rtname)
+            .ok_or_else(|| format!("运行时函数未声明: {}", rtname))?;
+        let cs = self
+            .builder
+            .build_call(f, args, "call")
+            .map_err(|e| e.to_string())?;
+        cs.try_as_basic_value()
+            .left()
+            .map(|v| v.into_int_value())
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 

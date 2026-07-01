@@ -15,26 +15,46 @@ use inkwell::AddressSpace;
 
 impl<'ctx> 后端<'ctx> {
     /// 登记所有结构体：填符号表布局 + 建 LLVM 具名 struct 类型。
-    pub(super) fn 登记结构体(&mut self, program: &Program) -> Result<(), String> {
-        // 先收集布局到符号表（含字段的 Qi 类型，自定义类型可能相互引用，
-        // 但字段目前只用指针语义即可，前向引用不成问题）。
+    /// 第一趟：只登记结构体名字（占索引），字段类型暂空。
+    /// 必须先跑完所有模块的名字登记，字段里跨模块/前向引用的结构体才能解析成 结构体(idx)。
+    pub(super) fn 登记结构体名字(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::结构体声明(sd) = stmt {
+                if self.符号.结构体索引(&sd.name).is_some() {
+                    continue; // 幂等
+                }
                 let 字段名: Vec<String> = sd.fields.iter().map(|f| f.name.clone()).collect();
-                let 字段类型: Vec<Qi类型> = sd
-                    .fields
-                    .iter()
-                    .map(|f| self.符号.解析类型(&f.type_annotation))
-                    .collect();
+                // 字段类型先占位（整数），第二趟再解析
+                let 占位: Vec<Qi类型> = sd.fields.iter().map(|_| Qi类型::整数).collect();
                 self.符号.登记结构体(结构体信息 {
                     名字: sd.name.clone(),
                     字段名,
-                    字段类型,
+                    字段类型: 占位,
                 });
             }
         }
+        Ok(())
+    }
 
-        // 再据符号表布局建 LLVM struct 类型，顺序与索引一致。
+    /// 第二趟：所有名字登记后，解析字段真实类型（跨模块结构体已可解析）。
+    pub(super) fn 解析结构体字段(&mut self, program: &Program) -> Result<(), String> {
+        for stmt in &program.statements {
+            if let AstNode::结构体声明(sd) = stmt {
+                if let Some(idx) = self.符号.结构体索引(&sd.name) {
+                    let 字段类型: Vec<Qi类型> = sd
+                        .fields
+                        .iter()
+                        .map(|f| self.符号.解析类型(&f.type_annotation))
+                        .collect();
+                    self.符号.结构体[idx as usize].字段类型 = 字段类型;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 第三趟：据最终字段类型建所有 LLVM struct 类型（顺序与索引一致）。
+    pub(super) fn 建结构体llvm类型(&mut self) -> Result<(), String> {
         self.结构体llvm.clear();
         for i in 0..self.符号.结构体.len() {
             let 字段类型 = self.符号.结构体[i].字段类型.clone();

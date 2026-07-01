@@ -23,6 +23,10 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
+#[path = "全局.rs"]
+mod 全局;
+#[path = "并发.rs"]
+mod 并发;
 #[path = "声明.rs"]
 mod 声明;
 #[path = "导入.rs"]
@@ -52,7 +56,7 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 use inkwell::types::StructType;
-use inkwell::values::PointerValue;
+use inkwell::values::{GlobalValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::OptimizationLevel as LlvmOpt;
 use std::collections::HashMap;
@@ -86,6 +90,17 @@ struct 后端<'ctx> {
     注册表: ModuleRegistry,
     /// 导入别名 → 标准库模块名。如 `导入 标准库.输入输出 作为 IO` → IO→输入输出。
     导入别名: HashMap<String, String>,
+    /// 模块顶层全局变量 / 常量：名字 → (LLVM global, Qi 类型)。跨文件合并编译，同名幂等。
+    全局变量表: HashMap<String, (GlobalValue<'ctx>, Qi类型)>,
+    /// 已在 main 序言初始化过的全局名（防重复 store）。
+    已初始化全局: std::collections::HashSet<String>,
+    /// 待合成的闭包函数（表达式位置先建 fat obj，函数体在所有普通函数后统一生成，
+    /// 避免污染当前 builder 插入点）。
+    待合成闭包: Vec<闭包::待合成闭包>,
+    /// 闭包合成计数器（生成唯一符号 __closure_N）。
+    闭包计数: u32,
+    /// 是否正在生成 入口→main（main 返回 i32，bare `返回` 要 emit ret i32 0）。
+    在入口中: bool,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -102,6 +117,11 @@ impl<'ctx> 后端<'ctx> {
             结构体llvm: Vec::new(),
             注册表: ModuleRegistry::new(),
             导入别名: HashMap::new(),
+            全局变量表: HashMap::new(),
+            已初始化全局: std::collections::HashSet::new(),
+            待合成闭包: Vec::new(),
+            闭包计数: 0,
+            在入口中: false,
         }
     }
 
@@ -132,6 +152,9 @@ impl<'ctx> 后端<'ctx> {
         // 字符串
         let 拼接 = ptrt.fn_type(&[ptrt.into(), ptrt.into()], false);
         self.module.add_function("qi_runtime_string_concat", 拼接, None);
+        // 字符串比较（== / != / </ > 等；返回 <0/0/>0）
+        let 比较 = i32t.fn_type(&[ptrt.into(), ptrt.into()], false);
+        self.module.add_function("qi_runtime_string_compare", 比较, None);
 
         // 类型转换
         self.module.add_function(
@@ -171,11 +194,57 @@ impl<'ctx> 后端<'ctx> {
             ptrt.fn_type(&[i64t.into()], false),
             None,
         );
+
+        // 通道（阶段10 退化并发）
+        self.module.add_function(
+            "qi_runtime_create_channel",
+            ptrt.fn_type(&[i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_runtime_channel_send",
+            i32t.fn_type(&[ptrt.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_runtime_channel_receive",
+            i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            None,
+        );
+
+        // 闭包 / 函数值 fat 对象 ABI（closure_ffi.rs）
+        self.module.add_function(
+            "qi_closure_create",
+            ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            None,
+        );
+        self.module
+            .add_function("qi_closure_get_fn", ptrt.fn_type(&[ptrt.into()], false), None);
+        self.module.add_function(
+            "qi_closure_get_int",
+            i64t.fn_type(&[ptrt.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_closure_get_ptr",
+            ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_closure_set_int",
+            self.ctx.void_type().fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_closure_set_ptr",
+            self.ctx.void_type().fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false),
+            None,
+        );
     }
 
     /// 生成 入口() → LLVM main。
-    fn 生成入口(&mut self, program: &Program) -> Result<(), String> {
-        let 入口 = program
+    fn 生成入口(&mut self, programs: &[Program]) -> Result<(), String> {
+        let 入口 = programs[0]
             .statements
             .iter()
             .find_map(|s| match s {
@@ -192,6 +261,10 @@ impl<'ctx> 后端<'ctx> {
         self.变量表.clear();
         self.符号.进入作用域();
         self.当前返回类型 = Qi类型::空;
+        self.在入口中 = true; // main 返回 i32：bare `返回` 要 ret i32 0
+
+        // 全局变量初始化（所有模块的带初值全局，在 body 之前 store）
+        self.生成全局初始化(programs)?;
 
         for stmt in &入口.body {
             self.生成语句(stmt, main_fn)?;
@@ -200,6 +273,7 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
+        self.在入口中 = false;
         self.符号.退出作用域();
 
         if !self.当前块已终结() {
@@ -239,9 +313,19 @@ pub fn compile_to_object_multi(
         后端值.收集导入别名(p);
     }
 
-    // 第一趟：登记所有模块的结构体（其它签名会引用结构体类型，必须最先）
+    // 第一趟：结构体三步（名字→字段类型→LLVM 类型）。名字必须先全部登记，
+    // 跨模块 / 前向引用的字段类型（如 代理.工具表: 注册表）才能解析成 结构体(idx)。
     for p in programs {
-        后端值.登记结构体(p)?;
+        后端值.登记结构体名字(p)?;
+    }
+    for p in programs {
+        后端值.解析结构体字段(p)?;
+    }
+    后端值.建结构体llvm类型()?;
+
+    // 第一趟半：登记所有模块顶层全局变量 / 常量（函数体会引用，须在函数体前）
+    for p in programs {
+        后端值.登记全局变量(p)?;
     }
 
     // 第二趟：登记所有模块的函数 / 方法签名 + LLVM 原型
@@ -268,8 +352,12 @@ pub fn compile_to_object_multi(
         后端值.生成所有方法体(p)?;
     }
 
-    // 入口 → main（只用 entry 程序 programs[0]）
-    后端值.生成入口(&programs[0])?;
+    // 入口 → main（entry=programs[0]；全局初始化用所有 programs）
+    后端值.生成入口(programs)?;
+
+    // 合成所有待处理闭包函数（函数体/方法体/入口里遇到的匿名闭包）。
+    // 闭包体内可能再产生闭包，循环到清空为止。
+    后端值.合成待处理闭包()?;
 
     后端值
         .module

@@ -108,6 +108,13 @@ impl 符号表 {
         }
     }
 
+    /// 在全局作用域（栈底 作用域[0]）声明变量类型。全局无论何时可见。
+    pub fn 声明全局(&mut self, name: &str, t: Qi类型) {
+        if let Some(scope) = self.作用域.first_mut() {
+            scope.insert(name.to_string(), t);
+        }
+    }
+
     /// 由内向外查找变量类型。
     pub fn 查变量(&self, name: &str) -> Option<Qi类型> {
         for scope in self.作用域.iter().rev() {

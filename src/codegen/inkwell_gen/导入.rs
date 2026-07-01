@@ -103,17 +103,30 @@ impl<'ctx> 后端<'ctx> {
             }
         };
 
-        // 参数：按声明类型做隐式转换（int↔ptr 句柄、bool→i32 等在此归一）
+        // 参数：按声明类型做隐式转换（int↔ptr 句柄、bool→i32、函数值/指针→ptr 等在此归一）
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "标准库实参无值".to_string())?;
-            let 期望 = mf
-                .param_types
-                .get(i)
-                .map(|t| 注册表类型转qi(t))
-                .unwrap_or(Qi类型::整数);
+            let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
+            // 指针/ptr 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针都可）
+            if 原始 == "指针" || 原始 == "ptr" {
+                let pv = if v.is_pointer_value() {
+                    v.into_pointer_value()
+                } else {
+                    self.builder
+                        .build_int_to_ptr(
+                            v.into_int_value(),
+                            self.ctx.ptr_type(AddressSpace::default()),
+                            "i2p",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+                args.push(pv.into());
+                continue;
+            }
+            let 期望 = 注册表参数类型转qi(原始);
             let cv = self.适配实参(v, vt, 期望)?;
             args.push(cv);
         }
@@ -128,14 +141,14 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
-    /// 实参适配：布尔→i32、整数↔浮点、其它原样（句柄整数、字符串指针不动）。
+    /// 实参适配：布尔→i32、整数↔浮点、指针句柄→i64、其它原样。
     fn 适配实参(
         &self,
         v: BasicValueEnum<'ctx>,
         实际: Qi类型,
         期望: Qi类型,
     ) -> Result<BasicMetadataValueEnum<'ctx>, String> {
-        // 布尔实参进 i32/i64 参数：扩展
+        // 布尔实参进 i64 整数参数：扩展
         if 实际 == Qi类型::布尔 && (期望 == Qi类型::整数 || 期望 == Qi类型::未知) {
             let ext = self
                 .builder
@@ -150,12 +163,36 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
             return Ok(f.into());
         }
+        // 期望整数(i64 句柄) 但实参是指针语义值（函数值/结构体/字符串误判）：ptr→int
+        if 期望 == Qi类型::整数 && v.is_pointer_value() {
+            let iv = self
+                .builder
+                .build_ptr_to_int(v.into_pointer_value(), self.ctx.i64_type(), "p2i")
+                .map_err(|e| e.to_string())?;
+            return Ok(iv.into());
+        }
+        // 期望字符串(ptr) 但实参是整数：int→ptr
+        if 期望 == Qi类型::字符串 && v.is_int_value() {
+            let pv = self
+                .builder
+                .build_int_to_ptr(
+                    v.into_int_value(),
+                    self.ctx.ptr_type(AddressSpace::default()),
+                    "i2p",
+                )
+                .map_err(|e| e.to_string())?;
+            return Ok(pv.into());
+        }
         Ok(v.into())
     }
 
     /// 注册表参数类型字符串 → LLVM 元参数类型。
     fn 注册表参数llvm类型(&self, t: &str) -> BasicMetadataTypeEnum<'ctx> {
-        match 注册表类型转qi(t) {
+        // 指针/ptr 形参声明为 ptr（吃 fat obj 指针 / 字符串指针 / 句柄）
+        if t == "指针" || t == "ptr" {
+            return self.ctx.ptr_type(AddressSpace::default()).into();
+        }
+        match 注册表参数类型转qi(t) {
             Qi类型::浮点数 => self.ctx.f64_type().into(),
             Qi类型::字符串 => self.ctx.ptr_type(AddressSpace::default()).into(),
             // 整数 / 句柄 / 布尔（运行时多收 i32/i64，这里统一按 i64 收，call 前已扩展）
@@ -174,14 +211,29 @@ impl<'ctx> 后端<'ctx> {
     }
 }
 
-/// 注册表类型字符串 → Qi 类型。整数/句柄/i32/i64 统一「整数」；ptr/指针/数组/未来 视作句柄整数。
+/// 注册表返回类型字符串 → Qi 类型。
+/// 关键（3-G）：裸 `ptr`/`指针` 在 registry 里几乎都表示**返回字符串**
+/// （qi_db_query / qi_path_* / qi_random_uuid / qi_compress_gzip_string / 部分大模型/MCP），
+/// 故返回侧把 ptr/指针 当字符串处理，后续拼接/字节长度/JSON.解码 类型才对。
 pub(super) fn 注册表类型转qi(t: &str) -> Qi类型 {
     match t {
-        "字符串" => Qi类型::字符串,
-        "浮点数" => Qi类型::浮点数,
+        "字符串" | "ptr" | "指针" => Qi类型::字符串,
+        "浮点数" | "double" => Qi类型::浮点数,
         "布尔" => Qi类型::布尔,
         "空" | "void" => Qi类型::空,
-        // 整数/i32/i64/句柄/指针/ptr/数组/未来<..> 一律按整数（句柄）处理
+        // 整数/i32/i64/句柄/数组/未来<..> 一律按整数（句柄）处理
+        _ => Qi类型::整数,
+    }
+}
+
+/// 注册表**参数**类型字符串 → Qi 类型。参数侧的 ptr/指针 多是句柄整数或 fat obj 指针，
+/// 在 64 位平台按 i64 收发等价 —— 故参数侧仍把 ptr/指针 当整数，避免把句柄误当字符串。
+pub(super) fn 注册表参数类型转qi(t: &str) -> Qi类型 {
+    match t {
+        "字符串" => Qi类型::字符串,
+        "浮点数" | "double" => Qi类型::浮点数,
+        "布尔" => Qi类型::布尔,
+        "空" | "void" => Qi类型::空,
         _ => Qi类型::整数,
     }
 }

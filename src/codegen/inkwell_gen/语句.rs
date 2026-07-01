@@ -61,16 +61,28 @@ impl<'ctx> 后端<'ctx> {
             }
 
             AstNode::返回语句(ret) => {
+                // 入口→main 返回 i32：无论 bare `返回` 还是带值，都 ret i32 0
+                if self.在入口中 {
+                    if let Some(expr) = &ret.value {
+                        self.生成表达式(expr)?; // 求值副作用，丢弃
+                    }
+                    let z = self.ctx.i32_type().const_int(0, false);
+                    self.builder.build_return(Some(&z)).map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
                 match &ret.value {
                     Some(expr) => {
-                        let (mut v, vt) = self
+                        let (v, vt) = self
                             .生成表达式(expr)?
                             .ok_or_else(|| "返回表达式无值".to_string())?;
-                        // 若当前函数返回浮点而值是整数，提升
-                        if self.当前返回类型.是浮点() && !vt.是浮点() {
-                            v = self.转为浮点(v)?;
+                        let rt = self.当前返回类型;
+                        // 声明返回 void：忽略返回值，emit ret void
+                        if rt == Qi类型::空 {
+                            self.builder.build_return(None).map_err(|e| e.to_string())?;
+                        } else {
+                            let cv = self.协调返回值(v, vt, rt)?;
+                            self.builder.build_return(Some(&cv)).map_err(|e| e.to_string())?;
                         }
-                        self.builder.build_return(Some(&v)).map_err(|e| e.to_string())?;
                     }
                     None => {
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -257,6 +269,78 @@ impl<'ctx> 后端<'ctx> {
             .build_signed_int_to_float(v.into_int_value(), self.ctx.f64_type(), "sitofp")
             .map_err(|e| e.to_string())?
             .into())
+    }
+
+    /// 把返回值协调到函数声明的返回类型对应的 LLVM 表示。
+    /// 处理：int→float 提升；ptr(字符串/结构体/函数值/句柄) ↔ i64 句柄；bool↔i64。
+    fn 协调返回值(
+        &mut self,
+        v: inkwell::values::BasicValueEnum<'ctx>,
+        实际: Qi类型,
+        期望: Qi类型,
+    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+        use inkwell::values::BasicValueEnum::*;
+        // 目标是否 ptr 语义
+        let 目标ptr = matches!(
+            期望,
+            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_)
+        );
+        // 浮点提升
+        if 期望.是浮点() && !实际.是浮点() {
+            return self.转为浮点(v);
+        }
+        match v {
+            PointerValue(pv) => {
+                if 目标ptr {
+                    Ok(v)
+                } else {
+                    // ptr → i64 句柄
+                    Ok(self
+                        .builder
+                        .build_ptr_to_int(pv, self.ctx.i64_type(), "p2i")
+                        .map_err(|e| e.to_string())?
+                        .into())
+                }
+            }
+            IntValue(iv) => {
+                if 目标ptr {
+                    // i64 句柄 → ptr
+                    Ok(self
+                        .builder
+                        .build_int_to_ptr(
+                            iv,
+                            self.ctx.ptr_type(inkwell::AddressSpace::default()),
+                            "i2p",
+                        )
+                        .map_err(|e| e.to_string())?
+                        .into())
+                } else {
+                    // 整数位宽协调（布尔 i1 ↔ i64 等）
+                    let want_bits = if 期望 == Qi类型::布尔 { 1 } else { 64 };
+                    let cur = iv.get_type().get_bit_width();
+                    if cur == want_bits {
+                        Ok(v)
+                    } else if cur < want_bits {
+                        Ok(self
+                            .builder
+                            .build_int_z_extend(iv, self.ctx.i64_type(), "zext")
+                            .map_err(|e| e.to_string())?
+                            .into())
+                    } else {
+                        Ok(self
+                            .builder
+                            .build_int_truncate(
+                                iv,
+                                self.ctx.bool_type(),
+                                "trunc",
+                            )
+                            .map_err(|e| e.to_string())?
+                            .into())
+                    }
+                }
+            }
+            _ => Ok(v),
+        }
     }
 
     /// 当前基本块是否已有终结指令（ret/br 等）。
