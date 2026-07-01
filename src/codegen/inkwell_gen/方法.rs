@@ -251,6 +251,17 @@ fn 收集方法(program: &Program) -> Vec<MethodDeclaration> {
                     out.push(m.clone());
                 }
             }
+            // 实现块 `实现 [特性 对于] 类型 { 函数 ... }`：方法的 receiver_type 空，
+            // 从 impl.target_type 补上（parser 里留空由 codegen 填）。
+            AstNode::实现块(imp) => {
+                for m in &imp.methods {
+                    let mut m = m.clone();
+                    if m.receiver_type.is_empty() {
+                        m.receiver_type = imp.target_type.clone();
+                    }
+                    out.push(m);
+                }
+            }
             _ => {}
         }
     }

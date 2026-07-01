@@ -101,6 +101,46 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::字段访问表达式(fa) => self.生成字段访问(&fa.object, &fa.field).map(Some),
 
+            AstNode::数组字面量表达式(arr) => self.生成数组字面量(arr).map(Some),
+            AstNode::数组访问表达式(acc) => self.生成数组访问(acc).map(Some),
+
+            // 取地址：局部/全局变量 → 其 alloca 指针（按 字符串/ptr 语义暴露）
+            AstNode::取地址表达式(a) => {
+                if let AstNode::标识符表达式(id) = a.expression.as_ref() {
+                    let ptr = if let Some((p, _)) = self.变量表.get(&id.name) {
+                        *p
+                    } else if let Some((g, _)) = self.全局变量表.get(&id.name) {
+                        g.as_pointer_value()
+                    } else {
+                        return Err(format!("取地址：未声明变量 {}", id.name));
+                    };
+                    return Ok(Some((ptr.into(), Qi类型::字符串)));
+                }
+                Err("取地址仅支持变量".to_string())
+            }
+            // 解引用：ptr → load i64（当整数用；指针演示够用）
+            AstNode::解引用表达式(d) => {
+                let (v, _t) = self
+                    .生成表达式(&d.expression)?
+                    .ok_or_else(|| "解引用操作数无值".to_string())?;
+                let p = if v.is_pointer_value() {
+                    v.into_pointer_value()
+                } else {
+                    self.builder
+                        .build_int_to_ptr(
+                            v.into_int_value(),
+                            self.ctx.ptr_type(inkwell::AddressSpace::default()),
+                            "i2p",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+                let val = self
+                    .builder
+                    .build_load(self.ctx.i64_type(), p, "deref")
+                    .map_err(|e| e.to_string())?;
+                Ok(Some((val, Qi类型::整数)))
+            }
+
             AstNode::方法调用表达式(mc) => {
                 // 1) 结构体方法（接收者是结构体，含链式）
                 if let Some(v) = self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)? {
@@ -350,6 +390,44 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
+    /// 把一个值协调到目标 Qi 类型的 LLVM 表示（实参传递 / 赋值等处）。
+    /// int↔float 提升；ptr(字符串/结构体/数组/函数值) ↔ i64 句柄 双向；位宽对齐。
+    pub(super) fn 协调到类型(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+        实际: Qi类型,
+        期望: Qi类型,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let 目标ptr = matches!(
+            期望,
+            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_)
+        );
+        if 期望.是浮点() && !实际.是浮点() && v.is_int_value() {
+            return Ok(self.转浮点(v, 实际)?.into());
+        }
+        if v.is_pointer_value() && !目标ptr && 期望 != Qi类型::未知 {
+            // ptr → i64 句柄（如通道句柄 / 传给 整数 形参）
+            return Ok(self
+                .builder
+                .build_ptr_to_int(v.into_pointer_value(), self.ctx.i64_type(), "p2i")
+                .map_err(|e| e.to_string())?
+                .into());
+        }
+        if v.is_int_value() && 目标ptr {
+            // i64 句柄 → ptr（如整数句柄传给 字符串/结构体 形参）
+            return Ok(self
+                .builder
+                .build_int_to_ptr(
+                    v.into_int_value(),
+                    self.ctx.ptr_type(inkwell::AddressSpace::default()),
+                    "i2p",
+                )
+                .map_err(|e| e.to_string())?
+                .into());
+        }
+        Ok(v)
+    }
+
     /// 生成表达式并保证结果是 i8*（字符串）；数值先转字符串。
     pub(super) fn 生成为字符串(
         &mut self,
@@ -377,6 +455,7 @@ impl<'ctx> 后端<'ctx> {
             }
             Qi类型::结构体(_) => Err("结构体不能直接拼接为字符串".to_string()),
             Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
+            Qi类型::数组(_) => Err("数组不能直接拼接为字符串".to_string()),
             Qi类型::空 => Err("空值不能拼接".to_string()),
         }
     }
@@ -455,38 +534,35 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 
-    /// 解析用户函数调用目标：当前包同名函数优先，否则任意包。
-    /// 返回 (LLVM 函数, 签名)。
-    fn 解析用户函数(
+    /// 解析用户函数调用目标：当前包同名函数优先，否则任意包，再否则裸符号。
+    /// 返回 (LLVM 函数, 签名)；找不到返回 None（交调用点回退 stdlib）。
+    fn 尝试解析用户函数(
         &self,
         name: &str,
-    ) -> Result<
-        (
-            inkwell::values::FunctionValue<'ctx>,
-            Option<super::类型检查::函数签名>,
-        ),
-        String,
-    > {
+    ) -> Option<(
+        inkwell::values::FunctionValue<'ctx>,
+        Option<super::类型检查::函数签名>,
+    )> {
         // 当前包符号
         let 当前 = super::包内符号名(self.当前包.as_deref(), name);
         if let Some(f) = self.module.get_function(&当前) {
-            return Ok((f, self.符号.解析函数(name).cloned()));
+            return Some((f, self.符号.解析函数(name).cloned()));
         }
         // 回退：任意已登记包的符号
         for ((pkg, fname), sig) in self.符号.函数按包.iter() {
             if fname == name {
                 let sym = super::包内符号名(Some(pkg), name);
                 if let Some(f) = self.module.get_function(&sym) {
-                    return Ok((f, Some(sig.clone())));
+                    return Some((f, Some(sig.clone())));
                 }
             }
         }
         // 再回退：裸符号（无包）
         let 裸 = super::mangle_function_name(name);
         if let Some(f) = self.module.get_function(&裸) {
-            return Ok((f, self.符号.函数.get(name).cloned()));
+            return Some((f, self.符号.函数.get(name).cloned()));
         }
-        Err(format!("未定义的函数: {}", name))
+        None
     }
 
     /// 用户函数调用 / 内建函数调用 / 打印调用。
@@ -509,22 +585,33 @@ impl<'ctx> 后端<'ctx> {
             return Ok(Some(v));
         }
 
-        // 用户函数（跨包同名消歧：当前包符号优先，否则回退裸/任意包符号）
-        let (f, sig) = self.解析用户函数(&call.callee)?;
+        // 同步 / 定时器内建（创建等待组 / 互斥锁 / 定时器 等无限定并发原语）
+        if let Some(v) = self.生成同步内建(&call.callee, &call.arguments)? {
+            return Ok(v);
+        }
+
+        // 用户函数（跨包同名消歧：当前包符号优先，否则回退裸/任意包符号）；
+        // 找不到用户函数时，回退无模块限定的标准库函数（如 MD5哈希(x)、创建等待组()）。
+        let (f, sig) = match self.尝试解析用户函数(&call.callee) {
+            Some(x) => x,
+            None => {
+                if let Some(v) = self.尝试无限定标准库(&call.callee, &call.arguments)? {
+                    return Ok(v);
+                }
+                return Err(format!("未定义的函数: {}", call.callee));
+            }
+        };
 
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         for (i, a) in call.arguments.iter().enumerate() {
-            let (mut v, vt) = self
+            let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "函数实参无值".to_string())?;
-            // 若形参声明为浮点而实参是整数，隐式转换
-            if let Some(s) = &sig {
-                if let Some(pt) = s.参数.get(i) {
-                    if pt.是浮点() && !vt.是浮点() {
-                        v = self.转浮点(v, vt)?.into();
-                    }
-                }
-            }
+            // 按形参声明类型协调（int↔float、ptr↔i64 句柄等），保证与函数原型一致
+            let v = match sig.as_ref().and_then(|s| s.参数.get(i)) {
+                Some(pt) => self.协调到类型(v, vt, *pt)?,
+                None => v,
+            };
             args.push(v.into());
         }
 
@@ -618,6 +705,7 @@ impl<'ctx> 后端<'ctx> {
                 }
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
                 Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
+                Qi类型::数组(_) => return Err("不能直接打印数组".to_string()),
                 Qi类型::空 => return Err("不能打印空值".to_string()),
             };
             let f = self

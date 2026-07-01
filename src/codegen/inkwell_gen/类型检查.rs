@@ -183,6 +183,16 @@ impl 符号表 {
                 let idx = self.登记函数值签名(函数签名 { 参数, 返回 });
                 Qi类型::函数值(idx)
             }
+            // 数组<T>：元素类型定型 → 数组(元素)
+            TypeNode::数组类型(at) => {
+                let 元素 = super::类型::元素类型::从标量(self.解析类型(&at.element_type));
+                Qi类型::数组(元素)
+            }
+            TypeNode::基础类型(crate::parser::ast::BasicType::数组) => {
+                Qi类型::数组(super::类型::元素类型::整数)
+            }
+            // 通道句柄按整数(i64)传递，收发两端一致
+            TypeNode::通道类型(_) => Qi类型::整数,
             _ => Qi类型::从注解(t),
         }
     }
@@ -282,6 +292,21 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             }
             Qi类型::未知
         }
+        AstNode::数组字面量表达式(arr) => {
+            let elem = arr
+                .elements
+                .first()
+                .map(|e| super::类型::元素类型::从标量(推断表达式类型(e, 表)))
+                .unwrap_or(super::类型::元素类型::整数);
+            Qi类型::数组(elem)
+        }
+        AstNode::数组访问表达式(acc) => {
+            let arr = 推断表达式类型(&acc.array, 表);
+            arr.数组元素().map(|e| e.标量()).unwrap_or(Qi类型::整数)
+        }
+        // 取地址 → 指针（按 字符串/ptr 语义）；解引用 → 整数（指针演示够用）
+        AstNode::取地址表达式(_) => Qi类型::字符串,
+        AstNode::解引用表达式(_) => Qi类型::整数,
         _ => Qi类型::未知,
     }
 }

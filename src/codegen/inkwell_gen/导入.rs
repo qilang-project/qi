@@ -78,6 +78,33 @@ impl<'ctx> 后端<'ctx> {
         self.发射标准库调用(&mf, arguments).map(Some)
     }
 
+    /// 无模块限定的标准库调用：`MD5哈希(x)`、`创建等待组()` 等（导入了名字但不带模块前缀）。
+    /// 在所有已注册模块里找同名函数，命中即按其签名发射。返回 None 表示不是 stdlib 函数。
+    pub(super) fn 尝试无限定标准库(
+        &mut self,
+        name: &str,
+        arguments: &[AstNode],
+    ) -> Result<Option<Option<(BasicValueEnum<'ctx>, Qi类型)>>, String> {
+        let name = name.trim_start_matches(':');
+        let mf = match self.查任意模块函数(name) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        self.发射标准库调用(&mf, arguments).map(Some)
+    }
+
+    /// 在所有已注册模块里找一个同名函数（用于无限定 stdlib 调用），返回其 clone。
+    fn 查任意模块函数(&self, name: &str) -> Option<ModuleFunction> {
+        for path in self.注册表.module_paths() {
+            if let Some(m) = self.注册表.get_module(path) {
+                if let Some(f) = m.get_function(name) {
+                    return Some(f.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// 据 ModuleFunction 签名 declare（一次）+ call。
     fn 发射标准库调用(
         &mut self,

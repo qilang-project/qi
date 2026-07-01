@@ -13,9 +13,136 @@ use crate::parser::ast::{
     AstNode, ChannelCreateExpression, ChannelReceiveExpression, ChannelSendExpression,
     GoroutineSpawnExpression,
 };
-use inkwell::values::BasicValueEnum;
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
+use inkwell::AddressSpace;
 
 impl<'ctx> 后端<'ctx> {
+    /// 同步 / 定时器内建（无模块限定的并发原语，如 创建等待组()、等待组完成(wg)）。
+    /// 返回 None 表示不是这类内建。句柄一律按 整数(i64) 暴露给 Qi；FFI 侧句柄参数用 ptr。
+    pub(super) fn 生成同步内建(
+        &mut self,
+        callee: &str,
+        arguments: &[AstNode],
+    ) -> Result<Option<Option<(BasicValueEnum<'ctx>, Qi类型)>>, String> {
+        // (FFI 名, 参数是否为句柄ptr的布尔序列, 额外整数参数个数, 返回是否句柄ptr)
+        // 简化：用 (FFI, 参数种类列表, 返回种类)。种类: 'h'=句柄ptr, 'i'=i32整数, 'l'=i64整数, 'r'=返回ptr句柄, 'v'=i32/i64返回
+        let (ffi, 参数种类, 返回句柄): (&str, &[char], bool) = match callee {
+            "创建等待组" | "新建等待组" => ("qi_runtime_waitgroup_create", &[], true),
+            "等待组增加" | "等待组添加" | "添加等待" => {
+                ("qi_runtime_waitgroup_add", &['h', 'i'], false)
+            }
+            "等待组完成" | "完成" => ("qi_runtime_waitgroup_done", &['h'], false),
+            "等待组等待" => ("qi_runtime_waitgroup_wait", &['h'], false),
+            "创建互斥锁" | "新建互斥锁" => ("qi_runtime_mutex_create", &[], true),
+            "互斥锁加锁" | "互斥锁锁定" | "加锁" => ("qi_runtime_mutex_lock", &['h'], false),
+            "互斥锁解锁" | "解锁" => ("qi_runtime_mutex_unlock", &['h'], false),
+            "尝试加锁" => ("qi_runtime_mutex_trylock", &['h'], false),
+            "获取时间" => ("qi_runtime_get_time_ms", &[], false),
+            "设置超时" => ("qi_runtime_set_timeout", &['l'], false),
+            "创建定时器" => ("qi_runtime_timer_create", &['l'], true),
+            "定时器过期" => ("qi_runtime_timer_expired", &['h'], false),
+            "停止定时器" => ("qi_runtime_timer_stop", &['h'], false),
+            _ => return Ok(None),
+        };
+
+        let i32t = self.ctx.i32_type();
+        let i64t = self.ctx.i64_type();
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+
+        // 声明原型（幂等）
+        let func = match self.module.get_function(ffi) {
+            Some(f) => f,
+            None => {
+                let mut ps: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+                for k in 参数种类 {
+                    ps.push(match k {
+                        'h' => ptrt.into(),
+                        'i' => i32t.into(),
+                        _ => i64t.into(), // 'l'
+                    });
+                }
+                let ft = if 返回句柄 {
+                    ptrt.fn_type(&ps, false)
+                } else if matches!(
+                    ffi,
+                    "qi_runtime_get_time_ms"
+                        | "qi_runtime_set_timeout"
+                        | "qi_runtime_timer_expired"
+                        | "qi_runtime_timer_stop"
+                ) {
+                    // get_time/set_timeout/timer 返回 i64
+                    i64t.fn_type(&ps, false)
+                } else {
+                    // waitgroup/mutex 返回 i32
+                    i32t.fn_type(&ps, false)
+                };
+                self.module.add_function(ffi, ft, None)
+            }
+        };
+
+        // 实参
+        let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
+        for (i, k) in 参数种类.iter().enumerate() {
+            let (v, _t) = self
+                .生成表达式(&arguments[i])?
+                .ok_or_else(|| "同步内建实参无值".to_string())?;
+            match k {
+                'h' => {
+                    // 句柄 i64 → ptr
+                    let p = if v.is_pointer_value() {
+                        v.into_pointer_value()
+                    } else {
+                        self.builder
+                            .build_int_to_ptr(v.into_int_value(), ptrt, "h2p")
+                            .map_err(|e| e.to_string())?
+                    };
+                    args.push(p.into());
+                }
+                'i' => {
+                    let iv = v.into_int_value();
+                    let iv = if iv.get_type().get_bit_width() != 32 {
+                        self.builder
+                            .build_int_truncate(iv, i32t, "t32")
+                            .map_err(|e| e.to_string())?
+                    } else {
+                        iv
+                    };
+                    args.push(iv.into());
+                }
+                _ => args.push(v.into()),
+            }
+        }
+
+        let cs = self
+            .builder
+            .build_call(func, &args, "syncbi")
+            .map_err(|e| e.to_string())?;
+        match cs.try_as_basic_value().left() {
+            Some(v) => {
+                if 返回句柄 {
+                    // ptr 句柄 → i64 暴露
+                    let iv = self
+                        .builder
+                        .build_ptr_to_int(v.into_pointer_value(), i64t, "p2h")
+                        .map_err(|e| e.to_string())?;
+                    Ok(Some(Some((iv.into(), Qi类型::整数))))
+                } else {
+                    // i32/i64 返回 → 统一扩到 i64
+                    let iv = v.into_int_value();
+                    let iv = if iv.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_z_extend(iv, i64t, "z64")
+                            .map_err(|e| e.to_string())?
+                    } else {
+                        iv
+                    };
+                    Ok(Some(Some((iv.into(), Qi类型::整数))))
+                }
+            }
+            None => Ok(Some(None)),
+        }
+    }
+
     /// `通道<T>(cap)` → 句柄指针（当整数）。cap 缺省 0（无缓冲）。
     pub(super) fn 生成通道创建(
         &mut self,

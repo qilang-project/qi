@@ -25,6 +25,8 @@
 
 #[path = "全局.rs"]
 mod 全局;
+#[path = "数组.rs"]
+mod 数组;
 #[path = "并发.rs"]
 mod 并发;
 #[path = "声明.rs"]
