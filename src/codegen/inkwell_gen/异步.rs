@@ -10,8 +10,8 @@
 //!   qi_future_await_i64(ptr)->i64 / _f64->double / _bool->i32 / _ptr->ptr / _string->ptr(c_char)
 //!   qi_future_failed(ptr,len)->ptr
 
-use super::类型::{Qi类型, 元素类型};
 use super::后端;
+use super::类型::{Qi类型, 元素类型};
 use crate::parser::ast::AstNode;
 use inkwell::values::BasicValueEnum;
 use inkwell::AddressSpace;
@@ -24,14 +24,26 @@ impl<'ctx> 后端<'ctx> {
         let f64t = self.ctx.f64_type();
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
 
-        self.module
-            .add_function("qi_future_ready_i64", ptrt.fn_type(&[i64t.into()], false), None);
-        self.module
-            .add_function("qi_future_ready_f64", ptrt.fn_type(&[f64t.into()], false), None);
-        self.module
-            .add_function("qi_future_ready_bool", ptrt.fn_type(&[i32t.into()], false), None);
-        self.module
-            .add_function("qi_future_ready_ptr", ptrt.fn_type(&[ptrt.into()], false), None);
+        self.module.add_function(
+            "qi_future_ready_i64",
+            ptrt.fn_type(&[i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_ready_f64",
+            ptrt.fn_type(&[f64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_ready_bool",
+            ptrt.fn_type(&[i32t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_ready_ptr",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
         self.module.add_function(
             "qi_future_ready_string",
             ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
@@ -43,16 +55,31 @@ impl<'ctx> 后端<'ctx> {
             None,
         );
 
-        self.module
-            .add_function("qi_future_await_i64", i64t.fn_type(&[ptrt.into()], false), None);
-        self.module
-            .add_function("qi_future_await_f64", f64t.fn_type(&[ptrt.into()], false), None);
-        self.module
-            .add_function("qi_future_await_bool", i32t.fn_type(&[ptrt.into()], false), None);
-        self.module
-            .add_function("qi_future_await_ptr", ptrt.fn_type(&[ptrt.into()], false), None);
-        self.module
-            .add_function("qi_future_await_string", ptrt.fn_type(&[ptrt.into()], false), None);
+        self.module.add_function(
+            "qi_future_await_i64",
+            i64t.fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_await_f64",
+            f64t.fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_await_bool",
+            i32t.fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_await_ptr",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_future_await_string",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
     }
 
     /// 把一个 T 值包成 ready future 指针。返回 (future_ptr, 未来(元素))。
@@ -81,8 +108,8 @@ impl<'ctx> 后端<'ctx> {
                     .map_err(|e| e.to_string())?;
                 ("qi_future_ready_bool", vec![b.into()])
             }
-            元素类型::指针 => {
-                // 字符串走 ready_string(ptr,len)；其它指针走 ready_ptr
+            元素类型::指针 | 元素类型::结构体(_) => {
+                // 字符串走 ready_string(ptr,len)；其它指针（含结构体）走 ready_ptr
                 if vt == Qi类型::字符串 {
                     let len = self.计算字符串长度(v)?;
                     ("qi_future_ready_string", vec![v.into(), len.into()])
@@ -130,10 +157,10 @@ impl<'ctx> 后端<'ctx> {
                 let (v, vt) = self
                     .生成表达式(&arguments[0])?
                     .ok_or_else(|| "未来::就绪 实参无值".to_string())?;
-                // ARC：结构体/数组经 ready_ptr 存指针不拷贝 —— 发送即转移：
-                // BORROWED 先 retain（随 future 泄漏，宁泄漏不悬垂）
+                // ARC：结构体/数组/闭包经 ready_ptr 存指针不拷贝 —— 发送即转移：
+                // BORROWED 先 retain（payload 随 await take / future free 释放）
                 if self.弧开()
-                    && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_))
+                    && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_))
                     && !self.表达式拥有RC(&arguments[0], vt)
                 {
                     self.弧retain任意(v, vt);
@@ -195,6 +222,8 @@ impl<'ctx> 后端<'ctx> {
             元素类型::浮点数 => ("qi_future_await_f64", Qi类型::浮点数),
             元素类型::布尔 => ("qi_future_await_bool", Qi类型::布尔),
             元素类型::指针 => ("qi_future_await_ptr", Qi类型::字符串),
+            // 结构体 future：await_ptr take 出对象指针，类型精确到 结构体(idx)
+            元素类型::结构体(i) => ("qi_future_await_ptr", Qi类型::结构体(i)),
             元素类型::整数 => ("qi_future_await_i64", Qi类型::整数),
         };
         let f = self

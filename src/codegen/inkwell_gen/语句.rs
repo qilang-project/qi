@@ -3,9 +3,9 @@
 //! 控制流用 basic block + 条件跳转搭建；每个块生成完后检查是否已有终结指令，
 //! 避免重复 br/ret 触发 LLVM 校验失败。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::推断表达式类型;
-use super::后端;
 use crate::parser::ast::AstNode;
 use inkwell::values::FunctionValue;
 use inkwell::IntPredicate;
@@ -21,7 +21,10 @@ impl<'ctx> 后端<'ctx> {
             AstNode::变量声明(vd) => {
                 // 类型：注解优先（结构体感知），否则由初值推断。
                 // 注解解析出结构体/基础类型即用；解析不出（未知）再退回初值推断。
-                let 注解类型 = vd.type_annotation.as_ref().map(|ann| self.符号.解析类型(ann));
+                let 注解类型 = vd
+                    .type_annotation
+                    .as_ref()
+                    .map(|ann| self.符号.解析类型(ann));
                 let 初值类型 = vd
                     .initializer
                     .as_ref()
@@ -59,7 +62,9 @@ impl<'ctx> 后端<'ctx> {
                         self.弧存入槽2(v, init, 类型);
                         self.弧释放槽旧值2(ptr, 类型)?;
                     }
-                    self.builder.build_store(ptr, v).map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_store(ptr, v)
+                        .map_err(|e| e.to_string())?;
                 }
                 self.变量表.insert(vd.name.clone(), (ptr, 类型));
                 self.符号.声明变量(&vd.name, 类型);
@@ -85,8 +90,11 @@ impl<'ctx> 后端<'ctx> {
                         }
                     }
                     self.弧释放局部()?; // ARC：main 出口释放字符串局部
+                    self.弹try帧()?; // E4：try 体内 return 先弹异常 frame
                     let z = self.ctx.i32_type().const_int(0, false);
-                    self.builder.build_return(Some(&z)).map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_return(Some(&z))
+                        .map_err(|e| e.to_string())?;
                     return Ok(());
                 }
                 match &ret.value {
@@ -99,6 +107,7 @@ impl<'ctx> 后端<'ctx> {
                         if rt == Qi类型::空 {
                             self.弧消费后释放2(v, vt, expr); // 值被丢弃
                             self.弧释放局部()?;
+                            self.弹try帧()?;
                             self.builder.build_return(None).map_err(|e| e.to_string())?;
                         } else if rt.未来内部().is_some() && vt.未来内部().is_none() {
                             // 函数返回 未来<T> 而值不是 future：包成 ready future
@@ -116,7 +125,10 @@ impl<'ctx> 后端<'ctx> {
                             // （仅字符串 —— 结构体/数组已转移进 future，不释放）
                             self.弧消费后释放(v, vt, expr);
                             self.弧释放局部()?;
-                            self.builder.build_return(Some(&fut)).map_err(|e| e.to_string())?;
+                            self.弹try帧()?;
+                            self.builder
+                                .build_return(Some(&fut))
+                                .map_err(|e| e.to_string())?;
                         } else {
                             let cv = self.协调返回值(v, vt, rt)?;
                             // 返回约定 +1：RC 返回值 BORROWED → retain 再 ret；
@@ -134,11 +146,15 @@ impl<'ctx> 后端<'ctx> {
                             // 出口释放全部字符串局部（返回值若来自某局部：上面已
                             // retain +1，槽 release -1，净 +1 交调用方，正确）。
                             self.弧释放局部()?;
-                            self.builder.build_return(Some(&cv)).map_err(|e| e.to_string())?;
+                            self.弹try帧()?;
+                            self.builder
+                                .build_return(Some(&cv))
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                     None => {
                         self.弧释放局部()?;
+                        self.弹try帧()?;
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                     }
                 }
@@ -246,7 +262,9 @@ impl<'ctx> 后端<'ctx> {
         let i64t = self.ctx.i64_type();
         // entry 块 alloca：嵌套循环里的 for 不再每次外层迭代吃栈
         let ivar = self.入口块alloca(i64t.into(), &f.variable)?;
-        self.builder.build_store(ivar, 起).map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(ivar, 起)
+            .map_err(|e| e.to_string())?;
         self.变量表.insert(f.variable.clone(), (ivar, Qi类型::整数));
         self.符号.声明变量(&f.variable, Qi类型::整数);
 
@@ -254,7 +272,9 @@ impl<'ctx> 后端<'ctx> {
         let body_bb = self.ctx.append_basic_block(func, "for.body");
         let end_bb = self.ctx.append_basic_block(func, "for.end");
 
-        self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
         self.builder.position_at_end(cond_bb);
         let cur = self
             .builder
@@ -281,8 +301,12 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_int_add(cur2, i64t.const_int(1, false), "inc")
                 .map_err(|e| e.to_string())?;
-            self.builder.build_store(ivar, next).map_err(|e| e.to_string())?;
-            self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(ivar, next)
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_unconditional_branch(cond_bb)
+                .map_err(|e| e.to_string())?;
         }
 
         self.builder.position_at_end(end_bb);
@@ -334,7 +358,9 @@ impl<'ctx> 后端<'ctx> {
         let body_bb = self.ctx.append_basic_block(func, "each.body");
         let end_bb = self.ctx.append_basic_block(func, "each.end");
 
-        self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
         self.builder.position_at_end(cond_bb);
         let cur = self
             .builder
@@ -366,7 +392,9 @@ impl<'ctx> 后端<'ctx> {
             self.弧retain任意(ev, 元素qi);
             self.弧释放槽旧值2(evar, 元素qi)?;
         }
-        self.builder.build_store(evar, ev).map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(evar, ev)
+            .map_err(|e| e.to_string())?;
 
         self.生成块(&f.body, func)?;
         if !self.当前块已终结() {
@@ -379,8 +407,12 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_int_add(cur2, i64t.const_int(1, false), "each.inc")
                 .map_err(|e| e.to_string())?;
-            self.builder.build_store(ivar, next).map_err(|e| e.to_string())?;
-            self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(ivar, next)
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_unconditional_branch(cond_bb)
+                .map_err(|e| e.to_string())?;
         }
 
         self.builder.position_at_end(end_bb);
@@ -391,8 +423,13 @@ impl<'ctx> 后端<'ctx> {
     fn 拆区间(
         &mut self,
         range: &AstNode,
-    ) -> Result<Option<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>)>, String>
-    {
+    ) -> Result<
+        Option<(
+            inkwell::values::IntValue<'ctx>,
+            inkwell::values::IntValue<'ctx>,
+        )>,
+        String,
+    > {
         // 二元操作里没有专门的「范围」运算符，前端可能用别的节点。
         // 目前仅当 range 是「数组字面量 [起, 止]」这类无法确定时保守跳过。
         let _ = range;
@@ -438,7 +475,11 @@ impl<'ctx> 后端<'ctx> {
         // 目标是否 ptr 语义
         let 目标ptr = matches!(
             期望,
-            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_) | Qi类型::未来(_)
+            Qi类型::字符串
+                | Qi类型::结构体(_)
+                | Qi类型::函数值(_)
+                | Qi类型::数组(_)
+                | Qi类型::未来(_)
         );
         // 浮点提升
         if 期望.是浮点() && !实际.是浮点() {
@@ -484,11 +525,7 @@ impl<'ctx> 后端<'ctx> {
                     } else {
                         Ok(self
                             .builder
-                            .build_int_truncate(
-                                iv,
-                                self.ctx.bool_type(),
-                                "trunc",
-                            )
+                            .build_int_truncate(iv, self.ctx.bool_type(), "trunc")
                             .map_err(|e| e.to_string())?
                             .into())
                     }

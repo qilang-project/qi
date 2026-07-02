@@ -23,36 +23,36 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
-#[path = "所有权.rs"]
-mod 所有权;
 #[path = "全局.rs"]
 mod 全局;
-#[path = "异常.rs"]
-mod 异常;
-#[path = "异步.rs"]
-mod 异步;
-#[path = "数组.rs"]
-mod 数组;
-#[path = "并发.rs"]
-mod 并发;
 #[path = "声明.rs"]
 mod 声明;
 #[path = "导入.rs"]
 mod 导入;
+#[path = "并发.rs"]
+mod 并发;
+#[path = "异常.rs"]
+mod 异常;
+#[path = "异步.rs"]
+mod 异步;
+#[path = "所有权.rs"]
+mod 所有权;
+#[path = "数组.rs"]
+mod 数组;
 #[path = "方法.rs"]
 mod 方法;
-#[path = "结构体.rs"]
-mod 结构体;
-#[path = "闭包.rs"]
-mod 闭包;
-#[path = "表达式.rs"]
-mod 表达式;
-#[path = "语句.rs"]
-mod 语句;
 #[path = "类型.rs"]
 mod 类型;
 #[path = "类型检查.rs"]
 mod 类型检查;
+#[path = "结构体.rs"]
+mod 结构体;
+#[path = "表达式.rs"]
+mod 表达式;
+#[path = "语句.rs"]
+mod 语句;
+#[path = "闭包.rs"]
+mod 闭包;
 
 use crate::codegen::module_registry::ModuleRegistry;
 use crate::config::CompilationTarget;
@@ -78,7 +78,11 @@ pub(crate) fn mangle_function_name(name: &str) -> String {
     if name.chars().all(|c| c.is_ascii()) {
         return name.to_string();
     }
-    let hex: String = name.as_bytes().iter().map(|b| format!("{:02X}", b)).collect();
+    let hex: String = name
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect();
     format!("_Z_{}", hex)
 }
 
@@ -126,6 +130,10 @@ struct 后端<'ctx> {
     /// QI_ARC=1 时为 true：插入保守字符串 ARC（retain/release）。默认关，
     /// 关时生成的 IR 与无此功能时完全一致。见 所有权.rs。
     弧: bool,
+    /// 当前 `尝试` 嵌套深度（Round E4）：进 try 体 +1，出体/进 catch -1。
+    /// `返回` 语句在 ret 前按当前深度补 qi_exc_pop × N，防 longjmp 到已失效帧。
+    /// 每个函数体/方法体/闭包体/入口独立清零（帧栈按函数平衡）。
+    try深度: u32,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -149,10 +157,11 @@ impl<'ctx> 后端<'ctx> {
             在入口中: false,
             当前包: None,
             字符串字面量缓存: HashMap::new(),
-            // ARC 默认开(字符串+结构体+数组 RC 回收);QI_ARC=0 退回纯泄漏模式(调试用)
+            // ARC 默认开(字符串+结构体+数组+闭包 RC 回收);QI_ARC=0 退回纯泄漏模式(调试用)
             弧: std::env::var("QI_ARC")
                 .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
                 .unwrap_or(true),
+            try深度: 0,
         }
     }
 
@@ -184,13 +193,19 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "函数缺 entry 块".to_string())?;
         if entry == 当前 {
             // 已在 entry（函数序言 / 无控制流的直线代码）：就地 alloca
-            return self.builder.build_alloca(llvmt, name).map_err(|e| e.to_string());
+            return self
+                .builder
+                .build_alloca(llvmt, name)
+                .map_err(|e| e.to_string());
         }
         match entry.get_terminator() {
             Some(term) => self.builder.position_before(&term),
             None => self.builder.position_at_end(entry),
         }
-        let p = self.builder.build_alloca(llvmt, name).map_err(|e| e.to_string())?;
+        let p = self
+            .builder
+            .build_alloca(llvmt, name)
+            .map_err(|e| e.to_string())?;
         self.builder.position_at_end(当前);
         Ok(p)
     }
@@ -208,23 +223,31 @@ impl<'ctx> 后端<'ctx> {
         self.module.add_function("qi_runtime_print", 收指针, None);
 
         let 收i64 = i32t.fn_type(&[i64t.into()], false);
-        self.module.add_function("qi_runtime_println_int", 收i64, None);
-        self.module.add_function("qi_runtime_print_int", 收i64, None);
+        self.module
+            .add_function("qi_runtime_println_int", 收i64, None);
+        self.module
+            .add_function("qi_runtime_print_int", 收i64, None);
 
         let 收f64 = i32t.fn_type(&[f64t.into()], false);
-        self.module.add_function("qi_runtime_println_float", 收f64, None);
-        self.module.add_function("qi_runtime_print_float", 收f64, None);
+        self.module
+            .add_function("qi_runtime_println_float", 收f64, None);
+        self.module
+            .add_function("qi_runtime_print_float", 收f64, None);
 
         let 收i32 = i32t.fn_type(&[i32t.into()], false);
-        self.module.add_function("qi_runtime_println_bool", 收i32, None);
-        self.module.add_function("qi_runtime_print_bool", 收i32, None);
+        self.module
+            .add_function("qi_runtime_println_bool", 收i32, None);
+        self.module
+            .add_function("qi_runtime_print_bool", 收i32, None);
 
         // 字符串
         let 拼接 = ptrt.fn_type(&[ptrt.into(), ptrt.into()], false);
-        self.module.add_function("qi_runtime_string_concat", 拼接, None);
+        self.module
+            .add_function("qi_runtime_string_concat", 拼接, None);
         // 字符串比较（== / != / </ > 等；返回 <0/0/>0）
         let 比较 = i32t.fn_type(&[ptrt.into(), ptrt.into()], false);
-        self.module.add_function("qi_runtime_string_compare", 比较, None);
+        self.module
+            .add_function("qi_runtime_string_compare", 比较, None);
         // 释放临时字符串（拼接链中间结果 / int_to_string 临时值）。
         // 仅对 codegen 结构上确定「新建且不逃逸」的临时值发，绝不对字面量/变量发。
         let 释放串 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
@@ -274,21 +297,16 @@ impl<'ctx> 后端<'ctx> {
 
         // RC 对象分配器（QI_ARC=1 时结构体/数组本体走这里；ptr-24 藏 header，
         // 零初始化，绕开 memory_manager 的全局 RwLock）。ARC 关时无人调用。
-        self.module.add_function(
-            "qi_obj_alloc",
-            ptrt.fn_type(&[i64t.into()], false),
-            None,
-        );
+        self.module
+            .add_function("qi_obj_alloc", ptrt.fn_type(&[i64t.into()], false), None);
         let 收指针void = self.ctx.void_type().fn_type(&[ptrt.into()], false);
         self.module.add_function("qi_obj_retain", 收指针void, None);
-        self.module.add_function(
-            "qi_obj_dec",
-            i64t.fn_type(&[ptrt.into()], false),
-            None,
-        );
+        self.module
+            .add_function("qi_obj_dec", i64t.fn_type(&[ptrt.into()], false), None);
         self.module.add_function("qi_obj_free", 收指针void, None);
         // 动态派发释放（数组<指针> 元素等编译期类型未知的保守路径）
-        self.module.add_function("qi_rc_release_any", 收指针void, None);
+        self.module
+            .add_function("qi_rc_release_any", 收指针void, None);
 
         // 通道（阶段10 退化并发）
         self.module.add_function(
@@ -330,8 +348,11 @@ impl<'ctx> 后端<'ctx> {
             ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
             None,
         );
-        self.module
-            .add_function("qi_closure_get_fn", ptrt.fn_type(&[ptrt.into()], false), None);
+        self.module.add_function(
+            "qi_closure_get_fn",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
         self.module.add_function(
             "qi_closure_get_int",
             i64t.fn_type(&[ptrt.into(), i64t.into()], false),
@@ -344,12 +365,35 @@ impl<'ctx> 后端<'ctx> {
         );
         self.module.add_function(
             "qi_closure_set_int",
-            self.ctx.void_type().fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false),
+            self.ctx
+                .void_type()
+                .fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false),
             None,
         );
         self.module.add_function(
             "qi_closure_set_ptr",
-            self.ctx.void_type().fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false),
+            self.ctx
+                .void_type()
+                .fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false),
+            None,
+        );
+        // 闭包 RC（Round E1）：retain/release 按 magic 动态派发；set_dtor 把
+        // codegen 合成的 env 析构函数挂进 fat obj 末槽（归零时级联释放捕获）
+        self.module.add_function(
+            "qi_closure_retain",
+            self.ctx.void_type().fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_closure_release",
+            self.ctx.void_type().fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "qi_closure_set_dtor",
+            self.ctx
+                .void_type()
+                .fn_type(&[ptrt.into(), ptrt.into()], false),
             None,
         );
 
@@ -369,7 +413,9 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "未找到 入口() 函数".to_string())?;
 
         let i32t = self.ctx.i32_type();
-        let main_fn = self.module.add_function("main", i32t.fn_type(&[], false), None);
+        let main_fn = self
+            .module
+            .add_function("main", i32t.fn_type(&[], false), None);
         let bb = self.ctx.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(bb);
 
@@ -377,6 +423,7 @@ impl<'ctx> 后端<'ctx> {
         self.变量表.clear();
         self.符号.进入作用域();
         self.当前返回类型 = Qi类型::空;
+        self.try深度 = 0; // E4
         self.在入口中 = true; // main 返回 i32：bare `返回` 要 ret i32 0
 
         // 全局变量初始化（所有模块的带初值全局，在 body 之前 store）

@@ -6,8 +6,8 @@
 //!
 //! 导入别名：`导入 标准库.输入输出 作为 IO` 让 `IO` 解析到模块「输入输出」。
 
-use super::类型::Qi类型;
 use super::后端;
+use super::类型::Qi类型;
 use crate::codegen::module_registry::ModuleFunction;
 use crate::parser::ast::{AstNode, Program};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
@@ -146,11 +146,12 @@ impl<'ctx> 后端<'ctx> {
             {
                 弧待释放.push(v);
             }
-            // ARC：结构体/数组指针进 runtime FFI（列表::设置指针 / 网络::异步服务
-            // 等可能**私藏**指针）→ 发送即转移：BORROWED 先 retain（对应引用随
-            // 藏点泄漏，宁泄漏不悬垂）；OWNED 直接转移，不 retain 也不释放。
+            // ARC：结构体/数组/闭包指针进 runtime FFI（列表::设置指针 / 网络::
+            // 异步服务 / 回调注册等可能**私藏**指针）→ 发送即转移：BORROWED 先
+            // retain（对应引用随藏点泄漏，宁泄漏不悬垂）；OWNED 直接转移，
+            // 不 retain 也不释放。
             if self.弧开()
-                && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_))
+                && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_))
                 && v.is_pointer_value()
                 && !self.表达式拥有RC(a, vt)
             {
@@ -199,7 +200,8 @@ impl<'ctx> 后端<'ctx> {
         期望: Qi类型,
     ) -> Result<BasicMetadataValueEnum<'ctx>, String> {
         // 布尔实参进 i64 整数参数：扩展
-        if 实际 == Qi类型::布尔 && (期望 == Qi类型::整数 || 期望 == Qi类型::未知) {
+        if 实际 == Qi类型::布尔 && (期望 == Qi类型::整数 || 期望 == Qi类型::未知)
+        {
             let ext = self
                 .builder
                 .build_int_z_extend(v.into_int_value(), self.ctx.i64_type(), "b2i")

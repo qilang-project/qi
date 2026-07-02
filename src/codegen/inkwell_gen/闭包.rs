@@ -9,9 +9,9 @@
 //!   同名局部）→ `qi_closure_create(__closure_N, num_caps)` + 逐个 set 捕获值。
 //! - 间接调用：局部/全局/参数变量持 fat obj → fat call。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::函数签名;
-use super::后端;
 use crate::parser::ast::{AstNode, ClosureExpression};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, PointerValue};
@@ -141,17 +141,21 @@ impl<'ctx> 后端<'ctx> {
                 .get(名)
                 .cloned()
                 .ok_or_else(|| format!("捕获变量 {} 缺失", 名))?;
-            let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
+            let llvmt = self
+                .llvm基础类型(*t)
+                .unwrap_or_else(|| self.ctx.i64_type().into());
             let v = self
                 .builder
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
-            // ARC：RC 值（字符串/结构体/数组）捕获进闭包 env（借用 load）→
-            // retain（env 持有一份；env 本轮不回收，随 env 泄漏 —— 宁泄漏不悬垂：
-            // 闭包可能被 spawn / 存进路由表，寿命超过创建函数）
+            // ARC：RC 值（字符串/结构体/数组/闭包）捕获进闭包 env（借用 load）
+            // → retain（env 持有一份；env 归零时由下面挂的 dtor 级联归还）
             self.弧retain任意(v, *t);
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
+        // ARC（E1）：有 RC 捕获 → 合成 env dtor 并挂到 fat obj（refcount 归零
+        // 时 runtime 调 dtor 释放捕获，再 free env 本体）
+        self.弧挂env析构(obj, &符号名, &捕获)?;
 
         Ok((obj.into(), Qi类型::函数值(idx)))
     }
@@ -199,7 +203,9 @@ impl<'ctx> 后端<'ctx> {
                 .get(名)
                 .cloned()
                 .ok_or_else(|| format!("捕获变量 {} 缺失", 名))?;
-            let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
+            let llvmt = self
+                .llvm基础类型(*t)
+                .unwrap_or_else(|| self.ctx.i64_type().into());
             let v = self
                 .builder
                 .build_load(llvmt, ptr, 名)
@@ -209,7 +215,83 @@ impl<'ctx> 后端<'ctx> {
             self.弧retain任意(v, *t);
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
+        // ARC（E1）：挂 env dtor（goroutine 跑完 qi_go_tramp 尾部 release env
+        // → 归零时级联释放捕获）
+        self.弧挂env析构(obj, &符号名, &捕获)?;
         Ok(obj)
+    }
+
+    /// ARC（E1）：为闭包 env 合成析构函数 `qi.env.drop.<闭包符号名>` 并挂到
+    /// fat obj 末槽（qi_closure_set_dtor）。dtor 只负责释放 RC 捕获槽 ——
+    /// dec / free 本体由 runtime 的 qi_closure_release 统一管。
+    /// 无 RC 捕获 / ARC 关 → 不合成不挂（dtor 槽保持 0，release 直接 free）。
+    fn 弧挂env析构(
+        &mut self,
+        obj: PointerValue<'ctx>,
+        闭包符号名: &str,
+        捕获: &[(String, Qi类型)],
+    ) -> Result<(), String> {
+        if !self.弧开() {
+            return Ok(());
+        }
+        let rc捕获: Vec<(usize, Qi类型)> = 捕获
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, t))| super::所有权::是RC类型(*t))
+            .map(|(i, (_, t))| (i, *t))
+            .collect();
+        if rc捕获.is_empty() {
+            return Ok(());
+        }
+
+        let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
+        let i64t = self.ctx.i64_type();
+        let dtor名 = format!("qi.env.drop.{}", 闭包符号名);
+        let dtor = match self.module.get_function(&dtor名) {
+            Some(f) => f,
+            None => {
+                let f = self.module.add_function(
+                    &dtor名,
+                    self.ctx.void_type().fn_type(&[ptrt.into()], false),
+                    None,
+                );
+                // 生成 dtor 体（保存/恢复 builder 插入点，与 生成trampoline 同法）
+                let 保存 = self.builder.get_insert_block();
+                let entry = self.ctx.append_basic_block(f, "entry");
+                self.builder.position_at_end(entry);
+                let env = f.get_nth_param(0).unwrap().into_pointer_value();
+                let getp = self.module.get_function("qi_closure_get_ptr").unwrap();
+                for (i, t) in &rc捕获 {
+                    let idxv = i64t.const_int(*i as u64, false);
+                    let v = self
+                        .builder
+                        .build_call(getp, &[env.into(), idxv.into()], "cap")
+                        .map_err(|e| e.to_string())?
+                        .try_as_basic_value()
+                        .left()
+                        .ok_or_else(|| "get_ptr 未返回".to_string())?;
+                    self.弧release任意(v, *t);
+                }
+                self.builder.build_return(None).map_err(|e| e.to_string())?;
+                if let Some(bb) = 保存 {
+                    self.builder.position_at_end(bb);
+                }
+                f
+            }
+        };
+
+        let set = self
+            .module
+            .get_function("qi_closure_set_dtor")
+            .ok_or_else(|| "运行时函数未声明: qi_closure_set_dtor".to_string())?;
+        self.builder
+            .build_call(
+                set,
+                &[obj.into(), dtor.as_global_value().as_pointer_value().into()],
+                "",
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// 间接调用（fat call）：callee 是持 fat obj 的变量/全局/参数。
@@ -300,7 +382,9 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(false);
             let 可释放 = match at {
                 Qi类型::字符串 => self.表达式拥有字符串(a),
-                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, at),
+                Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+                    形参rc && self.表达式拥有RC(a, at)
+                }
                 _ => false,
             };
             if self.弧开() && v.is_pointer_value() && 可释放 {
@@ -310,7 +394,11 @@ impl<'ctx> 后端<'ctx> {
                 if pt.是浮点() && !at.是浮点() {
                     v = self
                         .builder
-                        .build_signed_int_to_float(v.into_int_value(), self.ctx.f64_type(), "sitofp")
+                        .build_signed_int_to_float(
+                            v.into_int_value(),
+                            self.ctx.f64_type(),
+                            "sitofp",
+                        )
                         .map_err(|e| e.to_string())?
                         .into();
                 }
@@ -390,7 +478,9 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         match cs.try_as_basic_value().left() {
             Some(v) => {
-                self.builder.build_return(Some(&v)).map_err(|e| e.to_string())?;
+                self.builder
+                    .build_return(Some(&v))
+                    .map_err(|e| e.to_string())?;
             }
             None => {
                 self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -406,7 +496,7 @@ impl<'ctx> 后端<'ctx> {
     /// 声明闭包合成函数原型：ret (ptr env, 参数...)。
     fn 声明闭包原型(
         &self,
-         符号名: &str,
+        符号名: &str,
         _捕获: &[(String, Qi类型)],
         cl: &待合成闭包,
     ) -> Result<PointerValue<'ctx>, String> {
@@ -437,13 +527,15 @@ impl<'ctx> 后端<'ctx> {
             .get_function(&cl.符号名)
             .ok_or_else(|| format!("闭包原型缺失: {}", cl.符号名))?;
 
-        // 保存 builder / 变量表 / 返回类型（合成函数独立环境）
+        // 保存 builder / 变量表 / 返回类型 / try 深度（合成函数独立环境）
         let 保存位置 = self.builder.get_insert_block();
         let 保存变量 = std::mem::take(&mut self.变量表);
         let 保存返回 = self.当前返回类型;
+        let 保存try深度 = self.try深度;
 
         self.符号.进入作用域();
         self.当前返回类型 = cl.返回类型;
+        self.try深度 = 0; // E4：闭包体的异常 frame 独立平衡
 
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
@@ -453,8 +545,13 @@ impl<'ctx> 后端<'ctx> {
         // 从 env 读捕获 → alloca 同名局部
         for (i, (名, t)) in cl.捕获.iter().enumerate() {
             let v = self.闭包读槽(env, i as u64, *t)?;
-            let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
-            let a = self.builder.build_alloca(llvmt, 名).map_err(|e| e.to_string())?;
+            let llvmt = self
+                .llvm基础类型(*t)
+                .unwrap_or_else(|| self.ctx.i64_type().into());
+            let a = self
+                .builder
+                .build_alloca(llvmt, 名)
+                .map_err(|e| e.to_string())?;
             self.builder.build_store(a, v).map_err(|e| e.to_string())?;
             // ARC：RC 捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡
             self.弧retain任意(v, *t);
@@ -465,8 +562,13 @@ impl<'ctx> 后端<'ctx> {
         // 参数（从 param1.. 落地）
         for (i, 名) in cl.参数名.iter().enumerate() {
             let t = cl.参数类型.get(i).copied().unwrap_or(Qi类型::整数);
-            let llvmt = self.llvm基础类型(t).unwrap_or_else(|| self.ctx.i64_type().into());
-            let a = self.builder.build_alloca(llvmt, 名).map_err(|e| e.to_string())?;
+            let llvmt = self
+                .llvm基础类型(t)
+                .unwrap_or_else(|| self.ctx.i64_type().into());
+            let a = self
+                .builder
+                .build_alloca(llvmt, 名)
+                .map_err(|e| e.to_string())?;
             let p = func
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| "闭包缺形参".to_string())?;
@@ -488,7 +590,9 @@ impl<'ctx> 后端<'ctx> {
             match self.llvm基础类型(cl.返回类型) {
                 Some(rt) => {
                     let z = rt.const_zero();
-                    self.builder.build_return(Some(&z)).map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_return(Some(&z))
+                        .map_err(|e| e.to_string())?;
                 }
                 None => {
                     self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -499,6 +603,7 @@ impl<'ctx> 后端<'ctx> {
         self.符号.退出作用域();
         self.变量表 = 保存变量;
         self.当前返回类型 = 保存返回;
+        self.try深度 = 保存try深度;
         if let Some(bb) = 保存位置 {
             self.builder.position_at_end(bb);
         }
@@ -635,7 +740,9 @@ impl<'ctx> 后端<'ctx> {
                 self.收集自由标识符(&b.left, 参数, 本地, out, 已见);
                 self.收集自由标识符(&b.right, 参数, 本地, out, 已见);
             }
-            AstNode::一元操作表达式(u) => self.收集自由标识符(&u.operand, 参数, 本地, out, 已见),
+            AstNode::一元操作表达式(u) => {
+                self.收集自由标识符(&u.operand, 参数, 本地, out, 已见)
+            }
             AstNode::字符串连接表达式(s) => {
                 self.收集自由标识符(&s.left, 参数, 本地, out, 已见);
                 self.收集自由标识符(&s.right, 参数, 本地, out, 已见);
@@ -664,8 +771,12 @@ impl<'ctx> 后端<'ctx> {
                     self.收集自由标识符(a, 参数, 本地, out, 已见);
                 }
             }
-            AstNode::字段访问表达式(f) => self.收集自由标识符(&f.object, 参数, 本地, out, 已见),
-            AstNode::表达式语句(e) => self.收集自由标识符(&e.expression, 参数, 本地, out, 已见),
+            AstNode::字段访问表达式(f) => {
+                self.收集自由标识符(&f.object, 参数, 本地, out, 已见)
+            }
+            AstNode::表达式语句(e) => {
+                self.收集自由标识符(&e.expression, 参数, 本地, out, 已见)
+            }
             AstNode::返回语句(r) => {
                 if let Some(v) = &r.value {
                     self.收集自由标识符(v, 参数, 本地, out, 已见);

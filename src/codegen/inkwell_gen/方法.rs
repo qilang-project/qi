@@ -5,9 +5,9 @@
 //! `x` 的结构体类型，再找对应方法函数，传 (x指针, args…) 调用。
 //! 链式 `a().b().c()` 天然成立：接收者是任意表达式，其结果类型已知。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::函数签名;
-use super::后端;
 use crate::parser::ast::{AstNode, MethodDeclaration, Program};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
@@ -106,6 +106,7 @@ impl<'ctx> 后端<'ctx> {
         self.变量表.clear();
         self.符号.进入作用域();
         self.当前返回类型 = sig.返回;
+        self.try深度 = 0; // E4
 
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
@@ -142,7 +143,9 @@ impl<'ctx> 后端<'ctx> {
             let arg = func
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
-            self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(ptr, arg)
+                .map_err(|e| e.to_string())?;
             // ARC：RC 参数（借用）落地进局部槽 → retain 一次，与出口统一释放平衡
             self.弧retain任意(arg, t);
             self.变量表.insert(p.name.clone(), (ptr, t));
@@ -161,7 +164,9 @@ impl<'ctx> 后端<'ctx> {
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {
                     let zero = rt.const_zero();
-                    self.builder.build_return(Some(&zero)).map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_return(Some(&zero))
+                        .map_err(|e| e.to_string())?;
                 }
                 None => {
                     self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -214,9 +219,7 @@ impl<'ctx> 后端<'ctx> {
         let mut 弧待释放: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
         // ARC：链式调用的 OWNED 临时接收者（如 f(x).方法()）—— 方法自会对
         // 自身 retain/release，调用结束后释放这份 +1。
-        if self.弧开()
-            && recv_val.is_pointer_value()
-            && self.表达式拥有RC(object, recv_type)
+        if self.弧开() && recv_val.is_pointer_value() && self.表达式拥有RC(object, recv_type)
         {
             弧待释放.push((recv_val, recv_type));
         }
@@ -233,7 +236,9 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(false);
             let 可释放 = match vt {
                 Qi类型::字符串 => self.表达式拥有字符串(a),
-                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, vt),
+                Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+                    形参rc && self.表达式拥有RC(a, vt)
+                }
                 _ => false,
             };
             if self.弧开() && v.is_pointer_value() && 可释放 {
@@ -261,10 +266,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 整数实参 sitofp → double。
-    fn 实参转浮点(
-        &self,
-        v: BasicValueEnum<'ctx>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn 实参转浮点(&self, v: BasicValueEnum<'ctx>) -> Result<BasicValueEnum<'ctx>, String> {
         Ok(self
             .builder
             .build_signed_int_to_float(v.into_int_value(), self.ctx.f64_type(), "sitofp")

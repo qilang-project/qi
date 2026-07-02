@@ -16,25 +16,34 @@
 //! （见 弧字符串槽），因此任意 return 点统一 load+release 全部字符串局部
 //! 都满足 LLVM 支配关系，且 release(null) 安全。
 
+use super::后端;
+use super::导入::注册表类型转qi;
 use super::类型::{Qi类型, 元素类型};
 use super::类型检查::推断表达式类型;
-use super::导入::注册表类型转qi;
-use super::后端;
 use crate::parser::ast::{AstNode, BinaryOperator};
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 
-/// 该 Qi 类型的值是否受 RC 管理（字符串 / 结构体本体 / 数组本体）。
-/// 函数值（闭包 fat obj）与 未来 句柄本轮不管（保持泄漏）。
+/// 该 Qi 类型的值是否受 RC 管理（字符串 / 结构体本体 / 数组本体 / 闭包 fat obj）。
+/// 未来 句柄本轮不管（保持泄漏；其 Pointer payload 由 await take / future_free 归还）。
+///
+/// Round E1：函数值（闭包 fat obj）纳入 RC —— 闭包值本质是 {fn, env} 单指针
+/// 对象，retain/release 闭包值 = retain/release env 指针（qi_closure_retain /
+/// qi_closure_release，按 magic 动态派发，裸句柄误入时静默 no-op）。
 #[allow(non_snake_case)]
 pub(super) fn 是RC类型(t: Qi类型) -> bool {
-    matches!(t, Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::数组(_))
+    matches!(
+        t,
+        Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_)
+    )
 }
 
 /// 返回「借用串」的 runtime FFI 名单：这些函数返回的指针是内部借用 / 透传，
 /// **不是** rc=1 交出的新串。判为 BORROWED（store 时 retain，绝不按 OWNED release）。
 ///   - qi_web_request_*  / qi_web_match_params：RequestParts / MatchResult 内部
 ///     RC 串的借引用（parts 持有一份引用，parts_free 释放那份）
-///   - qi_future_await_ptr / qi_future_value_ptr：future 内部指针透传
+///   - qi_future_value_ptr：future 内部指针透传（非 take，仍借用）
+///   - qi_future_await_ptr **不在**名单（Round E3）：await 是 take 语义，
+///     Pointer payload +1 移交调用方；String payload 每次新分配 → OWNED
 const 借用串FFI: &[&str] = &[
     "qi_web_request_method",
     "qi_web_request_path",
@@ -42,7 +51,6 @@ const 借用串FFI: &[&str] = &[
     "qi_web_request_headers",
     "qi_web_request_body",
     "qi_web_match_params",
-    "qi_future_await_ptr",
     "qi_future_value_ptr",
 ];
 
@@ -58,8 +66,11 @@ impl<'ctx> 后端<'ctx> {
             Some(f) => f,
             None => {
                 let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
-                self.module
-                    .add_function(name, self.ctx.void_type().fn_type(&[ptrt.into()], false), None)
+                self.module.add_function(
+                    name,
+                    self.ctx.void_type().fn_type(&[ptrt.into()], false),
+                    None,
+                )
             }
         }
     }
@@ -68,7 +79,9 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 弧retain(&mut self, v: BasicValueEnum<'ctx>) {
         if self.弧 && v.is_pointer_value() {
             let f = self.弧函数("qi_string_retain");
-            let _ = self.builder.build_call(f, &[v.into_pointer_value().into()], "");
+            let _ = self
+                .builder
+                .build_call(f, &[v.into_pointer_value().into()], "");
         }
     }
 
@@ -76,7 +89,9 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 弧release(&mut self, v: BasicValueEnum<'ctx>) {
         if self.弧 && v.is_pointer_value() {
             let f = self.弧函数("qi_string_free");
-            let _ = self.builder.build_call(f, &[v.into_pointer_value().into()], "");
+            let _ = self
+                .builder
+                .build_call(f, &[v.into_pointer_value().into()], "");
         }
     }
 
@@ -118,8 +133,9 @@ impl<'ctx> 后端<'ctx> {
 
     // ───────────── RC 对象（结构体本体 / 数组本体）类型感知工具 ─────────────
 
-    /// 类型感知 retain：字符串 → qi_string_retain；结构体/数组 → qi_obj_retain
-    /// （跨 magic 互认，混淆时委托字符串侧；全不符警告后泄漏）。其余类型不动作。
+    /// 类型感知 retain：字符串 → qi_string_retain；结构体/数组 → qi_obj_retain；
+    /// 函数值（闭包 fat obj）→ qi_closure_retain（跨 magic 互认；全不符静默/警告
+    /// 后泄漏）。其余类型不动作。
     pub(super) fn 弧retain任意(&mut self, v: BasicValueEnum<'ctx>, t: Qi类型) {
         if !self.弧 || !v.is_pointer_value() {
             return;
@@ -128,7 +144,15 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::字符串 => self.弧retain(v),
             Qi类型::结构体(_) | Qi类型::数组(_) => {
                 let f = self.弧函数("qi_obj_retain");
-                let _ = self.builder.build_call(f, &[v.into_pointer_value().into()], "");
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
+            }
+            Qi类型::函数值(_) => {
+                let f = self.弧函数("qi_closure_retain");
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
             }
             _ => {}
         }
@@ -136,7 +160,8 @@ impl<'ctx> 后端<'ctx> {
 
     /// 类型感知 release：字符串 → qi_string_free；结构体(i) → qi.release.s<i>
     /// （每类型释放函数：dec 归零时递归释放字段再 free 本体）；
-    /// 数组(e) → qi.release.arr.{v|p}。其余类型不动作。
+    /// 数组(e) → qi.release.arr.{v|p|s<i>}；函数值 → qi_closure_release
+    /// （归零时调 env dtor 级联释放捕获，再 free 本体）。其余类型不动作。
     pub(super) fn 弧release任意(&mut self, v: BasicValueEnum<'ctx>, t: Qi类型) {
         if !self.弧 || !v.is_pointer_value() {
             return;
@@ -145,11 +170,21 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::字符串 => self.弧release(v),
             Qi类型::结构体(idx) => {
                 let f = self.弧函数(&结构体释放名(idx));
-                let _ = self.builder.build_call(f, &[v.into_pointer_value().into()], "");
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
             }
             Qi类型::数组(e) => {
-                let f = self.弧函数(数组释放名(e));
-                let _ = self.builder.build_call(f, &[v.into_pointer_value().into()], "");
+                let f = self.弧函数(&数组释放名(e));
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
+            }
+            Qi类型::函数值(_) => {
+                let f = self.弧函数("qi_closure_release");
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
             }
             _ => {}
         }
@@ -158,10 +193,7 @@ impl<'ctx> 后端<'ctx> {
     /// 值 v（表达式 值node 生成，目标槽/字段声明类型 t）即将存入：
     /// BORROWED → retain（+1 归槽）；OWNED → 转移，不动作。t 非 RC 类型不动作。
     pub(super) fn 弧存入槽2(
-        &mut self,
-        v: BasicValueEnum<'ctx>,
-        值node: &AstNode,
-        t: Qi类型,
+        &mut self, v: BasicValueEnum<'ctx>, 值node: &AstNode, t: Qi类型
     ) {
         if self.弧 && 是RC类型(t) && !self.表达式拥有RC(值node, t) {
             self.弧retain任意(v, t);
@@ -277,7 +309,8 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::方法调用表达式(mc) => {
                 // 0) 未来:: 静态方法 → 返回 future 指针，非字符串
-                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来") {
+                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")
+                {
                     return false;
                 }
                 // 1) 结构体方法（返回约定 +1）
@@ -310,13 +343,10 @@ impl<'ctx> 后端<'ctx> {
                             .get(&id.name)
                             .cloned()
                             .unwrap_or_else(|| id.name.clone());
-                        let mf = self
-                            .注册表
-                            .get_function(&module_name, m)
-                            .or_else(|| {
-                                self.注册表
-                                    .get_function(&format!("标准库.{}", module_name), m)
-                            });
+                        let mf = self.注册表.get_function(&module_name, m).or_else(|| {
+                            self.注册表
+                                .get_function(&format!("标准库.{}", module_name), m)
+                        });
                         if let Some(mf) = mf {
                             return 注册表类型转qi(&mf.return_type) == Qi类型::字符串
                                 && !借用串FFI.contains(&mf.runtime_name.as_str());
@@ -332,8 +362,10 @@ impl<'ctx> 后端<'ctx> {
                 false
             }
 
-            // 等待：生成等待 走 qi_future_await_ptr（透传，BORROWED）
-            AstNode::等待表达式(_) => false,
+            // 等待：Round E3 起 qi_future_await_ptr 是 take/新分配语义 → OWNED
+            // （Pointer payload +1 移交；String payload 每次 rc_cstr 新分配）。
+            // 数值 future 的 await 结果非指针，插桩点先验类型，不受影响。
+            AstNode::等待表达式(_) => true,
             // 其余（字面量 / 标识符 / 字段 / 数组元素 / 赋值值 / 通道收 …）→ BORROWED
             _ => false,
         }
@@ -371,10 +403,14 @@ impl<'ctx> 后端<'ctx> {
             "整数转字符串" | "int_to_string" | "浮点数转字符串" | "float_to_string" => {
                 return true
             }
-            "字符串转整数" | "string_to_int" | "字符串转浮点数" | "string_to_float"
-            | "整数转浮点数" | "int_to_float" | "浮点数转整数" | "float_to_int" => {
-                return false
-            }
+            "字符串转整数"
+            | "string_to_int"
+            | "字符串转浮点数"
+            | "string_to_float"
+            | "整数转浮点数"
+            | "int_to_float"
+            | "浮点数转整数"
+            | "float_to_int" => return false,
             _ => {}
         }
         // 4) 同步/定时器内建都返回整数句柄，非字符串 —— 若命中同名用户函数下面
@@ -394,20 +430,25 @@ impl<'ctx> 后端<'ctx> {
     // ───────────── RC 对象所有权判定（结构体本体 / 数组本体） ─────────────
 
     /// 统一入口：该表达式的结果（其类型为 t）是否 OWNED（+1 交到我手上）。
-    /// t 为字符串走字符串判定；结构体/数组走对象判定；其余恒 false。
+    /// t 为字符串走字符串判定；结构体/数组/函数值走对象判定；其余恒 false。
     #[allow(non_snake_case)]
     pub(super) fn 表达式拥有RC(&self, node: &AstNode, t: Qi类型) -> bool {
         match t {
             Qi类型::字符串 => self.表达式拥有字符串(node),
-            Qi类型::结构体(_) | Qi类型::数组(_) => self.表达式拥有对象(node),
+            Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+                self.表达式拥有对象(node)
+            }
             _ => false,
         }
     }
 
-    /// 结构体/数组值的 OWNED 判定。铁律同字符串：说 true 必须结构上 100% 确定；
+    /// 结构体/数组/闭包值的 OWNED 判定。铁律同字符串：说 true 必须结构上 100% 确定；
     /// 拿不准 → false（BORROWED，宁泄漏）。OWNED 来源：
     ///   - 结构体字面量 / 数组字面量（qi_obj_alloc 刚分配，rc=1）
+    ///   - 闭包字面量（qi_closure_create 刚分配，rc=1）
+    ///   - 顶层函数名当值（每次提及新建 trampoline fat obj，rc=1）
     ///   - Qi 用户函数 / 方法 / 闭包（fat call）返回（返回约定 +1）
+    ///   - `等待`（Round E3 take 语义：future 持有的 +1 移交）
     ///   - runtime FFI 永远不按 +1 交出对象 → false
     fn 表达式拥有对象(&self, node: &AstNode) -> bool {
         if !self.弧 {
@@ -416,12 +457,24 @@ impl<'ctx> 后端<'ctx> {
         match node {
             AstNode::结构体实例化表达式(_) => true,
             AstNode::数组字面量表达式(_) => true,
+            // 闭包字面量：qi_closure_create rc=1 交出
+            AstNode::闭包表达式(_) => true,
+            // `等待 fut`：take 语义，future 内那份 +1 移交（见 表达式拥有字符串 同款注释）
+            AstNode::等待表达式(_) => true,
+            // 顶层函数名当值：镜像 生成表达式 的标识符分发 —— 变量/全局优先
+            // （load → BORROWED），都不是且确是已登记函数 → 每次新建 fat obj（OWNED）
+            AstNode::标识符表达式(id) => {
+                !self.变量表.contains_key(&id.name)
+                    && !self.全局变量表.contains_key(&id.name)
+                    && self.符号.函数为值(&id.name).is_some()
+            }
 
             AstNode::函数调用表达式(call) => self.调用拥有对象(&call.callee),
 
             AstNode::方法调用表达式(mc) => {
                 // 未来:: 静态方法 → future 指针，非对象
-                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来") {
+                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")
+                {
                     return false;
                 }
                 // 结构体方法（返回约定 +1）
@@ -517,7 +570,7 @@ impl<'ctx> 后端<'ctx> {
         let voidt = self.ctx.void_type();
         let sig = voidt.fn_type(&[ptrt.into()], false);
 
-        // 先声明全部（结构体 n 个 + 数组 2 个），定义体内可互相引用
+        // 先声明全部（结构体 n 个 + 数组 2+n 个），定义体内可互相引用
         let n = self.符号.结构体.len();
         for i in 0..n {
             let name = 结构体释放名(i as u32);
@@ -530,12 +583,23 @@ impl<'ctx> 后端<'ctx> {
                 self.module.add_function(name, sig, None);
             }
         }
+        // E2：每个结构体类型一个类型化数组释放函数 qi.release.arr.s<i>
+        for i in 0..n {
+            let name = 数组释放名(元素类型::结构体(i as u32));
+            if self.module.get_function(&name).is_none() {
+                self.module.add_function(&name, sig, None);
+            }
+        }
 
         for i in 0..n {
             self.弧定义结构体释放(i as u32)?;
         }
-        self.弧定义数组释放(false)?; // 标量元素：只释放本体
-        self.弧定义数组释放(true)?; //  指针元素：逐槽 qi_rc_release_any 再释放本体
+        self.弧定义数组释放(数组元素释放::无)?; //   标量元素：只释放本体
+        self.弧定义数组释放(数组元素释放::动态)?; // 指针元素：逐槽 qi_rc_release_any
+        for i in 0..n {
+            // 结构体元素：逐槽 qi.release.s<i> 类型化级联
+            self.弧定义数组释放(数组元素释放::结构体(i as u32))?;
+        }
         Ok(())
     }
 
@@ -570,7 +634,10 @@ impl<'ctx> 后端<'ctx> {
 
         // dec：旧值 == 1 才走释放路径
         self.builder.position_at_end(body);
-        let dec = self.module.get_function("qi_obj_dec").ok_or("qi_obj_dec 未声明")?;
+        let dec = self
+            .module
+            .get_function("qi_obj_dec")
+            .ok_or("qi_obj_dec 未声明")?;
         let old = self
             .builder
             .build_call(dec, &[p.into()], "old")
@@ -581,7 +648,12 @@ impl<'ctx> 后端<'ctx> {
             .into_int_value();
         let last = self
             .builder
-            .build_int_compare(inkwell::IntPredicate::EQ, old, i64t.const_int(1, false), "last")
+            .build_int_compare(
+                inkwell::IntPredicate::EQ,
+                old,
+                i64t.const_int(1, false),
+                "last",
+            )
             .map_err(|e| e.to_string())?;
         self.builder
             .build_conditional_branch(last, free_bb, ret_bb)
@@ -605,7 +677,10 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
             self.弧release任意(fv, *ft);
         }
-        let free = self.module.get_function("qi_obj_free").ok_or("qi_obj_free 未声明")?;
+        let free = self
+            .module
+            .get_function("qi_obj_free")
+            .ok_or("qi_obj_free 未声明")?;
         self.builder
             .build_call(free, &[p.into()], "")
             .map_err(|e| e.to_string())?;
@@ -618,15 +693,20 @@ impl<'ctx> 后端<'ctx> {
         Ok(())
     }
 
-    /// 定义 qi.release.arr.{v|p}：
+    /// 定义 qi.release.arr.{v|p|s<i>}：
     ///   null → ret；dec 旧值 != 1 → ret；
-    ///   指针元素时按长度头逐槽 qi_rc_release_any（串→完整释放，对象→浅释放，
-    ///   其它→静默 no-op）；qi_obj_free(p)。
-    fn 弧定义数组释放(&mut self, 指针元素: bool) -> Result<(), String> {
-        let name = if 指针元素 { "qi.release.arr.p" } else { "qi.release.arr.v" };
+    ///   指针元素时按长度头逐槽释放（动态 → qi_rc_release_any：串→完整、
+    ///   对象→浅、闭包→完整、其它→静默；结构体元素 → qi.release.s<i> 级联）；
+    ///   qi_obj_free(p)。
+    fn 弧定义数组释放(&mut self, 模式: 数组元素释放) -> Result<(), String> {
+        let name = match 模式 {
+            数组元素释放::无 => "qi.release.arr.v".to_string(),
+            数组元素释放::动态 => "qi.release.arr.p".to_string(),
+            数组元素释放::结构体(i) => 数组释放名(元素类型::结构体(i)),
+        };
         let func = self
             .module
-            .get_function(name)
+            .get_function(&name)
             .ok_or_else(|| "数组释放原型缺失".to_string())?;
         if func.get_first_basic_block().is_some() {
             return Ok(());
@@ -650,7 +730,10 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(body);
-        let dec = self.module.get_function("qi_obj_dec").ok_or("qi_obj_dec 未声明")?;
+        let dec = self
+            .module
+            .get_function("qi_obj_dec")
+            .ok_or("qi_obj_dec 未声明")?;
         let old = self
             .builder
             .build_call(dec, &[p.into()], "old")
@@ -661,15 +744,20 @@ impl<'ctx> 后端<'ctx> {
             .into_int_value();
         let last = self
             .builder
-            .build_int_compare(inkwell::IntPredicate::EQ, old, i64t.const_int(1, false), "last")
+            .build_int_compare(
+                inkwell::IntPredicate::EQ,
+                old,
+                i64t.const_int(1, false),
+                "last",
+            )
             .map_err(|e| e.to_string())?;
         self.builder
             .build_conditional_branch(last, free_bb, ret_bb)
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(free_bb);
-        if 指针元素 {
-            // len = p[0]; for i in 0..len { qi_rc_release_any(p[i+1]) }
+        if !matches!(模式, 数组元素释放::无) {
+            // len = p[0]; for i in 0..len { 元素release(p[i+1]) }
             let head = self.槽指针(p, i64t.into(), 0)?;
             let len = self
                 .builder
@@ -714,9 +802,12 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_load(ptrt, slot, "ev")
                 .map_err(|e| e.to_string())?;
-            let anyrel = self.弧函数("qi_rc_release_any");
+            let 元素release = match 模式 {
+                数组元素释放::结构体(si) => self.弧函数(&结构体释放名(si)),
+                _ => self.弧函数("qi_rc_release_any"),
+            };
             self.builder
-                .build_call(anyrel, &[ev.into_pointer_value().into()], "")
+                .build_call(元素release, &[ev.into_pointer_value().into()], "")
                 .map_err(|e| e.to_string())?;
             let inext = self
                 .builder
@@ -731,7 +822,10 @@ impl<'ctx> 后端<'ctx> {
 
             self.builder.position_at_end(done_bb);
         }
-        let free = self.module.get_function("qi_obj_free").ok_or("qi_obj_free 未声明")?;
+        let free = self
+            .module
+            .get_function("qi_obj_free")
+            .ok_or("qi_obj_free 未声明")?;
         self.builder
             .build_call(free, &[p.into()], "")
             .map_err(|e| e.to_string())?;
@@ -750,15 +844,30 @@ fn 结构体释放名(idx: u32) -> String {
     format!("qi.release.s{}", idx)
 }
 
-/// 数组释放函数符号名（按元素类别二分）。
-fn 数组释放名(e: 元素类型) -> &'static str {
+/// 数组释放函数符号名（按元素类别分派）：
+///   标量元素 → arr.v（只回收本体）
+///   指针元素（类型不明）→ arr.p（逐槽 qi_rc_release_any 动态释放）
+///   结构体元素（E2 类型化）→ arr.s<idx>（逐槽 qi.release.s<idx> 级联）
+fn 数组释放名(e: 元素类型) -> String {
     match e {
-        元素类型::指针 => "qi.release.arr.p",
-        _ => "qi.release.arr.v",
+        元素类型::指针 => "qi.release.arr.p".to_string(),
+        元素类型::结构体(i) => format!("qi.release.arr.s{}", i),
+        _ => "qi.release.arr.v".to_string(),
     }
 }
 
-/// 返回类型是否对象（结构体/数组）—— 返回约定 +1 的判定用。
+/// 数组释放函数的元素处理模式。
+#[derive(Clone, Copy)]
+enum 数组元素释放 {
+    /// 标量元素：不逐槽，只回收本体。
+    无,
+    /// 指针元素（类型不明）：逐槽 qi_rc_release_any 动态派发。
+    动态,
+    /// 结构体元素（类型已知）：逐槽 qi.release.s<idx> 类型化级联。
+    结构体(u32),
+}
+
+/// 返回类型是否对象（结构体/数组/闭包）—— 返回约定 +1 的判定用。
 fn 是对象类型(t: Qi类型) -> bool {
-    matches!(t, Qi类型::结构体(_) | Qi类型::数组(_))
+    matches!(t, Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_))
 }

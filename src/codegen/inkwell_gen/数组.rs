@@ -5,9 +5,9 @@
 //! 索引访问对元素偏移 +1（跳过长度头）；`.长度` 读头。数组值本身是 ptr。
 //! 仅支持同构标量元素（整数/浮点/布尔/指针）；嵌套/结构体元素按指针存。
 
+use super::后端;
 use super::类型::{Qi类型, 元素类型};
 use super::类型检查::推断表达式类型;
-use super::后端;
 use crate::parser::ast::{ArrayAccessExpression, ArrayLiteralExpression};
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
 
@@ -29,7 +29,11 @@ impl<'ctx> 后端<'ctx> {
         // (n+1) 槽：0 号存长度，其余存元素，每槽 8 字节
         let size = i64t.const_int((n + 1) * 8, false);
         // QI_ARC=1：数组本体走 RC 对象分配器（见 结构体.rs 同款注释）
-        let alloc名 = if self.弧开() { "qi_obj_alloc" } else { "qi_runtime_alloc" };
+        let alloc名 = if self.弧开() {
+            "qi_obj_alloc"
+        } else {
+            "qi_runtime_alloc"
+        };
         let alloc = self
             .module
             .get_function(alloc名)
@@ -68,7 +72,9 @@ impl<'ctx> 后端<'ctx> {
             }
             // 元素偏移 +1（跳过长度头）
             let slot = self.槽指针(base, 元素llvm, (i as u64) + 1)?;
-            self.builder.build_store(slot, v).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(slot, v)
+                .map_err(|e| e.to_string())?;
         }
         Ok((base.into(), Qi类型::数组(元素)))
     }
@@ -121,7 +127,9 @@ impl<'ctx> 后端<'ctx> {
         match e {
             元素类型::浮点数 => self.ctx.f64_type().into(),
             元素类型::布尔 => self.ctx.bool_type().into(),
-            元素类型::指针 => self.ctx.ptr_type(inkwell::AddressSpace::default()).into(),
+            元素类型::指针 | 元素类型::结构体(_) => {
+                self.ctx.ptr_type(inkwell::AddressSpace::default()).into()
+            }
             元素类型::整数 => self.ctx.i64_type().into(),
         }
     }

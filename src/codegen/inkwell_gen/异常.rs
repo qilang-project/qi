@@ -19,8 +19,10 @@
 //!   finally:<finally body>; （后续语句继续在此块）
 //!
 //! 注意：catch 先 pop 再跑 body —— catch 体内再 `抛出` 会传播到外层 frame。
-//! 已知限制：try 体内 `返回` 不会弹栈（frame 泄漏 + 后续 throw 行为未定义），
-//! 与老后端一致，暂不处理。
+//! try 体内 `返回`（Round E4）：codegen 跟踪 try 嵌套深度（后端.try深度），
+//! `返回` 在 ret 前补 qi_exc_pop × 当前深度（嵌套 try 弹多层）——返回后外层
+//! 再 throw 不会 longjmp 到已失效帧。catch/finally 体在外层深度生成（frame
+//! 已在 catch 入口弹掉），其内 `返回` 只弹外层帧，自然正确。
 
 use super::后端;
 use crate::parser::ast::{ThrowStatement, TryStatement};
@@ -128,6 +130,22 @@ impl<'ctx> 后端<'ctx> {
         Ok(())
     }
 
+    /// E4：`返回` 前按当前 try 嵌套深度补弹异常 frame（qi_exc_pop × N）。
+    /// 深度 0（不在 try 体内）时零 IR。catch/finally 体生成时深度已回落，
+    /// 其内 `返回` 只弹真正还压着的外层帧。
+    pub(super) fn 弹try帧(&mut self) -> Result<(), String> {
+        if self.try深度 == 0 {
+            return Ok(());
+        }
+        let pop_fn = self.取异常运行时("qi_exc_pop")?;
+        for _ in 0..self.try深度 {
+            self.builder
+                .build_call(pop_fn, &[], "")
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// `尝试 { } 捕获 错误 { } 最终 { }` 降级。
     pub(super) fn 生成尝试(
         &mut self,
@@ -173,8 +191,11 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         // ── try 体：正常走完弹 frame ────────────────────────────────
+        // E4：体内深度 +1 —— `返回` 语句据此在 ret 前补弹本帧（嵌套累加）
         self.builder.position_at_end(try_bb);
+        self.try深度 += 1;
         self.生成块(&t.try_body, func)?;
+        self.try深度 -= 1;
         if !self.当前块已终结() {
             self.builder
                 .build_call(pop_fn, &[], "")

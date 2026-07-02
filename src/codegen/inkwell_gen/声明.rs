@@ -3,9 +3,9 @@
 //! 两趟：先登记所有函数签名（供前向调用 / 类型检查），再逐个生成函数体。
 //! 参数用 alloca+store 落地成局部变量，body 内当普通变量读写，语义与旧后端一致。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::函数签名;
-use super::后端;
 use crate::parser::ast::{FunctionDeclaration, Program};
 use inkwell::types::BasicType;
 use inkwell::values::FunctionValue;
@@ -27,7 +27,10 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 声明单个用户函数的 LLVM 原型，并把签名存入符号表。
-    fn 声明函数原型(&mut self, f: &FunctionDeclaration) -> Result<FunctionValue<'ctx>, String> {
+    fn 声明函数原型(
+        &mut self,
+        f: &FunctionDeclaration,
+    ) -> Result<FunctionValue<'ctx>, String> {
         let 参数类型: Vec<Qi类型> = f
             .parameters
             .iter()
@@ -112,10 +115,11 @@ impl<'ctx> 后端<'ctx> {
             .cloned()
             .ok_or_else(|| format!("函数签名缺失: {}", f.name))?;
 
-        // 每个函数独立的局部变量表 / 作用域 / 返回类型
+        // 每个函数独立的局部变量表 / 作用域 / 返回类型 / try 深度
         self.变量表.clear();
         self.符号.进入作用域();
         self.当前返回类型 = sig.返回;
+        self.try深度 = 0; // E4：异常 frame 栈按函数平衡，跨函数不串
 
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
@@ -133,7 +137,9 @@ impl<'ctx> 后端<'ctx> {
             let arg = func
                 .get_nth_param(i as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
-            self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(ptr, arg)
+                .map_err(|e| e.to_string())?;
             // ARC：RC 参数（字符串/结构体/数组，对调用方是借用）落地进局部槽
             // → retain 一次，与出口「释放所有 RC 局部」平衡；覆写时释放旧值也自洽。
             self.弧retain任意(arg, t);
@@ -154,7 +160,9 @@ impl<'ctx> 后端<'ctx> {
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {
                     let zero = rt.const_zero();
-                    self.builder.build_return(Some(&zero)).map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_return(Some(&zero))
+                        .map_err(|e| e.to_string())?;
                 }
                 None => {
                     self.builder.build_return(None).map_err(|e| e.to_string())?;

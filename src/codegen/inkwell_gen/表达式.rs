@@ -819,7 +819,9 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(false);
             let 可释放 = match vt {
                 Qi类型::字符串 => self.表达式拥有字符串(a),
-                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, vt),
+                Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+                    形参rc && self.表达式拥有RC(a, vt)
+                }
                 _ => false,
             };
             if self.弧开() && v.is_pointer_value() && 可释放 {

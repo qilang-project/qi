@@ -7,8 +7,8 @@
 //!   trampoline 丢到 `qi_runtime_spawn_goroutine_with_args` 的 tokio 线程池执行。
 //!   fire-and-forget，同步靠通道 / 等待组。见 生成协程启动。
 
-use super::类型::Qi类型;
 use super::后端;
+use super::类型::Qi类型;
 use crate::parser::ast::{
     AstNode, ChannelCreateExpression, ChannelReceiveExpression, ChannelSendExpression,
     ExpressionStatement, GoroutineSpawnExpression,
@@ -34,7 +34,9 @@ impl<'ctx> 后端<'ctx> {
             "等待组完成" | "完成" => ("qi_runtime_waitgroup_done", &['h'], false),
             "等待组等待" => ("qi_runtime_waitgroup_wait", &['h'], false),
             "创建互斥锁" | "新建互斥锁" => ("qi_runtime_mutex_create", &[], true),
-            "互斥锁加锁" | "互斥锁锁定" | "加锁" => ("qi_runtime_mutex_lock", &['h'], false),
+            "互斥锁加锁" | "互斥锁锁定" | "加锁" => {
+                ("qi_runtime_mutex_lock", &['h'], false)
+            }
             "互斥锁解锁" | "解锁" => ("qi_runtime_mutex_unlock", &['h'], false),
             "尝试加锁" => ("qi_runtime_mutex_trylock", &['h'], false),
             "获取时间" => ("qi_runtime_get_time_ms", &[], false),
@@ -289,11 +291,7 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "运行时函数未声明: qi_runtime_spawn_goroutine_with_args".to_string())?;
         let one = i64t.const_int(1, false);
         self.builder
-            .build_call(
-                spawn,
-                &[tramp.into(), 数组.into(), one.into()],
-                "go_spawn",
-            )
+            .build_call(spawn, &[tramp.into(), 数组.into(), one.into()], "go_spawn")
             .map_err(|e| e.to_string())?;
         Ok(None)
     }
@@ -345,6 +343,16 @@ impl<'ctx> 后端<'ctx> {
         self.builder
             .build_indirect_call(闭包fn类型, fptr, &[obj.into()], "go_call")
             .map_err(|e| e.to_string())?;
+        // ARC（E1）：spawn 是发送即转移 —— 闭包 obj 的 +1（创建时 rc=1）随
+        // spawn 移交 goroutine；体跑完在此释放（归零调 env dtor 级联释放捕获）。
+        // 跨线程 refcount 是 AtomicI64，安全。QI_ARC=0 不释放（与旧行为一致）。
+        if self.弧开() {
+            if let Some(rel) = self.module.get_function("qi_closure_release") {
+                self.builder
+                    .build_call(rel, &[obj.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         self.builder.build_return(None).map_err(|e| e.to_string())?;
 
         if let Some(bb) = 保存 {
