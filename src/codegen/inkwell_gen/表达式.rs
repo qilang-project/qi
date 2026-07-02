@@ -10,7 +10,62 @@ use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue, UnaryOperator};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{FloatPredicate, IntPredicate};
 
+/// qi-runtime RC buffer 识别 magic（qi_str.rs::QI_STR_MAGIC，位于 data-24 的 header 首 8 字节）。
+const QI_STR_MAGIC: u64 = 0x5149_5352_4331_0001;
+/// 不朽引用计数（qi_str.rs::IMMORTAL_RC）：runtime 对 refcount >= 此值的串 retain/free 一律 no-op。
+const QI_STR_IMMORTAL_RC: u64 = 1 << 61;
+
 impl<'ctx> 后端<'ctx> {
+    /// 把字符串字面量 emit 成带 immortal header 的全局常量，返回指向 data 字段的 i8* 指针。
+    ///
+    /// 布局与 qi-runtime 的 BufHeader 严格一致（repr(C)，8 对齐，data 在 base-24 处有 header）：
+    ///   { i64 magic, i64 refcount=IMMORTAL, i64 capacity=字节长度, [len+1 x i8] data(带 NUL 尾) }
+    /// 这样任何字面量指针都可被 runtime 安全 retain/release（immortal ⇒ no-op），
+    /// 为 Round C 的逃逸点 ARC 插入铺路。同一模块内相同字面量按内容去重。
+    pub(super) fn emit_immortal_string(
+        &mut self,
+        s: &str,
+        name_hint: &str,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        if let Some(p) = self.字符串字面量缓存.get(s) {
+            return Ok(*p);
+        }
+        let i64t = self.ctx.i64_type();
+        let bytes = s.as_bytes();
+        // data：字节 + NUL 尾（[len+1 x i8]）
+        let data = self.ctx.const_string(bytes, true);
+        let struct_ty = self.ctx.struct_type(
+            &[i64t.into(), i64t.into(), i64t.into(), data.get_type().into()],
+            false,
+        );
+        let init = self.ctx.const_struct(
+            &[
+                i64t.const_int(QI_STR_MAGIC, false).into(),
+                i64t.const_int(QI_STR_IMMORTAL_RC, false).into(),
+                i64t.const_int(bytes.len() as u64, false).into(),
+                data.into(),
+            ],
+            false,
+        );
+        let g = self.module.add_global(struct_ty, None, name_hint);
+        g.set_initializer(&init);
+        g.set_constant(true);
+        g.set_linkage(inkwell::module::Linkage::Private);
+        g.set_unnamed_address(inkwell::values::UnnamedAddress::Global);
+        // header 24 字节 + 8 对齐 ⇒ data 起点自然 8 对齐
+        g.set_alignment(8);
+        // GEP 到第 3 个字段（data）的首字节 → i8*，与现有字符串值表示一致
+        let i32t = self.ctx.i32_type();
+        let ptr = unsafe {
+            g.as_pointer_value().const_gep(
+                struct_ty,
+                &[i32t.const_zero(), i32t.const_int(3, false), i32t.const_zero()],
+            )
+        };
+        self.字符串字面量缓存.insert(s.to_string(), ptr);
+        Ok(ptr)
+    }
+
     /// 生成表达式，返回其 LLVM 值与 Qi 类型。`空`（如无返回值调用）返回 None。
     pub(super) fn 生成表达式(
         &mut self,
@@ -276,11 +331,9 @@ impl<'ctx> 后端<'ctx> {
                 Qi类型::整数,
             ),
             LiteralValue::字符串(s) => {
-                let g = self
-                    .builder
-                    .build_global_string_ptr(s, "str")
-                    .map_err(|e| e.to_string())?;
-                (g.as_pointer_value().into(), Qi类型::字符串)
+                // 带 immortal header 的全局常量（可安全 retain/release），而非裸 rodata
+                let p = self.emit_immortal_string(s, "qi.str")?;
+                (p.into(), Qi类型::字符串)
             }
         })
     }
@@ -841,7 +894,7 @@ impl<'ctx> 后端<'ctx> {
 /// 消费完即死，释放绝对安全。
 ///
 /// 其它一律 false（宁泄漏不 over-release）：
-///   - 字面量：.rodata，不可 free
+///   - 字面量：immortal header 全局常量，free 是 no-op，但也没必要发
 ///   - 标识符/字段访问：活变量或可能逃逸的值
 ///   - 函数调用返回：所有权语义不明（可能被缓存 / 存进结构体 / 是借引用）
 ///

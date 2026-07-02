@@ -117,6 +117,8 @@ struct 后端<'ctx> {
     在入口中: bool,
     /// 当前正在处理的模块包名（跨包同名函数消歧用；与 符号.当前包 同步）。
     当前包: Option<String>,
+    /// 字符串字面量 → 带 immortal header 的全局常量 data 指针（按内容去重，模块级缓存）。
+    字符串字面量缓存: HashMap<String, PointerValue<'ctx>>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -139,6 +141,7 @@ impl<'ctx> 后端<'ctx> {
             闭包计数: 0,
             在入口中: false,
             当前包: None,
+            字符串字面量缓存: HashMap::new(),
         }
     }
 
@@ -413,6 +416,11 @@ pub fn compile_to_object_multi(
         .module
         .verify()
         .map_err(|e| format!("LLVM 模块校验失败: {}", e.to_string()))?;
+
+    // 调试：QI_EMIT_LL=路径 时把类型化 IR 落盘（人工检查字面量 header / ARC 插入等）。
+    if let Ok(p) = std::env::var("QI_EMIT_LL") {
+        let _ = 后端值.module.print_to_file(Path::new(&p));
+    }
 
     Target::initialize_native(&InitializationConfig::default())
         .map_err(|e| format!("初始化目标失败: {}", e))?;
