@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "qi")]
 #[command(about = "Qi 编程语言编译器 | Qi Programming Language Compiler")]
-#[command(version = "Qi 编译器 v0.1.0 | Qi Compiler v0.1.0")]
+#[command(version = concat!("Qi 编译器 v", env!("CARGO_PKG_VERSION"), " | Qi Compiler v", env!("CARGO_PKG_VERSION")))]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
 #[command(help_template = "\

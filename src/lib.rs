@@ -381,7 +381,14 @@ impl QiCompiler {
             }
         }
         let exe = std::env::current_exe().map_err(CompilerError::Io)?;
-        // qilang/target/debug/qi → 上溯到 qilang
+        // 安装后布局：<prefix>/bin/qi → <prefix>/lib/qi/libqi_runtime.a（installer 安装到 /usr/local）
+        if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+            let p = prefix.join("lib/qi/libqi_runtime.a");
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+        // 开发布局：qilang/target/debug/qi → 上溯到 qilang
         if let Some(ws) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
             for profile in ["debug", "release"] {
                 let p = ws.join("qi-runtime/target").join(profile).join("libqi_runtime.a");
