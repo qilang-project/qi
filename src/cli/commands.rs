@@ -6,14 +6,16 @@ use std::path::PathBuf;
 /// Qi Language Compiler CLI | Qi 编程语言编译器
 #[derive(Parser)]
 #[command(name = "qi")]
-#[command(about = "Qi 编程语言编译器 | Qi Programming Language Compiler")]
-#[command(version = concat!("Qi 编译器 v", env!("CARGO_PKG_VERSION"), " | Qi Compiler v", env!("CARGO_PKG_VERSION")))]
+#[command(about = "奇语言编译器 | Qi Language Compiler")]
+#[command(version = concat!("v", env!("CARGO_PKG_VERSION")))]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
+#[command(override_usage = "qi [选项] [源文件]... [命令]\n       qi [OPTIONS] [SOURCE_FILES]... [COMMAND]")]
 #[command(help_template = "\
-{name} {version}
-{about-with-newline}
-用法 | Usage: {usage}
+奇语言编译器 · Qi Language Compiler {version}
+
+用法 | Usage:
+       {usage}
 
 命令 | Commands:
 {subcommands}
@@ -27,13 +29,15 @@ use std::path::PathBuf;
 {after-help}\
 ")]
 #[command(after_help = "示例 | Examples:
-  qi compile source.qi -o program    # 编译源文件 | Compile source file
-  qi 编译 source.qi -o program       # 中文命令示例 | Chinese command example
-  qi run source.qi                  # 编译并运行 | Compile and run
-  qi check source.qi                # 检查语法 | Check syntax
-  qi info --language                # 显示语言特性 | Show language features
+  qi run 程序.qi                    编译并运行 | Compile and run
+  qi 运行 程序.qi                   中文命令等价 | Chinese commands work too
+  qi compile 程序.qi -o 程序        编译出可执行文件 | Build an executable
+  qi check 程序.qi                  只查语法 | Syntax check only
+  qi test                           跑测试(*_测.qi) | Run tests
+  qi --target linux --release-runtime compile 程序.qi -o 程序
+                                    交叉编译 Linux | Cross-compile for Linux
 
-更多信息 | More information: https://qi-lang.org")]
+更多信息 | More: https://qi-lang.org")]
 pub struct Cli {
     /// 目标平台 | Target platform (Linux, Windows, macOS, Wasm)
     #[arg(short, long, value_enum)]
@@ -98,8 +102,8 @@ pub struct Cli {
 /// CLI 子命令 | CLI Commands
 #[derive(Subcommand)]
 pub enum Commands {
-    /// compile    编译    | 编译 Qi 源文件 | Compile Qi source files
-    #[command(aliases = &["编译"])]
+    /// 编译 Qi 源文件为可执行文件 | Compile Qi source files
+    #[command(visible_aliases = &["编译"])]
     #[command(help_template = "\
 {name} - {about}
 
@@ -122,16 +126,16 @@ pub enum Commands {
         help: Option<bool>,
     },
 
-    /// check      检查    | 检查源文件语法 | Check source file syntax (no executable generation)
-    #[command(aliases = &["检查"])]
+    /// 只检查语法，不产出可执行 | Check syntax only
+    #[command(visible_aliases = &["检查"])]
     Check {
         /// 源文件路径 | Source file paths
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
 
-    /// format     格式化  | 格式化源代码 | Format source code
-    #[command(aliases = &["格式化"])]
+    /// 格式化源代码 | Format source code
+    #[command(visible_aliases = &["格式化"])]
     Format {
         /// 源文件路径 | Source file paths
         files: Vec<PathBuf>,
@@ -141,8 +145,8 @@ pub enum Commands {
         inplace: bool,
     },
 
-    /// run        运行    | 编译并运行 Qi 程序 | Compile and run Qi programs
-    #[command(aliases = &["运行"])]
+    /// 编译并运行 | Compile and run
+    #[command(visible_aliases = &["运行"])]
     #[command(help_template = "\
 {name} - {about}
 
@@ -168,8 +172,8 @@ pub enum Commands {
         help: Option<bool>,
     },
 
-    /// debug      调试    | 编译并调试运行 Qi 程序 | Compile and debug Qi programs
-    #[command(aliases = &["调试"])]
+    /// 以调试模式编译运行 | Compile and run with debug info
+    #[command(visible_aliases = &["调试"])]
     Debug {
         /// 源文件路径 | Source file path
         #[arg(required = true)]
@@ -196,8 +200,8 @@ pub enum Commands {
         stack_trace: bool,
     },
 
-    /// check-run  检查运行 | 检查并运行 Qi 程序 | Check and run Qi programs (syntax check only before run)
-    #[command(aliases = &["检查运行"])]
+    /// 先查语法再运行 | Check syntax, then run
+    #[command(visible_aliases = &["检查运行"])]
     CheckRun {
         /// 源文件路径 | Source file path
         #[arg(required = true)]
@@ -212,8 +216,8 @@ pub enum Commands {
         check_only: bool,
     },
 
-    /// info       信息    | 显示编译器信息 | Show compiler information
-    #[command(aliases = &["信息"])]
+    /// 显示编译器信息 | Show compiler info
+    #[command(visible_aliases = &["信息"])]
     Info {
         /// 显示版本信息 | Show version information
         #[arg(short, long)]
@@ -228,8 +232,8 @@ pub enum Commands {
         targets: bool,
     },
 
-    /// test       测试    | 发现并运行测试文件（*_测.qi）| Discover and run test files
-    #[command(aliases = &["测试"])]
+    /// 发现并运行测试（*_测.qi）| Discover and run tests
+    #[command(visible_aliases = &["测试"])]
     Test {
         /// 测试目录或文件（默认当前目录递归找 *_测.qi）| Test dir or file
         #[arg(default_value = ".")]
