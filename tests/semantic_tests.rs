@@ -169,6 +169,7 @@ fn test_function_declaration_in_analyzer() {
         visibility: Default::default(),
         span: Default::default(),
         is_inline: false,
+        is_async: false,
     };
 
     let mut analyzer = SemanticAnalyzer::new();
