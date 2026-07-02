@@ -149,9 +149,10 @@ impl<'ctx> 后端<'ctx> {
             在入口中: false,
             当前包: None,
             字符串字面量缓存: HashMap::new(),
+            // ARC 默认开(字符串+结构体+数组 RC 回收);QI_ARC=0 退回纯泄漏模式(调试用)
             弧: std::env::var("QI_ARC")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
+                .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                .unwrap_or(true),
         }
     }
 
