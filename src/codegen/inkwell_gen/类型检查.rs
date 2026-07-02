@@ -8,8 +8,10 @@
 //! 因此链式 `创建().放(1).放(2)` 天生可解析 —— 每步返回类型已知。
 
 use super::类型::Qi类型;
+use crate::codegen::module_registry::ModuleRegistry;
 use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// 函数签名：参数类型 + 返回类型。
 #[derive(Debug, Clone)]
@@ -49,6 +51,9 @@ pub struct 符号表 {
     pub 方法: HashMap<(String, String), 函数签名>,
     /// 函数默认参数值 AST：函数名 → 每个形参的可选默认值表达式（供调用少传时补齐）。
     pub 函数默认值: HashMap<String, Vec<Option<crate::parser::ast::AstNode>>>,
+    /// 变参函数集合：末位形参是 `名字...: T`（签名里已按 数组(T) 登记），
+    /// 调用点须把多余尾实参打包成数组后再传。
+    pub 函数变参: HashSet<String>,
     /// 函数值签名注册表：索引即 Qi类型::函数值(idx) 的 idx。
     pub 函数值签名: Vec<函数签名>,
     /// 顶层函数名 → 其函数值签名索引（登记函数时预填，供「函数名当值」）。
@@ -67,6 +72,7 @@ impl 符号表 {
             结构体索引: HashMap::new(),
             方法: HashMap::new(),
             函数默认值: HashMap::new(),
+            函数变参: HashSet::new(),
             函数值签名: Vec::new(),
             函数值索引表: HashMap::new(),
             当前包: None,
@@ -205,12 +211,52 @@ impl 符号表 {
     }
 
     /// 从内建/用户函数名推断返回类型（当前包优先）。
+    /// 用户函数没有时回退标准库注册表（无限定名，如 `MD5哈希(x)`）——
+    /// 否则 `变量 h = MD5哈希(x)` 推断成 未知→整数，字符串返回值被按整数打印（指针地址）。
     pub fn 查函数返回(&self, callee: &str) -> Option<Qi类型> {
         if let Some(sig) = self.解析函数(callee) {
             return Some(sig.返回);
         }
-        内建返回类型(callee)
+        内建返回类型(callee).or_else(|| 标准库函数返回(callee.trim_start_matches(':')))
     }
+}
+
+/// 类型推断专用的标准库注册表单例（内容与后端持有的实例一致，仅查签名不产生 IR）。
+fn 推断注册表() -> &'static ModuleRegistry {
+    static REG: OnceLock<ModuleRegistry> = OnceLock::new();
+    REG.get_or_init(ModuleRegistry::new)
+}
+
+/// 无模块限定的标准库函数返回类型（镜像 codegen 的 尝试无限定标准库）。
+/// 仅当**所有**同名注册项映射到同一 Qi 类型时才给答案；有歧义（如 长度/获取
+/// 在不同模块返回类型不同）→ None，交上层维持原默认，避免与 codegen 的
+/// 首命中选择不一致。
+pub fn 标准库函数返回(name: &str) -> Option<Qi类型> {
+    let reg = 推断注册表();
+    let mut found: Option<Qi类型> = None;
+    for path in reg.module_paths() {
+        if let Some(m) = reg.get_module(path) {
+            if let Some(f) = m.get_function(name) {
+                let t = super::导入::注册表类型转qi(&f.return_type);
+                match found {
+                    None => found = Some(t),
+                    Some(prev) if prev == t => {}
+                    Some(_) => return None, // 歧义：不猜
+                }
+            }
+        }
+    }
+    found
+}
+
+/// 模块限定的标准库调用返回类型：`加密.MD5哈希(x)` / `字符串::长度(s)`。
+/// 接收者是模块名（精确匹配注册表 key，含 `标准库.X` 变体）时查其签名。
+fn 标准库模块方法返回(module: &str, method: &str) -> Option<Qi类型> {
+    let reg = 推断注册表();
+    let method = method.trim_start_matches(':');
+    reg.get_function(module, method)
+        .or_else(|| reg.get_function(&format!("标准库.{}", module), method))
+        .map(|f| super::导入::注册表类型转qi(&f.return_type))
 }
 
 /// 内建（运行时）函数的返回类型。
@@ -294,6 +340,15 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
                 if let Some(info) = 表.结构体信息(idx) {
                     if let Some(sig) = 表.方法.get(&(info.名字.clone(), mc.method_name.clone())) {
                         return sig.返回;
+                    }
+                }
+            }
+            // 接收者是模块名（非变量的裸标识符）：标准库注册表签名 ——
+            // `变量 h = 加密.MD5哈希(x)` 不带注解时也要推出 字符串。
+            if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                if 表.查变量(&id.name).is_none() {
+                    if let Some(t) = 标准库模块方法返回(&id.name, &mc.method_name) {
+                        return t;
                     }
                 }
             }

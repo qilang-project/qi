@@ -4423,6 +4423,47 @@ impl ModuleRegistry {
             "i32",
         ));
 
+        // ── 协程异常 ─────────────────────────────────────────────────
+        // goroutine 内未捕获的 `抛出` 进全局队列（fire-and-forget `启动`）
+        // 或句柄状态（启动并等待协程）。FFI 见 qi-runtime：
+        // stdlib/exception_ffi.rs + async_runtime/ffi/mod.rs。
+        m.add_function(ModuleFunction::new(
+            "协程异常数量",
+            "qi_exc_goroutine_count",
+            vec![],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "获取协程异常",
+            "qi_exc_goroutine_take",
+            vec![],
+            "字符串",
+        ));
+        m.add_function(ModuleFunction::new(
+            "启动并等待协程",
+            "qi_runtime_spawn_goroutine_handle",
+            vec!["指针".to_string()], // 函数值（fat 闭包对象）
+            "整数",                   // 协程句柄
+        ));
+        m.add_function(ModuleFunction::new(
+            "等待协程",
+            "qi_runtime_goroutine_join",
+            vec!["整数".to_string()], // 句柄
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "协程有异常",
+            "qi_runtime_goroutine_has_exception",
+            vec!["整数".to_string()], // 句柄
+            "整数",                   // 1=有 0=无 -1=未知句柄
+        ));
+        m.add_function(ModuleFunction::new(
+            "获取协程异常句柄",
+            "qi_runtime_goroutine_take_exception",
+            vec!["整数".to_string()], // 句柄
+            "字符串",
+        ));
+
         self.modules.insert("同步".to_string(), m.clone());
         self.modules.insert("标准库.同步".to_string(), m);
     }

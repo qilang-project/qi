@@ -115,7 +115,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 元素的 LLVM 类型。
-    fn 元素llvm类型(&self, e: 元素类型) -> inkwell::types::BasicTypeEnum<'ctx> {
+    pub(super) fn 元素llvm类型(&self, e: 元素类型) -> inkwell::types::BasicTypeEnum<'ctx> {
         match e {
             元素类型::浮点数 => self.ctx.f64_type().into(),
             元素类型::布尔 => self.ctx.bool_type().into(),
@@ -125,7 +125,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 常量槽号的指针（inbounds GEP）。
-    fn 槽指针(
+    pub(super) fn 槽指针(
         &self,
         base: PointerValue<'ctx>,
         elem_ty: inkwell::types::BasicTypeEnum<'ctx>,
@@ -140,7 +140,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 动态槽号的指针。
-    fn 槽指针动态(
+    pub(super) fn 槽指针动态(
         &self,
         base: PointerValue<'ctx>,
         elem_ty: inkwell::types::BasicTypeEnum<'ctx>,

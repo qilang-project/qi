@@ -27,6 +27,8 @@
 mod 所有权;
 #[path = "全局.rs"]
 mod 全局;
+#[path = "异常.rs"]
+mod 异常;
 #[path = "异步.rs"]
 mod 异步;
 #[path = "数组.rs"]
@@ -157,6 +159,39 @@ impl<'ctx> 后端<'ctx> {
     fn 设当前包(&mut self, pkg: Option<String>) {
         self.符号.当前包 = pkg.clone();
         self.当前包 = pkg;
+    }
+
+    /// 在**当前函数的 entry 块**建局部 alloca（LLVM 标准做法）。
+    ///
+    /// 循环体内的 alloca 每次迭代都吃栈（~50 万次迭代后栈溢出段错误），且
+    /// mem2reg 只提升 entry 块的 alloca。故所有函数级局部槽统一插到 entry：
+    /// 暂存当前插入点 → 定位到 entry（有终结指令则插在它前）→ alloca → 回位。
+    /// 初始化 store 留在调用处原位，同名变量循环内重入声明仍每迭代重新赋值，
+    /// 语义不变。当前函数从 builder 插入块反查，调用处无需传 FunctionValue。
+    pub(super) fn 入口块alloca(
+        &mut self,
+        llvmt: inkwell::types::BasicTypeEnum<'ctx>,
+        name: &str,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let 当前 = self
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| "builder 无插入点".to_string())?;
+        let entry = 当前
+            .get_parent()
+            .and_then(|f| f.get_first_basic_block())
+            .ok_or_else(|| "函数缺 entry 块".to_string())?;
+        if entry == 当前 {
+            // 已在 entry（函数序言 / 无控制流的直线代码）：就地 alloca
+            return self.builder.build_alloca(llvmt, name).map_err(|e| e.to_string());
+        }
+        match entry.get_terminator() {
+            Some(term) => self.builder.position_before(&term),
+            None => self.builder.position_at_end(entry),
+        }
+        let p = self.builder.build_alloca(llvmt, name).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(当前);
+        Ok(p)
     }
 
     /// 声明阶段7 用到的运行时函数原型。

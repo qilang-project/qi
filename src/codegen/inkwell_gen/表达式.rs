@@ -769,18 +769,34 @@ impl<'ctx> 后端<'ctx> {
             }
         };
 
-        // 少传实参时用默认参数值补齐（形参个数由签名决定）
+        // 少传实参时用默认参数值补齐（形参个数由签名决定）；
+        // 变参函数：固定形参之外的尾实参打包成数组字面量，与签名末位 数组(T) 对齐，
+        // 保证 call 实参个数 == 函数类型形参个数（否则 LLVM 模块校验失败）。
         let 形参数 = sig.as_ref().map(|s| s.参数.len()).unwrap_or(call.arguments.len());
-        let 默认值 = self.符号.函数默认值.get(&call.callee).cloned();
+        let 变参 = self.符号.函数变参.contains(&call.callee);
+        let 固定 = if 变参 { 形参数.saturating_sub(1) } else { 形参数 };
         let mut 实参: Vec<AstNode> = call.arguments.clone();
-        if 实参.len() < 形参数 {
-            if let Some(defs) = &默认值 {
-                for i in 实参.len()..形参数 {
+        let 尾实参: Vec<AstNode> = if 变参 && 实参.len() > 固定 {
+            实参.split_off(固定)
+        } else {
+            Vec::new()
+        };
+        if 实参.len() < 固定 {
+            if let Some(defs) = self.符号.函数默认值.get(&call.callee).cloned() {
+                for i in 实参.len()..固定 {
                     if let Some(Some(d)) = defs.get(i) {
                         实参.push(d.clone());
                     }
                 }
             }
+        }
+        if 变参 {
+            实参.push(AstNode::数组字面量表达式(
+                crate::parser::ast::ArrayLiteralExpression {
+                    elements: 尾实参,
+                    span: call.span,
+                },
+            ));
         }
 
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();

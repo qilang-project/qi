@@ -37,13 +37,12 @@ impl<'ctx> 后端<'ctx> {
                     .ok_or_else(|| format!("变量 {} 类型无效", vd.name))?;
                 // ARC：字符串槽统一在 entry 块 alloca + null 初始化（支配所有
                 // return 点，出口统一释放合法；重入声明可安全释放旧值）。
+                // 非 ARC 串路径也统一 entry 块 alloca（循环体内声明不再每迭代吃栈）。
                 let 弧串 = self.弧开() && 类型 == Qi类型::字符串;
                 let ptr = if 弧串 {
                     self.弧字符串槽(func, &vd.name)?
                 } else {
-                    self.builder
-                        .build_alloca(llvmt, &vd.name)
-                        .map_err(|e| e.to_string())?
+                    self.入口块alloca(llvmt, &vd.name)?
                 };
 
                 if let Some(init) = &vd.initializer {
@@ -189,6 +188,10 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::块语句(bs) => self.生成块(&bs.statements, func),
 
+            AstNode::尝试语句(t) => self.生成尝试(t, func),
+
+            AstNode::抛出语句(t) => self.生成抛出(t),
+
             _ => Ok(()),
         }
     }
@@ -219,17 +222,16 @@ impl<'ctx> 后端<'ctx> {
         f: &crate::parser::ast::ForStatement,
         func: FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        // range 若不是可识别的区间，退化为不执行（保守，不误生成）。
+        // range 若不是可识别的区间，先尝试「对于 x 在 数组」遍历；
+        // 都不是则退化为不执行（保守，不误生成）。
         let (起, 止) = match self.拆区间(&f.range)? {
             Some(x) => x,
-            None => return Ok(()),
+            None => return self.生成对于数组(f, func),
         };
 
         let i64t = self.ctx.i64_type();
-        let ivar = self
-            .builder
-            .build_alloca(i64t, &f.variable)
-            .map_err(|e| e.to_string())?;
+        // entry 块 alloca：嵌套循环里的 for 不再每次外层迭代吃栈
+        let ivar = self.入口块alloca(i64t.into(), &f.variable)?;
         self.builder.build_store(ivar, 起).map_err(|e| e.to_string())?;
         self.变量表.insert(f.variable.clone(), (ivar, Qi类型::整数));
         self.符号.声明变量(&f.variable, Qi类型::整数);
@@ -264,6 +266,96 @@ impl<'ctx> 后端<'ctx> {
             let next = self
                 .builder
                 .build_int_add(cur2, i64t.const_int(1, false), "inc")
+                .map_err(|e| e.to_string())?;
+            self.builder.build_store(ivar, next).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+        }
+
+        self.builder.position_at_end(end_bb);
+        Ok(())
+    }
+
+    /// `对于 元素 在 数组` —— 按数组长度头逐槽遍历，元素拷入循环变量。
+    /// range 表达式类型不是数组时保守跳过循环体（与旧行为一致，不误生成）。
+    fn 生成对于数组(
+        &mut self,
+        f: &crate::parser::ast::ForStatement,
+        func: FunctionValue<'ctx>,
+    ) -> Result<(), String> {
+        let Some((av, at)) = self.生成表达式(&f.range)? else {
+            return Ok(());
+        };
+        let Some(元素) = at.数组元素() else {
+            return Ok(());
+        };
+        let base = av.into_pointer_value();
+        let i64t = self.ctx.i64_type();
+
+        // 数组长度（头槽）
+        let head = self.槽指针(base, i64t.into(), 0)?;
+        let len = self
+            .builder
+            .build_load(i64t, head, "each.len")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+
+        // 循环变量（元素副本）+ 隐藏下标 —— entry 块 alloca，嵌套循环不吃栈
+        let 元素qi = 元素.标量();
+        let 元素llvm = self.元素llvm类型(元素);
+        let evar = self.入口块alloca(元素llvm, &f.variable)?;
+        let ivar = self.入口块alloca(i64t.into(), "each.idx")?;
+        self.builder
+            .build_store(ivar, i64t.const_zero())
+            .map_err(|e| e.to_string())?;
+        self.变量表.insert(f.variable.clone(), (evar, 元素qi));
+        self.符号.声明变量(&f.variable, 元素qi);
+
+        let cond_bb = self.ctx.append_basic_block(func, "each.cond");
+        let body_bb = self.ctx.append_basic_block(func, "each.body");
+        let end_bb = self.ctx.append_basic_block(func, "each.end");
+
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(cond_bb);
+        let cur = self
+            .builder
+            .build_load(i64t, ivar, "each.i")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let cond = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, cur, len, "each.cmp")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_conditional_branch(cond, body_bb, end_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(body_bb);
+        // 元素槽 = i + 1（跳过长度头）→ 载入循环变量
+        let 偏移 = self
+            .builder
+            .build_int_add(cur, i64t.const_int(1, false), "each.idx1")
+            .map_err(|e| e.to_string())?;
+        let slot = self.槽指针动态(base, 元素llvm, 偏移)?;
+        let ev = self
+            .builder
+            .build_load(元素llvm, slot, "each.elem")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_store(evar, ev).map_err(|e| e.to_string())?;
+        // ARC：字符串元素拷入局部槽是借用 → retain，与出口「释放字符串局部」平衡
+        if 元素qi == Qi类型::字符串 {
+            self.弧retain(ev);
+        }
+
+        self.生成块(&f.body, func)?;
+        if !self.当前块已终结() {
+            let cur2 = self
+                .builder
+                .build_load(i64t, ivar, "each.i2")
+                .map_err(|e| e.to_string())?
+                .into_int_value();
+            let next = self
+                .builder
+                .build_int_add(cur2, i64t.const_int(1, false), "each.inc")
                 .map_err(|e| e.to_string())?;
             self.builder.build_store(ivar, next).map_err(|e| e.to_string())?;
             self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;

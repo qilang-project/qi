@@ -1039,6 +1039,23 @@ fn test_default_and_variadic_parameter_compilation() {
 
     fs::write(&source_file, source).expect("Failed to write source file");
 
+    // 链接需要 qi-runtime 归档；测试进程 current_exe 在 deps/ 下多一层，
+    // 显式用 CARGO_MANIFEST_DIR 定位；没构建归档时跳过（而非假失败）。
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if std::env::var("QI_RUNTIME_LIB").is_err() {
+        let archive = ["debug", "release"]
+            .iter()
+            .map(|p| manifest.join("../qi-runtime/target").join(p).join("libqi_runtime.a"))
+            .find(|p| p.exists());
+        match archive {
+            Some(p) => std::env::set_var("QI_RUNTIME_LIB", p),
+            None => {
+                eprintln!("跳过:未找到 qi-runtime 归档(先在 qi-runtime/ 跑 cargo build)");
+                return;
+            }
+        }
+    }
+
     let compiler = qi_compiler::QiCompiler::new();
     let result = compiler.compile(source_file);
 

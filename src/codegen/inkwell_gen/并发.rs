@@ -219,11 +219,9 @@ impl<'ctx> 后端<'ctx> {
         let ch = self.求通道指针(&r.channel)?;
         let i64t = self.ctx.i64_type();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
-        // slot 存 *mut i64（boxed 值的指针）
-        let slot = self
-            .builder
-            .build_alloca(ptrt, "recvslot")
-            .map_err(|e| e.to_string())?;
+        // slot 存 *mut i64（boxed 值的指针）。entry 块 alloca：循环里反复
+        // 接收不吃栈；FFI 每次调用前后完整写/读该槽，复用安全。
+        let slot = self.入口块alloca(ptrt.into(), "recvslot")?;
         let f = self
             .module
             .get_function("qi_runtime_channel_receive")
@@ -274,10 +272,8 @@ impl<'ctx> 后端<'ctx> {
 
         // 3. 栈上 i64 = ptrtoint(闭包obj)；其指针即 1 元素 args 数组（*const i64）。
         //    runtime 侧会把这 1 个 i64 拷贝走，故用栈 alloca 安全（spawn 时读取即拷贝）。
-        let 数组 = self
-            .builder
-            .build_alloca(i64t, "go_args")
-            .map_err(|e| e.to_string())?;
+        //    entry 块 alloca：循环里反复 启动 不吃栈；spawn 调用即拷贝，复用安全。
+        let 数组 = self.入口块alloca(i64t.into(), "go_args")?;
         let obj_i = self
             .builder
             .build_ptr_to_int(闭包obj, i64t, "obj2i")

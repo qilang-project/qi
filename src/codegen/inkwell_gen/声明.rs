@@ -32,10 +32,18 @@ impl<'ctx> 后端<'ctx> {
             .parameters
             .iter()
             .map(|p| {
-                p.type_annotation
+                let t = p
+                    .type_annotation
                     .as_ref()
                     .map(|t| self.符号.解析类型(t))
-                    .unwrap_or(Qi类型::整数)
+                    .unwrap_or(Qi类型::整数);
+                if p.is_variadic {
+                    // 变参 `名字...: T` 在签名/函数体内是 数组(T)：
+                    // 调用点把尾实参打包成数组传入（见 表达式.rs 生成函数调用）。
+                    Qi类型::数组(super::类型::元素类型::从标量(t))
+                } else {
+                    t
+                }
             })
             .collect();
         let 返回类型 = f
@@ -82,6 +90,10 @@ impl<'ctx> 后端<'ctx> {
             .collect();
         if 默认.iter().any(|d| d.is_some()) {
             self.符号.函数默认值.entry(f.name.clone()).or_insert(默认);
+        }
+        // 记录变参函数（末位形参带 `...`），调用点据此打包尾实参
+        if f.parameters.last().map(|p| p.is_variadic).unwrap_or(false) {
+            self.符号.函数变参.insert(f.name.clone());
         }
         Ok(func)
     }
