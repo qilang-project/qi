@@ -35,10 +35,16 @@ impl<'ctx> 后端<'ctx> {
                 let llvmt = self
                     .llvm基础类型(类型)
                     .ok_or_else(|| format!("变量 {} 类型无效", vd.name))?;
-                let ptr = self
-                    .builder
-                    .build_alloca(llvmt, &vd.name)
-                    .map_err(|e| e.to_string())?;
+                // ARC：字符串槽统一在 entry 块 alloca + null 初始化（支配所有
+                // return 点，出口统一释放合法；重入声明可安全释放旧值）。
+                let 弧串 = self.弧开() && 类型 == Qi类型::字符串;
+                let ptr = if 弧串 {
+                    self.弧字符串槽(func, &vd.name)?
+                } else {
+                    self.builder
+                        .build_alloca(llvmt, &vd.name)
+                        .map_err(|e| e.to_string())?
+                };
 
                 if let Some(init) = &vd.initializer {
                     let (mut v, vt) = self
@@ -48,6 +54,12 @@ impl<'ctx> 后端<'ctx> {
                     if 类型.是浮点() && !vt.是浮点() {
                         v = self.转为浮点(v)?;
                     }
+                    if 弧串 && v.is_pointer_value() {
+                        // 先 retain 新值（BORROWED 时），再释放旧值（首轮为 null，
+                        // 循环里重入声明时是上一轮的值），最后 store。
+                        self.弧存入槽(v, init);
+                        self.弧释放槽旧值(ptr)?;
+                    }
                     self.builder.build_store(ptr, v).map_err(|e| e.to_string())?;
                 }
                 self.变量表.insert(vd.name.clone(), (ptr, 类型));
@@ -56,7 +68,10 @@ impl<'ctx> 后端<'ctx> {
             }
 
             AstNode::表达式语句(es) => {
-                self.生成表达式(&es.expression)?;
+                if let Some((v, t)) = self.生成表达式(&es.expression)? {
+                    // ARC：被丢弃的 OWNED 字符串返回值（如 FFI 返回串没人接）→ release
+                    self.弧消费后释放(v, t, &es.expression);
+                }
                 Ok(())
             }
 
@@ -64,8 +79,12 @@ impl<'ctx> 后端<'ctx> {
                 // 入口→main 返回 i32：无论 bare `返回` 还是带值，都 ret i32 0
                 if self.在入口中 {
                     if let Some(expr) = &ret.value {
-                        self.生成表达式(expr)?; // 求值副作用，丢弃
+                        // 求值副作用，丢弃 —— OWNED 字符串按丢弃释放
+                        if let Some((v, t)) = self.生成表达式(expr)? {
+                            self.弧消费后释放(v, t, expr);
+                        }
                     }
+                    self.弧释放局部()?; // ARC：main 出口释放字符串局部
                     let z = self.ctx.i32_type().const_int(0, false);
                     self.builder.build_return(Some(&z)).map_err(|e| e.to_string())?;
                     return Ok(());
@@ -78,17 +97,35 @@ impl<'ctx> 后端<'ctx> {
                         let rt = self.当前返回类型;
                         // 声明返回 void：忽略返回值，emit ret void
                         if rt == Qi类型::空 {
+                            self.弧消费后释放(v, vt, expr); // 值被丢弃
+                            self.弧释放局部()?;
                             self.builder.build_return(None).map_err(|e| e.to_string())?;
                         } else if rt.未来内部().is_some() && vt.未来内部().is_none() {
                             // 函数返回 未来<T> 而值不是 future：包成 ready future
                             let fut = self.包装ready(v, vt)?;
+                            // ready_string 已把字节拷进 future；OWNED 源释放
+                            self.弧消费后释放(v, vt, expr);
+                            self.弧释放局部()?;
                             self.builder.build_return(Some(&fut)).map_err(|e| e.to_string())?;
                         } else {
                             let cv = self.协调返回值(v, vt, rt)?;
+                            // 返回约定 +1：字符串返回值 BORROWED → retain 再 ret；
+                            // OWNED → 直接 ret（所有权移交调用方）。
+                            if self.弧开()
+                                && rt == Qi类型::字符串
+                                && vt == Qi类型::字符串
+                                && !self.表达式拥有字符串(expr)
+                            {
+                                self.弧retain(cv);
+                            }
+                            // 出口释放全部字符串局部（返回值若来自某局部：上面已
+                            // retain +1，槽 release -1，净 +1 交调用方，正确）。
+                            self.弧释放局部()?;
                             self.builder.build_return(Some(&cv)).map_err(|e| e.to_string())?;
                         }
                     }
                     None => {
+                        self.弧释放局部()?;
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                     }
                 }

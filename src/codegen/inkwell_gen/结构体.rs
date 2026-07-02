@@ -103,6 +103,28 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "qi_runtime_alloc 未返回指针".to_string())?
             .into_pointer_value();
 
+        // ARC：先把「字面量没覆盖到的字符串字段」置 null（qi_runtime_alloc 不清零，
+        // 否则后续字段赋值的旧值 release 会读到垃圾指针）。
+        if self.弧开() {
+            let 信息 = self
+                .符号
+                .结构体信息(idx)
+                .map(|s| (s.字段名.clone(), s.字段类型.clone()));
+            if let Some((字段名, 字段类型)) = 信息 {
+                let ptrt = self.ctx.ptr_type(AddressSpace::default());
+                for (fi, ft) in 字段类型.iter().enumerate() {
+                    if *ft == Qi类型::字符串
+                        && !lit.fields.iter().any(|fv| fv.name == 字段名[fi])
+                    {
+                        let fptr = self.字段指针(base, st, fi as u32, &字段名[fi])?;
+                        self.builder
+                            .build_store(fptr, ptrt.const_null())
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+        }
+
         // 逐字段初始化（按字面量出现顺序，用字段名定索引）
         for fv in &lit.fields {
             let (fidx, ftype) = self
@@ -115,6 +137,11 @@ impl<'ctx> 后端<'ctx> {
                 .ok_or_else(|| format!("字段 {} 初值无值", fv.name))?;
             if ftype.是浮点() && !vt.是浮点() {
                 v = self.整数转浮点值(v)?;
+            }
+            // ARC：字符串存进字段 —— BORROWED retain / OWNED 转移（字段持有一份）。
+            // 结构体本体生命周期不归本轮管：结构体泄漏时其字段串随之泄漏（可接受）。
+            if self.弧开() && ftype == Qi类型::字符串 && v.is_pointer_value() {
+                self.弧存入槽(v, &fv.value);
             }
             let fptr = self.字段指针(base, st, fidx, &fv.name)?;
             self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
@@ -168,6 +195,12 @@ impl<'ctx> 后端<'ctx> {
             v = self.整数转浮点值(v)?;
         }
         let fptr = self.字段指针(base, st, fidx, field)?;
+        // ARC：字符串字段覆写 —— 先 retain 新值（BORROWED 时），再释放旧值
+        // （字面量阶段已保证字符串字段全部初始化，load 到的必是合法值或 null）。
+        if self.弧开() && ftype == Qi类型::字符串 && v.is_pointer_value() {
+            self.弧存入槽(v, value);
+            self.弧释放槽旧值(fptr)?;
+        }
         self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
         Ok((v, ftype))
     }

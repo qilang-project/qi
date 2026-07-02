@@ -94,7 +94,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 在所有已注册模块里找一个同名函数（用于无限定 stdlib 调用），返回其 clone。
-    fn 查任意模块函数(&self, name: &str) -> Option<ModuleFunction> {
+    pub(super) fn 查任意模块函数(&self, name: &str) -> Option<ModuleFunction> {
         for path in self.注册表.module_paths() {
             if let Some(m) = self.注册表.get_module(path) {
                 if let Some(f) = m.get_function(name) {
@@ -132,10 +132,20 @@ impl<'ctx> 后端<'ctx> {
 
         // 参数：按声明类型做隐式转换（int↔ptr 句柄、bool→i32、函数值/指针→ptr 等在此归一）
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
+        // ARC：runtime FFI 借用读入参（内部拷贝，不留指针）——OWNED 字符串
+        // 临时在调用结束后释放。
+        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "标准库实参无值".to_string())?;
+            if self.弧开()
+                && vt == Qi类型::字符串
+                && v.is_pointer_value()
+                && self.表达式拥有字符串(a)
+            {
+                弧待释放.push(v);
+            }
             let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
             // 指针/ptr 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针都可）
             if 原始 == "指针" || 原始 == "ptr" {
@@ -162,6 +172,9 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(func, &args, "stdcall")
             .map_err(|e| e.to_string())?;
+        for v in 弧待释放 {
+            self.弧release(v);
+        }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some((v, 返回))),
             None => Ok(None),

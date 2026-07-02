@@ -59,6 +59,11 @@ impl<'ctx> 后端<'ctx> {
                     .map_err(|e| e.to_string())?
                     .into();
             }
+            // ARC：字符串存进数组元素槽 —— BORROWED retain / OWNED 转移。
+            // 数组本体生命周期不归本轮管（泄漏可接受）。
+            if self.弧开() && vt == Qi类型::字符串 && v.is_pointer_value() {
+                self.弧存入槽(v, e);
+            }
             // 元素偏移 +1（跳过长度头）
             let slot = self.槽指针(base, 元素llvm, (i as u64) + 1)?;
             self.builder.build_store(slot, v).map_err(|e| e.to_string())?;

@@ -140,6 +140,10 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
             self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
+            // ARC：字符串参数（借用）落地进局部槽 → retain 一次，与出口统一释放平衡
+            if t == super::类型::Qi类型::字符串 {
+                self.弧retain(arg);
+            }
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -152,6 +156,7 @@ impl<'ctx> 后端<'ctx> {
         }
 
         if !self.当前块已终结() {
+            self.弧释放局部()?; // ARC：落底默认返回前释放字符串局部
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {
                     let zero = rt.const_zero();
@@ -205,10 +210,19 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("方法未定义: {}", sym))?;
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![recv_val.into()];
+        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let (mut v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "方法实参无值".to_string())?;
+            // ARC：实参借用传递，OWNED 字符串临时调用后释放
+            if self.弧开()
+                && vt == super::类型::Qi类型::字符串
+                && v.is_pointer_value()
+                && self.表达式拥有字符串(a)
+            {
+                弧待释放.push(v);
+            }
             if let Some(pt) = sig.参数.get(i) {
                 if pt.是浮点() && !vt.是浮点() {
                     v = self.实参转浮点(v)?;
@@ -221,6 +235,9 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(func, &args, "mcall")
             .map_err(|e| e.to_string())?;
+        for v in 弧待释放 {
+            self.弧release(v);
+        }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some(Some((v, sig.返回)))),
             None => Ok(Some(None)),

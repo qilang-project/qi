@@ -291,6 +291,12 @@ impl<'ctx> 后端<'ctx> {
                                 .map_err(|e| e.to_string())?
                                 .into();
                         }
+                        // ARC：字符串槽覆写 —— 先 retain 新值（BORROWED 时；自赋值
+                        // 安全的关键顺序），再释放旧值，最后 store。
+                        if self.弧开() && target_t == Qi类型::字符串 && v.is_pointer_value() {
+                            self.弧存入槽(v, &a.value);
+                            self.弧释放槽旧值(ptr)?;
+                        }
                         self.builder
                             .build_store(ptr, v)
                             .map_err(|e| e.to_string())?;
@@ -384,6 +390,9 @@ impl<'ctx> 后端<'ctx> {
                 "qi_runtime_string_compare",
                 &[lv.into(), rv.into()],
             )?;
+            // ARC：比较已读完字节，OWNED 操作数（拼接/FFI 返回串）释放
+            self.弧消费后释放(lv, lt, &b.left);
+            self.弧消费后释放(rv, rt, &b.right);
             let zero = self.ctx.i32_type().const_zero();
             let pred = match b.operator {
                 等于 => IntPredicate::EQ,
@@ -535,7 +544,13 @@ impl<'ctx> 后端<'ctx> {
         node: &AstNode,
     ) -> Result<(inkwell::values::PointerValue<'ctx>, bool), String> {
         // 先据 AST 结构判断「若结果是字符串，是否为新建临时」。
-        let 结构上新建 = 是新建字符串表达式(node);
+        // QI_ARC=1：改用统一所有权判定（OWNED = 拼接后可释放），覆盖 FFI 返回串 /
+        // 用户函数返回串等更多回收点；关闭时保留旧启发式，行为不变。
+        let 结构上新建 = if self.弧开() {
+            self.表达式拥有字符串(node)
+        } else {
+            是新建字符串表达式(node)
+        };
         let (v, t) = self
             .生成表达式(node)?
             .ok_or_else(|| "字符串拼接操作数无值".to_string())?;
@@ -688,7 +703,7 @@ impl<'ctx> 后端<'ctx> {
 
     /// 解析用户函数调用目标：当前包同名函数优先，否则任意包，再否则裸符号。
     /// 返回 (LLVM 函数, 签名)；找不到返回 None（交调用点回退 stdlib）。
-    fn 尝试解析用户函数(
+    pub(super) fn 尝试解析用户函数(
         &self,
         name: &str,
     ) -> Option<(
@@ -769,10 +784,20 @@ impl<'ctx> 后端<'ctx> {
         }
 
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
+        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
         for (i, a) in 实参.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "函数实参无值".to_string())?;
+            // ARC：实参是借用传递 —— OWNED 字符串临时（拼接/FFI 返回）在调用
+            // 结束后释放（被调方需要保留会自行 retain）。
+            if self.弧开()
+                && vt == Qi类型::字符串
+                && v.is_pointer_value()
+                && self.表达式拥有字符串(a)
+            {
+                弧待释放.push(v);
+            }
             // 按形参声明类型协调（int↔float、ptr↔i64 句柄等），保证与函数原型一致
             let v = match sig.as_ref().and_then(|s| s.参数.get(i)) {
                 Some(pt) => self.协调到类型(v, vt, *pt)?,
@@ -786,6 +811,9 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(f, &args, "call")
             .map_err(|e| e.to_string())?;
+        for v in 弧待释放 {
+            self.弧release(v);
+        }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some((v, ret))),
             None => Ok(None),
@@ -816,16 +844,24 @@ impl<'ctx> 后端<'ctx> {
             .get_function(rtname)
             .ok_or_else(|| format!("运行时函数未声明: {}", rtname))?;
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
+        let mut 弧待释放: Vec<(BasicValueEnum, Qi类型, &AstNode)> = Vec::new();
         for a in arguments {
-            let (v, _t) = self
+            let (v, t) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "内建实参无值".to_string())?;
+            if t == Qi类型::字符串 {
+                弧待释放.push((v, t, a)); // 弧消费后释放 内部再判 OWNED
+            }
             args.push(v.into());
         }
         let cs = self
             .builder
             .build_call(f, &args, "call")
             .map_err(|e| e.to_string())?;
+        // ARC：如 字符串转整数(拼接结果) —— 转换读完即释 OWNED 实参
+        for (v, t, a) in 弧待释放 {
+            self.弧消费后释放(v, t, a);
+        }
         let v = cs
             .try_as_basic_value()
             .left()
@@ -882,6 +918,8 @@ impl<'ctx> 后端<'ctx> {
             self.builder
                 .build_call(f, &[arg], "call")
                 .map_err(|e| e.to_string())?;
+            // ARC：打印读完即释 —— 典型 打印行(整数转字符串(x)) / 打印行(a + b)
+            self.弧消费后释放(v, t, a);
         }
         Ok(Some(None))
     }

@@ -122,6 +122,11 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param(i as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
             self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
+            // ARC：字符串参数（对调用方是借用）落地进局部槽 → retain 一次，
+            // 与出口「释放所有字符串局部」平衡；参数被覆写时旧值 release 也自洽。
+            if t == Qi类型::字符串 {
+                self.弧retain(arg);
+            }
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -135,6 +140,7 @@ impl<'ctx> 后端<'ctx> {
 
         // body 未显式 return 时补默认返回
         if !self.当前块已终结() {
+            self.弧释放局部()?; // ARC：落底出口释放字符串局部
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {
                     let zero = rt.const_zero();

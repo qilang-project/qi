@@ -146,6 +146,11 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
+            // ARC：字符串捕获进闭包 env（借用 load）→ retain（env 持有一份；
+            // 闭包本体泄漏时该串随之泄漏，可接受）
+            if *t == Qi类型::字符串 {
+                self.弧retain(v);
+            }
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
 
@@ -200,6 +205,10 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
+            // ARC：字符串捕获（含 spawn/协程捕获）→ retain，同 生成闭包表达式
+            if *t == Qi类型::字符串 {
+                self.弧retain(v);
+            }
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
         Ok(obj)
@@ -279,10 +288,19 @@ impl<'ctx> 后端<'ctx> {
         };
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let (mut v, at) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "fat 调用实参无值".to_string())?;
+            // ARC：实参借用传递，OWNED 字符串临时调用后释放
+            if self.弧开()
+                && at == Qi类型::字符串
+                && v.is_pointer_value()
+                && self.表达式拥有字符串(a)
+            {
+                弧待释放.push(v);
+            }
             if let Some(pt) = sig.参数.get(i) {
                 if pt.是浮点() && !at.是浮点() {
                     v = self
@@ -299,6 +317,9 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_indirect_call(fn_type, fptr, &args, "fatcall")
             .map_err(|e| e.to_string())?;
+        for v in 弧待释放 {
+            self.弧release(v);
+        }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some((v, sig.返回))),
             None => Ok(None),
@@ -430,6 +451,10 @@ impl<'ctx> 后端<'ctx> {
             let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
             let a = self.builder.build_alloca(llvmt, 名).map_err(|e| e.to_string())?;
             self.builder.build_store(a, v).map_err(|e| e.to_string())?;
+            // ARC：字符串捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡
+            if *t == Qi类型::字符串 {
+                self.弧retain(v);
+            }
             self.变量表.insert(名.clone(), (a, *t));
             self.符号.声明变量(名, *t);
         }
@@ -443,6 +468,10 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| "闭包缺形参".to_string())?;
             self.builder.build_store(a, p).map_err(|e| e.to_string())?;
+            // ARC：字符串参数（借用）→ retain，与出口释放平衡
+            if t == Qi类型::字符串 {
+                self.弧retain(p);
+            }
             self.变量表.insert(名.clone(), (a, t));
             self.符号.声明变量(名, t);
         }
@@ -454,6 +483,7 @@ impl<'ctx> 后端<'ctx> {
             }
         }
         if !self.当前块已终结() {
+            self.弧释放局部()?; // ARC：闭包落底出口释放字符串局部
             match self.llvm基础类型(cl.返回类型) {
                 Some(rt) => {
                     let z = rt.const_zero();

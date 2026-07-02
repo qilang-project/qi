@@ -23,6 +23,8 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
+#[path = "所有权.rs"]
+mod 所有权;
 #[path = "全局.rs"]
 mod 全局;
 #[path = "异步.rs"]
@@ -119,6 +121,9 @@ struct 后端<'ctx> {
     当前包: Option<String>,
     /// 字符串字面量 → 带 immortal header 的全局常量 data 指针（按内容去重，模块级缓存）。
     字符串字面量缓存: HashMap<String, PointerValue<'ctx>>,
+    /// QI_ARC=1 时为 true：插入保守字符串 ARC（retain/release）。默认关，
+    /// 关时生成的 IR 与无此功能时完全一致。见 所有权.rs。
+    弧: bool,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -142,6 +147,9 @@ impl<'ctx> 后端<'ctx> {
             在入口中: false,
             当前包: None,
             字符串字面量缓存: HashMap::new(),
+            弧: std::env::var("QI_ARC")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 
@@ -185,6 +193,9 @@ impl<'ctx> 后端<'ctx> {
         // 仅对 codegen 结构上确定「新建且不逃逸」的临时值发，绝不对字面量/变量发。
         let 释放串 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
         self.module.add_function("qi_string_free", 释放串, None);
+        // 增引用（QI_ARC 插桩用；null/immortal/非 RC 指针皆 no-op）
+        let 保留串 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
+        self.module.add_function("qi_string_retain", 保留串, None);
 
         // 类型转换
         self.module.add_function(
@@ -328,6 +339,8 @@ impl<'ctx> 后端<'ctx> {
         self.符号.退出作用域();
 
         if !self.当前块已终结() {
+            // ARC：main 顺利落底时释放入口的字符串局部
+            self.弧释放局部()?;
             self.builder
                 .build_return(Some(&i32t.const_int(0, false)))
                 .map_err(|e| e.to_string())?;

@@ -131,10 +131,12 @@ impl<'ctx> 后端<'ctx> {
                     .生成表达式(&arguments[0])?
                     .ok_or_else(|| "未来::就绪 实参无值".to_string())?;
                 let fut = self.包装ready(v, vt)?;
+                // ARC：ready_string 已把字节拷进 future —— OWNED 字符串源释放
+                self.弧消费后释放(v, vt, &arguments[0]);
                 Ok(Some((fut, Qi类型::未来(元素类型::从标量(vt)))))
             }
             "失败" | "failed" => {
-                let (v, _vt) = self
+                let (v, vt) = self
                     .生成表达式(&arguments[0])?
                     .ok_or_else(|| "未来::失败 实参无值".to_string())?;
                 let len = self.计算字符串长度(v)?;
@@ -149,6 +151,8 @@ impl<'ctx> 后端<'ctx> {
                     .try_as_basic_value()
                     .left()
                     .ok_or_else(|| "failed 未返回".to_string())?;
+                // ARC：qi_future_failed 已拷贝错误消息 —— OWNED 字符串源释放
+                self.弧消费后释放(v, vt, &arguments[0]);
                 // 失败 future 的内部类型未知，按整数占位（await 时按目标类型定）
                 Ok(Some((fut, Qi类型::未来(元素类型::整数))))
             }
