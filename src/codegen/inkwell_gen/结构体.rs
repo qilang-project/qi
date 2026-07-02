@@ -89,10 +89,13 @@ impl<'ctx> 后端<'ctx> {
         // 与旧后端一致，指针可 GC 追踪）。这里用精确布局大小更稳：字段数*8。
         let 字段数 = self.符号.结构体信息(idx).map(|s| s.字段名.len()).unwrap_or(0);
         let size = self.ctx.i64_type().const_int((字段数 as u64) * 8, false);
+        // QI_ARC=1：走 RC 对象分配器（ptr-24 header + refcount=1 + 零初始化，
+        // 且绕开 memory_manager 的全局 RwLock）；关闭时保持 qi_runtime_alloc 不变。
+        let alloc名 = if self.弧开() { "qi_obj_alloc" } else { "qi_runtime_alloc" };
         let alloc = self
             .module
-            .get_function("qi_runtime_alloc")
-            .ok_or_else(|| "运行时函数未声明: qi_runtime_alloc".to_string())?;
+            .get_function(alloc名)
+            .ok_or_else(|| format!("运行时函数未声明: {}", alloc名))?;
         let cs = self
             .builder
             .build_call(alloc, &[size.into()], "structmem")
@@ -138,10 +141,10 @@ impl<'ctx> 后端<'ctx> {
             if ftype.是浮点() && !vt.是浮点() {
                 v = self.整数转浮点值(v)?;
             }
-            // ARC：字符串存进字段 —— BORROWED retain / OWNED 转移（字段持有一份）。
-            // 结构体本体生命周期不归本轮管：结构体泄漏时其字段串随之泄漏（可接受）。
-            if self.弧开() && ftype == Qi类型::字符串 && v.is_pointer_value() {
-                self.弧存入槽(v, &fv.value);
+            // ARC：RC 值（字符串/结构体/数组）存进字段 —— BORROWED retain /
+            // OWNED 转移（字段持有一份）。本体归零时释放函数逐字段回收。
+            if self.弧开() && v.is_pointer_value() {
+                self.弧存入槽2(v, &fv.value, ftype);
             }
             let fptr = self.字段指针(base, st, fidx, &fv.name)?;
             self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
@@ -195,11 +198,11 @@ impl<'ctx> 后端<'ctx> {
             v = self.整数转浮点值(v)?;
         }
         let fptr = self.字段指针(base, st, fidx, field)?;
-        // ARC：字符串字段覆写 —— 先 retain 新值（BORROWED 时），再释放旧值
-        // （字面量阶段已保证字符串字段全部初始化，load 到的必是合法值或 null）。
-        if self.弧开() && ftype == Qi类型::字符串 && v.is_pointer_value() {
-            self.弧存入槽(v, value);
-            self.弧释放槽旧值(fptr)?;
+        // ARC：RC 字段覆写 —— 先 retain 新值（BORROWED 时；自赋值安全的关键
+        // 顺序），再释放旧值（qi_obj_alloc 零初始化保证旧值是合法值或 null）。
+        if self.弧开() && v.is_pointer_value() {
+            self.弧存入槽2(v, value, ftype);
+            self.弧释放槽旧值2(fptr, ftype)?;
         }
         self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
         Ok((v, ftype))

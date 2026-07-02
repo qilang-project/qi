@@ -146,11 +146,10 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
-            // ARC：字符串捕获进闭包 env（借用 load）→ retain（env 持有一份；
-            // 闭包本体泄漏时该串随之泄漏，可接受）
-            if *t == Qi类型::字符串 {
-                self.弧retain(v);
-            }
+            // ARC：RC 值（字符串/结构体/数组）捕获进闭包 env（借用 load）→
+            // retain（env 持有一份；env 本轮不回收，随 env 泄漏 —— 宁泄漏不悬垂：
+            // 闭包可能被 spawn / 存进路由表，寿命超过创建函数）
+            self.弧retain任意(v, *t);
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
 
@@ -205,10 +204,9 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
-            // ARC：字符串捕获（含 spawn/协程捕获）→ retain，同 生成闭包表达式
-            if *t == Qi类型::字符串 {
-                self.弧retain(v);
-            }
+            // ARC：RC 捕获（含 spawn/协程捕获 —— 发送即转移）→ retain，
+            // 同 生成闭包表达式
+            self.弧retain任意(v, *t);
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
         Ok(obj)
@@ -288,18 +286,25 @@ impl<'ctx> 后端<'ctx> {
         };
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
-        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
+        let mut 弧待释放: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let (mut v, at) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "fat 调用实参无值".to_string())?;
-            // ARC：实参借用传递，OWNED 字符串临时调用后释放
-            if self.弧开()
-                && at == Qi类型::字符串
-                && v.is_pointer_value()
-                && self.表达式拥有字符串(a)
-            {
-                弧待释放.push(v);
+            // ARC：实参借用传递，OWNED RC 临时调用后释放。结构体/数组要求
+            // 形参声明类型也是 RC（否则被调方不套 retain 纪律 —— 保守不释放）。
+            let 形参rc = sig
+                .参数
+                .get(i)
+                .map(|pt| super::所有权::是RC类型(*pt))
+                .unwrap_or(false);
+            let 可释放 = match at {
+                Qi类型::字符串 => self.表达式拥有字符串(a),
+                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, at),
+                _ => false,
+            };
+            if self.弧开() && v.is_pointer_value() && 可释放 {
+                弧待释放.push((v, at));
             }
             if let Some(pt) = sig.参数.get(i) {
                 if pt.是浮点() && !at.是浮点() {
@@ -317,8 +322,8 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_indirect_call(fn_type, fptr, &args, "fatcall")
             .map_err(|e| e.to_string())?;
-        for v in 弧待释放 {
-            self.弧release(v);
+        for (v, vt) in 弧待释放 {
+            self.弧release任意(v, vt);
         }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some((v, sig.返回))),
@@ -451,10 +456,8 @@ impl<'ctx> 后端<'ctx> {
             let llvmt = self.llvm基础类型(*t).unwrap_or_else(|| self.ctx.i64_type().into());
             let a = self.builder.build_alloca(llvmt, 名).map_err(|e| e.to_string())?;
             self.builder.build_store(a, v).map_err(|e| e.to_string())?;
-            // ARC：字符串捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡
-            if *t == Qi类型::字符串 {
-                self.弧retain(v);
-            }
+            // ARC：RC 捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡
+            self.弧retain任意(v, *t);
             self.变量表.insert(名.clone(), (a, *t));
             self.符号.声明变量(名, *t);
         }
@@ -468,10 +471,8 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| "闭包缺形参".to_string())?;
             self.builder.build_store(a, p).map_err(|e| e.to_string())?;
-            // ARC：字符串参数（借用）→ retain，与出口释放平衡
-            if t == Qi类型::字符串 {
-                self.弧retain(p);
-            }
+            // ARC：RC 参数（借用）→ retain，与出口释放平衡
+            self.弧retain任意(p, t);
             self.变量表.insert(名.clone(), (a, t));
             self.符号.声明变量(名, t);
         }

@@ -130,8 +130,17 @@ impl<'ctx> 后端<'ctx> {
                 let (v, vt) = self
                     .生成表达式(&arguments[0])?
                     .ok_or_else(|| "未来::就绪 实参无值".to_string())?;
+                // ARC：结构体/数组经 ready_ptr 存指针不拷贝 —— 发送即转移：
+                // BORROWED 先 retain（随 future 泄漏，宁泄漏不悬垂）
+                if self.弧开()
+                    && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_))
+                    && !self.表达式拥有RC(&arguments[0], vt)
+                {
+                    self.弧retain任意(v, vt);
+                }
                 let fut = self.包装ready(v, vt)?;
                 // ARC：ready_string 已把字节拷进 future —— OWNED 字符串源释放
+                // （结构体/数组已转移进 future，不释放）
                 self.弧消费后释放(v, vt, &arguments[0]);
                 Ok(Some((fut, Qi类型::未来(元素类型::从标量(vt)))))
             }

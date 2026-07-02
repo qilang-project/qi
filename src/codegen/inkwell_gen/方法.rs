@@ -122,6 +122,9 @@ impl<'ctx> 后端<'ctx> {
         self.builder
             .build_store(recv_ptr, recv_arg)
             .map_err(|e| e.to_string())?;
+        // ARC：接收者（结构体指针，对调用方是借用）落地进局部槽 → retain 一次，
+        // 与出口「释放 RC 局部」平衡
+        self.弧retain任意(recv_arg, 接收者类型);
         self.变量表
             .insert(m.receiver_name.clone(), (recv_ptr, 接收者类型));
         self.符号.声明变量(&m.receiver_name, 接收者类型);
@@ -140,10 +143,8 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param((i + 1) as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
             self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
-            // ARC：字符串参数（借用）落地进局部槽 → retain 一次，与出口统一释放平衡
-            if t == super::类型::Qi类型::字符串 {
-                self.弧retain(arg);
-            }
+            // ARC：RC 参数（借用）落地进局部槽 → retain 一次，与出口统一释放平衡
+            self.弧retain任意(arg, t);
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -210,18 +211,33 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("方法未定义: {}", sym))?;
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![recv_val.into()];
-        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
+        let mut 弧待释放: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
+        // ARC：链式调用的 OWNED 临时接收者（如 f(x).方法()）—— 方法自会对
+        // 自身 retain/release，调用结束后释放这份 +1。
+        if self.弧开()
+            && recv_val.is_pointer_value()
+            && self.表达式拥有RC(object, recv_type)
+        {
+            弧待释放.push((recv_val, recv_type));
+        }
         for (i, a) in arguments.iter().enumerate() {
             let (mut v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "方法实参无值".to_string())?;
-            // ARC：实参借用传递，OWNED 字符串临时调用后释放
-            if self.弧开()
-                && vt == super::类型::Qi类型::字符串
-                && v.is_pointer_value()
-                && self.表达式拥有字符串(a)
-            {
-                弧待释放.push(v);
+            // ARC：实参借用传递，OWNED RC 临时调用后释放。结构体/数组要求
+            // 形参声明类型也是 RC（否则被调方不套 retain 纪律 —— 保守不释放）。
+            let 形参rc = sig
+                .参数
+                .get(i)
+                .map(|pt| super::所有权::是RC类型(*pt))
+                .unwrap_or(false);
+            let 可释放 = match vt {
+                Qi类型::字符串 => self.表达式拥有字符串(a),
+                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, vt),
+                _ => false,
+            };
+            if self.弧开() && v.is_pointer_value() && 可释放 {
+                弧待释放.push((v, vt));
             }
             if let Some(pt) = sig.参数.get(i) {
                 if pt.是浮点() && !vt.是浮点() {
@@ -235,8 +251,8 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(func, &args, "mcall")
             .map_err(|e| e.to_string())?;
-        for v in 弧待释放 {
-            self.弧release(v);
+        for (v, vt) in 弧待释放 {
+            self.弧release任意(v, vt);
         }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some(Some((v, sig.返回)))),

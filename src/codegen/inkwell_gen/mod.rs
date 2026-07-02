@@ -271,6 +271,24 @@ impl<'ctx> 后端<'ctx> {
             None,
         );
 
+        // RC 对象分配器（QI_ARC=1 时结构体/数组本体走这里；ptr-24 藏 header，
+        // 零初始化，绕开 memory_manager 的全局 RwLock）。ARC 关时无人调用。
+        self.module.add_function(
+            "qi_obj_alloc",
+            ptrt.fn_type(&[i64t.into()], false),
+            None,
+        );
+        let 收指针void = self.ctx.void_type().fn_type(&[ptrt.into()], false);
+        self.module.add_function("qi_obj_retain", 收指针void, None);
+        self.module.add_function(
+            "qi_obj_dec",
+            i64t.fn_type(&[ptrt.into()], false),
+            None,
+        );
+        self.module.add_function("qi_obj_free", 收指针void, None);
+        // 动态派发释放（数组<指针> 元素等编译期类型未知的保守路径）
+        self.module.add_function("qi_rc_release_any", 收指针void, None);
+
         // 通道（阶段10 退化并发）
         self.module.add_function(
             "qi_runtime_create_channel",
@@ -421,6 +439,10 @@ pub fn compile_to_object_multi(
         后端值.解析结构体字段(p)?;
     }
     后端值.建结构体llvm类型()?;
+
+    // QI_ARC=1：为所有结构体类型 + 两类数组 emit 释放函数（先声明后定义，
+    // 递归类型可用；函数体生成前就位，插桩点直接引用）。关闭时不产生任何 IR。
+    后端值.弧生成释放函数()?;
 
     // 第一趟半：登记所有模块顶层全局变量 / 常量（函数体会引用，须在函数体前）
     for p in programs {

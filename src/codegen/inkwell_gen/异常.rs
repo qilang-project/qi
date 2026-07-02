@@ -200,8 +200,14 @@ impl<'ctx> 后端<'ctx> {
                     .try_as_basic_value()
                     .left()
                     .ok_or_else(|| "exc_message 未返回".to_string())?;
-                // entry 块 alloca:尝试/捕获 嵌在循环里时不随迭代吃栈
-                let slot = self.入口块alloca(self.ctx.ptr_type(AddressSpace::default()).into(), var)?;
+                // entry 块 alloca:尝试/捕获 嵌在循环里时不随迭代吃栈。
+                // ARC：错误变量是字符串局部槽，走 entry null 初始化 —— 函数从
+                // 未进 catch 也会在出口统一释放该槽，未初始化读到垃圾会崩。
+                let slot = if self.弧开() {
+                    self.弧字符串槽(func, var)?
+                } else {
+                    self.入口块alloca(self.ctx.ptr_type(AddressSpace::default()).into(), var)?
+                };
                 self.builder
                     .build_store(slot, msg)
                     .map_err(|e| e.to_string())?;

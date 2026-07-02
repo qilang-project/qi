@@ -28,10 +28,12 @@ impl<'ctx> 后端<'ctx> {
         let i64t = self.ctx.i64_type();
         // (n+1) 槽：0 号存长度，其余存元素，每槽 8 字节
         let size = i64t.const_int((n + 1) * 8, false);
+        // QI_ARC=1：数组本体走 RC 对象分配器（见 结构体.rs 同款注释）
+        let alloc名 = if self.弧开() { "qi_obj_alloc" } else { "qi_runtime_alloc" };
         let alloc = self
             .module
-            .get_function("qi_runtime_alloc")
-            .ok_or_else(|| "运行时函数未声明: qi_runtime_alloc".to_string())?;
+            .get_function(alloc名)
+            .ok_or_else(|| format!("运行时函数未声明: {}", alloc名))?;
         let base = self
             .builder
             .build_call(alloc, &[size.into()], "arrmem")
@@ -59,10 +61,10 @@ impl<'ctx> 后端<'ctx> {
                     .map_err(|e| e.to_string())?
                     .into();
             }
-            // ARC：字符串存进数组元素槽 —— BORROWED retain / OWNED 转移。
-            // 数组本体生命周期不归本轮管（泄漏可接受）。
-            if self.弧开() && vt == Qi类型::字符串 && v.is_pointer_value() {
-                self.弧存入槽(v, e);
+            // ARC：RC 值（字符串/结构体/数组）存进元素槽 —— BORROWED retain /
+            // OWNED 转移。本体归零时 qi.release.arr.p 逐槽动态释放。
+            if self.弧开() && v.is_pointer_value() {
+                self.弧存入槽2(v, e, vt);
             }
             // 元素偏移 +1（跳过长度头）
             let slot = self.槽指针(base, 元素llvm, (i as u64) + 1)?;

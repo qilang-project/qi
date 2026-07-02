@@ -134,11 +134,9 @@ impl<'ctx> 后端<'ctx> {
                 .get_nth_param(i as u32)
                 .ok_or_else(|| format!("缺少第 {} 个形参", i))?;
             self.builder.build_store(ptr, arg).map_err(|e| e.to_string())?;
-            // ARC：字符串参数（对调用方是借用）落地进局部槽 → retain 一次，
-            // 与出口「释放所有字符串局部」平衡；参数被覆写时旧值 release 也自洽。
-            if t == Qi类型::字符串 {
-                self.弧retain(arg);
-            }
+            // ARC：RC 参数（字符串/结构体/数组，对调用方是借用）落地进局部槽
+            // → retain 一次，与出口「释放所有 RC 局部」平衡；覆写时释放旧值也自洽。
+            self.弧retain任意(arg, t);
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }

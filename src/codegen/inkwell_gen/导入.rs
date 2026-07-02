@@ -146,6 +146,16 @@ impl<'ctx> 后端<'ctx> {
             {
                 弧待释放.push(v);
             }
+            // ARC：结构体/数组指针进 runtime FFI（列表::设置指针 / 网络::异步服务
+            // 等可能**私藏**指针）→ 发送即转移：BORROWED 先 retain（对应引用随
+            // 藏点泄漏，宁泄漏不悬垂）；OWNED 直接转移，不 retain 也不释放。
+            if self.弧开()
+                && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_))
+                && v.is_pointer_value()
+                && !self.表达式拥有RC(a, vt)
+            {
+                self.弧retain任意(v, vt);
+            }
             let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
             // 指针/ptr 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针都可）
             if 原始 == "指针" || 原始 == "ptr" {

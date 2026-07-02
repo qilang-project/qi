@@ -35,11 +35,11 @@ impl<'ctx> 后端<'ctx> {
                 let llvmt = self
                     .llvm基础类型(类型)
                     .ok_or_else(|| format!("变量 {} 类型无效", vd.name))?;
-                // ARC：字符串槽统一在 entry 块 alloca + null 初始化（支配所有
-                // return 点，出口统一释放合法；重入声明可安全释放旧值）。
-                // 非 ARC 串路径也统一 entry 块 alloca（循环体内声明不再每迭代吃栈）。
-                let 弧串 = self.弧开() && 类型 == Qi类型::字符串;
-                let ptr = if 弧串 {
+                // ARC：RC 槽（字符串/结构体/数组）统一在 entry 块 alloca + null
+                // 初始化（支配所有 return 点，出口统一释放合法；重入声明可安全
+                // 释放旧值）。非 ARC 路径也统一 entry 块 alloca（循环不吃栈）。
+                let 弧rc = self.弧开() && super::所有权::是RC类型(类型);
+                let ptr = if 弧rc {
                     self.弧字符串槽(func, &vd.name)?
                 } else {
                     self.入口块alloca(llvmt, &vd.name)?
@@ -53,11 +53,11 @@ impl<'ctx> 后端<'ctx> {
                     if 类型.是浮点() && !vt.是浮点() {
                         v = self.转为浮点(v)?;
                     }
-                    if 弧串 && v.is_pointer_value() {
+                    if 弧rc && v.is_pointer_value() {
                         // 先 retain 新值（BORROWED 时），再释放旧值（首轮为 null，
                         // 循环里重入声明时是上一轮的值），最后 store。
-                        self.弧存入槽(v, init);
-                        self.弧释放槽旧值(ptr)?;
+                        self.弧存入槽2(v, init, 类型);
+                        self.弧释放槽旧值2(ptr, 类型)?;
                     }
                     self.builder.build_store(ptr, v).map_err(|e| e.to_string())?;
                 }
@@ -68,8 +68,9 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::表达式语句(es) => {
                 if let Some((v, t)) = self.生成表达式(&es.expression)? {
-                    // ARC：被丢弃的 OWNED 字符串返回值（如 FFI 返回串没人接）→ release
-                    self.弧消费后释放(v, t, &es.expression);
+                    // ARC：被丢弃的 OWNED RC 值（FFI 返回串没人接 / 结构体
+                    // 数组临时没人存）→ release
+                    self.弧消费后释放2(v, t, &es.expression);
                 }
                 Ok(())
             }
@@ -78,9 +79,9 @@ impl<'ctx> 后端<'ctx> {
                 // 入口→main 返回 i32：无论 bare `返回` 还是带值，都 ret i32 0
                 if self.在入口中 {
                     if let Some(expr) = &ret.value {
-                        // 求值副作用，丢弃 —— OWNED 字符串按丢弃释放
+                        // 求值副作用，丢弃 —— OWNED RC 值按丢弃释放
                         if let Some((v, t)) = self.生成表达式(expr)? {
-                            self.弧消费后释放(v, t, expr);
+                            self.弧消费后释放2(v, t, expr);
                         }
                     }
                     self.弧释放局部()?; // ARC：main 出口释放字符串局部
@@ -96,26 +97,39 @@ impl<'ctx> 后端<'ctx> {
                         let rt = self.当前返回类型;
                         // 声明返回 void：忽略返回值，emit ret void
                         if rt == Qi类型::空 {
-                            self.弧消费后释放(v, vt, expr); // 值被丢弃
+                            self.弧消费后释放2(v, vt, expr); // 值被丢弃
                             self.弧释放局部()?;
                             self.builder.build_return(None).map_err(|e| e.to_string())?;
                         } else if rt.未来内部().is_some() && vt.未来内部().is_none() {
                             // 函数返回 未来<T> 而值不是 future：包成 ready future
+                            // ARC：结构体/数组经 ready_ptr **存指针不拷贝** ——
+                            // 发送即转移：BORROWED 先 retain（future 持有一份，
+                            // future 本体不回收 → 该对象泄漏，宁泄漏不悬垂）。
+                            if self.弧开()
+                                && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_))
+                                && !self.表达式拥有RC(expr, vt)
+                            {
+                                self.弧retain任意(v, vt);
+                            }
                             let fut = self.包装ready(v, vt)?;
                             // ready_string 已把字节拷进 future；OWNED 源释放
+                            // （仅字符串 —— 结构体/数组已转移进 future，不释放）
                             self.弧消费后释放(v, vt, expr);
                             self.弧释放局部()?;
                             self.builder.build_return(Some(&fut)).map_err(|e| e.to_string())?;
                         } else {
                             let cv = self.协调返回值(v, vt, rt)?;
-                            // 返回约定 +1：字符串返回值 BORROWED → retain 再 ret；
+                            // 返回约定 +1：RC 返回值 BORROWED → retain 再 ret；
                             // OWNED → 直接 ret（所有权移交调用方）。
-                            if self.弧开()
-                                && rt == Qi类型::字符串
-                                && vt == Qi类型::字符串
-                                && !self.表达式拥有字符串(expr)
-                            {
-                                self.弧retain(cv);
+                            // 结构体/数组按声明返回类型 rt retain（值可能经 FFI
+                            // 透传 vt 标注不准 —— qi_obj_retain 跨 magic 安全）。
+                            let 该retain = if rt == Qi类型::字符串 {
+                                vt == Qi类型::字符串 && !self.表达式拥有字符串(expr)
+                            } else {
+                                super::所有权::是RC类型(rt) && !self.表达式拥有RC(expr, rt)
+                            };
+                            if self.弧开() && 该retain && cv.is_pointer_value() {
+                                self.弧retain任意(cv, rt);
                             }
                             // 出口释放全部字符串局部（返回值若来自某局部：上面已
                             // retain +1，槽 release -1，净 +1 交调用方，正确）。
@@ -299,10 +313,16 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?
             .into_int_value();
 
-        // 循环变量（元素副本）+ 隐藏下标 —— entry 块 alloca，嵌套循环不吃栈
+        // 循环变量（元素副本）+ 隐藏下标 —— entry 块 alloca，嵌套循环不吃栈。
+        // ARC：RC 元素槽走 entry null 初始化（空数组不进循环体时出口统一释放
+        // 读到 null 才安全；每迭代覆写也需释放上一轮旧值）。
         let 元素qi = 元素.标量();
         let 元素llvm = self.元素llvm类型(元素);
-        let evar = self.入口块alloca(元素llvm, &f.variable)?;
+        let evar = if self.弧开() && super::所有权::是RC类型(元素qi) {
+            self.弧字符串槽(func, &f.variable)?
+        } else {
+            self.入口块alloca(元素llvm, &f.variable)?
+        };
         let ivar = self.入口块alloca(i64t.into(), "each.idx")?;
         self.builder
             .build_store(ivar, i64t.const_zero())
@@ -340,11 +360,13 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_load(元素llvm, slot, "each.elem")
             .map_err(|e| e.to_string())?;
-        self.builder.build_store(evar, ev).map_err(|e| e.to_string())?;
-        // ARC：字符串元素拷入局部槽是借用 → retain，与出口「释放字符串局部」平衡
-        if 元素qi == Qi类型::字符串 {
-            self.弧retain(ev);
+        // ARC：RC 元素拷入局部槽是借用 → 先 retain 新值，再释放上一轮旧值
+        // （首轮为 null），最后 store；与出口「释放 RC 局部」平衡。
+        if self.弧开() && super::所有权::是RC类型(元素qi) {
+            self.弧retain任意(ev, 元素qi);
+            self.弧释放槽旧值2(evar, 元素qi)?;
         }
+        self.builder.build_store(evar, ev).map_err(|e| e.to_string())?;
 
         self.生成块(&f.body, func)?;
         if !self.当前块已终结() {

@@ -77,10 +77,11 @@ impl<'ctx> 后端<'ctx> {
                             .map_err(|e| e.to_string())?
                             .into();
                     }
-                    // ARC：字符串存进全局（程序生命周期，永不释放）——
-                    // BORROWED retain / OWNED 转移；无需释放旧值（zeroinit，只初始化一次）
-                    if self.弧开() && gt == Qi类型::字符串 && v.is_pointer_value() {
-                        self.弧存入槽(v, init);
+                    // ARC：RC 值（字符串/结构体/数组）存进全局（程序生命周期，
+                    // 永不释放）—— BORROWED retain / OWNED 转移；无需释放旧值
+                    // （zeroinit，只初始化一次）
+                    if self.弧开() && v.is_pointer_value() {
+                        self.弧存入槽2(v, init, gt);
                     }
                     self.builder
                         .build_store(g.as_pointer_value(), v)

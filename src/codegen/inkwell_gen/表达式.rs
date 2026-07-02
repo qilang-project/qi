@@ -291,11 +291,14 @@ impl<'ctx> 后端<'ctx> {
                                 .map_err(|e| e.to_string())?
                                 .into();
                         }
-                        // ARC：字符串槽覆写 —— 先 retain 新值（BORROWED 时；自赋值
-                        // 安全的关键顺序），再释放旧值，最后 store。
-                        if self.弧开() && target_t == Qi类型::字符串 && v.is_pointer_value() {
-                            self.弧存入槽(v, &a.value);
-                            self.弧释放槽旧值(ptr)?;
+                        // ARC：RC 槽（字符串/结构体/数组）覆写 —— 先 retain 新值
+                        // （BORROWED 时；自赋值安全的关键顺序），再释放旧值，最后 store。
+                        if self.弧开()
+                            && super::所有权::是RC类型(target_t)
+                            && v.is_pointer_value()
+                        {
+                            self.弧存入槽2(v, &a.value, target_t);
+                            self.弧释放槽旧值2(ptr, target_t)?;
                         }
                         self.builder
                             .build_store(ptr, v)
@@ -800,19 +803,27 @@ impl<'ctx> 后端<'ctx> {
         }
 
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
-        let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
+        let mut 弧待释放: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
         for (i, a) in 实参.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "函数实参无值".to_string())?;
-            // ARC：实参是借用传递 —— OWNED 字符串临时（拼接/FFI 返回）在调用
-            // 结束后释放（被调方需要保留会自行 retain）。
-            if self.弧开()
-                && vt == Qi类型::字符串
-                && v.is_pointer_value()
-                && self.表达式拥有字符串(a)
-            {
-                弧待释放.push(v);
+            // ARC：实参是借用传递 —— OWNED RC 临时（拼接串/结构体字面量/
+            // 变参打包数组）在调用结束后释放（被调方需要保留会自行 retain）。
+            // 结构体/数组额外要求形参声明类型也是 RC（否则被调方按整数句柄收，
+            // 不套 retain 纪律，可能私藏指针 —— 保守不释放，宁泄漏）。
+            let 形参rc = sig
+                .as_ref()
+                .and_then(|s| s.参数.get(i))
+                .map(|pt| super::所有权::是RC类型(*pt))
+                .unwrap_or(false);
+            let 可释放 = match vt {
+                Qi类型::字符串 => self.表达式拥有字符串(a),
+                Qi类型::结构体(_) | Qi类型::数组(_) => 形参rc && self.表达式拥有RC(a, vt),
+                _ => false,
+            };
+            if self.弧开() && v.is_pointer_value() && 可释放 {
+                弧待释放.push((v, vt));
             }
             // 按形参声明类型协调（int↔float、ptr↔i64 句柄等），保证与函数原型一致
             let v = match sig.as_ref().and_then(|s| s.参数.get(i)) {
@@ -827,8 +838,8 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(f, &args, "call")
             .map_err(|e| e.to_string())?;
-        for v in 弧待释放 {
-            self.弧release(v);
+        for (v, vt) in 弧待释放 {
+            self.弧release任意(v, vt);
         }
         match cs.try_as_basic_value().left() {
             Some(v) => Ok(Some((v, ret))),

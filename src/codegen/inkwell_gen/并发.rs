@@ -182,10 +182,10 @@ impl<'ctx> 后端<'ctx> {
         let (v, t) = self
             .生成表达式(&s.value)?
             .ok_or_else(|| "通道发送值无值".to_string())?;
-        // ARC：发送即转移 —— BORROWED 字符串 retain 后发；OWNED 直接发。
-        // （接收端类型退化为整数句柄，永不 release —— 宁泄漏。）
-        if self.弧开() && t == super::类型::Qi类型::字符串 && v.is_pointer_value() {
-            self.弧存入槽(v, &s.value);
+        // ARC：发送即转移 —— BORROWED RC 值（字符串/结构体/数组）retain 后发；
+        // OWNED 直接发。（接收端类型退化为整数句柄，永不 release —— 宁泄漏。）
+        if self.弧开() && v.is_pointer_value() {
+            self.弧存入槽2(v, &s.value, t);
         }
         let f = self
             .module
