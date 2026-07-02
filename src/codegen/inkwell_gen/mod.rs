@@ -456,15 +456,17 @@ pub fn compile_to_object(
     out: &Path,
     target: CompilationTarget,
 ) -> Result<(), String> {
-    compile_to_object_multi(std::slice::from_ref(program), out, target)
+    compile_to_object_multi(std::slice::from_ref(program), out, target, None)
 }
 
 /// 把多个 Program（entry + 所有用户模块）合并进同一个 LLVM 模块，编成一个 .o。
 /// programs[0] 是 entry（含 入口()）。跨模块符号共享同一 mangle，天然可见。
+/// `arch`：交叉编译目标架构（x86_64 / aarch64），None 时默认 x86_64。
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
-    _target: CompilationTarget,
+    target: CompilationTarget,
+    arch: Option<&str>,
 ) -> Result<(), String> {
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
@@ -540,9 +542,29 @@ pub fn compile_to_object_multi(
         let _ = 后端值.module.print_to_file(Path::new(&p));
     }
 
-    Target::initialize_native(&InitializationConfig::default())
-        .map_err(|e| format!("初始化目标失败: {}", e))?;
-    let triple = TargetMachine::get_default_triple();
+    // 目标三元组：宿主==目标 时走默认三元组（本地路径零风险）；
+    // 交叉时按 平台+架构 显式构造（cutover 到 inkwell 时曾丢失，产物错成宿主 Mach-O）。
+    let 宿主即目标 = match target {
+        CompilationTarget::Linux => cfg!(target_os = "linux"),
+        CompilationTarget::MacOS => cfg!(target_os = "macos"),
+        CompilationTarget::Windows => cfg!(target_os = "windows"),
+        CompilationTarget::Wasm => false,
+    } && arch.is_none_or(|a| a == std::env::consts::ARCH);
+    let triple = if 宿主即目标 {
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|e| format!("初始化目标失败: {}", e))?;
+        TargetMachine::get_default_triple()
+    } else {
+        Target::initialize_all(&InitializationConfig::default());
+        let a = arch.unwrap_or("x86_64");
+        let t = match target {
+            CompilationTarget::Linux => format!("{}-unknown-linux-gnu", a),
+            CompilationTarget::Windows => format!("{}-pc-windows-msvc", a),
+            CompilationTarget::MacOS => format!("{}-apple-darwin", a),
+            CompilationTarget::Wasm => "wasm32-unknown-unknown".to_string(),
+        };
+        inkwell::targets::TargetTriple::create(&t)
+    };
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let tm = target
         .create_target_machine(
@@ -555,6 +577,8 @@ pub fn compile_to_object_multi(
         )
         .ok_or_else(|| "无法创建 target machine".to_string())?;
     后端值.module.set_triple(&triple);
+    // 数据布局必须跟目标机匹配（结构体偏移/对齐在跨架构时不同）
+    后端值.module.set_data_layout(&tm.get_target_data().get_data_layout());
     tm.write_to_file(&后端值.module, FileType::Object, out)
         .map_err(|e| e.to_string())?;
     Ok(())

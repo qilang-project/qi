@@ -150,6 +150,7 @@ impl QiCompiler {
             &programs,
             &obj,
             self.config.target_platform,
+            self.config.target_arch.as_deref(),
         )
         .map_err(CompilerError::Codegen)?;
         let exe = if cfg!(windows) {
