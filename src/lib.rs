@@ -389,16 +389,24 @@ impl QiCompiler {
             }
         }
         // 开发布局：qilang/target/debug/qi → 上溯到 qilang
-        if let Some(ws) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        if let Some(ws) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
             for profile in ["debug", "release"] {
-                let p = ws.join("qi-runtime/target").join(profile).join("libqi_runtime.a");
+                let p = ws
+                    .join("qi-runtime/target")
+                    .join(profile)
+                    .join("libqi_runtime.a");
                 if p.exists() {
                     return Ok(p);
                 }
             }
         }
         Err(CompilerError::Codegen(
-            "找不到 qi-runtime 归档。先在 qi-runtime/ 跑 cargo build，或设 QI_RUNTIME_LIB。".to_string(),
+            "找不到 qi-runtime 归档。先在 qi-runtime/ 跑 cargo build，或设 QI_RUNTIME_LIB。"
+                .to_string(),
         ))
     }
 
@@ -610,6 +618,13 @@ impl QiCompiler {
             }
         }
 
+        // 1.6. Project qi.toml declared dependencies: import 首段 == 依赖别名。
+        // 远程依赖（github/任意 git/详细表 git）从本地缓存解析，编译期绝不联网；
+        // 缓存缺失时直接报错提示先运行 qi get。
+        if let Some(result) = self.resolve_manifest_declared_dependency(current_file, module_path) {
+            return result;
+        }
+
         if module_path.len() > 1 {
             if let Some(package_path) =
                 self.resolve_package_internal_module_path(current_file, module_path)
@@ -701,6 +716,87 @@ impl QiCompiler {
                 module_path.join("/")
             ),
         )))
+    }
+
+    /// 解析项目 qi.toml 中声明的远程依赖（import 首段 == 依赖别名）。
+    ///
+    /// 返回 `None` 表示与本步骤无关（无清单/别名不匹配/本地路径依赖），继续走后续解析链；
+    /// 返回 `Some(Err(..))` 表示确定是远程依赖但无法解析（缓存缺失 → 提示先运行 qi get）。
+    fn resolve_manifest_declared_dependency(
+        &self,
+        current_file: &PathBuf,
+        module_path: &[String],
+    ) -> Option<Result<PathBuf, CompilerError>> {
+        let alias = module_path.first()?;
+        let manifest = crate::package::ResolvedPackageManifest::discover(current_file)
+            .ok()
+            .flatten()?;
+        let dependency = manifest.manifest.dependencies.get(alias)?;
+
+        let spec = match dependency.source() {
+            Ok(crate::package::DependencySource::Remote(spec)) => spec,
+            // 本地路径依赖保持原有解析机制（qi_packages / 名称匹配等）
+            Ok(crate::package::DependencySource::LocalPath(_)) => return None,
+            Err(message) => {
+                return Some(Err(CompilerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "qi.toml 中依赖 `{}` 配置有误: {} ({})",
+                        alias,
+                        message,
+                        manifest.manifest_path.display()
+                    ),
+                ))));
+            }
+        };
+
+        let package_root = spec.package_root();
+        if !package_root.is_dir() {
+            return Some(Err(CompilerError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "远程依赖 `{}`（{}）尚未拉取到本地缓存。\n  预期缓存位置: {}\n  请先在项目目录运行: qi get",
+                    alias,
+                    spec.coordinate(),
+                    package_root.display()
+                ),
+            ))));
+        }
+
+        // 优先用包自己的 qi.toml（只认缓存目录本身，不向上查找）；
+        // 没有清单时退化为默认布局（<别名>.qi / <仓库名>.qi / 子模块 .qi）。
+        let dep_manifest = crate::package::ResolvedPackageManifest::load_dir(&package_root)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::package::ResolvedPackageManifest {
+                manifest_path: package_root.join("qi.toml"),
+                root_dir: package_root.clone(),
+                manifest: Default::default(),
+            });
+
+        let resolved = dep_manifest
+            .resolve_module_path(alias, module_path)
+            .or_else(|| {
+                if module_path.len() == 1 {
+                    let candidate = package_root.join(format!("{}.qi", spec.repo));
+                    candidate.exists().then_some(candidate)
+                } else {
+                    None
+                }
+            });
+
+        match resolved {
+            Some(path) => Some(Ok(path)),
+            None => Some(Err(CompilerError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "远程依赖 `{}` 已缓存于 {}，但找不到模块 {}（检查包内文件名或 qi.toml 的 [源码] 配置）",
+                    alias,
+                    package_root.display(),
+                    module_path.join(".")
+                ),
+            )))),
+        }
     }
 
     fn resolve_local_manifest_package_path(
@@ -920,7 +1016,6 @@ impl QiCompiler {
         }
         Ok(None) // No package declaration found
     }
-
 }
 
 /// Result of a compilation operation

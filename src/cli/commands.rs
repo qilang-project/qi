@@ -10,7 +10,9 @@ use std::path::PathBuf;
 #[command(version = concat!("v", env!("CARGO_PKG_VERSION")))]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
-#[command(override_usage = "qi [选项] [源文件]... [命令]\n       qi [OPTIONS] [SOURCE_FILES]... [COMMAND]")]
+#[command(
+    override_usage = "qi [选项] [源文件]... [命令]\n       qi [OPTIONS] [SOURCE_FILES]... [COMMAND]"
+)]
 #[command(help_template = "\
 奇语言编译器 · Qi Language Compiler {version}
 
@@ -34,6 +36,8 @@ use std::path::PathBuf;
   qi compile 程序.qi -o 程序        编译出可执行文件 | Build an executable
   qi check 程序.qi                  只查语法 | Syntax check only
   qi test                           跑测试(*_测.qi) | Run tests
+  qi get github.com/user/repo@v1.0  拉取远程依赖进缓存并登记 | Fetch remote dependency
+  qi get                            拉取 qi.toml 全部远程依赖 | Fetch all remote deps
   qi --target linux --release-runtime compile 程序.qi -o 程序
                                     交叉编译 Linux | Cross-compile for Linux
 
@@ -232,6 +236,32 @@ pub enum Commands {
         targets: bool,
     },
 
+    /// 拉取远程包依赖到本地缓存 | Fetch remote package dependencies
+    #[command(visible_aliases = &["拉取"])]
+    #[command(help_template = "\
+{name} - {about}
+
+用法 | Usage: {usage}
+
+参数 | Arguments:
+{positionals}
+
+选项 | Options:
+{options}
+")]
+    Get {
+        /// 远程包地址，如 github.com/user/repo@v1.0（省略则拉取 qi.toml 全部远程依赖）| Remote package spec
+        spec: Option<String>,
+
+        /// 写入 qi.toml 的依赖别名（默认取被拉包的 包.名称 或仓库名）| Dependency alias
+        #[arg(long = "名", alias = "alias")]
+        name: Option<String>,
+
+        /// 显示帮助信息 | Show help information
+        #[arg(short, long, action = clap::ArgAction::Help)]
+        help: Option<bool>,
+    },
+
     /// 发现并运行测试（*_测.qi）| Discover and run tests
     #[command(visible_aliases = &["测试"])]
     Test {
@@ -290,6 +320,11 @@ impl Cli {
                 language,
                 targets,
             }) => self.show_info(version, language, targets).await,
+            Some(Commands::Get {
+                spec,
+                name,
+                help: _,
+            }) => crate::cli::get::run(spec, name, config.verbose),
             Some(Commands::Test {
                 path,
                 filter,
@@ -865,7 +900,10 @@ impl Cli {
         for p in 项 {
             if p.is_dir() {
                 // 跳过包镜像 / 构建产物目录
-                let 名 = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                let 名 = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if 名 == "qi_packages" || 名 == "target" || 名.starts_with('.') {
                     continue;
                 }
@@ -911,7 +949,10 @@ impl Cli {
         let mut 败: usize = 0;
         for f in &文件 {
             总 += 1;
-            let 名 = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let 名 = f
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             println!("▶ {}", 名);
 
             let compiler = crate::QiCompiler::with_config(config.clone());
@@ -1669,4 +1710,8 @@ pub enum CliError {
     /// I/O 错误
     #[error("I/O 错误: {0}")]
     Io(#[from] std::io::Error),
+
+    /// 包管理错误（qi get 等）
+    #[error("{0}")]
+    Package(String),
 }
