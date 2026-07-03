@@ -155,6 +155,9 @@ jobs:
           files: artifacts/*
 
       - name: Trigger installer build
+        # 可选自动化:通知 qi-installer 仓重打安装包。RELEASE_TOKEN 未配置时
+        # 不应拖垮整个发布(产物在上一步已发出)。
+        continue-on-error: true
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
