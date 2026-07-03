@@ -383,7 +383,11 @@ impl QiCompiler {
         }
         let exe = std::env::current_exe().map_err(CompilerError::Io)?;
         // 归档文件名平台相关：unix .a / windows msvc .lib
-        let 归档名 = if cfg!(windows) { "qi_runtime.lib" } else { "libqi_runtime.a" };
+        let 归档名 = if cfg!(windows) {
+            "qi_runtime.lib"
+        } else {
+            "libqi_runtime.a"
+        };
         // 安装后/发布包布局：<prefix>/bin/qi → <prefix>/lib/qi/<归档>
         // （installer 装到 /usr/local;release tar/zip 解压即用同构）
         if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
