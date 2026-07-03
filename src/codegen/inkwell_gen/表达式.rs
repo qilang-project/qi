@@ -325,6 +325,9 @@ impl<'ctx> 后端<'ctx> {
                 }
             }
 
+            // 匹配（match）：语句语义的 if-else 链降级（见 匹配.rs），不产生值
+            AstNode::匹配表达式(m) => self.生成匹配(m),
+
             _ => Ok(None),
         }
     }

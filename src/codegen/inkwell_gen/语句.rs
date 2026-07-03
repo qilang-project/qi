@@ -207,7 +207,11 @@ impl<'ctx> 后端<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 self.builder.position_at_end(body_bb);
-                self.生成块(&w.body, func)?;
+                // 继续 → 重测条件；跳出 → 循环后
+                self.循环栈.push((cond_bb, end_bb));
+                let r = self.生成块(&w.body, func);
+                self.循环栈.pop();
+                r?;
                 self.跳转若未终结(cond_bb)?;
 
                 self.builder.position_at_end(end_bb);
@@ -215,6 +219,36 @@ impl<'ctx> 后端<'ctx> {
             }
 
             AstNode::对于语句(f) => self.生成对于(f, func),
+
+            AstNode::跳出语句(_) => {
+                let (_, 出口) = self
+                    .循环栈
+                    .last()
+                    .copied()
+                    .ok_or_else(|| "跳出 只能出现在 当 / 对于 循环体内".to_string())?;
+                // RC 局部槽在函数出口统一释放（entry 块 alloca + null 初始化），
+                // 穿作用域跳转无需额外插释放。
+                self.builder
+                    .build_unconditional_branch(出口)
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+
+            AstNode::继续语句(_) => {
+                let (继续目标, _) = self
+                    .循环栈
+                    .last()
+                    .copied()
+                    .ok_or_else(|| "继续 只能出现在 当 / 对于 循环体内".to_string())?;
+                self.builder
+                    .build_unconditional_branch(继续目标)
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+
+            AstNode::选择表达式(s) => self.生成选择(s, func),
+
+            AstNode::匹配表达式(m) => self.生成匹配(m).map(|_| ()),
 
             AstNode::块语句(bs) => self.生成块(&bs.statements, func),
 
@@ -270,6 +304,7 @@ impl<'ctx> 后端<'ctx> {
 
         let cond_bb = self.ctx.append_basic_block(func, "for.cond");
         let body_bb = self.ctx.append_basic_block(func, "for.body");
+        let step_bb = self.ctx.append_basic_block(func, "for.step");
         let end_bb = self.ctx.append_basic_block(func, "for.end");
 
         self.builder
@@ -290,24 +325,30 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(body_bb);
-        self.生成块(&f.body, func)?;
-        if !self.当前块已终结() {
-            let cur2 = self
-                .builder
-                .build_load(i64t, ivar, "i")
-                .map_err(|e| e.to_string())?
-                .into_int_value();
-            let next = self
-                .builder
-                .build_int_add(cur2, i64t.const_int(1, false), "inc")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_store(ivar, next)
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_unconditional_branch(cond_bb)
-                .map_err(|e| e.to_string())?;
-        }
+        // 继续 → step（先自增再重测，不跳过步进）；跳出 → 循环后
+        self.循环栈.push((step_bb, end_bb));
+        let r = self.生成块(&f.body, func);
+        self.循环栈.pop();
+        r?;
+        self.跳转若未终结(step_bb)?;
+
+        // step：自增 + 回测（体内全路径 return/跳出 时不可达，仍合法）
+        self.builder.position_at_end(step_bb);
+        let cur2 = self
+            .builder
+            .build_load(i64t, ivar, "i")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let next = self
+            .builder
+            .build_int_add(cur2, i64t.const_int(1, false), "inc")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(ivar, next)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
         Ok(())
@@ -356,6 +397,7 @@ impl<'ctx> 后端<'ctx> {
 
         let cond_bb = self.ctx.append_basic_block(func, "each.cond");
         let body_bb = self.ctx.append_basic_block(func, "each.body");
+        let step_bb = self.ctx.append_basic_block(func, "each.step");
         let end_bb = self.ctx.append_basic_block(func, "each.end");
 
         self.builder
@@ -396,24 +438,29 @@ impl<'ctx> 后端<'ctx> {
             .build_store(evar, ev)
             .map_err(|e| e.to_string())?;
 
-        self.生成块(&f.body, func)?;
-        if !self.当前块已终结() {
-            let cur2 = self
-                .builder
-                .build_load(i64t, ivar, "each.i2")
-                .map_err(|e| e.to_string())?
-                .into_int_value();
-            let next = self
-                .builder
-                .build_int_add(cur2, i64t.const_int(1, false), "each.inc")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_store(ivar, next)
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_unconditional_branch(cond_bb)
-                .map_err(|e| e.to_string())?;
-        }
+        // 继续 → step（先步进再重测）；跳出 → 循环后
+        self.循环栈.push((step_bb, end_bb));
+        let r = self.生成块(&f.body, func);
+        self.循环栈.pop();
+        r?;
+        self.跳转若未终结(step_bb)?;
+
+        self.builder.position_at_end(step_bb);
+        let cur2 = self
+            .builder
+            .build_load(i64t, ivar, "each.i2")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let next = self
+            .builder
+            .build_int_add(cur2, i64t.const_int(1, false), "each.inc")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(ivar, next)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
         Ok(())
@@ -437,7 +484,10 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 生成条件表达式并归一到 i1。
-    fn 生成条件(&mut self, node: &AstNode) -> Result<inkwell::values::IntValue<'ctx>, String> {
+    pub(super) fn 生成条件(
+        &mut self,
+        node: &AstNode,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
         let (v, _t) = self
             .生成表达式(node)?
             .ok_or_else(|| "条件表达式无值".to_string())?;
@@ -544,7 +594,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 若当前块未终结，则无条件跳到目标块。
-    fn 跳转若未终结(
+    pub(super) fn 跳转若未终结(
         &self,
         target: inkwell::basic_block::BasicBlock<'ctx>,
     ) -> Result<(), String> {

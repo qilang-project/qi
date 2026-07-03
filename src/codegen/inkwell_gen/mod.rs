@@ -25,6 +25,8 @@
 
 #[path = "全局.rs"]
 mod 全局;
+#[path = "匹配.rs"]
+mod 匹配;
 #[path = "声明.rs"]
 mod 声明;
 #[path = "导入.rs"]
@@ -134,6 +136,13 @@ struct 后端<'ctx> {
     /// `返回` 语句在 ret 前按当前深度补 qi_exc_pop × N，防 longjmp 到已失效帧。
     /// 每个函数体/方法体/闭包体/入口独立清零（帧栈按函数平衡）。
     try深度: u32,
+    /// 循环栈：(继续目标块, 跳出目标块)。当/对于 进循环体前压栈、出体后弹栈；
+    /// `跳出;`/`继续;` 向栈顶目标生成 br。函数体/方法体/闭包体各自独立生成且
+    /// 压弹严格配对，跨函数不会串（闭包体在所有函数之后统一合成，彼时栈已空）。
+    循环栈: Vec<(
+        inkwell::basic_block::BasicBlock<'ctx>,
+        inkwell::basic_block::BasicBlock<'ctx>,
+    )>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -162,6 +171,7 @@ impl<'ctx> 后端<'ctx> {
                 .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
                 .unwrap_or(true),
             try深度: 0,
+            循环栈: Vec::new(),
         }
     }
 
