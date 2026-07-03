@@ -90,19 +90,46 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      # 编译产物要链接的运行时归档(无 LLVM,独立仓)——没有它用户装了编译器也编不了程序
+      - name: Build qi-runtime
+        run: |
+          git clone --depth 1 https://github.com/qilang-project/qi-runtime.git qi-runtime
+          cd qi-runtime && cargo build --release
+
+      # 布局 bin/ + lib/qi/ —— 与 installer 安装布局同构,解压即用
+      # (find_host_runtime_library 按 <prefix>/lib/qi/<归档> 查找)
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp target/${{ matrix.target }}/release/${{ matrix.artifact }} qi
-          tar czf ${{ matrix.archive }} qi
-          rm qi
+          mkdir -p pkg/bin pkg/lib/qi
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact }} pkg/bin/qi
+          cp qi-runtime/target/release/libqi_runtime.a pkg/lib/qi/
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # 捆绑 homebrew 动态库(z3/zstd 等 LLVM 连带依赖)+ rpath 化,
+            # 无 homebrew 的 mac 也能跑(与 qi-installer 同法)
+            otool -L pkg/bin/qi | awk '/\/opt\/homebrew\//{print $1}' | while read -r dep; do
+              base=$(basename "$dep")
+              cp -f "$dep" "pkg/lib/qi/$base"
+              install_name_tool -change "$dep" "@rpath/$base" pkg/bin/qi
+            done
+            install_name_tool -add_rpath /usr/local/lib/qi pkg/bin/qi 2>/dev/null || true
+            install_name_tool -add_rpath @executable_path/../lib/qi pkg/bin/qi 2>/dev/null || true
+            codesign --force -s - pkg/bin/qi 2>/dev/null || true
+            if otool -L pkg/bin/qi | grep -q "/opt/homebrew/"; then
+              echo "仍有 homebrew 动态依赖未处理"; otool -L pkg/bin/qi; exit 1
+            fi
+          fi
+          tar czf ${{ matrix.archive }} -C pkg bin lib
+          rm -rf pkg
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          Copy-Item target\${{ matrix.target }}\release\${{ matrix.artifact }} qi.exe
-          Compress-Archive -Path qi.exe -DestinationPath ${{ matrix.archive }}
-          Remove-Item qi.exe
+          New-Item -ItemType Directory -Force -Path pkg\bin, pkg\lib\qi | Out-Null
+          Copy-Item target\${{ matrix.target }}\release\${{ matrix.artifact }} pkg\bin\qi.exe
+          Copy-Item qi-runtime\target\release\qi_runtime.lib pkg\lib\qi\
+          Compress-Archive -Path pkg\bin, pkg\lib -DestinationPath ${{ matrix.archive }}
+          Remove-Item -Recurse -Force pkg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
