@@ -42,6 +42,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
+          sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
           # qi 生成的是不透明指针(ptr) IR；装 clang-17 专供编译 .ll（独立工具，与构建 qi 用的 LLVM 21 无关），
           # 把 `clang` 指向它。
@@ -61,6 +62,13 @@ jobs:
         # The binary's test target has a pre-existing clap version mismatch;
         # library tests cover the actual compiler / parser / codegen modules.
         run: cargo test --release --lib --verbose
+
+      - name: Build qi-runtime (examples link against it)
+        # 示例链接无 LLVM 的 qi-runtime 归档(独立仓);find_host_runtime_library
+        # 会在 <checkout根>/qi-runtime/target/{debug,release}/ 找到它
+        run: |
+          git clone --depth 1 https://github.com/qilang-project/qi-runtime.git qi-runtime
+          cd qi-runtime && cargo build --release
 
       - name: Smoke — stable examples
         # Curated stable examples; no LLM / network / GUI requirements.
@@ -85,13 +93,14 @@ jobs:
             target
           key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # GitHub 的 windows runner 预装的 LLVM 版本不定（可能更新到 22.x）；inkwell 的 llvm21-1 需要 21.x，
-      # 用 choco 显式钉住 21.1.8（choco 上 21.x 最新；--allow-downgrade --force 兼容预装版更高的情况，与 release.yml 一致）。
+      # 官方 clang+llvm msvc 包(含 llvm-config.exe 与静态库)——choco 的官方安装器
+      # 缺 llvm-config/静态库,llvm-sys 探测必败(此前 15.x 同因烂掉)。
       - name: Install LLVM 21 (Windows)
         shell: pwsh
         run: |
-          choco install -y llvm --version=21.1.8 --allow-downgrade --force
-          echo "LLVM_SYS_211_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
+          curl.exe -L -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+          7z x llvm.tar.xz -so | 7z x -si -ttar -oC:\LLVM21
+          echo "LLVM_SYS_211_PREFIX=C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build (release)
         run: cargo build --release --verbose
@@ -115,6 +124,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
+          sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
       - run: cargo clippy --lib  # 报告不阻塞：既有 ~600 lint 债务(多为 FFI 裸指针等故意模式)，待逐步清理后再收紧回 -D warnings
 

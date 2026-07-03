@@ -64,6 +64,7 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
+          sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
@@ -76,11 +77,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # GitHub 的 windows runner 预装的 LLVM 版本不定（可能更新到 22.x），
-          # inkwell 的 llvm21-1 特性需要 LLVM 21.x，choco 显式钉住 21.1.8（choco 上 21.x 最新），
-          # --allow-downgrade --force 兼容预装版更高的情况。
-          choco install -y llvm --version=21.1.8 --allow-downgrade --force
-          echo "LLVM_SYS_211_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # 官方 clang+llvm msvc 包(含 llvm-config.exe 与静态库)——choco 的官方安装器
+          # 缺 llvm-config/静态库,llvm-sys 探测必败(此前 15.x 同因烂掉)。
+          curl.exe -L -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+          7z x llvm.tar.xz -so | 7z x -si -ttar -oC:\LLVM21
+          echo "LLVM_SYS_211_PREFIX=C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
