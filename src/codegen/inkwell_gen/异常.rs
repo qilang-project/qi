@@ -89,7 +89,7 @@ impl<'ctx> 后端<'ctx> {
                 .build_call(f, &[v.into()], "f2s")
                 .map_err(|e| e.to_string())?
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .ok_or_else(|| "float_to_string 未返回".to_string())?
                 .into_pointer_value()
         } else {
@@ -114,7 +114,7 @@ impl<'ctx> 后端<'ctx> {
                 .build_call(f, &[iv.into()], "i2s")
                 .map_err(|e| e.to_string())?
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .ok_or_else(|| "int_to_string 未返回".to_string())?
                 .into_pointer_value()
         };
@@ -162,14 +162,14 @@ impl<'ctx> 后端<'ctx> {
             .build_call(alloc_fn, &[], "exc.buf")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "alloc_frame 未返回".to_string())?;
         let rc = self
             .builder
             .build_call(setjmp_fn, &[buf.into()], "exc.rc")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "setjmp 未返回".to_string())?
             .into_int_value();
         let 正常 = self
@@ -219,7 +219,7 @@ impl<'ctx> 后端<'ctx> {
                     .build_call(msg_fn, &[], "exc.msg")
                     .map_err(|e| e.to_string())?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| "exc_message 未返回".to_string())?;
                 // entry 块 alloca:尝试/捕获 嵌在循环里时不随迭代吃栈。
                 // ARC：错误变量是字符串局部槽，走 entry null 初始化 —— 函数从

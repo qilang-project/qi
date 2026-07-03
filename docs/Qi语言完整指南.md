@@ -198,7 +198,7 @@ qi run 你好世界.qi
 ### 环境要求
 
 - Rust 1.75+
-- LLVM 15.0+（用于代码生成）
+- LLVM 21.x（用于代码生成）
 - Clang（用于链接）
 - macOS / Linux / Windows
 
@@ -2366,7 +2366,7 @@ qi/示例/
 ### 环境要求
 
 - **Rust** 1.75+
-- **LLVM** 15.0+
+- **LLVM** 21.x
 - **Clang**（链接器）
 - **平台**: macOS / Linux / Windows
 

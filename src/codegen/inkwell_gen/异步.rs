@@ -140,7 +140,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(f, &arg, "ready")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "ready 未返回".to_string())?;
         Ok(fut)
     }
@@ -185,7 +185,7 @@ impl<'ctx> 后端<'ctx> {
                     .build_call(f, &[v.into(), len.into()], "failed")
                     .map_err(|e| e.to_string())?
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .ok_or_else(|| "failed 未返回".to_string())?;
                 // ARC：qi_future_failed 已拷贝错误消息 —— OWNED 字符串源释放
                 self.弧消费后释放(v, vt, &arguments[0]);
@@ -235,7 +235,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(f, &[fut.into()], "await")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "await 未返回".to_string())?;
         // await_bool 回来是 i32，截回 i1
         if ret == Qi类型::布尔 {
@@ -274,7 +274,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(f, &[p.into()], "slen")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "string_length 未返回".to_string())?
             .into_int_value();
         Ok(len)

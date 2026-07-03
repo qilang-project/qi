@@ -643,7 +643,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(dec, &[p.into()], "old")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or("qi_obj_dec 未返回")?
             .into_int_value();
         let last = self
@@ -739,7 +739,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(dec, &[p.into()], "old")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or("qi_obj_dec 未返回")?
             .into_int_value();
         let last = self

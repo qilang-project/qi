@@ -22,8 +22,8 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 # LALRPOP parser generator
 lalrpop-util = { version = "0.22.2", features = ["lexer"] }
 
-# LLVM bindings for code generation —— inkwell 是唯一后端，强制依赖（需 LLVM 15 / LLVM_SYS_150_PREFIX）
-inkwell = { version = "0.6.0", features = ["llvm15-0"] }
+# LLVM bindings for code generation —— inkwell 是唯一后端，强制依赖（需 LLVM 21 / LLVM_SYS_211_PREFIX）
+inkwell = { version = "0.8", features = ["llvm21-1"] }
 
 
 # Unicode support for Chinese characters

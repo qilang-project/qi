@@ -679,7 +679,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(f, args, "call")
             .map_err(|e| e.to_string())?;
         cs.try_as_basic_value()
-            .left()
+            .basic()
             .map(|v| v.into_pointer_value())
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
@@ -699,7 +699,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(f, args, "call")
             .map_err(|e| e.to_string())?;
         cs.try_as_basic_value()
-            .left()
+            .basic()
             .map(|v| v.into_int_value())
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
@@ -843,7 +843,7 @@ impl<'ctx> 后端<'ctx> {
         for (v, vt) in 弧待释放 {
             self.弧release任意(v, vt);
         }
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => Ok(Some((v, ret))),
             None => Ok(None),
         }
@@ -893,7 +893,7 @@ impl<'ctx> 后端<'ctx> {
         }
         let v = cs
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| format!("{} 未返回值", rtname))?;
         Ok(Some((v, ret)))
     }

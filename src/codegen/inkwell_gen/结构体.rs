@@ -102,7 +102,7 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         let base = cs
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "qi_runtime_alloc 未返回指针".to_string())?
             .into_pointer_value();
 

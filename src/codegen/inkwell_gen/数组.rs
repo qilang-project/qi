@@ -43,7 +43,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(alloc, &[size.into()], "arrmem")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "alloc 未返回".to_string())?
             .into_pointer_value();
 

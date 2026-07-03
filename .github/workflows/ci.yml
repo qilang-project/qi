@@ -33,26 +33,26 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # inkwell needs LLVM 15. macOS ships clang; on Linux install via apt.
-      - name: Install LLVM 15 (Linux)
+      # inkwell needs LLVM 21. macOS ships clang; on Linux install via apt.
+      - name: Install LLVM 21 (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 15
-          echo "LLVM_SYS_150_PREFIX=/usr/lib/llvm-15" >> $GITHUB_ENV
-          # qi 生成的是不透明指针(ptr) IR；clang-15 需 -opaque-pointers，太旧。
-          # 装 clang-17（默认不透明指针）专供编译 .ll，把 `clang` 指向它；LLVM 15 仍用于构建 qi。
+          sudo ./llvm.sh 21
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          # qi 生成的是不透明指针(ptr) IR；装 clang-17 专供编译 .ll（独立工具，与构建 qi 用的 LLVM 21 无关），
+          # 把 `clang` 指向它。
           sudo ./llvm.sh 17
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 200
 
-      - name: Install LLVM 15 (macOS)
+      - name: Install LLVM 21 (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm@15
-          echo "LLVM_SYS_150_PREFIX=$(brew --prefix llvm@15)" >> $GITHUB_ENV
+          brew install llvm@21
+          echo "LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)" >> $GITHUB_ENV
 
       - name: Build (release)
         run: cargo build --release --verbose
@@ -85,13 +85,13 @@ jobs:
             target
           key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # GitHub 的 windows runner 预装了更新的 LLVM；inkwell 的 llvm15-0 需要 15，
-      # 用 choco 强制降级装回 15.0.7（与 release.yml 一致）。
-      - name: Install LLVM 15 (Windows)
+      # GitHub 的 windows runner 预装的 LLVM 版本不定（可能更新到 22.x）；inkwell 的 llvm21-1 需要 21.x，
+      # 用 choco 显式钉住 21.1.8（choco 上 21.x 最新；--allow-downgrade --force 兼容预装版更高的情况，与 release.yml 一致）。
+      - name: Install LLVM 21 (Windows)
         shell: pwsh
         run: |
-          choco install -y llvm --version=15.0.7 --allow-downgrade --force
-          echo "LLVM_SYS_150_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
+          choco install -y llvm --version=21.1.8 --allow-downgrade --force
+          echo "LLVM_SYS_211_PREFIX=C:\Program Files\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build (release)
         run: cargo build --release --verbose
@@ -108,14 +108,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install LLVM 15
+      - name: Install LLVM 21
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 15
-          echo "LLVM_SYS_150_PREFIX=/usr/lib/llvm-15" >> $GITHUB_ENV
+          sudo ./llvm.sh 21
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
       - run: cargo clippy --lib  # 报告不阻塞：既有 ~600 lint 债务(多为 FFI 裸指针等故意模式)，待逐步清理后再收紧回 -D warnings
 
   fmt:

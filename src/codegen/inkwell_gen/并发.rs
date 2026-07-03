@@ -119,7 +119,7 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(func, &args, "syncbi")
             .map_err(|e| e.to_string())?;
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => {
                 if 返回句柄 {
                     // ptr 句柄 → i64 暴露
@@ -169,7 +169,7 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         let ptr = cs
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "create_channel 未返回".to_string())?;
         // 句柄按整数（ptr 在 64 位与 i64 等价）暴露给 Qi
         Ok((ptr, Qi类型::整数))
@@ -199,7 +199,7 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         let r = cs
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "channel_send 未返回".to_string())?;
         // i32 状态 → 扩到 i64
         let r64 = self
@@ -335,7 +335,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(getfn, &[obj.into()], "go_getfn")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "get_fn 未返回".to_string())?
             .into_pointer_value();
         // 调 fn(env=fat)（nullary 闭包：仅 env 参，void 返回）

@@ -186,7 +186,7 @@ impl<'ctx> 后端<'ctx> {
         for v in 弧待释放 {
             self.弧release(v);
         }
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => Ok(Some((v, 返回))),
             None => Ok(None),
         }

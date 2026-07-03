@@ -11,7 +11,7 @@
 ## 特性
 
 - ✅ **100% 中文关键字支持** - 完全使用中文编程
-- ✅ **LLVM 代码生成** - 基于 LLVM 15 编译为原生可执行文件
+- ✅ **LLVM 代码生成** - 基于 LLVM 21 编译为原生可执行文件
 - ✅ **M:N 协程调度** - 类似 Go 的轻量级并发模型
 - ✅ **通道通信** - 支持带缓冲和无缓冲通道
 - ✅ **Select 多路复用** - 协程间通信的选择语句
@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/qilang-project/qi/main/scripts/inst
 curl -fsSL .../install.sh | INSTALL_DIR=$HOME/bin bash
 ```
 
-**从源码构建**（需要 LLVM 15）：
+**从源码构建**（需要 LLVM 21）：
 
 ```bash
 git clone https://github.com/qilang-project/qi.git
@@ -59,8 +59,8 @@ cargo build --release
 # 二进制在 ./target/release/qi
 ```
 
-Linux 装 LLVM 15：`wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 15`
-macOS：`brew install llvm@15 && export LLVM_SYS_150_PREFIX=$(brew --prefix llvm@15)`
+Linux 装 LLVM 21：`wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 21`
+macOS：`brew install llvm@21 && export LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)`
 
 ### 第一个程序
 
@@ -315,7 +315,7 @@ cargo run -- run 示例/标准库/加密/加密.qi
 ### 构建要求
 
 - **Rust** 1.75+
-- **LLVM** 15.0+
+- **LLVM** 21.x
 - **C 编译器** (GCC 或 Clang)
 
 ### 开发环境设置

@@ -259,7 +259,7 @@ impl<'ctx> 后端<'ctx> {
         for (v, vt) in 弧待释放 {
             self.弧release任意(v, vt);
         }
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => Ok(Some(Some((v, sig.返回)))),
             None => Ok(Some(None)),
         }

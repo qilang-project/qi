@@ -268,7 +268,7 @@ impl<'ctx> 后端<'ctx> {
                         .build_call(getp, &[env.into(), idxv.into()], "cap")
                         .map_err(|e| e.to_string())?
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .ok_or_else(|| "get_ptr 未返回".to_string())?;
                     self.弧release任意(v, *t);
                 }
@@ -348,7 +348,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(getfn, &[obj.into()], "getfn")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
-            .left()
+            .basic()
             .ok_or_else(|| "get_fn 未返回".to_string())?
             .into_pointer_value();
 
@@ -413,7 +413,7 @@ impl<'ctx> 后端<'ctx> {
         for (v, vt) in 弧待释放 {
             self.弧release任意(v, vt);
         }
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => Ok(Some((v, sig.返回))),
             None => Ok(None),
         }
@@ -476,7 +476,7 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(real, &fwd, "fwd")
             .map_err(|e| e.to_string())?;
-        match cs.try_as_basic_value().left() {
+        match cs.try_as_basic_value().basic() {
             Some(v) => {
                 self.builder
                     .build_return(Some(&v))
@@ -623,7 +623,7 @@ impl<'ctx> 后端<'ctx> {
             .build_call(create, &[fn_ptr.into(), n.into()], "clo")
             .map_err(|e| e.to_string())?;
         cs.try_as_basic_value()
-            .left()
+            .basic()
             .map(|v| v.into_pointer_value())
             .ok_or_else(|| "closure_create 未返回".to_string())
     }
@@ -688,14 +688,14 @@ impl<'ctx> 后端<'ctx> {
                 .builder
                 .build_call(get, &[env.into(), idxv.into()], "getp")
                 .map_err(|e| e.to_string())?;
-            Ok(cs.try_as_basic_value().left().unwrap())
+            Ok(cs.try_as_basic_value().basic().unwrap())
         } else {
             let get = self.module.get_function("qi_closure_get_int").unwrap();
             let cs = self
                 .builder
                 .build_call(get, &[env.into(), idxv.into()], "geti")
                 .map_err(|e| e.to_string())?;
-            let mut v = cs.try_as_basic_value().left().unwrap().into_int_value();
+            let mut v = cs.try_as_basic_value().basic().unwrap().into_int_value();
             // 布尔捕获：截回 i1
             if t == Qi类型::布尔 {
                 v = self
