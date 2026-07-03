@@ -101,6 +101,10 @@ jobs:
           curl.exe -L -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
           7z x llvm.tar.xz -so | 7z x -si -ttar -oC:\LLVM21
           echo "LLVM_SYS_211_PREFIX=C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # 官方包的 llvm-config 声明链 libxml2s.lib(WindowsManifest 用)但不随包发货:
+          # 用 runner 自带 vcpkg 出一个最小静态 libxml2(core 关掉 iconv/lzma/zlib 依赖),改名放进 LLVM lib 目录
+          vcpkg install "libxml2[core]:x64-windows-static"
+          Copy-Item "C:\vcpkg\installed\x64-windows-static\lib\libxml2.lib" "C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc\lib\libxml2s.lib"
 
       - name: Build (release)
         run: cargo build --release --verbose
