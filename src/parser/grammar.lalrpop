@@ -171,6 +171,15 @@ Statement: AstNode = {
         expression: Box::new(e),
         span: Default::default(),
     }),
+    // 匹配 statement (like 如果/当: bare block is a statement).
+    // Trailing ; optional -- keeps the old `匹配 x {...};` form compatible.
+    // NOTE: MatchExpression was moved out of Atom (expression position):
+    // keeping it there made `匹配 x {...}` at statement start genuinely
+    // ambiguous (reduce-reduce vs Expr ";"). Codegen never produced a value
+    // for match-as-expression, so no working program is affected.
+    <m:MatchExpression> => m,
+    <m:MatchExpression> ";" => m,
+    <m:MatchExpression> "；" => m,
     // Select statement must be separate to avoid conflicts with expressions
     "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" => {
         // 超时分支以 SelectCase 形式混在 cases 里（情况 超时(ms): …），
@@ -1712,7 +1721,6 @@ Atom: AstNode = {
     CharLiteral,
     ArrayLiteral,
     ClosureExpression,
-    MatchExpression,
     AsyncBlockExpression,
     // Parenthesized expressions
     "(" <Expr> ")",

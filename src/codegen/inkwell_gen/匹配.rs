@@ -35,6 +35,13 @@ impl<'ctx> 后端<'ctx> {
 
         let end_bb = self.ctx.append_basic_block(func, "match.end");
 
+        // end 块可达性追踪：
+        //   - 落空可达：模式链一路不中落到 end（存在未守卫的兜底分支即堵死）
+        //   - 有分支汇入：某分支体没有终结（返回/抛出/跳出）自然汇入 end
+        // 两者皆无 ⇒ end 不可达 ⇒ 发 unreachable，函数尾不再强制补一条返回。
+        let mut 落空可达 = true;
+        let mut 有分支汇入 = false;
+
         for (i, arm) in m.arms.iter().enumerate() {
             let body_bb = self
                 .ctx
@@ -102,8 +109,16 @@ impl<'ctx> 后端<'ctx> {
                 }
             }
             r?;
+            if !self.当前块已终结() {
+                有分支汇入 = true;
+            }
             self.跳转若未终结(end_bb)?;
 
+            if 兜底 && arm.guard.is_none() {
+                // 未守卫兜底：模式链到此必中，落空路径被堵死。
+                // （其后的分支已不可达，仍照常生成，保守计入 有分支汇入。）
+                落空可达 = false;
+            }
             self.builder.position_at_end(next_bb);
         }
 
@@ -112,6 +127,15 @@ impl<'ctx> 后端<'ctx> {
             .build_unconditional_branch(end_bb)
             .map_err(|e| e.to_string())?;
         self.builder.position_at_end(end_bb);
+
+        if !落空可达 && !有分支汇入 {
+            // 全分支终结 + 无落空路径：end 不可达。发 unreachable，让上层的
+            // 当前块已终结() 生效 —— 函数尾不再要求多余的 `返回 不可达`。
+            self.builder
+                .build_unreachable()
+                .map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
 
         // ARC：目标值若是结构上新建的 OWNED RC 临时（如函数调用返回的串）→ 释放。
         // 变量 / 字面量（BORROWED / immortal）不动。
