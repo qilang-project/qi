@@ -3,9 +3,9 @@
 //! 每个表达式先经类型检查器定型，再据类型选对应 LLVM 指令。
 //! 返回 (值, Qi类型)，让调用点无需二次猜测。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::推断表达式类型;
-use super::后端;
 use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue, UnaryOperator};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{FloatPredicate, IntPredicate};
@@ -35,7 +35,12 @@ impl<'ctx> 后端<'ctx> {
         // data：字节 + NUL 尾（[len+1 x i8]）
         let data = self.ctx.const_string(bytes, true);
         let struct_ty = self.ctx.struct_type(
-            &[i64t.into(), i64t.into(), i64t.into(), data.get_type().into()],
+            &[
+                i64t.into(),
+                i64t.into(),
+                i64t.into(),
+                data.get_type().into(),
+            ],
             false,
         );
         let init = self.ctx.const_struct(
@@ -59,7 +64,11 @@ impl<'ctx> 后端<'ctx> {
         let ptr = unsafe {
             g.as_pointer_value().const_gep(
                 struct_ty,
-                &[i32t.const_zero(), i32t.const_int(3, false), i32t.const_zero()],
+                &[
+                    i32t.const_zero(),
+                    i32t.const_int(3, false),
+                    i32t.const_zero(),
+                ],
             )
         };
         self.字符串字面量缓存.insert(s.to_string(), ptr);
@@ -140,7 +149,10 @@ impl<'ctx> 后端<'ctx> {
             AstNode::字符串连接表达式(sc) => {
                 let (l, l新) = self.生成拼接操作数(&sc.left)?;
                 let (r, r新) = self.生成拼接操作数(&sc.right)?;
-                Ok(Some((self.拼接字符串带释放(l, l新, r, r新)?, Qi类型::字符串)))
+                Ok(Some((
+                    self.拼接字符串带释放(l, l新, r, r新)?,
+                    Qi类型::字符串,
+                )))
             }
 
             AstNode::函数调用表达式(call) => self.生成函数调用(call),
@@ -156,8 +168,7 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::字段访问表达式(fa) => {
                 // 数组 .长度 属性
-                if fa.field == "长度"
-                    && 推断表达式类型(&fa.object, &self.符号).数组元素().is_some()
+                if fa.field == "长度" && 推断表达式类型(&fa.object, &self.符号).数组元素().is_some()
                 {
                     let (av, _) = self
                         .生成表达式(&fa.object)?
@@ -211,7 +222,8 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::方法调用表达式(mc) => {
                 // 0) 未来::就绪 / 未来::失败 静态方法
-                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来") {
+                if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")
+                {
                     if let Some(v) =
                         self.生成未来静态方法(&mc.method_name, &mc.arguments)?
                     {
@@ -219,7 +231,9 @@ impl<'ctx> 后端<'ctx> {
                     }
                 }
                 // 1) 结构体方法（接收者是结构体，含链式）
-                if let Some(v) = self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)? {
+                if let Some(v) =
+                    self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)?
+                {
                     return Ok(v);
                 }
                 // 1.5) IO.打印行/打印：接收者是模块名（非变量）时走通用打印（支持多参 + 各类型重载），
@@ -293,9 +307,7 @@ impl<'ctx> 后端<'ctx> {
                         }
                         // ARC：RC 槽（字符串/结构体/数组）覆写 —— 先 retain 新值
                         // （BORROWED 时；自赋值安全的关键顺序），再释放旧值，最后 store。
-                        if self.弧开()
-                            && super::所有权::是RC类型(target_t)
-                            && v.is_pointer_value()
+                        if self.弧开() && super::所有权::是RC类型(target_t) && v.is_pointer_value()
                         {
                             self.弧存入槽2(v, &a.value, target_t);
                             self.弧释放槽旧值2(ptr, target_t)?;
@@ -327,10 +339,9 @@ impl<'ctx> 后端<'ctx> {
                 self.ctx.i64_type().const_int(*n as u64, true).into(),
                 Qi类型::整数,
             ),
-            LiteralValue::浮点数(f) => (
-                self.ctx.f64_type().const_float(*f).into(),
-                Qi类型::浮点数,
-            ),
+            LiteralValue::浮点数(f) => {
+                (self.ctx.f64_type().const_float(*f).into(), Qi类型::浮点数)
+            }
             LiteralValue::布尔(b) => (
                 self.ctx.bool_type().const_int(*b as u64, false).into(),
                 Qi类型::布尔,
@@ -387,12 +398,12 @@ impl<'ctx> 后端<'ctx> {
 
         // 字符串比较：== / != / < / <= / > / >= → qi_runtime_string_compare(返回 <0/0/>0)
         if (lt == Qi类型::字符串 || rt == Qi类型::字符串)
-            && matches!(b.operator, 等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于)
+            && matches!(
+                b.operator,
+                等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于
+            )
         {
-            let cmp = self.调用返回i32(
-                "qi_runtime_string_compare",
-                &[lv.into(), rv.into()],
-            )?;
+            let cmp = self.调用返回i32("qi_runtime_string_compare", &[lv.into(), rv.into()])?;
             // ARC：比较已读完字节，OWNED 操作数（拼接/FFI 返回串）释放
             self.弧消费后释放(lv, lt, &b.left);
             self.弧消费后释放(rv, rt, &b.right);
@@ -419,11 +430,31 @@ impl<'ctx> 后端<'ctx> {
             let lf = self.转浮点(lv, lt)?;
             let rf = self.转浮点(rv, rt)?;
             let v: BasicValueEnum = match b.operator {
-                加 => self.builder.build_float_add(lf, rf, "fadd").map_err(|e| e.to_string())?.into(),
-                减 => self.builder.build_float_sub(lf, rf, "fsub").map_err(|e| e.to_string())?.into(),
-                乘 => self.builder.build_float_mul(lf, rf, "fmul").map_err(|e| e.to_string())?.into(),
-                除 => self.builder.build_float_div(lf, rf, "fdiv").map_err(|e| e.to_string())?.into(),
-                取余 => self.builder.build_float_rem(lf, rf, "frem").map_err(|e| e.to_string())?.into(),
+                加 => self
+                    .builder
+                    .build_float_add(lf, rf, "fadd")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                减 => self
+                    .builder
+                    .build_float_sub(lf, rf, "fsub")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                乘 => self
+                    .builder
+                    .build_float_mul(lf, rf, "fmul")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                除 => self
+                    .builder
+                    .build_float_div(lf, rf, "fdiv")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                取余 => self
+                    .builder
+                    .build_float_rem(lf, rf, "frem")
+                    .map_err(|e| e.to_string())?
+                    .into(),
                 _ => {
                     let pred = match b.operator {
                         等于 => FloatPredicate::OEQ,
@@ -446,11 +477,31 @@ impl<'ctx> 后端<'ctx> {
             let li = lv.into_int_value();
             let ri = rv.into_int_value();
             let v: BasicValueEnum = match b.operator {
-                加 => self.builder.build_int_add(li, ri, "iadd").map_err(|e| e.to_string())?.into(),
-                减 => self.builder.build_int_sub(li, ri, "isub").map_err(|e| e.to_string())?.into(),
-                乘 => self.builder.build_int_mul(li, ri, "imul").map_err(|e| e.to_string())?.into(),
-                除 => self.builder.build_int_signed_div(li, ri, "idiv").map_err(|e| e.to_string())?.into(),
-                取余 => self.builder.build_int_signed_rem(li, ri, "irem").map_err(|e| e.to_string())?.into(),
+                加 => self
+                    .builder
+                    .build_int_add(li, ri, "iadd")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                减 => self
+                    .builder
+                    .build_int_sub(li, ri, "isub")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                乘 => self
+                    .builder
+                    .build_int_mul(li, ri, "imul")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                除 => self
+                    .builder
+                    .build_int_signed_div(li, ri, "idiv")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                取余 => self
+                    .builder
+                    .build_int_signed_rem(li, ri, "irem")
+                    .map_err(|e| e.to_string())?
+                    .into(),
                 _ => {
                     let pred = match b.operator {
                         等于 => IntPredicate::EQ,
@@ -497,7 +548,11 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let 目标ptr = matches!(
             期望,
-            Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::函数值(_) | Qi类型::数组(_) | Qi类型::未来(_)
+            Qi类型::字符串
+                | Qi类型::结构体(_)
+                | Qi类型::函数值(_)
+                | Qi类型::数组(_)
+                | Qi类型::未来(_)
         );
         if 期望.是浮点() && !实际.是浮点() && v.is_int_value() {
             return Ok(self.转浮点(v, 实际)?.into());
@@ -570,10 +625,16 @@ impl<'ctx> 后端<'ctx> {
                     iv
                 };
                 // int_to_string 产物永远是新建临时
-                Ok((self.调用返回指针("qi_runtime_int_to_string", &[iv.into()])?, true))
+                Ok((
+                    self.调用返回指针("qi_runtime_int_to_string", &[iv.into()])?,
+                    true,
+                ))
             }
             Qi类型::浮点数 => Ok((
-                self.调用返回指针("qi_runtime_float_to_string", &[v.into_float_value().into()])?,
+                self.调用返回指针(
+                    "qi_runtime_float_to_string",
+                    &[v.into_float_value().into()],
+                )?,
                 true,
             )),
             _ => Ok((self.生成为字符串_旧(node, v, t)?, 结构上新建)),
@@ -602,10 +663,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 生成表达式并保证结果是 i1。
-    fn 生成为i1(
-        &mut self,
-        node: &AstNode,
-    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+    fn 生成为i1(&mut self, node: &AstNode) -> Result<inkwell::values::IntValue<'ctx>, String> {
         let (v, _t) = self
             .生成表达式(node)?
             .ok_or_else(|| "布尔操作数无值".to_string())?;
@@ -615,12 +673,7 @@ impl<'ctx> 后端<'ctx> {
         } else {
             // 非零即真
             self.builder
-                .build_int_compare(
-                    IntPredicate::NE,
-                    iv,
-                    iv.get_type().const_zero(),
-                    "tobool",
-                )
+                .build_int_compare(IntPredicate::NE, iv, iv.get_type().const_zero(), "tobool")
                 .map_err(|e| e.to_string())
         }
     }
@@ -775,9 +828,16 @@ impl<'ctx> 后端<'ctx> {
         // 少传实参时用默认参数值补齐（形参个数由签名决定）；
         // 变参函数：固定形参之外的尾实参打包成数组字面量，与签名末位 数组(T) 对齐，
         // 保证 call 实参个数 == 函数类型形参个数（否则 LLVM 模块校验失败）。
-        let 形参数 = sig.as_ref().map(|s| s.参数.len()).unwrap_or(call.arguments.len());
+        let 形参数 = sig
+            .as_ref()
+            .map(|s| s.参数.len())
+            .unwrap_or(call.arguments.len());
         let 变参 = self.符号.函数变参.contains(&call.callee);
-        let 固定 = if 变参 { 形参数.saturating_sub(1) } else { 形参数 };
+        let 固定 = if 变参 {
+            形参数.saturating_sub(1)
+        } else {
+            形参数
+        };
         let mut 实参: Vec<AstNode> = call.arguments.clone();
         let 尾实参: Vec<AstNode> = if 变参 && 实参.len() > 固定 {
             实参.split_off(固定)
@@ -916,11 +976,20 @@ impl<'ctx> 后端<'ctx> {
                 .生成表达式(a)?
                 .ok_or_else(|| "打印实参无值".to_string())?;
             let (rtname, arg): (&str, BasicMetadataValueEnum) = match t {
-                Qi类型::整数 | Qi类型::未知 => {
-                    (if 换行 { "qi_runtime_println_int" } else { "qi_runtime_print_int" }, v.into())
-                }
+                Qi类型::整数 | Qi类型::未知 => (
+                    if 换行 {
+                        "qi_runtime_println_int"
+                    } else {
+                        "qi_runtime_print_int"
+                    },
+                    v.into(),
+                ),
                 Qi类型::浮点数 => (
-                    if 换行 { "qi_runtime_println_float" } else { "qi_runtime_print_float" },
+                    if 换行 {
+                        "qi_runtime_println_float"
+                    } else {
+                        "qi_runtime_print_float"
+                    },
                     v.into(),
                 ),
                 Qi类型::布尔 => {
@@ -929,11 +998,23 @@ impl<'ctx> 后端<'ctx> {
                         .builder
                         .build_int_z_extend(v.into_int_value(), self.ctx.i32_type(), "b2i")
                         .map_err(|e| e.to_string())?;
-                    (if 换行 { "qi_runtime_println_bool" } else { "qi_runtime_print_bool" }, i32v.into())
+                    (
+                        if 换行 {
+                            "qi_runtime_println_bool"
+                        } else {
+                            "qi_runtime_print_bool"
+                        },
+                        i32v.into(),
+                    )
                 }
-                Qi类型::字符串 => {
-                    (if 换行 { "qi_runtime_println" } else { "qi_runtime_print" }, v.into())
-                }
+                Qi类型::字符串 => (
+                    if 换行 {
+                        "qi_runtime_println"
+                    } else {
+                        "qi_runtime_print"
+                    },
+                    v.into(),
+                ),
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
                 Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
                 Qi类型::数组(_) => return Err("不能直接打印数组".to_string()),

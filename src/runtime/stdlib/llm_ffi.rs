@@ -445,7 +445,9 @@ fn 保存流历史(流: &LLM流) {
             // 工具流：assistant 消息要带 tool_calls，否则后续 continue / tool 结果无法对齐。
             // 续传流历史里已有 user 消息，不再重复 push。
             if !流.是续传 {
-                会话.历史.push(json!({ "role": "user", "content": 流.提示 }));
+                会话
+                    .历史
+                    .push(json!({ "role": "user", "content": 流.提示 }));
             }
             会话.历史.push(流.组装助手消息());
         } else {
@@ -453,8 +455,12 @@ fn 保存流历史(流: &LLM流) {
             if 流.累计.is_empty() {
                 return;
             }
-            会话.历史.push(json!({ "role": "user", "content": 流.提示 }));
-            会话.历史.push(json!({ "role": "assistant", "content": 流.累计 }));
+            会话
+                .历史
+                .push(json!({ "role": "user", "content": 流.提示 }));
+            会话
+                .历史
+                .push(json!({ "role": "assistant", "content": 流.累计 }));
         }
     }
 }
@@ -578,7 +584,10 @@ pub extern "C" fn qi_llm_stream_chat(session_handle: i64, prompt: *const c_char)
         let 流句柄 = *计数器;
 
         let mut 流池 = 获取流池().lock().unwrap();
-        流池.insert(流句柄, LLM流::创建(session_handle, 提示, 响应, false, false));
+        流池.insert(
+            流句柄,
+            LLM流::创建(session_handle, 提示, 响应, false, false),
+        );
 
         流句柄
     }
@@ -635,7 +644,10 @@ pub extern "C" fn qi_llm_stream_continue_with_tools(session_handle: i64) -> i64 
         *计数器
     };
     let mut 流池 = 获取流池().lock().unwrap();
-    流池.insert(流句柄, LLM流::创建(session_handle, String::new(), 响应, true, true));
+    流池.insert(
+        流句柄,
+        LLM流::创建(session_handle, String::new(), 响应, true, true),
+    );
     流句柄
 }
 

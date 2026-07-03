@@ -5,9 +5,9 @@
 //! LLVM 侧用具名 struct 类型 + typed GEP 定位字段，读写用 load/store，
 //! 类型完全由类型检查器提供 —— 不再有旧后端的字节偏移 + i64 猜测。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::结构体信息;
-use super::后端;
 use crate::parser::ast::{AstNode, Program, StructLiteralExpression};
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, PointerValue};
@@ -87,11 +87,19 @@ impl<'ctx> 后端<'ctx> {
         // 堆分配：size = LLVM 结构体大小（用 target-independent 常量占位不可靠，
         // 直接用 store 之前的 GEP 定位；分配大小取字段数*8 的保守上界，够放所有字段，
         // 与旧后端一致，指针可 GC 追踪）。这里用精确布局大小更稳：字段数*8。
-        let 字段数 = self.符号.结构体信息(idx).map(|s| s.字段名.len()).unwrap_or(0);
+        let 字段数 = self
+            .符号
+            .结构体信息(idx)
+            .map(|s| s.字段名.len())
+            .unwrap_or(0);
         let size = self.ctx.i64_type().const_int((字段数 as u64) * 8, false);
         // QI_ARC=1：走 RC 对象分配器（ptr-24 header + refcount=1 + 零初始化，
         // 且绕开 memory_manager 的全局 RwLock）；关闭时保持 qi_runtime_alloc 不变。
-        let alloc名 = if self.弧开() { "qi_obj_alloc" } else { "qi_runtime_alloc" };
+        let alloc名 = if self.弧开() {
+            "qi_obj_alloc"
+        } else {
+            "qi_runtime_alloc"
+        };
         let alloc = self
             .module
             .get_function(alloc名)
@@ -116,8 +124,7 @@ impl<'ctx> 后端<'ctx> {
             if let Some((字段名, 字段类型)) = 信息 {
                 let ptrt = self.ctx.ptr_type(AddressSpace::default());
                 for (fi, ft) in 字段类型.iter().enumerate() {
-                    if *ft == Qi类型::字符串
-                        && !lit.fields.iter().any(|fv| fv.name == 字段名[fi])
+                    if *ft == Qi类型::字符串 && !lit.fields.iter().any(|fv| fv.name == 字段名[fi])
                     {
                         let fptr = self.字段指针(base, st, fi as u32, &字段名[fi])?;
                         self.builder
@@ -147,7 +154,9 @@ impl<'ctx> 后端<'ctx> {
                 self.弧存入槽2(v, &fv.value, ftype);
             }
             let fptr = self.字段指针(base, st, fidx, &fv.name)?;
-            self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(fptr, v)
+                .map_err(|e| e.to_string())?;
         }
 
         Ok((base.into(), Qi类型::结构体(idx)))
@@ -204,7 +213,9 @@ impl<'ctx> 后端<'ctx> {
             self.弧存入槽2(v, value, ftype);
             self.弧释放槽旧值2(fptr, ftype)?;
         }
-        self.builder.build_store(fptr, v).map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(fptr, v)
+            .map_err(|e| e.to_string())?;
         Ok((v, ftype))
     }
 
@@ -236,10 +247,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 整数值 sitofp → double（结构体字段/字面量隐式提升用）。
-    fn 整数转浮点值(
-        &self,
-        v: BasicValueEnum<'ctx>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn 整数转浮点值(&self, v: BasicValueEnum<'ctx>) -> Result<BasicValueEnum<'ctx>, String> {
         Ok(self
             .builder
             .build_signed_int_to_float(v.into_int_value(), self.ctx.f64_type(), "sitofp")

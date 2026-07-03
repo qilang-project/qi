@@ -189,7 +189,12 @@ fn test_future_struct_compilation_pipeline() {
     if std::env::var("QI_RUNTIME_LIB").is_err() {
         let archive = ["debug", "release"]
             .iter()
-            .map(|p| manifest.join("../qi-runtime/target").join(p).join("libqi_runtime.a"))
+            .map(|p| {
+                manifest
+                    .join("../qi-runtime/target")
+                    .join(p)
+                    .join("libqi_runtime.a")
+            })
             .find(|p| p.exists());
         match archive {
             Some(p) => std::env::set_var("QI_RUNTIME_LIB", p),
@@ -213,7 +218,10 @@ fn test_future_struct_compilation_pipeline() {
     );
 
     let ir = fs::read_to_string(&ll_path).expect("QI_EMIT_LL 应落盘 IR");
-    assert!(ir.contains("qi_runtime_alloc"), "结构体应经 qi_runtime_alloc 分配");
+    assert!(
+        ir.contains("qi_runtime_alloc"),
+        "结构体应经 qi_runtime_alloc 分配"
+    );
     // gc_add_root 是老文本后端的 GC 根跟踪,inkwell 后端不 emit;断言入口存在即可
     assert!(ir.contains("@main"), "入口应生成 @main");
 }
@@ -1045,7 +1053,12 @@ fn test_default_and_variadic_parameter_compilation() {
     if std::env::var("QI_RUNTIME_LIB").is_err() {
         let archive = ["debug", "release"]
             .iter()
-            .map(|p| manifest.join("../qi-runtime/target").join(p).join("libqi_runtime.a"))
+            .map(|p| {
+                manifest
+                    .join("../qi-runtime/target")
+                    .join(p)
+                    .join("libqi_runtime.a")
+            })
             .find(|p| p.exists());
         match archive {
             Some(p) => std::env::set_var("QI_RUNTIME_LIB", p),

@@ -7,9 +7,9 @@
 //! （字符串字面量也走序言 store，省去 const ptr initializer 的麻烦）。
 //! 读写：`表达式.rs` 的标识符 / 赋值分支在 变量表(局部) miss 后 fallback 到 全局变量表。
 
+use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::推断表达式类型;
-use super::后端;
 use crate::parser::ast::{AstNode, Program};
 
 impl<'ctx> 后端<'ctx> {
@@ -73,7 +73,11 @@ impl<'ctx> 后端<'ctx> {
                     if gt.是浮点() && !vt.是浮点() {
                         v = self
                             .builder
-                            .build_signed_int_to_float(v.into_int_value(), self.ctx.f64_type(), "sitofp")
+                            .build_signed_int_to_float(
+                                v.into_int_value(),
+                                self.ctx.f64_type(),
+                                "sitofp",
+                            )
                             .map_err(|e| e.to_string())?
                             .into();
                     }

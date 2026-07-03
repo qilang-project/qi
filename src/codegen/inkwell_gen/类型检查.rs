@@ -181,11 +181,11 @@ impl 符号表 {
     pub fn 解析类型(&mut self, t: &crate::parser::ast::TypeNode) -> Qi类型 {
         use crate::parser::ast::TypeNode;
         match t {
-            TypeNode::自定义类型(name) | TypeNode::结构体类型(crate::parser::ast::StructType { name, .. }) => {
-                self.结构体索引(name)
-                    .map(Qi类型::结构体)
-                    .unwrap_or(Qi类型::未知)
-            }
+            TypeNode::自定义类型(name)
+            | TypeNode::结构体类型(crate::parser::ast::StructType { name, .. }) => self
+                .结构体索引(name)
+                .map(Qi类型::结构体)
+                .unwrap_or(Qi类型::未知),
             TypeNode::函数类型(ft) => {
                 let 参数: Vec<Qi类型> = ft.parameters.iter().map(|p| self.解析类型(p)).collect();
                 let 返回 = self.解析类型(&ft.return_type);
@@ -290,7 +290,9 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
         AstNode::二元操作表达式(b) => {
             use BinaryOperator::*;
             match b.operator {
-                等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于 | 与 | 或 => Qi类型::布尔,
+                等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于 | 与 | 或 => {
+                    Qi类型::布尔
+                }
                 加 | 减 | 乘 | 除 | 取余 => {
                     let l = 推断表达式类型(&b.left, 表);
                     let r = 推断表达式类型(&b.right, 表);
@@ -338,7 +340,8 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             let recv = 推断表达式类型(&mc.object, 表);
             if let Some(idx) = recv.结构体索引() {
                 if let Some(info) = 表.结构体信息(idx) {
-                    if let Some(sig) = 表.方法.get(&(info.名字.clone(), mc.method_name.clone())) {
+                    if let Some(sig) = 表.方法.get(&(info.名字.clone(), mc.method_name.clone()))
+                    {
                         return sig.返回;
                     }
                 }

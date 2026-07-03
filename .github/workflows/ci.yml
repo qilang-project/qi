@@ -98,13 +98,13 @@ jobs:
       - name: Install LLVM 21 (Windows)
         shell: pwsh
         run: |
-          curl.exe -L -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
-          7z x llvm.tar.xz -so | 7z x -si -ttar -oC:\LLVM21
-          echo "LLVM_SYS_211_PREFIX=C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # 官方包的 llvm-config 声明链 libxml2s.lib(WindowsManifest 用)但不随包发货:
-          # 用 runner 自带 vcpkg 出一个最小静态 libxml2(core 关掉 iconv/lzma/zlib 依赖),改名放进 LLVM lib 目录
-          vcpkg install "libxml2[core]:x64-windows-static"
-          Copy-Item "C:\vcpkg\installed\x64-windows-static\lib\libxml2.lib" "C:\LLVM21\clang+llvm-21.1.8-x86_64-pc-windows-msvc\lib\libxml2s.lib"
+          # PLC-lang 的 LLVM Windows 包 —— 专为 llvm-sys/inkwell CI 打造。
+          # 官方 clang+llvm msvc 包有两个死穴:内嵌 rpmalloc(与 ucrt 的 malloc/free
+          # LNK2005 冲突)+ 部分 target 库链接不全(LLVMInitializeMips* LNK2019)。
+          curl.exe -L -o llvm.7z https://github.com/PLC-lang/llvm-package-windows/releases/download/v21.1.7/LLVM-21.1.7-win64.7z
+          7z x llvm.7z -oC:\LLVM21
+          $prefix = if (Test-Path "C:\LLVM21\bin") { "C:\LLVM21" } else { (Get-ChildItem C:\LLVM21 -Directory | Select-Object -First 1).FullName }
+          echo "LLVM_SYS_211_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build (release)
         run: cargo build --release --verbose

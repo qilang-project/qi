@@ -594,7 +594,9 @@ pub fn compile_to_object_multi(
     后端值.module.set_triple(&triple);
     // 数据布局必须跟目标机匹配（结构体偏移/对齐在跨架构时不同）；
     // 也必须在跑优化 pass 之前设好，否则按错误布局折叠常量/对齐。
-    后端值.module.set_data_layout(&tm.get_target_data().get_data_layout());
+    后端值
+        .module
+        .set_data_layout(&tm.get_target_data().get_data_layout());
     // 模块级优化管线（新 PassManager）。setjmp 已带 returns_twice、
     // retain/release 是不透明外部调用，O3 下语义安全。
     if let Some(pipeline) = pass_pipeline {
