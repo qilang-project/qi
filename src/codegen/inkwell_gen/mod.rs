@@ -456,17 +456,25 @@ pub fn compile_to_object(
     out: &Path,
     target: CompilationTarget,
 ) -> Result<(), String> {
-    compile_to_object_multi(std::slice::from_ref(program), out, target, None)
+    compile_to_object_multi(
+        std::slice::from_ref(program),
+        out,
+        target,
+        None,
+        crate::config::OptimizationLevel::Basic,
+    )
 }
 
 /// 把多个 Program（entry + 所有用户模块）合并进同一个 LLVM 模块，编成一个 .o。
 /// programs[0] 是 entry（含 入口()）。跨模块符号共享同一 mangle，天然可见。
 /// `arch`：交叉编译目标架构（x86_64 / aarch64），None 时默认 x86_64。
+/// `opt`：优化级别（None/Basic/Standard/Maximum → O0/O1/O2/O3 管线 + 同级目标机 opt）。
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
     target: CompilationTarget,
     arch: Option<&str>,
+    opt: crate::config::OptimizationLevel,
 ) -> Result<(), String> {
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
@@ -565,20 +573,36 @@ pub fn compile_to_object_multi(
         };
         inkwell::targets::TargetTriple::create(&t)
     };
+    // 优化级别 → (目标机 codegen 级别, 新 PassManager 管线串)
+    let (tm_opt, pass_pipeline) = match opt {
+        crate::config::OptimizationLevel::None => (LlvmOpt::None, None),
+        crate::config::OptimizationLevel::Basic => (LlvmOpt::Less, Some("default<O1>")),
+        crate::config::OptimizationLevel::Standard => (LlvmOpt::Default, Some("default<O2>")),
+        crate::config::OptimizationLevel::Maximum => (LlvmOpt::Aggressive, Some("default<O3>")),
+    };
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let tm = target
         .create_target_machine(
             &triple,
             "generic",
             "",
-            LlvmOpt::Default,
+            tm_opt,
             RelocMode::PIC,
             CodeModel::Default,
         )
         .ok_or_else(|| "无法创建 target machine".to_string())?;
     后端值.module.set_triple(&triple);
-    // 数据布局必须跟目标机匹配（结构体偏移/对齐在跨架构时不同）
+    // 数据布局必须跟目标机匹配（结构体偏移/对齐在跨架构时不同）；
+    // 也必须在跑优化 pass 之前设好，否则按错误布局折叠常量/对齐。
     后端值.module.set_data_layout(&tm.get_target_data().get_data_layout());
+    // 模块级优化管线（新 PassManager）。setjmp 已带 returns_twice、
+    // retain/release 是不透明外部调用，O3 下语义安全。
+    if let Some(pipeline) = pass_pipeline {
+        后端值
+            .module
+            .run_passes(pipeline, &tm, inkwell::passes::PassBuilderOptions::create())
+            .map_err(|e| format!("优化管线失败({}): {}", pipeline, e))?;
+    }
     tm.write_to_file(&后端值.module, FileType::Object, out)
         .map_err(|e| e.to_string())?;
     Ok(())
