@@ -21,20 +21,23 @@ pub struct 函数签名 {
 }
 
 /// 结构体布局：字段名 → (索引, 类型)，按声明顺序。
+/// `包`：声明它的包名 —— 跨包同名结构体（如 Web::应用 vs CLI::应用）各占独立索引，
+/// 绝不共享/覆写彼此的字段布局（否则字段读错内存）。
 #[derive(Debug, Clone)]
 pub struct 结构体信息 {
     pub 名字: String,
+    pub 包: Option<String>,
     pub 字段名: Vec<String>,
     pub 字段类型: Vec<Qi类型>,
 }
 
 impl 结构体信息 {
-    /// 字段索引 + 类型。
+    /// 字段索引 + 类型。防御：字段名/字段类型 长度不一致时返回 None（交上层报编译错误），
+    /// 绝不越界 panic。
     pub fn 查字段(&self, name: &str) -> Option<(u32, Qi类型)> {
-        self.字段名
-            .iter()
-            .position(|f| f == name)
-            .map(|i| (i as u32, self.字段类型[i]))
+        let i = self.字段名.iter().position(|f| f == name)?;
+        let t = self.字段类型.get(i).copied()?;
+        Some((i as u32, t))
     }
 }
 
@@ -46,9 +49,19 @@ pub struct 符号表 {
     pub 函数按包: HashMap<(String, String), 函数签名>,
     /// 结构体注册表：索引即 Qi类型::结构体(idx) 的 idx。
     pub 结构体: Vec<结构体信息>,
-    结构体索引: HashMap<String, u32>,
-    /// 方法签名：(结构体名, 方法名) → 签名（参数不含接收者）。
-    pub 方法: HashMap<(String, String), 函数签名>,
+    /// (声明包, 结构体名) → 索引。跨包同名结构体各占一条，互不干扰。
+    结构体键索引: HashMap<(Option<String>, String), u32>,
+    /// 结构体名 → 所有同名索引（无限定名解析的全局唯一性判定 / 歧义诊断用）。
+    结构体同名: HashMap<String, Vec<u32>>,
+    /// destructure 导入映射：(使用方包, 符号名) → 来源包名。
+    /// `导入 Web::{应用}` 让 使用方 里裸名 `应用` 优先解析到 Web 包
+    /// （结构体与函数共用 —— 跨包同名符号靠它消歧）。
+    符号导入: HashMap<(Option<String>, String), String>,
+    /// 同一使用方对同名符号 destructure 导入了多个来源 → 歧义，禁用导入映射。
+    符号导入歧义: HashSet<(Option<String>, String)>,
+    /// 方法签名：(结构体索引, 方法名) → 签名（参数不含接收者）。
+    /// 按索引（而非名字）挂 —— 跨包同名结构体的方法互不串位。
+    pub 方法: HashMap<(u32, String), 函数签名>,
     /// 函数默认参数值 AST：函数名 → 每个形参的可选默认值表达式（供调用少传时补齐）。
     pub 函数默认值: HashMap<String, Vec<Option<crate::parser::ast::AstNode>>>,
     /// 变参函数集合：末位形参是 `名字...: T`（签名里已按 数组(T) 登记），
@@ -69,7 +82,10 @@ impl 符号表 {
             函数: HashMap::new(),
             函数按包: HashMap::new(),
             结构体: Vec::new(),
-            结构体索引: HashMap::new(),
+            结构体键索引: HashMap::new(),
+            结构体同名: HashMap::new(),
+            符号导入: HashMap::new(),
+            符号导入歧义: HashSet::new(),
             方法: HashMap::new(),
             函数默认值: HashMap::new(),
             函数变参: HashSet::new(),
@@ -80,14 +96,50 @@ impl 符号表 {
         }
     }
 
-    /// 解析函数签名：优先当前包内同名函数，否则回退到任意包（用于导入的函数）。
+    /// destructure 导入的来源包（歧义时 None）。
+    pub fn 导入来源(&self, name: &str) -> Option<&str> {
+        let key = (self.当前包.clone(), name.to_string());
+        if self.符号导入歧义.contains(&key) {
+            return None;
+        }
+        self.符号导入.get(&key).map(|s| s.as_str())
+    }
+
+    /// 定义了同名函数的所有包（排序保证确定性；歧义诊断用）。
+    pub fn 函数候选包(&self, name: &str) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .函数按包
+            .keys()
+            .filter(|(_, f)| f == name)
+            .map(|(p, _)| p.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// 解析函数签名：
+    /// 1) 当前包内同名函数；
+    /// 2) 当前包 destructure 导入的来源包的；
+    /// 3) 全局唯一定义包的；
+    /// 4) 无任何包定义时回退扁平表（无包程序 / 单文件）。
+    ///
+    /// 多包同名且无法定位 → None（不随机挑 —— 调用处按未定义/歧义报错）。
     pub fn 解析函数(&self, name: &str) -> Option<&函数签名> {
         if let Some(pkg) = &self.当前包 {
             if let Some(sig) = self.函数按包.get(&(pkg.clone(), name.to_string())) {
                 return Some(sig);
             }
         }
-        self.函数.get(name)
+        if let Some(src) = self.导入来源(name) {
+            if let Some(sig) = self.函数按包.get(&(src.to_string(), name.to_string())) {
+                return Some(sig);
+            }
+        }
+        match self.函数候选包(name).as_slice() {
+            [唯一] => self.函数按包.get(&(唯一.clone(), name.to_string())),
+            [] => self.函数.get(name),
+            _ => None, // 多包同名：不猜
+        }
     }
 
     /// 函数是否存在（当前包优先）。
@@ -155,20 +207,89 @@ impl 符号表 {
         None
     }
 
-    /// 登记一个结构体，返回其索引（幂等）。
+    /// 登记一个结构体，返回其索引。按 (包, 名字) 幂等 —— 同包同名只登记一次，
+    /// **跨包同名各占独立索引**（布局/方法互不干扰）。
     pub fn 登记结构体(&mut self, 信息: 结构体信息) -> u32 {
-        if let Some(idx) = self.结构体索引.get(&信息.名字) {
+        let key = (信息.包.clone(), 信息.名字.clone());
+        if let Some(idx) = self.结构体键索引.get(&key) {
             return *idx;
         }
         let idx = self.结构体.len() as u32;
-        self.结构体索引.insert(信息.名字.clone(), idx);
+        self.结构体键索引.insert(key, idx);
+        self.结构体同名
+            .entry(信息.名字.clone())
+            .or_default()
+            .push(idx);
         self.结构体.push(信息);
         idx
     }
 
-    /// 按名字查结构体索引。
+    /// 登记一条 destructure 导入映射：使用方包 里裸名 `名字` 来自 `来源包`。
+    /// 同名多来源 → 记歧义（解析时禁用映射，落到全局唯一性判定）。
+    pub fn 登记符号导入(&mut self, 使用方: Option<String>, 名字: &str, 来源包: &str) {
+        let key = (使用方, 名字.to_string());
+        match self.符号导入.get(&key) {
+            Some(旧) if 旧 != 来源包 => {
+                self.符号导入歧义.insert(key);
+            }
+            Some(_) => {}
+            None => {
+                self.符号导入.insert(key, 来源包.to_string());
+            }
+        }
+    }
+
+    /// 按名字解析结构体索引（带包上下文）：
+    /// 1) 当前包自己声明的；
+    /// 2) 当前包 destructure 导入的来源包声明的；
+    /// 3) 全局唯一同名的。
+    ///
+    /// 多包同名且无法定位 → None（调用处报编译错误，见 结构体解析错误）——
+    /// 宁报错不静默选错。
     pub fn 结构体索引(&self, name: &str) -> Option<u32> {
-        self.结构体索引.get(name).copied()
+        let key = (self.当前包.clone(), name.to_string());
+        if let Some(idx) = self.结构体键索引.get(&key) {
+            return Some(*idx);
+        }
+        if let Some(src) = self.导入来源(name) {
+            if let Some(idx) = self
+                .结构体键索引
+                .get(&(Some(src.to_string()), name.to_string()))
+            {
+                return Some(*idx);
+            }
+        }
+        match self.结构体同名.get(name).map(|v| v.as_slice()) {
+            Some([唯一]) => Some(*唯一),
+            _ => None,
+        }
+    }
+
+    /// 只查**当前包自己声明**的结构体（字段解析第二趟用：声明必然属于本包）。
+    pub fn 本包结构体索引(&self, name: &str) -> Option<u32> {
+        self.结构体键索引
+            .get(&(self.当前包.clone(), name.to_string()))
+            .copied()
+    }
+
+    /// 结构体名解析失败时的诊断消息：区分「未定义」与「跨包同名歧义」。
+    pub fn 结构体解析错误(&self, name: &str) -> String {
+        match self.结构体同名.get(name) {
+            Some(v) if v.len() > 1 => {
+                let 包们: Vec<String> = v
+                    .iter()
+                    .filter_map(|i| self.结构体.get(*i as usize))
+                    .map(|s| s.包.clone().unwrap_or_else(|| "(无包)".to_string()))
+                    .collect();
+                format!(
+                    "结构体名 {} 歧义：同名结构体定义于多个包（{}）。请用 `导入 包::{{{}}}` 指明来源",
+                    name,
+                    包们.join("、"),
+                    name
+                )
+            }
+            _ => format!("未定义的结构体: {}", name),
+        }
     }
 
     /// 按索引拿结构体信息。
@@ -339,10 +460,15 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             // 接收者是任意表达式（链式关键）：先定其类型，再查方法返回。
             let recv = 推断表达式类型(&mc.object, 表);
             if let Some(idx) = recv.结构体索引() {
+                if let Some(sig) = 表.方法.get(&(idx, mc.method_name.clone())) {
+                    return sig.返回;
+                }
+                // 函数值字段以方法语法调用：`命令值.执行函数(ctx)` → 字段签名的返回类型
                 if let Some(info) = 表.结构体信息(idx) {
-                    if let Some(sig) = 表.方法.get(&(info.名字.clone(), mc.method_name.clone()))
-                    {
-                        return sig.返回;
+                    if let Some((_, Qi类型::函数值(fi))) = info.查字段(&mc.method_name) {
+                        if let Some(sig) = 表.函数值签名(fi) {
+                            return sig.返回;
+                        }
                     }
                 }
             }

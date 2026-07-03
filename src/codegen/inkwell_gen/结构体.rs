@@ -17,17 +17,17 @@ impl<'ctx> 后端<'ctx> {
     /// 登记所有结构体：填符号表布局 + 建 LLVM 具名 struct 类型。
     /// 第一趟：只登记结构体名字（占索引），字段类型暂空。
     /// 必须先跑完所有模块的名字登记，字段里跨模块/前向引用的结构体才能解析成 结构体(idx)。
+    /// 按 (当前包, 名字) 登记 —— 跨包同名结构体各占独立索引（调用前须 设当前包）。
     pub(super) fn 登记结构体名字(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::结构体声明(sd) = stmt {
-                if self.符号.结构体索引(&sd.name).is_some() {
-                    continue; // 幂等
-                }
                 let 字段名: Vec<String> = sd.fields.iter().map(|f| f.name.clone()).collect();
                 // 字段类型先占位（整数），第二趟再解析
                 let 占位: Vec<Qi类型> = sd.fields.iter().map(|_| Qi类型::整数).collect();
+                // 登记结构体 按 (包, 名字) 幂等
                 self.符号.登记结构体(结构体信息 {
                     名字: sd.name.clone(),
+                    包: self.当前包.clone(),
                     字段名,
                     字段类型: 占位,
                 });
@@ -37,17 +37,29 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 第二趟：所有名字登记后，解析字段真实类型（跨模块结构体已可解析）。
+    /// 只写**本包**登记的那条（绝不覆写别包同名结构体的布局）；同包重复定义且
+    /// 字段不一致 → 编译报错（否则 字段名/字段类型 错位 → 字段读错内存）。
     pub(super) fn 解析结构体字段(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::结构体声明(sd) = stmt {
-                if let Some(idx) = self.符号.结构体索引(&sd.name) {
-                    let 字段类型: Vec<Qi类型> = sd
-                        .fields
-                        .iter()
-                        .map(|f| self.符号.解析类型(&f.type_annotation))
-                        .collect();
-                    self.符号.结构体[idx as usize].字段类型 = 字段类型;
+                let idx = self
+                    .符号
+                    .本包结构体索引(&sd.name)
+                    .ok_or_else(|| format!("内部错误：结构体 {} 未在第一趟登记", sd.name))?;
+                let 名字们: Vec<String> = sd.fields.iter().map(|f| f.name.clone()).collect();
+                if self.符号.结构体[idx as usize].字段名 != 名字们 {
+                    return Err(format!(
+                        "结构体 {} 在包 {} 中重复定义且字段不一致",
+                        sd.name,
+                        self.当前包.as_deref().unwrap_or("(无包)")
+                    ));
                 }
+                let 字段类型: Vec<Qi类型> = sd
+                    .fields
+                    .iter()
+                    .map(|f| self.符号.解析类型(&f.type_annotation))
+                    .collect();
+                self.符号.结构体[idx as usize].字段类型 = 字段类型;
             }
         }
         Ok(())
@@ -66,7 +78,12 @@ impl<'ctx> 后端<'ctx> {
                         .unwrap_or_else(|| self.ctx.i64_type().into())
                 })
                 .collect();
-            let st = self.ctx.opaque_struct_type(&format!("struct.{}", 名字));
+            // LLVM 类型名带包名 —— 跨包同名结构体不靠 LLVM 自动改名（.0 后缀）区分
+            let 类型名 = match &self.符号.结构体[i].包 {
+                Some(p) => format!("struct.{}.{}", p, 名字),
+                None => format!("struct.{}", 名字),
+            };
+            let st = self.ctx.opaque_struct_type(&类型名);
             st.set_body(&llvm字段, false);
             self.结构体llvm.push(st);
         }
@@ -81,7 +98,7 @@ impl<'ctx> 后端<'ctx> {
         let idx = self
             .符号
             .结构体索引(&lit.struct_name)
-            .ok_or_else(|| format!("未定义的结构体: {}", lit.struct_name))?;
+            .ok_or_else(|| self.符号.结构体解析错误(&lit.struct_name))?;
         let st = self.结构体llvm[idx as usize];
 
         // 堆分配：size = LLVM 结构体大小（用 target-independent 常量占位不可靠，
@@ -123,10 +140,11 @@ impl<'ctx> 后端<'ctx> {
                 .map(|s| (s.字段名.clone(), s.字段类型.clone()));
             if let Some((字段名, 字段类型)) = 信息 {
                 let ptrt = self.ctx.ptr_type(AddressSpace::default());
-                for (fi, ft) in 字段类型.iter().enumerate() {
-                    if *ft == Qi类型::字符串 && !lit.fields.iter().any(|fv| fv.name == 字段名[fi])
-                    {
-                        let fptr = self.字段指针(base, st, fi as u32, &字段名[fi])?;
+                // zip 迭代：字段名/字段类型 结构上不可能越界（长度不一致只会少迭代，
+                // 且第二趟已强制两者一致）
+                for (fi, (名, ft)) in 字段名.iter().zip(字段类型.iter()).enumerate() {
+                    if *ft == Qi类型::字符串 && !lit.fields.iter().any(|fv| &fv.name == 名) {
+                        let fptr = self.字段指针(base, st, fi as u32, 名)?;
                         self.builder
                             .build_store(fptr, ptrt.const_null())
                             .map_err(|e| e.to_string())?;

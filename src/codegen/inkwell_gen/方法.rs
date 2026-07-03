@@ -12,9 +12,13 @@ use crate::parser::ast::{AstNode, MethodDeclaration, Program};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
 
-/// 方法符号名：接收者类型 + 方法名，走统一 mangle。
-fn 方法符号(receiver_type: &str, method: &str) -> String {
-    super::mangle_function_name(&format!("{}_{}", receiver_type, method))
+/// 方法符号名：接收者结构体的声明包 + 类型名 + 方法名，走统一 mangle。
+/// 带包 —— 跨包同名结构体（Web::应用 vs CLI::应用）的同名方法符号不冲突。
+fn 方法符号(pkg: Option<&str>, receiver_type: &str, method: &str) -> String {
+    match pkg {
+        Some(p) => super::mangle_function_name(&format!("{}${}_{}", p, receiver_type, method)),
+        None => super::mangle_function_name(&format!("{}_{}", receiver_type, method)),
+    }
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -36,8 +40,25 @@ impl<'ctx> 后端<'ctx> {
         Ok(())
     }
 
+    /// 解析方法接收者结构体：索引 + 声明包（符号名用）。解析不到 → 编译报错。
+    fn 解析方法接收者(
+        &self,
+        m: &MethodDeclaration,
+    ) -> Result<(u32, Option<String>), String> {
+        let idx = self.符号.结构体索引(&m.receiver_type).ok_or_else(|| {
+            format!(
+                "方法 {} 的接收者类型解析失败：{}",
+                m.method_name,
+                self.符号.结构体解析错误(&m.receiver_type)
+            )
+        })?;
+        let 包 = self.符号.结构体信息(idx).and_then(|s| s.包.clone());
+        Ok((idx, 包))
+    }
+
     /// 声明单个方法的 LLVM 原型，并把签名（不含接收者）存入符号表。
     fn 声明方法原型(&mut self, m: &MethodDeclaration) -> Result<FunctionValue<'ctx>, String> {
+        let (recv_idx, recv_pkg) = self.解析方法接收者(m)?;
         let 参数类型: Vec<Qi类型> = m
             .parameters
             .iter()
@@ -70,11 +91,11 @@ impl<'ctx> 后端<'ctx> {
             None => self.ctx.void_type().fn_type(&参数llvm, false),
         };
 
-        let sym = 方法符号(&m.receiver_type, &m.method_name);
+        let sym = 方法符号(recv_pkg.as_deref(), &m.receiver_type, &m.method_name);
         let func = self.module.add_function(&sym, fn_type, None);
 
         self.符号.方法.insert(
-            (m.receiver_type.clone(), m.method_name.clone()),
+            (recv_idx, m.method_name.clone()),
             函数签名 {
                 参数: 参数类型,
                 返回: 返回类型,
@@ -85,7 +106,8 @@ impl<'ctx> 后端<'ctx> {
 
     /// 生成方法体：接收者 `自身` 作为结构体指针局部变量。
     fn 生成方法体(&mut self, m: &MethodDeclaration) -> Result<(), String> {
-        let sym = 方法符号(&m.receiver_type, &m.method_name);
+        let (recv_idx, recv_pkg) = self.解析方法接收者(m)?;
+        let sym = 方法符号(recv_pkg.as_deref(), &m.receiver_type, &m.method_name);
         let func = self
             .module
             .get_function(&sym)
@@ -93,15 +115,11 @@ impl<'ctx> 后端<'ctx> {
         let sig = self
             .符号
             .方法
-            .get(&(m.receiver_type.clone(), m.method_name.clone()))
+            .get(&(recv_idx, m.method_name.clone()))
             .cloned()
             .ok_or_else(|| format!("方法签名缺失: {}", m.method_name))?;
 
-        let 接收者类型 = self
-            .符号
-            .结构体索引(&m.receiver_type)
-            .map(Qi类型::结构体)
-            .unwrap_or(Qi类型::未知);
+        let 接收者类型 = Qi类型::结构体(recv_idx);
 
         self.变量表.clear();
         self.符号.进入作用域();
@@ -191,25 +209,42 @@ impl<'ctx> 后端<'ctx> {
             Some(i) => i,
             None => return Ok(None),
         };
-        let 结构体名 = self
+        let (结构体名, 结构体包) = self
             .符号
             .结构体信息(idx)
-            .map(|s| s.名字.clone())
+            .map(|s| (s.名字.clone(), s.包.clone()))
             .ok_or_else(|| "结构体信息缺失".to_string())?;
 
-        let sig = self
-            .符号
-            .方法
-            .get(&(结构体名.clone(), method.to_string()))
-            .cloned()
-            .ok_or_else(|| format!("结构体 {} 无方法 {}", 结构体名, method))?;
+        let sig = match self.符号.方法.get(&(idx, method.to_string())).cloned() {
+            Some(s) => s,
+            None => {
+                // 函数值字段以方法语法调用：`命令值.持久前置执行函数(ctx)` ——
+                // 结构体没有这个方法、但有同名 函数(..) 类型字段 → load 字段 + fat 调用。
+                if let Some((_, Qi类型::函数值(fidx))) =
+                    self.符号.结构体信息(idx).and_then(|s| s.查字段(method))
+                {
+                    let fsig = self
+                        .符号
+                        .函数值签名(fidx)
+                        .cloned()
+                        .ok_or_else(|| format!("函数值字段签名缺失: {}", method))?;
+                    let (fv, _ft) = self.生成字段访问(object, method)?;
+                    let r = self.发射fat调用(fv.into_pointer_value(), &fsig, arguments)?;
+                    return Ok(Some(r));
+                }
+                return Err(format!(
+                    "结构体 {} 无方法 {}（也没有同名函数类型字段）",
+                    结构体名, method
+                ));
+            }
+        };
 
         // 求接收者指针值（可能是链式的上一个方法调用结果）
         let (recv_val, _t) = self
             .生成表达式(object)?
             .ok_or_else(|| "方法接收者无值".to_string())?;
 
-        let sym = 方法符号(&结构体名, method);
+        let sym = 方法符号(结构体包.as_deref(), &结构体名, method);
         let func = self
             .module
             .get_function(&sym)

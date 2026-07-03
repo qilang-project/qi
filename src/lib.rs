@@ -136,11 +136,15 @@ impl QiCompiler {
                 .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
             programs.push(p);
         }
-        for (path, ast) in &compiled_modules {
-            if *path == entry_key {
-                continue;
-            }
-            if let crate::parser::ast::AstNode::程序(p) = ast {
+        // 非 entry 模块按路径排序 —— HashMap 迭代序每进程随机，编译必须确定性
+        // （模块顺序影响符号登记顺序，进而影响诊断与产物稳定性）。
+        let mut 其余: Vec<&PathBuf> = compiled_modules
+            .keys()
+            .filter(|path| **path != entry_key)
+            .collect();
+        其余.sort();
+        for path in 其余 {
+            if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(path) {
                 programs.push(p.clone());
             }
         }

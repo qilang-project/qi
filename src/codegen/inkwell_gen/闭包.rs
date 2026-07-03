@@ -25,6 +25,8 @@ pub(super) struct 待合成闭包 {
     pub 返回类型: Qi类型,
     pub 捕获: Vec<(String, Qi类型)>,
     pub body: Vec<AstNode>,
+    /// 登记闭包时所在的包（体在末尾统一合成，须还原包上下文才能解析本包结构体/函数）。
+    pub 包: Option<String>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -53,18 +55,23 @@ impl<'ctx> 后端<'ctx> {
         Ok(Some((obj.into(), t)))
     }
 
-    /// 找一个顶层函数的实际 LLVM 符号名（当前包→任意包→裸）。
+    /// 找一个顶层函数的实际 LLVM 符号名（当前包 → destructure 导入来源包 →
+    /// 全局唯一定义包 → 裸）。多包同名不猜（与 尝试解析用户函数 同规则）。
     fn 解析函数符号名(&self, name: &str) -> String {
         let 当前 = super::包内符号名(self.当前包.as_deref(), name);
         if self.module.get_function(&当前).is_some() {
             return 当前;
         }
-        for (pkg, fname) in self.符号.函数按包.keys() {
-            if fname == name {
-                let sym = super::包内符号名(Some(pkg), name);
-                if self.module.get_function(&sym).is_some() {
-                    return sym;
-                }
+        if let Some(src) = self.符号.导入来源(name) {
+            let sym = super::包内符号名(Some(src), name);
+            if self.module.get_function(&sym).is_some() {
+                return sym;
+            }
+        }
+        if let [唯一] = self.符号.函数候选包(name).as_slice() {
+            let sym = super::包内符号名(Some(唯一), name);
+            if self.module.get_function(&sym).is_some() {
+                return sym;
             }
         }
         super::mangle_function_name(name)
@@ -128,6 +135,7 @@ impl<'ctx> 后端<'ctx> {
             返回类型,
             捕获: 捕获.clone(),
             body: c.body.clone(),
+            包: self.当前包.clone(),
         });
 
         // 声明合成函数原型（body 稍后生成），建 fat obj
@@ -192,6 +200,7 @@ impl<'ctx> 后端<'ctx> {
             返回类型: Qi类型::空,
             捕获: 捕获.clone(),
             body,
+            包: self.当前包.clone(),
         });
 
         let fn_val = self.声明闭包原型(&符号名, &捕获, self.待合成闭包.last().unwrap())?;
@@ -527,11 +536,13 @@ impl<'ctx> 后端<'ctx> {
             .get_function(&cl.符号名)
             .ok_or_else(|| format!("闭包原型缺失: {}", cl.符号名))?;
 
-        // 保存 builder / 变量表 / 返回类型 / try 深度（合成函数独立环境）
+        // 保存 builder / 变量表 / 返回类型 / try 深度 / 包上下文（合成函数独立环境）
         let 保存位置 = self.builder.get_insert_block();
         let 保存变量 = std::mem::take(&mut self.变量表);
         let 保存返回 = self.当前返回类型;
         let 保存try深度 = self.try深度;
+        let 保存包 = self.当前包.clone();
+        self.设当前包(cl.包.clone());
 
         self.符号.进入作用域();
         self.当前返回类型 = cl.返回类型;
@@ -604,6 +615,7 @@ impl<'ctx> 后端<'ctx> {
         self.变量表 = 保存变量;
         self.当前返回类型 = 保存返回;
         self.try深度 = 保存try深度;
+        self.设当前包(保存包);
         if let Some(bb) = 保存位置 {
             self.builder.position_at_end(bb);
         }

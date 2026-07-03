@@ -35,6 +35,31 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
+    /// 从一个模块的 destructure 导入收集「裸名 → 来源包」映射（结构体+函数共用）：
+    /// `导入 Web::{应用, 创建应用}` → 本模块里裸名 `应用`/`创建应用` 优先解析到 Web 包。
+    /// 项目里跨包同名符号（Web::应用 vs CLI::应用）靠这个消歧；
+    /// 同一模块从多个来源导入同名符号 → 记歧义（解析时报编译错误）。
+    pub(super) fn 收集符号导入(&mut self, program: &Program) {
+        let 使用方 = program.package_name.clone();
+        for imp in &program.imports {
+            let 首段 = match imp.module_path.first() {
+                Some(s) => s.as_str(),
+                None => continue,
+            };
+            // 标准库 / 相对路径导入没有跨包结构体归属问题
+            if 首段 == "标准库" || 首段 == "." || 首段 == ".." {
+                continue;
+            }
+            let items = match &imp.items {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+            for item in items {
+                self.符号.登记符号导入(使用方.clone(), item, 首段);
+            }
+        }
+    }
+
     /// 把「接收者(标识符) + 方法名」当作标准库调用尝试解析。
     /// 返回 Ok(None)：不是标准库调用；Ok(Some(...))：已生成调用（可能 void→None）。
     pub(super) fn 尝试标准库调用(

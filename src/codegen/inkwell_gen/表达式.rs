@@ -760,8 +760,9 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 
-    /// 解析用户函数调用目标：当前包同名函数优先，否则任意包，再否则裸符号。
-    /// 返回 (LLVM 函数, 签名)；找不到返回 None（交调用点回退 stdlib）。
+    /// 解析用户函数调用目标：当前包 → destructure 导入来源包 → 全局唯一定义包 → 裸符号。
+    /// 多包同名且无法定位 → None（**绝不随机挑包** —— 符号与签名必须来自同一个包，
+    /// 否则实参适配/返回类型全错）。调用点据 函数候选包 报歧义错误。
     pub(super) fn 尝试解析用户函数(
         &self,
         name: &str,
@@ -774,13 +775,28 @@ impl<'ctx> 后端<'ctx> {
         if let Some(f) = self.module.get_function(&当前) {
             return Some((f, self.符号.解析函数(name).cloned()));
         }
-        // 回退：任意已登记包的符号
-        for ((pkg, fname), sig) in self.符号.函数按包.iter() {
-            if fname == name {
-                let sym = super::包内符号名(Some(pkg), name);
-                if let Some(f) = self.module.get_function(&sym) {
-                    return Some((f, Some(sig.clone())));
-                }
+        // destructure 导入指明的来源包
+        if let Some(src) = self.符号.导入来源(name) {
+            let sig = self
+                .符号
+                .函数按包
+                .get(&(src.to_string(), name.to_string()))
+                .cloned();
+            let sym = super::包内符号名(Some(src), name);
+            if let Some(f) = self.module.get_function(&sym) {
+                return Some((f, sig));
+            }
+        }
+        // 全局唯一定义包（多包同名 → 不猜，返回 None 交调用点报歧义）
+        if let [唯一] = self.符号.函数候选包(name).as_slice() {
+            let sig = self
+                .符号
+                .函数按包
+                .get(&(唯一.clone(), name.to_string()))
+                .cloned();
+            let sym = super::包内符号名(Some(唯一), name);
+            if let Some(f) = self.module.get_function(&sym) {
+                return Some((f, sig));
             }
         }
         // 再回退：裸符号（无包）
@@ -821,6 +837,16 @@ impl<'ctx> 后端<'ctx> {
         let (f, sig) = match self.尝试解析用户函数(&call.callee) {
             Some(x) => x,
             None => {
+                // 多包同名的用户函数：先报歧义 —— 绝不静默落到同名 stdlib 函数
+                let 候选 = self.符号.函数候选包(&call.callee);
+                if 候选.len() > 1 {
+                    return Err(format!(
+                        "函数名 {} 歧义：定义于多个包（{}）。请用 `导入 包::{{{}}}` 指明来源",
+                        call.callee,
+                        候选.join("、"),
+                        call.callee
+                    ));
+                }
                 if let Some(v) = self.尝试无限定标准库(&call.callee, &call.arguments)? {
                     return Ok(v);
                 }
