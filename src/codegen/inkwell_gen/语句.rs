@@ -21,16 +21,33 @@ impl<'ctx> 后端<'ctx> {
             AstNode::变量声明(vd) => {
                 // 类型：注解优先（结构体感知），否则由初值推断。
                 // 注解解析出结构体/基础类型即用；解析不出（未知）再退回初值推断。
-                let 注解类型 = vd
+                let 注解已知 = vd
                     .type_annotation
                     .as_ref()
-                    .map(|ann| self.符号.解析类型(ann));
-                let 初值类型 = vd
-                    .initializer
-                    .as_ref()
-                    .map(|init| 推断表达式类型(init, &self.符号));
-                let 类型 = match (注解类型, 初值类型) {
-                    (Some(t), _) if t != Qi类型::未知 => t,
+                    .map(|ann| self.符号.解析类型(ann))
+                    .filter(|t| *t != Qi类型::未知);
+
+                // 构造子初值（有/无/成/败）：先据注解期望生成，用其真实类型定槽 ——
+                // 覆盖规则②（有注解 选项<T>）与规则④（无注解，按参数反推实例）。
+                // 推断表达式类型 认不出构造子（返回 未知），故必须先生成拿真实类型。
+                let 构造初值: Option<(inkwell::values::BasicValueEnum<'ctx>, Qi类型)> =
+                    match &vd.initializer {
+                        Some(init) if self.识别构造子调用(init).is_some() => Some(
+                            self.生成带期望(init, 注解已知)?
+                                .ok_or_else(|| format!("变量 {} 初值无值", vd.name))?,
+                        ),
+                        _ => None,
+                    };
+
+                let 初值类型 = match &构造初值 {
+                    Some((_, vt)) => Some(*vt),
+                    None => vd
+                        .initializer
+                        .as_ref()
+                        .map(|init| 推断表达式类型(init, &self.符号)),
+                };
+                let 类型 = match (注解已知, 初值类型) {
+                    (Some(t), _) => t,
                     (_, Some(t)) if t != Qi类型::未知 => t,
                     _ => Qi类型::整数,
                 };
@@ -49,9 +66,13 @@ impl<'ctx> 后端<'ctx> {
                 };
 
                 if let Some(init) = &vd.initializer {
-                    let (mut v, vt) = self
-                        .生成表达式(init)?
-                        .ok_or_else(|| format!("变量 {} 初值无值", vd.name))?;
+                    // 构造子初值已提前生成；其余就地生成
+                    let (mut v, vt) = match 构造初值 {
+                        Some(x) => x,
+                        None => self
+                            .生成表达式(init)?
+                            .ok_or_else(|| format!("变量 {} 初值无值", vd.name))?,
+                    };
                     // 隐式协调：整数→浮点提升、布尔(i1)→整数(i64) 加宽等
                     v = self.协调到类型(v, vt, 类型)?;
                     if 弧rc && v.is_pointer_value() {
@@ -97,10 +118,11 @@ impl<'ctx> 后端<'ctx> {
                 }
                 match &ret.value {
                     Some(expr) => {
-                        let (v, vt) = self
-                            .生成表达式(expr)?
-                            .ok_or_else(|| "返回表达式无值".to_string())?;
+                        // 规则①：返回语句以声明返回类型为构造子期望（选项/结果 定型）
                         let rt = self.当前返回类型;
+                        let (v, vt) = self
+                            .生成带期望(expr, Some(rt))?
+                            .ok_or_else(|| "返回表达式无值".to_string())?;
                         // 声明返回 void：忽略返回值，emit ret void
                         if rt == Qi类型::空 {
                             self.弧消费后释放2(v, vt, expr); // 值被丢弃
@@ -561,6 +583,7 @@ impl<'ctx> 后端<'ctx> {
             期望,
             Qi类型::字符串
                 | Qi类型::结构体(_)
+                | Qi类型::装箱枚举(_)
                 | Qi类型::函数值(_)
                 | Qi类型::数组(_)
                 | Qi类型::未来(_)

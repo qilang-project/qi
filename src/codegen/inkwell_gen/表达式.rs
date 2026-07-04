@@ -80,6 +80,11 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         node: &AstNode,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // 内建构造子（有/无/成/败）—— 无期望上下文时按参数反推（规则④）。
+        // 有期望的位置（返回/变量注解/形参/枚举载荷）走 生成带期望 提前定型。
+        if let Some((名, 参数)) = self.识别构造子调用(node) {
+            return self.生成构造子(&名, &参数, None).map(Some);
+        }
         match node {
             AstNode::字面量表达式(lit) => Ok(Some(self.生成字面量(&lit.value)?)),
 
@@ -1036,8 +1041,10 @@ impl<'ctx> 后端<'ctx> {
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         let mut 弧待释放: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
         for (i, a) in 实参.iter().enumerate() {
+            // 规则③：实参位以形参声明类型为构造子期望（选项/结果 定型）
+            let 形参期望 = sig.as_ref().and_then(|s| s.参数.get(i)).copied();
             let (v, vt) = self
-                .生成表达式(a)?
+                .生成带期望(a, 形参期望)?
                 .ok_or_else(|| "函数实参无值".to_string())?;
             // ARC：实参是借用传递 —— OWNED RC 临时（拼接串/结构体字面量/
             // 变参打包数组）在调用结束后释放（被调方需要保留会自行 retain）。

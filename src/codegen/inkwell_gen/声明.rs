@@ -31,6 +31,13 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         f: &FunctionDeclaration,
     ) -> Result<FunctionValue<'ctx>, String> {
+        // 保留构造子名（有/无/成/败）：选项/结果 的内建构造子，用户不能定义同名函数。
+        if super::枚举::是保留构造子(&f.name) {
+            return Err(format!(
+                "「{}」是奇语内建构造子（选项/结果），不能用作函数名。请换一个名字。",
+                f.name
+            ));
+        }
         let 参数类型: Vec<Qi类型> = f
             .parameters
             .iter()

@@ -209,7 +209,8 @@ impl<'ctx> 后端<'ctx> {
                             .ok_or_else(|| {
                                 format!(
                                     "匹配：枚举 {} 没有变体 {}",
-                                    self.符号.枚举[idx as usize].名字, variant_name
+                                    super::枚举::枚举显示名(&self.符号.枚举[idx as usize].名字),
+                                    variant_name
                                 )
                             })?;
                     if bindings.len() != vinfo.载荷.len() {
@@ -244,7 +245,7 @@ impl<'ctx> 后端<'ctx> {
             if !缺.is_empty() {
                 return Err(format!(
                     "匹配：未覆盖枚举 {} 的全部变体，缺少 [{}]。补齐这些分支，或加 `_ =>` 兜底",
-                    self.符号.枚举[idx as usize].名字,
+                    super::枚举::枚举显示名(&self.符号.枚举[idx as usize].名字),
                     缺.join("、")
                 ));
             }

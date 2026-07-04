@@ -2263,6 +2263,12 @@ Type: TypeNode = {
         err_type: Box::new(err_type),
     }),
 
+    // 结果<T> 单参形式（错误类型固定为字符串，v1 务实）
+    "结果" "<" <ok_type:Type> ">" => TypeNode::结果类型(ResultType {
+        ok_type: Box::new(ok_type),
+        err_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
+    }),
+
     // 选项类型 (Option type for nullable values)
     "选项" "<" <inner_type:Type> ">" => TypeNode::选项类型(OptionType {
         inner_type: Box::new(inner_type),

@@ -9,6 +9,7 @@
 
 use super::后端;
 use super::类型::Qi类型;
+use super::类型检查::推断表达式类型;
 use super::类型检查::{枚举信息, 枚举变体信息};
 use crate::parser::ast::{AstNode, Program};
 use inkwell::values::BasicValueEnum;
@@ -17,6 +18,34 @@ use inkwell::{AddressSpace, IntPredicate};
 /// 装箱枚举类型 idx 的 ARC 释放函数符号名。
 pub(super) fn 枚举释放名(idx: u32) -> String {
     format!("qi.release.e{}", idx)
+}
+
+/// 内建参数化枚举构造子 → (模板名, 变体名, 载荷个数, 能否从参数[0]反推 T)。
+///   有(x)→选项.有(T 来自参数)   无→选项.无
+///   成(x)→结果.成(T 来自参数)   败(msg)→结果.败(字符串，msg 非 T，不能反推)
+/// 返回 None 表示不是构造子名。集中一处，未来用户泛型构造子登记进同款表即可。
+pub(super) fn 构造子模板(名: &str) -> Option<(&'static str, &'static str, usize, bool)> {
+    match 名 {
+        "有" => Some(("选项", "有", 1, true)),
+        "无" => Some(("选项", "无", 0, false)),
+        "成" => Some(("结果", "成", 1, true)),
+        "败" => Some(("结果", "败", 1, false)),
+        _ => None,
+    }
+}
+
+/// 名字是否为保留构造子（用户不能定义同名函数）。
+pub(super) fn 是保留构造子(名: &str) -> bool {
+    构造子模板(名).is_some()
+}
+
+/// 枚举名的人类可读渲染：单态实例名 `选项$整数` → `选项<整数>`；
+/// 嵌套 `选项$选项$整数` → `选项<选项<整数>>`；普通枚举原样。
+pub(super) fn 枚举显示名(名: &str) -> String {
+    match 名.split_once('$') {
+        Some((模板, 实参)) => format!("{}<{}>", 模板, 枚举显示名(实参)),
+        None => 名.to_string(),
+    }
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -163,8 +192,9 @@ impl<'ctx> 后端<'ctx> {
 
         // 载荷槽（槽1..）
         for (k, (arg, ft)) in 参数.iter().zip(载荷类型.iter()).enumerate() {
+            // 期望透传：载荷本身是构造子（如 选项<选项<整数>> 的 有(有(5)) / 有(无)）时定型
             let (mut v, vt) = self
-                .生成表达式(arg)?
+                .生成带期望(arg, Some(*ft))?
                 .ok_or_else(|| "枚举载荷实参无值".to_string())?;
             v = self.协调到类型(v, vt, *ft)?;
             // ARC：RC 载荷（字符串/结构体/数组/装箱枚举）存槽 —— BORROWED retain / OWNED 转移
@@ -178,6 +208,104 @@ impl<'ctx> 后端<'ctx> {
         }
 
         Ok((base.into(), Qi类型::装箱枚举(idx)))
+    }
+
+    // ───────────────── 参数化枚举构造子（选项/结果）codegen ─────────────────
+
+    /// 识别一个表达式节点是否为内建构造子调用（裸 有(x)/无/成(x)/败(msg)）。
+    /// 返回 (构造子名, 实参)。裸 `无` 是标识符且不能被局部/全局变量遮蔽时才算构造子。
+    pub(super) fn 识别构造子调用(&self, node: &AstNode) -> Option<(String, Vec<AstNode>)> {
+        match node {
+            AstNode::函数调用表达式(call)
+                if call.module_qualifier.is_none() && 构造子模板(&call.callee).is_some() =>
+            {
+                Some((call.callee.clone(), call.arguments.clone()))
+            }
+            AstNode::标识符表达式(id)
+                if id.name == "无"
+                    && !self.变量表.contains_key(&id.name)
+                    && !self.全局变量表.contains_key(&id.name) =>
+            {
+                Some(("无".to_string(), Vec::new()))
+            }
+            _ => None,
+        }
+    }
+
+    /// 生成表达式；若目标处有期望类型（返回/变量注解/形参/载荷位），先透传给构造子定型。
+    /// 非构造子表达式直接走 生成表达式（期望被忽略）。这是四条定型规则的统一注入点。
+    pub(super) fn 生成带期望(
+        &mut self,
+        node: &AstNode,
+        期望: Option<Qi类型>,
+    ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        if let Some((名, 参数)) = self.识别构造子调用(node) {
+            return self.生成构造子(&名, &参数, 期望).map(Some);
+        }
+        self.生成表达式(node)
+    }
+
+    /// 构造子降级：定型对应的枚举实例，再复用装箱枚举构造。
+    ///
+    /// 定型（按序）：
+    ///   ① 期望是匹配模板的装箱枚举实例 → 直接用它（覆盖规则①②③：注解/返回/形参）；
+    ///   ② 否则若能从参数[0]反推 T（有/成）→ 按需实例化（规则④）；
+    ///   ③ 否则（裸 无 / 败 缺上下文）→ 人话报错。
+    pub(super) fn 生成构造子(
+        &mut self,
+        名: &str,
+        参数: &[AstNode],
+        期望: Option<Qi类型>,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        let (模板, 变体, 载荷个数, 可推断) =
+            构造子模板(名).ok_or_else(|| format!("内部错误：{} 不是构造子", 名))?;
+        if 参数.len() != 载荷个数 {
+            return Err(format!(
+                "构造子 {} 需要 {} 个参数，实际传入 {} 个",
+                名,
+                载荷个数,
+                参数.len()
+            ));
+        }
+
+        // ① 期望是本模板的装箱枚举实例 → 直接用
+        let 前缀 = format!("{}$", 模板);
+        let idx = match 期望 {
+            Some(Qi类型::装箱枚举(i))
+                if self
+                    .符号
+                    .枚举信息(i)
+                    .map(|e| e.名字.starts_with(&前缀))
+                    .unwrap_or(false) =>
+            {
+                i
+            }
+            _ => {
+                // ②/③ 反推 T 或报错
+                if 可推断 {
+                    let 元素 = 推断表达式类型(&参数[0], &self.符号);
+                    if 元素 == Qi类型::未知 {
+                        return Err(format!(
+                            "{} 的载荷类型无法推断，请给变量 / 返回值加类型注解，例如 : {}<整数>",
+                            名, 模板
+                        ));
+                    }
+                    self.符号.实例化参数枚举(模板, &[元素])?
+                } else {
+                    return Err(format!(
+                        "{} 需要类型上下文，给变量加 : {}<...> 注解（或用于已声明返回类型的返回语句 / 已知形参类型的实参位）",
+                        名, 模板
+                    ));
+                }
+            }
+        };
+
+        let 实例名 = self
+            .符号
+            .枚举信息(idx)
+            .map(|e| e.名字.clone())
+            .ok_or_else(|| "参数化枚举实例缺失".to_string())?;
+        self.生成枚举构造(&实例名, 变体, 参数)
     }
 
     /// 为所有装箱枚举 emit ARC 释放函数（qi.release.e<idx>）。先声明后定义（幂等）。

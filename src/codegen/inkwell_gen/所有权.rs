@@ -494,6 +494,10 @@ impl<'ctx> 后端<'ctx> {
         if !self.弧 {
             return false;
         }
+        // 内建构造子（有/无/成/败）→ qi_obj_alloc rc=1 新装箱枚举 → OWNED
+        if self.识别构造子调用(node).is_some() {
+            return true;
+        }
         match node {
             AstNode::结构体实例化表达式(_) => true,
             AstNode::数组字面量表达式(_) => true,
@@ -924,7 +928,11 @@ enum 数组元素释放 {
     结构体(u32),
 }
 
-/// 返回类型是否对象（结构体/数组/闭包）—— 返回约定 +1 的判定用。
+/// 返回类型是否对象（结构体/数组/闭包/装箱枚举）—— 返回约定 +1 的判定用。
+/// 装箱枚举（选项/结果 及带载荷用户枚举）是 qi_obj_alloc rc=1 对象，返回同约定。
 fn 是对象类型(t: Qi类型) -> bool {
-    matches!(t, Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_))
+    matches!(
+        t,
+        Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) | Qi类型::装箱枚举(_)
+    )
 }
