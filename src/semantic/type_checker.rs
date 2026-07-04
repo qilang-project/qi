@@ -85,6 +85,12 @@ impl TypeChecker {
             AstNode::数组字面量表达式(array_literal) => {
                 self.check_array_literal(array_literal)
             }
+            // 区间只出现在 对于 循环目标位置：起止各自检查，本身无值
+            AstNode::区间表达式(range) => {
+                self.check(&range.start)?;
+                self.check(&range.end)?;
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
             AstNode::字符串连接表达式(string_concat) => {
                 self.check_string_concat(string_concat)
             }
@@ -240,6 +246,31 @@ impl TypeChecker {
                     Err(TypeError::TypeMismatch {
                         expected: format!("{:?}", left_type),
                         actual: format!("{:?}", right_type),
+                        span: binary.span,
+                    })
+                }
+            }
+            // Bitwise operators: integers only, result is integer
+            crate::parser::ast::BinaryOperator::位与
+            | crate::parser::ast::BinaryOperator::位或
+            | crate::parser::ast::BinaryOperator::位异或
+            | crate::parser::ast::BinaryOperator::左移
+            | crate::parser::ast::BinaryOperator::右移 => {
+                let is_int = |t: &TypeNode| {
+                    matches!(
+                        t,
+                        TypeNode::基础类型(BasicType::整数)
+                            | TypeNode::基础类型(BasicType::长整数)
+                            | TypeNode::基础类型(BasicType::短整数)
+                            | TypeNode::基础类型(BasicType::字节)
+                    )
+                };
+                if is_int(&left_type) && is_int(&right_type) {
+                    Ok(TypeNode::基础类型(BasicType::整数))
+                } else {
+                    Err(TypeError::InvalidOperation {
+                        operation: "位运算".to_string(),
+                        type_name: format!("{:?} 和 {:?}", left_type, right_type),
                         span: binary.span,
                     })
                 }

@@ -196,7 +196,8 @@ impl<'ctx> 后端<'ctx> {
             let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
             // 指针/ptr/数组 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针、
             // Qi 数组本体指针都可）
-            if 原始 == "指针" || 原始 == "ptr" || 原始 == "数组" || 原始 == "浮点数组" {
+            if 原始 == "指针" || 原始 == "ptr" || 原始 == "数组" || 原始 == "浮点数组"
+            {
                 let pv = if v.is_pointer_value() {
                     v.into_pointer_value()
                 } else {

@@ -530,10 +530,7 @@ impl<'ctx> 后端<'ctx> {
                                 .get_function(&format!("标准库.{}", module_name), m)
                         });
                         if let Some(mf) = mf {
-                            return matches!(
-                                注册表类型转qi(&mf.return_type),
-                                Qi类型::数组(_)
-                            );
+                            return matches!(注册表类型转qi(&mf.return_type), Qi类型::数组(_));
                         }
                         if self.符号.查函数返回(&mc.method_name).is_some() {
                             return self.调用拥有对象(&mc.method_name);

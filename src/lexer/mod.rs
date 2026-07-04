@@ -236,6 +236,32 @@ impl Lexer {
                 start_line,
                 start_column,
             ))),
+            // | : 位或 / 闭包竖线；|| 为逻辑或（LALRPOP 侧按重构文本再分词）
+            '|' => {
+                if self.peek_char() == Some('|') {
+                    self.advance();
+                    Ok(Some(self.make_two_char_token(
+                        TokenKind::或,
+                        start_pos,
+                        start_line,
+                        start_column,
+                    )))
+                } else {
+                    Ok(Some(self.make_single_char_token(
+                        TokenKind::位或,
+                        start_pos,
+                        start_line,
+                        start_column,
+                    )))
+                }
+            }
+            // ^ : 位异或
+            '^' => Ok(Some(self.make_single_char_token(
+                TokenKind::位异或,
+                start_pos,
+                start_line,
+                start_column,
+            ))),
             '/' => {
                 if self.peek_char() == Some('/') {
                     // Check if it's a doc comment (///)
@@ -716,8 +742,15 @@ impl Lexer {
             self.advance();
         }
 
-        // Check for float
-        if self.current_char() == Some('.') {
+        // Check for float：仅当 `.` 后紧跟数字才按浮点收（与 LALRPOP 正则
+        // [0-9]+\.[0-9]+ 对齐）。否则 `0..10` 会被误收成 `0.` + `.`，
+        // 重构源码后区间语法碎掉。
+        if self.current_char() == Some('.')
+            && self
+                .peek_char()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
             self.advance();
             while !self.is_at_end() && self.current_char().unwrap().is_ascii_digit() {
                 self.advance();

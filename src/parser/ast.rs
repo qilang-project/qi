@@ -55,6 +55,7 @@ pub enum AstNode {
     赋值表达式(AssignmentExpression),
     数组访问表达式(ArrayAccessExpression),
     数组字面量表达式(ArrayLiteralExpression),
+    区间表达式(RangeExpression),
     字符串连接表达式(StringConcatExpression),
     结构体实例化表达式(StructLiteralExpression),
     字段访问表达式(FieldAccessExpression),
@@ -259,6 +260,22 @@ pub enum BinaryOperator {
     小于等于,
     与,
     或,
+    // 位运算（仅整数合法）：& | ^ << >>（>> 为算术右移）
+    位与,
+    位或,
+    位异或,
+    左移,
+    右移,
+}
+
+/// Range expression（仅用于 `对于 i 在 起..止` / `对于 i 在 起 到 止` 的循环目标）。
+/// `..` 为半开区间（不含 止），`到` 为闭区间（含 止），由 `inclusive` 区分。
+#[derive(Debug, Clone)]
+pub struct RangeExpression {
+    pub start: Box<AstNode>,
+    pub end: Box<AstNode>,
+    pub inclusive: bool,
+    pub span: Span,
 }
 
 /// Unary expression

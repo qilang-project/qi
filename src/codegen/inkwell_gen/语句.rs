@@ -52,10 +52,8 @@ impl<'ctx> 后端<'ctx> {
                     let (mut v, vt) = self
                         .生成表达式(init)?
                         .ok_or_else(|| format!("变量 {} 初值无值", vd.name))?;
-                    // 整数初值赋给浮点变量：隐式提升
-                    if 类型.是浮点() && !vt.是浮点() {
-                        v = self.转为浮点(v)?;
-                    }
+                    // 隐式协调：整数→浮点提升、布尔(i1)→整数(i64) 加宽等
+                    v = self.协调到类型(v, vt, 类型)?;
                     if 弧rc && v.is_pointer_value() {
                         // 先 retain 新值（BORROWED 时），再释放旧值（首轮为 null，
                         // 循环里重入声明时是上一轮的值），最后 store。
@@ -288,7 +286,7 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<(), String> {
         // range 若不是可识别的区间，先尝试「对于 x 在 数组」遍历；
         // 都不是则退化为不执行（保守，不误生成）。
-        let (起, 止) = match self.拆区间(&f.range)? {
+        let (起, 止, 含端点) = match self.拆区间(&f.range)? {
             Some(x) => x,
             None => return self.生成对于数组(f, func),
         };
@@ -316,9 +314,16 @@ impl<'ctx> 后端<'ctx> {
             .build_load(i64t, ivar, "i")
             .map_err(|e| e.to_string())?
             .into_int_value();
+        // `..` 半开（SLT，不含 止）；`到` 闭区间（SLE，含 止 —— 用 SLE 而非
+        // 止+1，避免 止 = i64::MAX 时加一溢出）。
+        let 谓词 = if 含端点 {
+            IntPredicate::SLE
+        } else {
+            IntPredicate::SLT
+        };
         let cond = self
             .builder
-            .build_int_compare(IntPredicate::SLT, cur, 止, "for.cmp")
+            .build_int_compare(谓词, cur, 止, "for.cmp")
             .map_err(|e| e.to_string())?;
         self.builder
             .build_conditional_branch(cond, body_bb, end_bb)
@@ -466,7 +471,9 @@ impl<'ctx> 后端<'ctx> {
         Ok(())
     }
 
-    /// 尝试把 range 节点拆成 (起始 i64 值, 终止 i64 值)。识别不了返回 None。
+    /// 尝试把 range 节点拆成 (起始 i64 值, 终止 i64 值, 是否含端点)。
+    /// 前端把 `起..止`（半开）/ `起 到 止`（闭）都建成 区间表达式 节点；
+    /// 起止在循环块之外求值（各一次）。非区间节点返回 None（走数组遍历）。
     fn 拆区间(
         &mut self,
         range: &AstNode,
@@ -474,13 +481,40 @@ impl<'ctx> 后端<'ctx> {
         Option<(
             inkwell::values::IntValue<'ctx>,
             inkwell::values::IntValue<'ctx>,
+            bool,
         )>,
         String,
     > {
-        // 二元操作里没有专门的「范围」运算符，前端可能用别的节点。
-        // 目前仅当 range 是「数组字面量 [起, 止]」这类无法确定时保守跳过。
-        let _ = range;
-        Ok(None)
+        let AstNode::区间表达式(r) = range else {
+            return Ok(None);
+        };
+        let 关键字 = if r.inclusive { "到" } else { ".." };
+        let (sv, st) = self
+            .生成表达式(&r.start)?
+            .ok_or_else(|| "区间起点无值".to_string())?;
+        let (ev, et) = self
+            .生成表达式(&r.end)?
+            .ok_or_else(|| "区间终点无值".to_string())?;
+        for (t, 侧) in [(st, "起点"), (et, "终点")] {
+            if t.是浮点() || t == Qi类型::字符串 {
+                return Err(format!(
+                    "区间循环（{}）的{}必须是整数，不能是{}",
+                    关键字,
+                    侧,
+                    if t.是浮点() {
+                        "浮点数"
+                    } else {
+                        "字符串"
+                    }
+                ));
+            }
+        }
+        if !sv.is_int_value() || !ev.is_int_value() {
+            return Err(format!("区间循环（{}）的起止必须是整数", 关键字));
+        }
+        let s = self.整数加宽到i64(sv.into_int_value())?;
+        let e = self.整数加宽到i64(ev.into_int_value())?;
+        Ok(Some((s, e, r.inclusive)))
     }
 
     /// 生成条件表达式并归一到 i1。

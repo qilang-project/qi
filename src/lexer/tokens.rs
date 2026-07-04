@@ -80,19 +80,21 @@ pub enum TokenKind {
     中文分号,     // ；
 
     // Additional keywords for grammar
-    导入, // import
-    导出, // export
-    作为, // as
-    在,   // in
-    字符, // char
-    空,   // null/void
-    参数, // parameter
-    与,   // and
-    或,   // or
-    包,   // package
-    模块, // module
-    公开, // public
-    私有, // private
+    导入,   // import
+    导出,   // export
+    作为,   // as
+    在,     // in
+    字符,   // char
+    空,     // null/void
+    参数,   // parameter
+    与,     // and
+    或,     // or
+    位或,   // | (位或 / 闭包竖线；|| 为逻辑或)
+    位异或, // ^ (位异或)
+    包,     // package
+    模块,   // module
+    公开,   // public
+    私有,   // private
 
     // Concurrency keywords - 并发关键字
     启动, // go/spawn

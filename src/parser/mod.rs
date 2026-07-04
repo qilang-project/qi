@@ -229,6 +229,7 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
         "解引用",
         "取地址",
         "在",
+        "到",
         "作为",
         "选择",
         "情况",

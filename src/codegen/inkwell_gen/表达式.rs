@@ -293,18 +293,8 @@ impl<'ctx> 后端<'ctx> {
                             } else {
                                 return Err(format!("赋值给未声明变量: {}", id.name));
                             };
-                        // 整数赋给浮点变量：隐式提升
-                        if target_t.是浮点() && !vt.是浮点() {
-                            v = self
-                                .builder
-                                .build_signed_int_to_float(
-                                    v.into_int_value(),
-                                    self.ctx.f64_type(),
-                                    "sitofp",
-                                )
-                                .map_err(|e| e.to_string())?
-                                .into();
-                        }
+                        // 隐式协调：整数→浮点提升、布尔(i1)→整数(i64) 加宽等
+                        v = self.协调到类型(v, vt, target_t)?;
                         // ARC：RC 槽（字符串/结构体/数组）覆写 —— 先 retain 新值
                         // （BORROWED 时；自赋值安全的关键顺序），再释放旧值，最后 store。
                         if self.弧开() && super::所有权::是RC类型(target_t) && v.is_pointer_value()
@@ -321,7 +311,11 @@ impl<'ctx> 后端<'ctx> {
                     AstNode::字段访问表达式(fa) => {
                         self.生成字段赋值(&fa.object, &fa.field, &a.value).map(Some)
                     }
-                    _ => Err("暂只支持标识符 / 字段赋值".to_string()),
+                    // 下标赋值 甲[i] = 值
+                    AstNode::数组访问表达式(acc) => {
+                        self.生成数组元素赋值(acc, &a.value).map(Some)
+                    }
+                    _ => Err("暂只支持标识符 / 字段 / 数组下标赋值".to_string()),
                 }
             }
 
@@ -390,6 +384,11 @@ impl<'ctx> 后端<'ctx> {
             }
             .map_err(|e| e.to_string())?;
             return Ok((v.into(), Qi类型::布尔));
+        }
+
+        // 位运算：& | ^ << >>（仅整数合法）
+        if matches!(b.operator, 位与 | 位或 | 位异或 | 左移 | 右移) {
+            return self.生成位运算(b);
         }
 
         let (lv, lt) = self
@@ -526,6 +525,99 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
+    /// 位运算 & | ^ << >>：只对整数合法（i64 按位 / 移位，>> 为算术右移）。
+    /// 浮点 / 字符串操作数直接编译报错；布尔(i1) 按隐式加宽规则 zext 成 i64 参与。
+    fn 生成位运算(
+        &mut self,
+        b: &crate::parser::ast::BinaryExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        use BinaryOperator::*;
+        let 符号 = match b.operator {
+            位与 => "&",
+            位或 => "|",
+            位异或 => "^",
+            左移 => "<<",
+            右移 => ">>",
+            _ => unreachable!(),
+        };
+        // 先按推断类型把浮点/字符串挡在编译期（人话报错）
+        for (side, 侧名) in [(&b.left, "左"), (&b.right, "右")] {
+            let t = 推断表达式类型(side, &self.符号);
+            match t {
+                Qi类型::浮点数 => {
+                    return Err(format!(
+                        "位运算 {} 只能用于整数，{}操作数是浮点数。请先用 浮点数转整数(...) 转换",
+                        符号, 侧名
+                    ));
+                }
+                Qi类型::字符串 => {
+                    return Err(format!(
+                        "位运算 {} 只能用于整数，{}操作数是字符串",
+                        符号, 侧名
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let (lv, lt) = self
+            .生成表达式(&b.left)?
+            .ok_or_else(|| "位运算左操作数无值".to_string())?;
+        let (rv, rt) = self
+            .生成表达式(&b.right)?
+            .ok_or_else(|| "位运算右操作数无值".to_string())?;
+        // 生成后再兜一层（推断为 未知 但实际生成出浮点/指针值的情况）
+        if !lv.is_int_value() || !rv.is_int_value() {
+            return Err(format!("位运算 {} 只能用于整数", 符号));
+        }
+        let li = self.整数加宽到i64(lv.into_int_value())?;
+        let ri = self.整数加宽到i64(rv.into_int_value())?;
+        let _ = (lt, rt);
+        let v: BasicValueEnum = match b.operator {
+            位与 => self
+                .builder
+                .build_and(li, ri, "band")
+                .map_err(|e| e.to_string())?
+                .into(),
+            位或 => self
+                .builder
+                .build_or(li, ri, "bor")
+                .map_err(|e| e.to_string())?
+                .into(),
+            位异或 => self
+                .builder
+                .build_xor(li, ri, "bxor")
+                .map_err(|e| e.to_string())?
+                .into(),
+            左移 => self
+                .builder
+                .build_left_shift(li, ri, "shl")
+                .map_err(|e| e.to_string())?
+                .into(),
+            // 算术右移（带符号，i64）
+            右移 => self
+                .builder
+                .build_right_shift(li, ri, true, "ashr")
+                .map_err(|e| e.to_string())?
+                .into(),
+            _ => unreachable!(),
+        };
+        Ok((v, Qi类型::整数))
+    }
+
+    /// 窄位宽整数（典型 i1 布尔）zext 到 i64；已是 i64 原样返回。
+    pub(super) fn 整数加宽到i64(
+        &mut self,
+        iv: inkwell::values::IntValue<'ctx>,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        if iv.get_type().get_bit_width() < 64 {
+            self.builder
+                .build_int_z_extend(iv, self.ctx.i64_type(), "zext")
+                .map_err(|e| e.to_string())
+        } else {
+            Ok(iv)
+        }
+    }
+
     /// 把任意数值值转 double（int→sitofp，float 原样）。
     fn 转浮点(
         &mut self,
@@ -579,6 +671,14 @@ impl<'ctx> 后端<'ctx> {
                 )
                 .map_err(|e| e.to_string())?
                 .into());
+        }
+        // 布尔(i1) → 整数(i64) 隐式加宽：比较/逻辑结果当整数用（真=1 假=0）。
+        // 覆盖 实参 / 变量初值与赋值 / 数组元素 等一切「期待整数拿到 i1」处。
+        if v.is_int_value() && 期望 == Qi类型::整数 {
+            let iv = v.into_int_value();
+            if iv.get_type().get_bit_width() < 64 {
+                return Ok(self.整数加宽到i64(iv)?.into());
+            }
         }
         Ok(v)
     }

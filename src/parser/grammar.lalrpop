@@ -690,22 +690,40 @@ WhileStatement: AstNode = {
 };
 
 ForStatement: AstNode = {
-    "对于" <variable:Identifier> "在" <range:Expr> <body:Block> => AstNode::对于语句(ForStatement {
+    "对于" <variable:Identifier> "在" <range:ForTarget> <body:Block> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
         span: Default::default(),
     }),
-    "对于" "(" <variable:Identifier> "在" <range:Expr> ")" <body:Block> => AstNode::对于语句(ForStatement {
+    "对于" "(" <variable:Identifier> "在" <range:ForTarget> ")" <body:Block> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
         span: Default::default(),
     }),
-    "对于" "（" <variable:Identifier> "在" <range:Expr> "）" <body:Block> => AstNode::对于语句(ForStatement {
+    "对于" "（" <variable:Identifier> "在" <range:ForTarget> "）" <body:Block> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
+        span: Default::default(),
+    }),
+};
+
+// 对于 循环目标：普通表达式（数组遍历）或整数区间。
+// `起..止` 半开（不含 止，Rust 惯例）；`起 到 止` 闭区间（含 止，中文自然读法）。
+ForTarget: AstNode = {
+    <e:Expr> => e,
+    <start:Expr> ".." <end:Expr> => AstNode::区间表达式(RangeExpression {
+        start: Box::new(start),
+        end: Box::new(end),
+        inclusive: false,
+        span: Default::default(),
+    }),
+    <start:Expr> "到" <end:Expr> => AstNode::区间表达式(RangeExpression {
+        start: Box::new(start),
+        end: Box::new(end),
+        inclusive: true,
         span: Default::default(),
     }),
 };
@@ -1402,6 +1420,19 @@ Precedence5_5: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    // 位或 / 位异或：Go 风格，与 + - 同层（低于 * / << >> &）
+    <left:Precedence5_5> "|" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::位或,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence5_5> "^" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::位异或,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     Precedence6,
 };
 
@@ -1440,6 +1471,25 @@ Precedence6: AstNode = {
     <left:Precedence6> "取余" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    // 位移 / 位与：Go 风格，与 * / % 同层（高于 + - | ^）
+    <left:Precedence6> "<<" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::左移,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence6> ">>" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::右移,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
+    <left:Precedence6> "&" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::位与,
         right: Box::new(right),
         span: Default::default(),
     }),
@@ -1790,7 +1840,10 @@ ClosureExpression: AstNode = {
         span: Default::default(),
     }),
     // 简化语法: |参数| 表达式
-    "|" <params:ParameterList> "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    // 注意：竖线闭包参数不允许默认值表达式 —— 引入二元 `|`（位或）后，
+    // `|x: T = a | b|` 里的 `|` 无法判定是位或还是闭包收尾（真歧义）。
+    // 需要默认值请用 闭包(x: 类型 = 默认值) {...} 完整语法。
+    "|" <params:BarClosureParamList> "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: None,
         body,
@@ -1804,6 +1857,35 @@ ClosureExpression: AstNode = {
         captures: vec![],
         span: Default::default(),
     }),
+};
+
+// 竖线闭包专用参数表：仅 名字 / 名字:类型，无默认值、无变参
+BarClosureParamList: Vec<Parameter> = {
+    <params:Comma<BarClosureParameter>> => params,
+};
+
+BarClosureParameter: Parameter = {
+    <name:FieldIdentifier> ":" <type_annotation:Type> => Parameter {
+        name,
+        type_annotation: Some(type_annotation),
+        default_value: None,
+        is_variadic: false,
+        span: Default::default(),
+    },
+    <name:FieldIdentifier> "：" <type_annotation:Type> => Parameter {
+        name,
+        type_annotation: Some(type_annotation),
+        default_value: None,
+        is_variadic: false,
+        span: Default::default(),
+    },
+    <name:Identifier> => Parameter {
+        name,
+        type_annotation: None,
+        default_value: None,
+        is_variadic: false,
+        span: Default::default(),
+    },
 };
 
 // 匹配表达式: 匹配 值 { 分支... }

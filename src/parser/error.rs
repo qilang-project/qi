@@ -522,6 +522,8 @@ impl ParserErrorRecovery {
             TokenKind::大于等于 => ">=".to_string(),
             TokenKind::与 => "&&".to_string(),
             TokenKind::或 => "||".to_string(),
+            TokenKind::位或 => "|".to_string(),
+            TokenKind::位异或 => "^".to_string(),
             TokenKind::非 => "!".to_string(),
             TokenKind::感叹号 => "!".to_string(),
             TokenKind::箭头 => "->".to_string(),
