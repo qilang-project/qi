@@ -151,6 +151,9 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
         } else if s.contains("\\{") || (s.contains("f\"") && s.contains("[^")) {
             // 格式字符串 f"...{...}..."
             push_special("<格式字符串>", &mut specials);
+        } else if s.contains("'(") || s.contains("'.'") || s.contains("'\\") {
+            // 字符字面量 '.' / '([^\\']|\\.)'（须先于字符串字面量判断，二者正则都含 [^）
+            push_special("<字符字面量>", &mut specials);
         } else if s.contains("[^") {
             // 普通字符串字面量 "..."
             push_special("<字符串字面量>", &mut specials);
@@ -158,8 +161,6 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
             push_special("<浮点数字面量>", &mut specials);
         } else if s.contains("[0-9]") {
             push_special("<整数字面量>", &mut specials);
-        } else if s.contains("'.'") || s.contains("'\\") {
-            push_special("<字符字面量>", &mut specials);
         } else if is_regex {
             // 兜底：未识别的正则，跳过（不往用户脸上糊正则）
         } else {
@@ -327,7 +328,8 @@ impl Parser {
             let n = bytes.len();
 
             let mut in_line_comment = false;
-            let mut in_block_comment = false;
+            // 块注释可嵌套（与 Rust 语义一致）：用深度计数配对 /* 与 */
+            let mut block_comment_depth = 0usize;
             let mut in_string = false;
             let mut in_char = false;
             let mut escape = false;
@@ -343,11 +345,18 @@ impl Parser {
                     continue;
                 }
 
-                if in_block_comment {
-                    if i + 1 < n && bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                        in_block_comment = false;
+                if block_comment_depth > 0 {
+                    if i + 1 < n && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                        block_comment_depth += 1;
+                        i += 2;
+                    } else if i + 1 < n && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        block_comment_depth -= 1;
                         i += 2;
                     } else {
+                        // 保留换行，让后续诊断的行号不漂移
+                        if bytes[i] == b'\n' {
+                            out.push('\n');
+                        }
                         i += 1;
                     }
                     continue;
@@ -397,7 +406,7 @@ impl Parser {
                     continue;
                 }
                 if i + 1 < n && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    in_block_comment = true;
+                    block_comment_depth = 1;
                     i += 2;
                     continue;
                 }

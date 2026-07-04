@@ -1557,7 +1557,7 @@ Precedence8: AstNode = {
             span: Default::default(),
         })
     },
-    <base:Precedence8> "." <field:FieldIdentifier> => {
+    <base:Precedence8> "." <field:MemberFieldIdentifier> => {
         AstNode::字段访问表达式(FieldAccessExpression {
             object: Box::new(base),
             field,
@@ -1946,8 +1946,9 @@ FormatStringLiteral: AstNode = {
 };
 
 CharLiteral: AstNode = {
-    <c:r"'.'"> => AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::字符(c.chars().nth(1).unwrap()),
+    // 支持普通字符 'A' 与转义字符 '\n' '\t' '\r' '\\' '\'' '\"' '\0'
+    <c:r"'([^\\']|\\.)'"> => AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::字符(unescape_string(&c[1..c.len()-1]).chars().next().unwrap_or('\0')),
         span: Default::default(),
     }),
 };
@@ -2291,6 +2292,25 @@ MethodIdentifier: String = {
     "不等于" => "不等于".to_string(),
     "大于" => "大于".to_string(),
     "小于" => "小于".to_string(),
+};
+
+// MemberFieldIdentifier: 用于 `对象.成员` 的成员名位置。
+// 标准库注册表里存在与关键字撞名的函数（如 文本.等于、向量.加、HTTP.选项），
+// 在成员位置放行这些关键字作为普通名字；关键字在表达式/类型位置的本职用法不受影响。
+MemberFieldIdentifier: String = {
+    <id:FieldIdentifier> => id,
+    "等于" => "等于".to_string(),
+    "不等于" => "不等于".to_string(),
+    "大于" => "大于".to_string(),
+    "小于" => "小于".to_string(),
+    "大于等于" => "大于等于".to_string(),
+    "小于等于" => "小于等于".to_string(),
+    "加" => "加".to_string(),
+    "减" => "减".to_string(),
+    "乘" => "乘".to_string(),
+    "除" => "除".to_string(),
+    "取余" => "取余".to_string(),
+    // 注：选项 已由 FieldIdentifier 放行（HTTP.选项 走那条），这里不重复
 };
 
 ChannelTypeConstructor: TypeNode = {
