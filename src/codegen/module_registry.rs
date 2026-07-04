@@ -1229,68 +1229,56 @@ impl ModuleRegistry {
     fn register_vector_module(&mut self) {
         let mut vector_module = Module::new("向量");
 
-        // 向量点积 - 需要返回浮点数类型的中间结果
-        // 注意：由于FFI限制，实际使用时需要传入结果指针
+        // 签名与 qi-runtime/src/stdlib/vector_ffi.rs 一一对应（Qi 友好形态：
+        // 直接收 Qi 数组指针，长度从数组头读，无出参缓冲）。
+        // 参数 "数组" → ptr 直传；返回 "浮点数组" → rc=1 新数组（数组(浮点数)）。
+
+        // 向量点积: 点积(数组, 数组) : 浮点数
         vector_module.add_function(ModuleFunction::new(
             "点积",
             "qi_vector_dot",
-            vec![
-                "数组".to_string(),
-                "整数".to_string(),
-                "数组".to_string(),
-                "整数".to_string(),
-            ],
+            vec!["数组".to_string(), "数组".to_string()],
             "浮点数",
         ));
 
-        // 向量加法
+        // 向量加法: 加(数组, 数组) : 数组（返回新数组）
         vector_module.add_function(ModuleFunction::new(
             "加",
             "qi_vector_add",
-            vec![
-                "数组".to_string(),
-                "整数".to_string(),
-                "数组".to_string(),
-                "整数".to_string(),
-            ],
-            "数组",
+            vec!["数组".to_string(), "数组".to_string()],
+            "浮点数组",
         ));
 
-        // 向量长度(模)
+        // 向量长度(模): 长度(数组) : 浮点数
         vector_module.add_function(ModuleFunction::new(
             "长度",
             "qi_vector_magnitude",
-            vec!["数组".to_string(), "整数".to_string()],
+            vec!["数组".to_string()],
             "浮点数",
         ));
 
-        // 向量归一化
+        // 向量归一化: 归一化(数组) : 数组（返回新数组）
         vector_module.add_function(ModuleFunction::new(
             "归一化",
             "qi_vector_normalize",
-            vec!["数组".to_string(), "整数".to_string()],
-            "数组",
+            vec!["数组".to_string()],
+            "浮点数组",
         ));
 
-        // 余弦相似度
+        // 余弦相似度: 余弦相似度(数组, 数组) : 浮点数
         vector_module.add_function(ModuleFunction::new(
             "余弦相似度",
             "qi_vector_cosine_similarity",
-            vec![
-                "数组".to_string(),
-                "整数".to_string(),
-                "数组".to_string(),
-                "整数".to_string(),
-            ],
+            vec!["数组".to_string(), "数组".to_string()],
             "浮点数",
         ));
 
-        // 向量数乘
+        // 向量数乘: 数乘(数组, 浮点数) : 数组（返回新数组）
         vector_module.add_function(ModuleFunction::new(
             "数乘",
             "qi_vector_scale",
-            vec!["数组".to_string(), "整数".to_string(), "浮点数".to_string()],
-            "数组",
+            vec!["数组".to_string(), "浮点数".to_string()],
+            "浮点数组",
         ));
 
         // Register module with both Chinese and path formats

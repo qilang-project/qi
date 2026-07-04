@@ -54,6 +54,15 @@ const 借用串FFI: &[&str] = &[
     "qi_future_value_ptr",
 ];
 
+/// 「借用读对象」的 runtime FFI：RC 对象（数组/结构体）入参只**借用读**
+/// （内部拷贝数据、不私藏指针、不释放）。调用点不做「发送即转移」retain，
+/// OWNED 临时实参在调用结束后释放（与 借用串FFI 的字符串语义对称）。
+/// 目前：向量模块全家（qi_vector_dot/add/magnitude/normalize/scale/cosine_similarity）。
+#[allow(non_snake_case)]
+pub(super) fn 借用读对象FFI(runtime_name: &str) -> bool {
+    runtime_name.starts_with("qi_vector_")
+}
+
 impl<'ctx> 后端<'ctx> {
     /// ARC 是否开启（QI_ARC=1）。
     pub(super) fn 弧开(&self) -> bool {
@@ -501,7 +510,9 @@ impl<'ctx> 后端<'ctx> {
                     }
                     return false;
                 }
-                // 标准库分发：FFI 不交对象所有权 → false。
+                // 标准库分发：FFI 一般不交对象所有权 → false；**例外**：注册表
+                // 返回类型为 浮点数组 的 FFI（向量.加/归一化/数乘）按约定
+                // qi_obj_alloc rc=1 新数组交出 → OWNED。
                 // 用户模块限定调用 别名.函数(...)（镜像 生成表达式 的分发顺序：
                 // 注册表两种 key 形式都命中不了才轮到用户函数）
                 if let AstNode::标识符表达式(id) = mc.object.as_ref() {
@@ -514,15 +525,17 @@ impl<'ctx> 后端<'ctx> {
                             .get(&id.name)
                             .cloned()
                             .unwrap_or_else(|| id.name.clone());
-                        let 是stdlib = self
-                            .注册表
-                            .get_function(&module_name, m)
-                            .or_else(|| {
-                                self.注册表
-                                    .get_function(&format!("标准库.{}", module_name), m)
-                            })
-                            .is_some();
-                        if !是stdlib && self.符号.查函数返回(&mc.method_name).is_some() {
+                        let mf = self.注册表.get_function(&module_name, m).or_else(|| {
+                            self.注册表
+                                .get_function(&format!("标准库.{}", module_name), m)
+                        });
+                        if let Some(mf) = mf {
+                            return matches!(
+                                注册表类型转qi(&mf.return_type),
+                                Qi类型::数组(_)
+                            );
+                        }
+                        if self.符号.查函数返回(&mc.method_name).is_some() {
                             return self.调用拥有对象(&mc.method_name);
                         }
                     }
@@ -563,7 +576,11 @@ impl<'ctx> 后端<'ctx> {
         if let Some((_f, sig)) = self.尝试解析用户函数(callee) {
             return sig.map(|s| 是对象类型(s.返回)).unwrap_or(false);
         }
-        // 4) 标准库 FFI：不交对象所有权
+        // 4) 标准库 FFI：一般不交对象所有权；例外：返回 浮点数组 的 FFI
+        //    （向量.*）按约定 rc=1 新数组交出 → OWNED（镜像 调用拥有字符串 6）
+        if let Some(mf) = self.查任意模块函数(callee.trim_start_matches(':')) {
+            return matches!(注册表类型转qi(&mf.return_type), Qi类型::数组(_));
+        }
         false
     }
 

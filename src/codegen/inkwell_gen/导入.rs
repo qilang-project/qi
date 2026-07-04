@@ -160,6 +160,10 @@ impl<'ctx> 后端<'ctx> {
         // ARC：runtime FFI 借用读入参（内部拷贝，不留指针）——OWNED 字符串
         // 临时在调用结束后释放。
         let mut 弧待释放: Vec<BasicValueEnum> = Vec::new();
+        // ARC：借用读 FFI（向量.* 等）的 OWNED 对象临时（数组字面量直传实参）
+        // 同理调用结束后按类型释放。
+        let mut 弧待释放对象: Vec<(BasicValueEnum, Qi类型)> = Vec::new();
+        let 借用读对象 = super::所有权::借用读对象FFI(&mf.runtime_name);
         for (i, a) in arguments.iter().enumerate() {
             let (v, vt) = self
                 .生成表达式(a)?
@@ -171,20 +175,28 @@ impl<'ctx> 后端<'ctx> {
             {
                 弧待释放.push(v);
             }
-            // ARC：结构体/数组/闭包指针进 runtime FFI（列表::设置指针 / 网络::
-            // 异步服务 / 回调注册等可能**私藏**指针）→ 发送即转移：BORROWED 先
-            // retain（对应引用随藏点泄漏，宁泄漏不悬垂）；OWNED 直接转移，
-            // 不 retain 也不释放。
             if self.弧开()
                 && matches!(vt, Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_))
                 && v.is_pointer_value()
-                && !self.表达式拥有RC(a, vt)
             {
-                self.弧retain任意(v, vt);
+                if 借用读对象 {
+                    // 借用读 FFI（内部只拷贝数据，不私藏指针）：BORROWED 原样借出；
+                    // OWNED 临时（如 向量.点积([1.0], [2.0]) 的字面量）调用后释放。
+                    if self.表达式拥有RC(a, vt) {
+                        弧待释放对象.push((v, vt));
+                    }
+                } else if !self.表达式拥有RC(a, vt) {
+                    // ARC：结构体/数组/闭包指针进 runtime FFI（列表::设置指针 / 网络::
+                    // 异步服务 / 回调注册等可能**私藏**指针）→ 发送即转移：BORROWED 先
+                    // retain（对应引用随藏点泄漏，宁泄漏不悬垂）；OWNED 直接转移，
+                    // 不 retain 也不释放。
+                    self.弧retain任意(v, vt);
+                }
             }
             let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
-            // 指针/ptr 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针都可）
-            if 原始 == "指针" || 原始 == "ptr" {
+            // 指针/ptr/数组 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针、
+            // Qi 数组本体指针都可）
+            if 原始 == "指针" || 原始 == "ptr" || 原始 == "数组" || 原始 == "浮点数组" {
                 let pv = if v.is_pointer_value() {
                     v.into_pointer_value()
                 } else {
@@ -210,6 +222,9 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         for v in 弧待释放 {
             self.弧release(v);
+        }
+        for (v, t) in 弧待释放对象 {
+            self.弧release任意(v, t);
         }
         match cs.try_as_basic_value().basic() {
             Some(v) => Ok(Some((v, 返回))),
@@ -265,8 +280,8 @@ impl<'ctx> 后端<'ctx> {
 
     /// 注册表参数类型字符串 → LLVM 元参数类型。
     fn 注册表参数llvm类型(&self, t: &str) -> BasicMetadataTypeEnum<'ctx> {
-        // 指针/ptr 形参声明为 ptr（吃 fat obj 指针 / 字符串指针 / 句柄）
-        if t == "指针" || t == "ptr" {
+        // 指针/ptr/数组 形参声明为 ptr（吃 fat obj 指针 / 字符串指针 / 句柄 / Qi 数组本体）
+        if t == "指针" || t == "ptr" || t == "数组" || t == "浮点数组" {
             return self.ctx.ptr_type(AddressSpace::default()).into();
         }
         match 注册表参数类型转qi(t) {
@@ -282,7 +297,9 @@ impl<'ctx> 后端<'ctx> {
         match 返回 {
             Qi类型::空 => None,
             Qi类型::浮点数 => Some(self.ctx.f64_type().into()),
-            Qi类型::字符串 => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
+            Qi类型::字符串 | Qi类型::数组(_) => {
+                Some(self.ctx.ptr_type(AddressSpace::default()).into())
+            }
             _ => Some(self.ctx.i64_type().into()),
         }
     }
@@ -298,7 +315,10 @@ pub(super) fn 注册表类型转qi(t: &str) -> Qi类型 {
         "浮点数" | "double" => Qi类型::浮点数,
         "布尔" => Qi类型::布尔,
         "空" | "void" => Qi类型::空,
-        // 整数/i32/i64/句柄/数组/未来<..> 一律按整数（句柄）处理
+        // 浮点数组：FFI 按 Qi 数组布局新分配（qi_obj_alloc，rc=1 交出）的
+        // f64 元素数组（向量.加/归一化/数乘）
+        "浮点数组" => Qi类型::数组(super::类型::元素类型::浮点数),
+        // 整数/i32/i64/句柄/未来<..> 一律按整数（句柄）处理
         _ => Qi类型::整数,
     }
 }
