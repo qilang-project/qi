@@ -167,6 +167,24 @@ impl<'ctx> 后端<'ctx> {
             AstNode::协程启动表达式(g) => self.生成协程启动(g),
 
             AstNode::字段访问表达式(fa) => {
+                // 枚举构造 `颜色.红` / `形状.点`：接收者是枚举名（非变量）且字段是其变体
+                if let AstNode::标识符表达式(id) = fa.object.as_ref() {
+                    if !self.变量表.contains_key(&id.name)
+                        && !self.全局变量表.contains_key(&id.name)
+                        && self.符号.是枚举名(&id.name)
+                    {
+                        if let Some(eidx) = self.符号.枚举索引(&id.name) {
+                            if self
+                                .符号
+                                .枚举信息(eidx)
+                                .and_then(|e| e.查变体(&fa.field))
+                                .is_some()
+                            {
+                                return self.生成枚举构造(&id.name, &fa.field, &[]).map(Some);
+                            }
+                        }
+                    }
+                }
                 // 数组 .长度 属性
                 if fa.field == "长度" && 推断表达式类型(&fa.object, &self.符号).数组元素().is_some()
                 {
@@ -221,6 +239,26 @@ impl<'ctx> 后端<'ctx> {
             AstNode::等待表达式(a) => self.生成等待(&a.expression).map(Some),
 
             AstNode::方法调用表达式(mc) => {
+                // 0a) 枚举构造 `形状.圆(3.14)`：接收者是枚举名（非变量）且方法是带载荷变体
+                if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                    if !self.变量表.contains_key(&id.name)
+                        && !self.全局变量表.contains_key(&id.name)
+                        && self.符号.是枚举名(&id.name)
+                    {
+                        if let Some(eidx) = self.符号.枚举索引(&id.name) {
+                            if self
+                                .符号
+                                .枚举信息(eidx)
+                                .and_then(|e| e.查变体(&mc.method_name))
+                                .is_some()
+                            {
+                                return self
+                                    .生成枚举构造(&id.name, &mc.method_name, &mc.arguments)
+                                    .map(Some);
+                            }
+                        }
+                    }
+                }
                 // 0) 未来::就绪 / 未来::失败 静态方法
                 if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")
                 {
@@ -645,6 +683,7 @@ impl<'ctx> 后端<'ctx> {
             期望,
             Qi类型::字符串
                 | Qi类型::结构体(_)
+                | Qi类型::装箱枚举(_)
                 | Qi类型::函数值(_)
                 | Qi类型::数组(_)
                 | Qi类型::未来(_)
@@ -757,6 +796,9 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
             Qi类型::数组(_) => Err("数组不能直接拼接为字符串".to_string()),
             Qi类型::未来(_) => Err("未来不能直接拼接为字符串（先 等待）".to_string()),
+            Qi类型::枚举(_) | Qi类型::装箱枚举(_) => {
+                Err("枚举不能直接拼接为字符串（用 匹配 解构）".to_string())
+            }
             Qi类型::空 => Err("空值不能拼接".to_string()),
             // 数值类型在 生成拼接操作数 里已转字符串处理，不会走到这里
             Qi类型::整数 | Qi类型::布尔 | Qi类型::浮点数 | Qi类型::未知 => {
@@ -1008,7 +1050,7 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(false);
             let 可释放 = match vt {
                 Qi类型::字符串 => self.表达式拥有字符串(a),
-                Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+                Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) | Qi类型::装箱枚举(_) => {
                     形参rc && self.表达式拥有RC(a, vt)
                 }
                 _ => false,
@@ -1144,6 +1186,18 @@ impl<'ctx> 后端<'ctx> {
                     },
                     v.into(),
                 ),
+                // 无载荷枚举 = i64 tag，直接按整数打印（变体序号）
+                Qi类型::枚举(_) => (
+                    if 换行 {
+                        "qi_runtime_println_int"
+                    } else {
+                        "qi_runtime_print_int"
+                    },
+                    v.into(),
+                ),
+                Qi类型::装箱枚举(_) => {
+                    return Err("不能直接打印带载荷枚举（用 匹配 解构后打印字段）".to_string())
+                }
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
                 Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
                 Qi类型::数组(_) => return Err("不能直接打印数组".to_string()),

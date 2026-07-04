@@ -43,6 +43,8 @@ mod 所有权;
 mod 数组;
 #[path = "方法.rs"]
 mod 方法;
+#[path = "枚举.rs"]
+mod 枚举;
 #[path = "类型.rs"]
 mod 类型;
 #[path = "类型检查.rs"]
@@ -506,15 +508,26 @@ pub fn compile_to_object_multi(
         后端值.设当前包(p.package_name.clone());
         后端值.登记结构体名字(p)?;
     }
+    // 枚举名字紧随结构体名字登记：结构体字段 / 枚举载荷 里跨引用彼此都能解析成型。
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.登记枚举名字(p)?;
+    }
     for p in programs {
         后端值.设当前包(p.package_name.clone());
         后端值.解析结构体字段(p)?;
+    }
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.解析枚举变体(p)?;
     }
     后端值.建结构体llvm类型()?;
 
     // QI_ARC=1：为所有结构体类型 + 两类数组 emit 释放函数（先声明后定义，
     // 递归类型可用；函数体生成前就位，插桩点直接引用）。关闭时不产生任何 IR。
     后端值.弧生成释放函数()?;
+    // 装箱枚举的按-tag 级联释放函数（qi.release.e<idx>）
+    后端值.弧生成枚举释放函数()?;
 
     // 第一趟半：登记所有模块顶层全局变量 / 常量（函数体会引用，须在函数体前）。
     // 带包上下文：全局的结构体类型注解按声明包解析。

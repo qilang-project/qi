@@ -151,6 +151,7 @@ Statement: AstNode = {
     FunctionDeclaration,
     InlineFunctionDeclaration,
     TypeDeclaration,
+    EnumDeclaration,
     ExportStatement,
     UnionDeclaration,
     TraitDeclaration,
@@ -891,6 +892,39 @@ TypeDeclaration: AstNode = {
         visibility: vis,
         span: Default::default(),
     }),
+};
+
+// 枚举声明: 枚举 名称 { 变体... }
+// 变体形如 `红`（无载荷）或 `圆(浮点数)` / `矩形(浮点数, 浮点数)`（带载荷）。
+// 任一变体带载荷 ⇒ 整个枚举装箱（堆指针）；否则为纯 i64 tag。
+EnumDeclaration: AstNode = {
+    <vis:Visibility> "枚举" <name:Identifier> "{" <variants:Comma<EnumVariantDecl>> "}" => AstNode::枚举声明(EnumDeclaration {
+        name,
+        variants,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "枚举" <name:Identifier> "{" "}" => AstNode::枚举声明(EnumDeclaration {
+        name,
+        variants: vec![],
+        visibility: vis,
+        span: Default::default(),
+    }),
+};
+
+EnumVariantDecl: EnumVariant = {
+    <name:Identifier> => EnumVariant {
+        name,
+        value: None,
+        payload: vec![],
+        span: Default::default(),
+    },
+    <name:Identifier> "(" <types:Comma<Type>> ")" => EnumVariant {
+        name,
+        value: None,
+        payload: types,
+        span: Default::default(),
+    },
 };
 
 // 特性声明: 特性 名称 { 方法签名... }
@@ -1966,6 +2000,13 @@ MatchPatternAtom: MatchPattern = {
     <s:r#""([^"\\]|\\.)*""#> => MatchPattern::字面量(LiteralValue::字符串(unescape_string(&s[1..s.len()-1]))),
     "真" => MatchPattern::字面量(LiteralValue::布尔(true)),
     "假" => MatchPattern::字面量(LiteralValue::布尔(false)),
+    // 枚举变体解构：`圆(半径)` / `矩形(宽, 高)`（无载荷变体 `点` 走下面的裸标识符，
+    // codegen 据 scrutinee 是枚举类型把裸名当变体名解析）。
+    <name:Identifier> "(" <bindings:Comma<MatchPatternAtom>> ")" => MatchPattern::枚举变体模式 {
+        enum_name: None,
+        variant_name: name,
+        bindings,
+    },
     <name:Identifier> => MatchPattern::变量绑定(name),
 };
 

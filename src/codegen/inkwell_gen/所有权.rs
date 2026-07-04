@@ -33,7 +33,11 @@ use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 pub(super) fn 是RC类型(t: Qi类型) -> bool {
     matches!(
         t,
-        Qi类型::字符串 | Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_)
+        Qi类型::字符串
+            | Qi类型::结构体(_)
+            | Qi类型::数组(_)
+            | Qi类型::函数值(_)
+            | Qi类型::装箱枚举(_)
     )
 }
 
@@ -151,7 +155,7 @@ impl<'ctx> 后端<'ctx> {
         }
         match t {
             Qi类型::字符串 => self.弧retain(v),
-            Qi类型::结构体(_) | Qi类型::数组(_) => {
+            Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::装箱枚举(_) => {
                 let f = self.弧函数("qi_obj_retain");
                 let _ = self
                     .builder
@@ -185,6 +189,12 @@ impl<'ctx> 后端<'ctx> {
             }
             Qi类型::数组(e) => {
                 let f = self.弧函数(&数组释放名(e));
+                let _ = self
+                    .builder
+                    .build_call(f, &[v.into_pointer_value().into()], "");
+            }
+            Qi类型::装箱枚举(idx) => {
+                let f = self.弧函数(&super::枚举::枚举释放名(idx));
                 let _ = self
                     .builder
                     .build_call(f, &[v.into_pointer_value().into()], "");
@@ -449,11 +459,27 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 表达式拥有RC(&self, node: &AstNode, t: Qi类型) -> bool {
         match t {
             Qi类型::字符串 => self.表达式拥有字符串(node),
-            Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) => {
+            Qi类型::结构体(_) | Qi类型::数组(_) | Qi类型::函数值(_) | Qi类型::装箱枚举(_) => {
                 self.表达式拥有对象(node)
             }
             _ => false,
         }
+    }
+
+    /// 该表达式是否为「装箱枚举构造」（`形状.圆(x)` 方法式 / `形状.点` 字段式）。
+    /// 装箱枚举构造 = qi_obj_alloc rc=1 新对象 → OWNED。
+    pub(super) fn 枚举构造是装箱(&self, object: &AstNode, 变体: &str) -> bool {
+        if let AstNode::标识符表达式(id) = object {
+            if !self.变量表.contains_key(&id.name) && !self.全局变量表.contains_key(&id.name)
+            {
+                if let Some(idx) = self.符号.枚举索引(&id.name) {
+                    if let Some(info) = self.符号.枚举信息(idx) {
+                        return info.装箱 && info.查变体(变体).is_some();
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// 结构体/数组/闭包值的 OWNED 判定。铁律同字符串：说 true 必须结构上 100% 确定；
@@ -485,7 +511,14 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::函数调用表达式(call) => self.调用拥有对象(&call.callee),
 
+            // 装箱枚举字段式构造 `形状.点`（无载荷变体仍是装箱指针）→ OWNED
+            AstNode::字段访问表达式(fa) => self.枚举构造是装箱(&fa.object, &fa.field),
+
             AstNode::方法调用表达式(mc) => {
+                // 装箱枚举方法式构造 `形状.圆(x)` → OWNED
+                if self.枚举构造是装箱(&mc.object, &mc.method_name) {
+                    return true;
+                }
                 // 未来:: 静态方法 → future 指针，非对象
                 if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")
                 {

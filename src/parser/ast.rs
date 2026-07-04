@@ -463,6 +463,9 @@ pub struct EnumDeclaration {
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<i64>, // Optional explicit value
+    /// 变体载荷类型列表（如 `圆(浮点数)` → [浮点数]；`矩形(浮点数,浮点数)` → [浮点数,浮点数]）。
+    /// 空 = 无载荷变体（C 风格）。任一变体非空 ⇒ 整个枚举装箱（堆指针表示）。
+    pub payload: Vec<TypeNode>,
     pub span: Span,
 }
 

@@ -21,6 +21,7 @@ fi
 QUICK_EXAMPLES=(
     "示例/基础/格式字符串.qi"
     "示例/基础/新功能演示.qi"
+    "示例/基础/枚举/枚举示例.qi"
 )
 STDLIB_EXAMPLES=(
     "示例/标准库/路径处理/路径示例.qi"

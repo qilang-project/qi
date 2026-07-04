@@ -19,6 +19,10 @@ pub enum Qi类型 {
     空,     // void
     /// 结构体实例（按指针传递）。u32 是结构体在 结构体注册表 中的索引。
     结构体(u32),
+    /// 无载荷枚举（纯 i64 tag，零分配，非 RC）。u32 是枚举注册表索引。
+    枚举(u32),
+    /// 带载荷枚举（堆指针：槽0=tag，槽1..=载荷）。RC 管理。u32 是枚举注册表索引。
+    装箱枚举(u32),
     /// 函数值 / 函数指针。u32 是签名在 函数值签名 注册表中的索引。按指针传递。
     函数值(u32),
     /// 数组（连续堆分配，按指针传递）。参数是元素类型。
@@ -96,6 +100,14 @@ impl Qi类型 {
         }
     }
 
+    /// 是否枚举（无载荷或装箱），返回其枚举注册表索引。
+    pub fn 枚举索引(&self) -> Option<u32> {
+        match self {
+            Qi类型::枚举(i) | Qi类型::装箱枚举(i) => Some(*i),
+            _ => None,
+        }
+    }
+
     /// 是否函数值，返回其签名索引。
     pub fn 函数值索引(&self) -> Option<u32> {
         match self {
@@ -126,11 +138,14 @@ impl<'ctx> 后端<'ctx> {
     /// 结构体按指针传递（不透明 ptr）。
     pub(super) fn llvm基础类型(&self, t: Qi类型) -> Option<BasicTypeEnum<'ctx>> {
         Some(match t {
-            Qi类型::整数 | Qi类型::未知 => self.ctx.i64_type().into(),
+            // 无载荷枚举 = i64 tag
+            Qi类型::整数 | Qi类型::未知 | Qi类型::枚举(_) => self.ctx.i64_type().into(),
             Qi类型::浮点数 => self.ctx.f64_type().into(),
             Qi类型::布尔 => self.ctx.bool_type().into(),
+            // 装箱枚举 = 堆指针
             Qi类型::字符串
             | Qi类型::结构体(_)
+            | Qi类型::装箱枚举(_)
             | Qi类型::函数值(_)
             | Qi类型::数组(_)
             | Qi类型::未来(_) => self.ctx.ptr_type(AddressSpace::default()).into(),

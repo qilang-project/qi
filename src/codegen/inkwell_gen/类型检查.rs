@@ -41,6 +41,33 @@ impl 结构体信息 {
     }
 }
 
+/// 枚举变体信息：变体名 + tag（声明序号）+ 载荷类型列表（空=无载荷）。
+#[derive(Debug, Clone)]
+pub struct 枚举变体信息 {
+    pub 名字: String,
+    pub tag: i64,
+    pub 载荷: Vec<Qi类型>,
+}
+
+/// 枚举布局：变体表 + 装箱标志。任一变体带载荷 ⇒ 装箱（堆指针，槽0=tag，槽1..=载荷）。
+/// `包`：声明包（跨包同名枚举各占独立索引，与结构体同款）。
+#[derive(Debug, Clone)]
+pub struct 枚举信息 {
+    pub 名字: String,
+    pub 包: Option<String>,
+    pub 变体: Vec<枚举变体信息>,
+    pub 装箱: bool,
+    /// 装箱时最大载荷槽数（分配 (1+最大载荷槽)*8 字节）。
+    pub 最大载荷槽: usize,
+}
+
+impl 枚举信息 {
+    /// 按变体名查 (tag, 载荷)。
+    pub fn 查变体(&self, name: &str) -> Option<&枚举变体信息> {
+        self.变体.iter().find(|v| v.名字 == name)
+    }
+}
+
 /// 作用域符号表。函数/结构体/方法签名全局共享；变量类型按块作用域压栈。
 #[derive(Default)]
 pub struct 符号表 {
@@ -53,6 +80,12 @@ pub struct 符号表 {
     结构体键索引: HashMap<(Option<String>, String), u32>,
     /// 结构体名 → 所有同名索引（无限定名解析的全局唯一性判定 / 歧义诊断用）。
     结构体同名: HashMap<String, Vec<u32>>,
+    /// 枚举注册表：索引即 Qi类型::枚举/装箱枚举(idx) 的 idx。
+    pub 枚举: Vec<枚举信息>,
+    /// (声明包, 枚举名) → 索引。跨包同名枚举各占一条。
+    枚举键索引: HashMap<(Option<String>, String), u32>,
+    /// 枚举名 → 所有同名索引（无限定名解析 / 歧义诊断用）。
+    枚举同名: HashMap<String, Vec<u32>>,
     /// destructure 导入映射：(使用方包, 符号名) → 来源包名。
     /// `导入 Web::{应用}` 让 使用方 里裸名 `应用` 优先解析到 Web 包
     /// （结构体与函数共用 —— 跨包同名符号靠它消歧）。
@@ -84,6 +117,9 @@ impl 符号表 {
             结构体: Vec::new(),
             结构体键索引: HashMap::new(),
             结构体同名: HashMap::new(),
+            枚举: Vec::new(),
+            枚举键索引: HashMap::new(),
+            枚举同名: HashMap::new(),
             符号导入: HashMap::new(),
             符号导入歧义: HashSet::new(),
             方法: HashMap::new(),
@@ -297,6 +333,72 @@ impl 符号表 {
         self.结构体.get(idx as usize)
     }
 
+    // ───────────────────────── 枚举注册（与结构体同款） ─────────────────────────
+
+    /// 登记一个枚举（按 (包, 名字) 幂等；跨包同名各占独立索引）。返回索引。
+    pub fn 登记枚举(&mut self, 信息: 枚举信息) -> u32 {
+        let key = (信息.包.clone(), 信息.名字.clone());
+        if let Some(idx) = self.枚举键索引.get(&key) {
+            return *idx;
+        }
+        let idx = self.枚举.len() as u32;
+        self.枚举键索引.insert(key, idx);
+        self.枚举同名
+            .entry(信息.名字.clone())
+            .or_default()
+            .push(idx);
+        self.枚举.push(信息);
+        idx
+    }
+
+    /// 按名字解析枚举索引（当前包 → 导入来源 → 全局唯一），与 结构体索引 同款。
+    pub fn 枚举索引(&self, name: &str) -> Option<u32> {
+        let key = (self.当前包.clone(), name.to_string());
+        if let Some(idx) = self.枚举键索引.get(&key) {
+            return Some(*idx);
+        }
+        if let Some(src) = self.导入来源(name) {
+            if let Some(idx) = self
+                .枚举键索引
+                .get(&(Some(src.to_string()), name.to_string()))
+            {
+                return Some(*idx);
+            }
+        }
+        match self.枚举同名.get(name).map(|v| v.as_slice()) {
+            Some([唯一]) => Some(*唯一),
+            _ => None,
+        }
+    }
+
+    /// 只查本包自己声明的枚举（变体解析第二趟用）。
+    pub fn 本包枚举索引(&self, name: &str) -> Option<u32> {
+        self.枚举键索引
+            .get(&(self.当前包.clone(), name.to_string()))
+            .copied()
+    }
+
+    /// 按索引拿枚举信息。
+    pub fn 枚举信息(&self, idx: u32) -> Option<&枚举信息> {
+        self.枚举.get(idx as usize)
+    }
+
+    /// 名字是否为已登记枚举类型（构造点消歧用）。
+    pub fn 是枚举名(&self, name: &str) -> bool {
+        self.枚举索引(name).is_some()
+    }
+
+    /// 枚举名 name 对应的 Qi 类型（装箱与否据注册表）。
+    pub fn 枚举qi类型(&self, name: &str) -> Option<Qi类型> {
+        let idx = self.枚举索引(name)?;
+        let info = self.枚举信息(idx)?;
+        Some(if info.装箱 {
+            Qi类型::装箱枚举(idx)
+        } else {
+            Qi类型::枚举(idx)
+        })
+    }
+
     /// 解析类型注解为 Qi 类型，自定义类型解析成 结构体(idx)，函数类型解析成 函数值(idx)。
     /// 需 &mut 因为函数类型会登记新签名。
     pub fn 解析类型(&mut self, t: &crate::parser::ast::TypeNode) -> Qi类型 {
@@ -306,7 +408,11 @@ impl 符号表 {
             | TypeNode::结构体类型(crate::parser::ast::StructType { name, .. }) => self
                 .结构体索引(name)
                 .map(Qi类型::结构体)
+                .or_else(|| self.枚举qi类型(name))
                 .unwrap_or(Qi类型::未知),
+            TypeNode::枚举类型(crate::parser::ast::EnumType { name, .. }) => {
+                self.枚举qi类型(name).unwrap_or(Qi类型::未知)
+            }
             TypeNode::函数类型(ft) => {
                 let 参数: Vec<Qi类型> = ft.parameters.iter().map(|p| self.解析类型(p)).collect();
                 let 返回 = self.解析类型(&ft.return_type);
@@ -448,6 +554,16 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             .map(Qi类型::结构体)
             .unwrap_or(Qi类型::未知),
         AstNode::字段访问表达式(fa) => {
+            // 枚举构造 `颜色.红`：接收者是枚举名（非变量）且字段是其变体 → 枚举类型
+            if let AstNode::标识符表达式(id) = fa.object.as_ref() {
+                if 表.查变量(&id.name).is_none() && 表.是枚举名(&id.name) {
+                    if let Some(idx) = 表.枚举索引(&id.name) {
+                        if 表.枚举信息(idx).and_then(|e| e.查变体(&fa.field)).is_some() {
+                            return 表.枚举qi类型(&id.name).unwrap_or(Qi类型::未知);
+                        }
+                    }
+                }
+            }
             let obj = 推断表达式类型(&fa.object, 表);
             if let Some(idx) = obj.结构体索引() {
                 if let Some(info) = 表.结构体信息(idx) {
@@ -459,6 +575,20 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             Qi类型::未知
         }
         AstNode::方法调用表达式(mc) => {
+            // 枚举构造 `形状.圆(3.14)`：接收者是枚举名（非变量）且方法是带载荷变体 → 枚举类型
+            if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                if 表.查变量(&id.name).is_none() && 表.是枚举名(&id.name) {
+                    if let Some(idx) = 表.枚举索引(&id.name) {
+                        if 表
+                            .枚举信息(idx)
+                            .and_then(|e| e.查变体(&mc.method_name))
+                            .is_some()
+                        {
+                            return 表.枚举qi类型(&id.name).unwrap_or(Qi类型::未知);
+                        }
+                    }
+                }
+            }
             // 接收者是任意表达式（链式关键）：先定其类型，再查方法返回。
             let recv = 推断表达式类型(&mc.object, 表);
             if let Some(idx) = recv.结构体索引() {
