@@ -1,6 +1,6 @@
 [package]
 name = "qi-compiler"
-version = "2026.7.3-2"
+version = "2026.7.4-1"
 edition = "2021"
 authors = ["Qi Language Team <team@qi-lang.org>"]
 description = "A compiler for the Qi programming language with 100% Chinese keywords"
