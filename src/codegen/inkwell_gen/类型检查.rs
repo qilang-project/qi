@@ -68,6 +68,34 @@ impl 枚举信息 {
     }
 }
 
+/// 用户泛型枚举模板：`枚举 盒装<T> { 满(T), 空盒 }`。
+/// 变体载荷存 AST TypeNode（含 T 占位），实例化时按 T→实参 绑定解析。
+#[derive(Debug, Clone)]
+pub struct 泛型枚举模板 {
+    pub 类型参数: Vec<String>,
+    /// (变体名, 载荷 TypeNode 列表)
+    pub 变体: Vec<(String, Vec<crate::parser::ast::TypeNode>)>,
+}
+
+/// 用户泛型结构体模板：`类型 对<T> { T 左; T 右; }`。
+#[derive(Debug, Clone)]
+pub struct 泛型结构体模板 {
+    pub 类型参数: Vec<String>,
+    /// (字段名, 字段 TypeNode)
+    pub 字段: Vec<(String, crate::parser::ast::TypeNode)>,
+}
+
+/// 用户泛型函数模板：AST 原样存档 + 声明包（实例体在末尾统一合成时还原包上下文）。
+#[derive(Clone)]
+pub struct 泛型函数模板 {
+    pub 声明: crate::parser::ast::FunctionDeclaration,
+    pub 包: Option<String>,
+}
+
+/// 泛型实例名嵌套深度上限（`盒装$盒装$…` 中 `$` 的个数）。
+/// 递归泛型（盒<盒<T>>）的无限展开防护。
+const 泛型深度上限: usize = 8;
+
 /// 作用域符号表。函数/结构体/方法签名全局共享；变量类型按块作用域压栈。
 #[derive(Default)]
 pub struct 符号表 {
@@ -107,6 +135,16 @@ pub struct 符号表 {
     /// 当前正在生成的函数所属包名（用于跨包同名函数消歧）。
     pub 当前包: Option<String>,
     作用域: Vec<HashMap<String, Qi类型>>,
+    // ───────── 用户泛型（单态化）─────────
+    /// 泛型枚举模板：模板名 → 模板（跨包共享名字，v1 不做同名消歧）。
+    pub 泛型枚举模板: HashMap<String, 泛型枚举模板>,
+    /// 泛型结构体模板：模板名 → 模板。
+    pub 泛型结构体模板: HashMap<String, 泛型结构体模板>,
+    /// 泛型函数模板：模板名 → 模板 AST。
+    pub 泛型函数模板: HashMap<String, 泛型函数模板>,
+    /// 类型参数绑定栈：解析类型 时 `自定义类型("T")` 先查栈顶。
+    /// 泛型函数实例体生成期间压该实例的绑定；实例化枚举/结构体模板时临时再压一层。
+    类型参数栈: Vec<HashMap<String, Qi类型>>,
 }
 
 impl 符号表 {
@@ -129,7 +167,26 @@ impl 符号表 {
             函数值索引表: HashMap::new(),
             当前包: None,
             作用域: vec![HashMap::new()],
+            泛型枚举模板: HashMap::new(),
+            泛型结构体模板: HashMap::new(),
+            泛型函数模板: HashMap::new(),
+            类型参数栈: Vec::new(),
         }
+    }
+
+    /// 压入一层类型参数绑定（泛型实例体生成 / 模板实例化期间）。
+    pub fn 压类型参数(&mut self, 绑定: HashMap<String, Qi类型>) {
+        self.类型参数栈.push(绑定);
+    }
+
+    /// 弹出最近一层类型参数绑定。
+    pub fn 弹类型参数(&mut self) {
+        self.类型参数栈.pop();
+    }
+
+    /// 栈顶绑定里查类型参数名（只查最近一层 —— 模板实例化时外层函数的 T 不可见）。
+    fn 查类型参数(&self, name: &str) -> Option<Qi类型> {
+        self.类型参数栈.last().and_then(|m| m.get(name)).copied()
     }
 
     /// destructure 导入的来源包（歧义时 None）。
@@ -427,21 +484,50 @@ impl 符号表 {
                 .unwrap_or_else(|| format!("枚举{}", i)),
             Qi类型::函数值(i) => format!("函数{}", i),
             Qi类型::数组(_) => "数组".to_string(),
+            Qi类型::通道(_) => "通道".to_string(),
             Qi类型::未来(_) => "未来".to_string(),
             Qi类型::未知 => "未知".to_string(),
         }
     }
 
+    /// (模板名, 类型实参) 的稳定实例名：`盒装$字符串`、`对$整数`、`映射$整数$字符串`。
+    /// 嵌套实例天然复用内层实例名（`盒装$对$整数`）。
+    pub fn 泛型实例名(&self, 模板: &str, 实参: &[Qi类型]) -> String {
+        let 片段: Vec<String> = 实参.iter().map(|t| self.类型名(*t)).collect();
+        format!("{}${}", 模板, 片段.join("$"))
+    }
+
+    /// 递归泛型的深度防护：实例名里 `$` 超过上限即报错（人话）。
+    pub fn 泛型深度检查(&self, 实例名: &str) -> Result<(), String> {
+        if 实例名.matches('$').count() > 泛型深度上限 {
+            return Err(format!(
+                "泛型嵌套过深（超过 {} 层）：{}。请检查是否存在无限递归的泛型实例化（如 盒<盒<T>> 反复自我包装）",
+                泛型深度上限,
+                super::枚举::枚举显示名(实例名)
+            ));
+        }
+        Ok(())
+    }
+
     /// 按需把一个参数化枚举模板单态化成具体枚举，登记进注册表，返回其索引。
     /// 幂等（同 模板+实参 复用同一实例，靠 登记枚举 按 (包=None, 实例名) 去重）。
     ///
-    /// v1 内建两个模板：
+    /// 内建两个模板：
     ///   选项<T> = { 有(T), 无 }
     ///   结果<T> = { 成(T), 败(字符串) }   // 错误类型固定字符串
     /// 两者恒装箱（有/成 带载荷）。`类型实参[0]` 即 T。
-    pub fn 实例化参数枚举(&mut self, 模板: &str, 类型实参: &[Qi类型]) -> Result<u32, String> {
+    ///
+    /// 其余模板名查 泛型枚举模板 注册表（用户 `枚举 X<T>{...}`）：
+    /// 先按模板载荷个数登记占位布局（自引用可解析、装箱标志已定），
+    /// 再压 T→实参 绑定逐变体解析载荷类型，回填。
+    pub fn 实例化参数枚举(
+        &mut self,
+        模板: &str,
+        类型实参: &[Qi类型],
+    ) -> Result<u32, String> {
         let 元素 = 类型实参.first().copied().unwrap_or(Qi类型::未知);
-        let 实例名 = format!("{}${}", 模板, self.类型名(元素));
+        let 实例名 = self.泛型实例名(模板, 类型实参);
+        self.泛型深度检查(&实例名)?;
         let 变体: Vec<枚举变体信息> = match 模板 {
             "选项" => vec![
                 枚举变体信息 {
@@ -467,7 +553,7 @@ impl 符号表 {
                     载荷: vec![Qi类型::字符串],
                 },
             ],
-            _ => return Err(format!("未知的参数化枚举模板: {}", 模板)),
+            _ => return self.实例化用户枚举(模板, 类型实参, &实例名),
         };
         Ok(self.登记枚举(枚举信息 {
             名字: 实例名,
@@ -476,6 +562,146 @@ impl 符号表 {
             装箱: true,
             最大载荷槽: 1,
         }))
+    }
+
+    /// 用户泛型枚举模板 → 具体实例（实例化参数枚举 的用户模板分支）。
+    fn 实例化用户枚举(
+        &mut self,
+        模板: &str,
+        类型实参: &[Qi类型],
+        实例名: &str,
+    ) -> Result<u32, String> {
+        let t = self
+            .泛型枚举模板
+            .get(模板)
+            .cloned()
+            .ok_or_else(|| format!("未知的参数化枚举模板: {}", 模板))?;
+        if 类型实参.len() != t.类型参数.len() {
+            return Err(format!(
+                "泛型枚举 {} 需要 {} 个类型实参，实际给了 {} 个",
+                模板,
+                t.类型参数.len(),
+                类型实参.len()
+            ));
+        }
+        // 幂等：已实例化过直接复用
+        if let Some(idx) = self.枚举键索引.get(&(None, 实例名.to_string())) {
+            return Ok(*idx);
+        }
+        // 1) 先按占位登记（装箱/最大载荷槽 由模板载荷个数决定，与 T 无关）——
+        //    自引用模板（满(盒装<T>)）解析载荷时能查到自己。
+        let 装箱 = t.变体.iter().any(|(_, p)| !p.is_empty());
+        let 最大载荷槽 = t.变体.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
+        let 占位变体: Vec<枚举变体信息> = t
+            .变体
+            .iter()
+            .enumerate()
+            .map(|(i, (名, _))| 枚举变体信息 {
+                名字: 名.clone(),
+                tag: i as i64,
+                载荷: vec![],
+            })
+            .collect();
+        let idx = self.登记枚举(枚举信息 {
+            名字: 实例名.to_string(),
+            包: None,
+            变体: 占位变体,
+            装箱,
+            最大载荷槽,
+        });
+        // 2) 压 T→实参 绑定，逐变体解析载荷类型，回填
+        let 绑定: HashMap<String, Qi类型> = t
+            .类型参数
+            .iter()
+            .cloned()
+            .zip(类型实参.iter().copied())
+            .collect();
+        self.压类型参数(绑定);
+        let mut 变体: Vec<枚举变体信息> = Vec::new();
+        for (i, (名, 载荷节点)) in t.变体.iter().enumerate() {
+            let 载荷: Vec<Qi类型> = 载荷节点.iter().map(|tn| self.解析类型(tn)).collect();
+            变体.push(枚举变体信息 {
+                名字: 名.clone(),
+                tag: i as i64,
+                载荷,
+            });
+        }
+        self.弹类型参数();
+        self.枚举[idx as usize].变体 = 变体;
+        Ok(idx)
+    }
+
+    /// 用户泛型结构体模板 → 具体实例，登记进结构体注册表，返回索引。幂等。
+    /// LLVM 具名 struct 类型由 后端::取结构体llvm 惰性补建（见 结构体.rs）。
+    pub fn 实例化参数结构体(
+        &mut self,
+        模板: &str,
+        类型实参: &[Qi类型],
+    ) -> Result<u32, String> {
+        let t = self
+            .泛型结构体模板
+            .get(模板)
+            .cloned()
+            .ok_or_else(|| format!("未知的泛型结构体模板: {}", 模板))?;
+        if 类型实参.len() != t.类型参数.len() {
+            return Err(format!(
+                "泛型结构体 {} 需要 {} 个类型实参，实际给了 {} 个",
+                模板,
+                t.类型参数.len(),
+                类型实参.len()
+            ));
+        }
+        let 实例名 = self.泛型实例名(模板, 类型实参);
+        self.泛型深度检查(&实例名)?;
+        if let Some(idx) = self.结构体键索引.get(&(None, 实例名.clone())) {
+            return Ok(*idx);
+        }
+        // 先占位登记（自引用可解析），再绑定解析字段类型回填
+        let 字段名: Vec<String> = t.字段.iter().map(|(n, _)| n.clone()).collect();
+        let 占位: Vec<Qi类型> = t.字段.iter().map(|_| Qi类型::整数).collect();
+        let idx = self.登记结构体(结构体信息 {
+            名字: 实例名,
+            包: None,
+            字段名,
+            字段类型: 占位,
+        });
+        let 绑定: HashMap<String, Qi类型> = t
+            .类型参数
+            .iter()
+            .cloned()
+            .zip(类型实参.iter().copied())
+            .collect();
+        self.压类型参数(绑定);
+        let 字段类型: Vec<Qi类型> = t.字段.iter().map(|(_, tn)| self.解析类型(tn)).collect();
+        self.弹类型参数();
+        self.结构体[idx as usize].字段类型 = 字段类型;
+        Ok(idx)
+    }
+
+    /// 通用入口：按模板种类把 (模板名, 类型实参) 单态化成具体 Qi 类型。
+    /// 结构体模板 → 结构体(idx)；枚举模板（含内建 选项/结果）→ 枚举/装箱枚举(idx)。
+    pub fn 实例化参数类型(
+        &mut self,
+        模板: &str,
+        类型实参: &[Qi类型],
+    ) -> Result<Qi类型, String> {
+        if self.泛型结构体模板.contains_key(模板) {
+            return self.实例化参数结构体(模板, 类型实参).map(Qi类型::结构体);
+        }
+        if 模板 == "选项" || 模板 == "结果" || self.泛型枚举模板.contains_key(模板)
+        {
+            let idx = self.实例化参数枚举(模板, 类型实参)?;
+            let 装箱 = self.枚举信息(idx).map(|e| e.装箱).unwrap_or(true);
+            return Ok(if 装箱 {
+                Qi类型::装箱枚举(idx)
+            } else {
+                Qi类型::枚举(idx)
+            });
+        }
+        Err(format!(
+            "未定义的泛型类型: {}。可用形式：用户声明的 枚举 {}<T> / 类型 {}<T>，或内建 选项<T> / 结果<T>",
+            模板, 模板, 模板
+        ))
     }
 
     /// 解析类型注解为 Qi 类型，自定义类型解析成 结构体(idx)，函数类型解析成 函数值(idx)。
@@ -499,10 +725,18 @@ impl 符号表 {
             }
             TypeNode::自定义类型(name)
             | TypeNode::结构体类型(crate::parser::ast::StructType { name, .. }) => self
-                .结构体索引(name)
-                .map(Qi类型::结构体)
+                // 泛型体内的 T：先查类型参数绑定（实例体生成/模板实例化期间压栈）
+                .查类型参数(name)
+                .or_else(|| self.结构体索引(name).map(Qi类型::结构体))
                 .or_else(|| self.枚举qi类型(name))
                 .unwrap_or(Qi类型::未知),
+            // 用户泛型类型注解：对<整数> / 盒装<字符串> / 嵌套 盒装<对<整数> >
+            // 递归解析实参后按模板种类单态实例化。解析失败 → 未知（调用处报错）。
+            TypeNode::泛型类型(g) => {
+                let 实参: Vec<Qi类型> = g.type_arguments.iter().map(|t| self.解析类型(t)).collect();
+                self.实例化参数类型(&g.base_type, &实参)
+                    .unwrap_or(Qi类型::未知)
+            }
             TypeNode::枚举类型(crate::parser::ast::EnumType { name, .. }) => {
                 self.枚举qi类型(name).unwrap_or(Qi类型::未知)
             }
@@ -520,8 +754,11 @@ impl 符号表 {
             TypeNode::基础类型(crate::parser::ast::BasicType::数组) => {
                 Qi类型::数组(super::类型::元素类型::整数)
             }
-            // 通道句柄按整数(i64)传递，收发两端一致
-            TypeNode::通道类型(_) => Qi类型::整数,
+            // 通道<T>：句柄指针 + 元素类型（收发两端据元素类型做 i64 位模式装/还原）
+            TypeNode::通道类型(ct) => {
+                let 元素 = super::类型::元素类型::从标量(self.解析类型(&ct.element_type));
+                Qi类型::通道(元素)
+            }
             // 未来<T>：eager future 句柄，内部类型 T 记进 Qi类型::未来
             TypeNode::未来类型(inner) => {
                 Qi类型::未来(super::类型::元素类型::从标量(self.解析类型(inner)))
@@ -538,6 +775,31 @@ impl 符号表 {
             return Some(sig.返回);
         }
         内建返回类型(callee).or_else(|| 标准库函数返回(callee.trim_start_matches(':')))
+    }
+}
+
+/// 注解 TypeNode → 元素类型（**不可变**解析，供 推断表达式类型 的通道创建臂用）。
+/// 基础类型走 从注解；自定义类型查注册表（已登记的结构体/枚举）；
+/// 泛型注解（实例可能尚未存在）保守按 指针。
+fn 注解元素类型(
+    t: &crate::parser::ast::TypeNode,
+    表: &符号表,
+) -> super::类型::元素类型 {
+    use super::类型::元素类型;
+    use crate::parser::ast::TypeNode;
+    match t {
+        TypeNode::自定义类型(name) => {
+            if let Some(i) = 表.结构体索引(name) {
+                return 元素类型::结构体(i);
+            }
+            match 表.枚举qi类型(name) {
+                Some(Qi类型::装箱枚举(_)) => 元素类型::指针,
+                Some(Qi类型::枚举(_)) => 元素类型::整数,
+                _ => 元素类型::整数,
+            }
+        }
+        TypeNode::泛型类型(_) => 元素类型::指针,
+        _ => 元素类型::从标量(Qi类型::从注解(t)),
     }
 }
 
@@ -720,6 +982,12 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             let arr = 推断表达式类型(&acc.array, 表);
             arr.数组元素().map(|e| e.标量()).unwrap_or(Qi类型::整数)
         }
+        // 通道创建 → 通道(元素类型)；通道接收 → 元素标量类型
+        AstNode::通道创建表达式(c) => Qi类型::通道(注解元素类型(&c.element_type, 表)),
+        AstNode::通道接收表达式(r) => 推断表达式类型(&r.channel, 表)
+            .通道元素()
+            .map(|e| e.标量())
+            .unwrap_or(Qi类型::整数),
         // 取地址 → 指针（按 字符串/ptr 语义）；解引用 → 整数（指针演示够用）
         AstNode::取地址表达式(_) => Qi类型::字符串,
         AstNode::解引用表达式(_) => Qi类型::整数,

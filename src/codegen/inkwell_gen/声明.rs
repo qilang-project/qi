@@ -12,17 +12,53 @@ use inkwell::values::FunctionValue;
 
 impl<'ctx> 后端<'ctx> {
     /// 第一趟：登记所有顶层函数签名 + 声明 LLVM function 原型。
+    /// 泛型函数（带 <T>）不声明原型 —— AST 模板进注册表，按调用点单态实例化。
     pub(super) fn 登记函数(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let crate::parser::ast::AstNode::函数声明(f) = stmt {
                 if f.name == "入口" {
                     continue; // 入口单独变 main
                 }
+                if !f.type_params.is_empty() {
+                    self.登记泛型函数模板(f)?;
+                    continue;
+                }
                 self.声明函数原型(f)?;
                 // 预登记「函数名当值」的签名索引，供函数值传递
                 self.符号.预登记函数值(&f.name);
             }
         }
+        Ok(())
+    }
+
+    /// 登记一个泛型函数模板（AST 原样入表，供调用点单态化）。
+    fn 登记泛型函数模板(&mut self, f: &FunctionDeclaration) -> Result<(), String> {
+        if f.type_params.len() > 2 {
+            return Err(format!(
+                "泛型函数 {} 声明了 {} 个类型参数，最多支持 2 个（<T> 或 <T, E>）",
+                f.name,
+                f.type_params.len()
+            ));
+        }
+        if super::枚举::是保留构造子(&f.name) {
+            return Err(format!(
+                "「{}」是奇语内建构造子（选项/结果），不能用作函数名。请换一个名字。",
+                f.name
+            ));
+        }
+        if self.符号.有函数(&f.name) {
+            return Err(format!(
+                "泛型函数 {} 与同名非泛型函数冲突，请改名其一",
+                f.name
+            ));
+        }
+        self.符号.泛型函数模板.insert(
+            f.name.clone(),
+            super::类型检查::泛型函数模板 {
+                声明: f.clone(),
+                包: self.当前包.clone(),
+            },
+        );
         Ok(())
     }
 

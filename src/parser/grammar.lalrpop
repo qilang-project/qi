@@ -343,6 +343,12 @@ Visibility: Visibility = {
     => Visibility::私有,  // Default to private if not specified
 };
 
+// 泛型类型参数声明：`<T>` / `<T, E>`（函数/枚举/结构体声明名字后可选）。
+// 名字任意标识符；个数上限由 codegen 校验（1 或 2）。
+TypeParamsDecl: Vec<String> = {
+    "<" <tps:Comma<Identifier>> ">" => tps,
+};
+
 FunctionDeclaration: AstNode = {
     // 带接收器的函数(方法) - Go 风格
     <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
@@ -435,8 +441,9 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 普通函数(无接收器)
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: Some(return_type),
         body,
@@ -445,8 +452,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: None,
         body,
@@ -455,8 +463,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: Some(return_type),
         body,
@@ -465,8 +474,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: None,
         body,
@@ -476,8 +486,9 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 中文标点符号版本
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: Some(return_type),
         body,
@@ -486,8 +497,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: None,
         body,
@@ -496,8 +508,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: Some(return_type),
         body,
@@ -506,8 +519,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: None,
         body,
@@ -517,8 +531,9 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 混合标点符号版本：英文括号 + 中文大括号
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: Some(return_type),
         body,
@@ -527,8 +542,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: None,
         body,
@@ -537,8 +553,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: Some(return_type),
         body,
@@ -547,8 +564,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: None,
         body,
@@ -558,8 +576,9 @@ FunctionDeclaration: AstNode = {
         span: Default::default(),
     }),
     // 混合标点符号版本：中文括号 + 英文大括号
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: Some(return_type),
         body,
@@ -568,8 +587,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: None,
         body,
@@ -578,8 +598,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: Some(return_type),
         body,
@@ -588,8 +609,9 @@ FunctionDeclaration: AstNode = {
         is_async: is_async_kw.is_some(),
         span: Default::default(),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: None,
         body,
@@ -733,8 +755,9 @@ ForTarget: AstNode = {
 
 // 内联函数声明
 InlineFunctionDeclaration: AstNode = {
-    <vis:Visibility> "内联" "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: Some(return_type),
         body,
@@ -743,8 +766,9 @@ InlineFunctionDeclaration: AstNode = {
         is_async: false,
         span: Default::default(),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: vec![],
         return_type: None,
         body,
@@ -753,8 +777,9 @@ InlineFunctionDeclaration: AstNode = {
         is_async: false,
         span: Default::default(),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: Some(return_type),
         body,
@@ -763,8 +788,9 @@ InlineFunctionDeclaration: AstNode = {
         is_async: false,
         span: Default::default(),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
         name,
+        type_params: tps.unwrap_or_default(),
         parameters: params,
         return_type: None,
         body,
@@ -866,6 +892,24 @@ ThrowStatement: AstNode = {
 TypeDeclaration: AstNode = {
     <vis:Visibility> "类型" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
+        type_params: vec![],
+        fields,
+        methods: vec![],
+        visibility: vis,
+        span: Default::default(),
+    }),
+    // 泛型结构体：类型 对<T> { T 左; T 右; } / 结构体 对<T> { 左: T, 右: T }
+    <vis:Visibility> "类型" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+        name,
+        type_params: tps,
+        fields,
+        methods: vec![],
+        visibility: vis,
+        span: Default::default(),
+    }),
+    <vis:Visibility> "结构体" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+        name,
+        type_params: tps,
         fields,
         methods: vec![],
         visibility: vis,
@@ -873,6 +917,7 @@ TypeDeclaration: AstNode = {
     }),
     <vis:Visibility> "类型" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
         name,
+        type_params: vec![],
         fields: vec![],
         methods: vec![],
         visibility: vis,
@@ -880,6 +925,7 @@ TypeDeclaration: AstNode = {
     }),
     <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
         name,
+        type_params: vec![],
         fields,
         methods: vec![],
         visibility: vis,
@@ -887,6 +933,7 @@ TypeDeclaration: AstNode = {
     }),
     <vis:Visibility> "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
         name,
+        type_params: vec![],
         fields: vec![],
         methods: vec![],
         visibility: vis,
@@ -900,12 +947,22 @@ TypeDeclaration: AstNode = {
 EnumDeclaration: AstNode = {
     <vis:Visibility> "枚举" <name:Identifier> "{" <variants:Comma<EnumVariantDecl>> "}" => AstNode::枚举声明(EnumDeclaration {
         name,
+        type_params: vec![],
+        variants,
+        visibility: vis,
+        span: Default::default(),
+    }),
+    // 泛型枚举：枚举 盒装<T> { 满(T), 空盒 }
+    <vis:Visibility> "枚举" <name:Identifier> <tps:TypeParamsDecl> "{" <variants:Comma<EnumVariantDecl>> "}" => AstNode::枚举声明(EnumDeclaration {
+        name,
+        type_params: tps,
         variants,
         visibility: vis,
         span: Default::default(),
     }),
     <vis:Visibility> "枚举" <name:Identifier> "{" "}" => AstNode::枚举声明(EnumDeclaration {
         name,
+        type_params: vec![],
         variants: vec![],
         visibility: vis,
         span: Default::default(),
@@ -1378,7 +1435,10 @@ Precedence4: AstNode = {
 
 // Level 5: Type conversion (作为)
 Precedence5: AstNode = {
-    <expr:Precedence5_5> "作为" <target_type:Type> => AstNode::类型转换表达式(TypeCastExpression {
+    // 转换目标只允许基础类型关键字：TypeKeyworded 里的 函数(...):Type 尾随
+    // 完整 Type，`x 作为 函数():T < y` 会让 `<`（比较）与 `T<整数>`（泛型）
+    // 真歧义（Local ambiguity）。语义上 作为 也只支持标量转换。
+    <expr:Precedence5_5> "作为" <target_type:BasicTypeKeyword> => AstNode::类型转换表达式(TypeCastExpression {
         expression: Box::new(expr),
         target_type,
         span: Default::default(),
@@ -1632,6 +1692,12 @@ Precedence8: AstNode = {
             span: Default::default(),
         })
     },
+    // 显式泛型调用（turbofish）：最大::<整数>(3, 5) / 嵌套 最大::<盒装<整数> >(...)
+    // 纯 LR(1) 下 `最大<整数>(3,5)` 与比较 `a<b` 单 token 前瞻不可判定（Rust 同因取舍）。
+    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" <args:ExprList> ")" =>? 泛型调用动作3(callee, targs, args),
+    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" ")" =>? 泛型调用动作3(callee, targs, vec![]),
+    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" <args:ExprList> "）" =>? 泛型调用动作3(callee, targs, args),
+    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" "）" =>? 泛型调用动作3(callee, targs, vec![]),
     <base:Precedence8> "::" <method:MethodIdentifier> => {
         // Static method call: Type::method parsed as a field access for now
         // The codegen layer will convert this to the appropriate static method call
@@ -1681,6 +1747,7 @@ Precedence8: AstNode = {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
+                type_arguments: vec![],
                 arguments: args,
                 span: Default::default(),
             }),
@@ -1701,6 +1768,7 @@ Precedence8: AstNode = {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
+                type_arguments: vec![],
                 arguments: vec![],
                 span: Default::default(),
             }),
@@ -1722,6 +1790,7 @@ Precedence8: AstNode = {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
+                type_arguments: vec![],
                 arguments: args,
                 span: Default::default(),
             }),
@@ -1742,6 +1811,7 @@ Precedence8: AstNode = {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
+                type_arguments: vec![],
                 arguments: vec![],
                 span: Default::default(),
             }),
@@ -1812,32 +1882,51 @@ Atom: AstNode = {
     // Struct literals with 新建 keyword (preferred syntax)
     "新建" <name:Identifier> "{" <fields:StructFieldValueList> "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields,
+        span: Default::default(),
+    }),
+    // 泛型结构体字面量（新建 形态）：新建 对<整数> { 左: 1, 右: 2 }
+    "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" <fields:StructFieldValueList> "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        type_arguments: targs,
+        fields,
+        span: Default::default(),
+    }),
+    "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        type_arguments: targs,
+        fields: vec![],
         span: Default::default(),
     }),
     "新建" <name:Identifier> "{" "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields: vec![],
         span: Default::default(),
     }),
     // Struct literals with parentheses (backwards compatible syntax)
     "(" <name:Identifier> "{" <fields:StructFieldValueList> "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields,
         span: Default::default(),
     }),
     "(" <name:Identifier> "{" "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields: vec![],
         span: Default::default(),
     }),
     "（" <name:Identifier> "{" <fields:StructFieldValueList> "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields,
         span: Default::default(),
     }),
     "（" <name:Identifier> "{" "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
+        type_arguments: vec![],
         fields: vec![],
         span: Default::default(),
     }),
@@ -2218,7 +2307,27 @@ ExprList: Vec<AstNode> = {
     <exprs:Comma<Expr>> => exprs,
 };
 
+// Type = 关键字类型 | 裸自定义类型名 | 泛型用户类型（对<整数> / 盒装<字符串> …）。
+// `作为` 的转换目标只允许关键字类型（TypeKeyworded）：若允许裸 TypeName，
+// `x 作为 T < y`（比较）会把 `<` 注入 TypeName 归约的 FOLLOW，与
+// GenericUserType 的 `TypeName . "<"` 移进在 LR 表里相撞。
+// （编译器本就只支持基础类型转换；自定义类型 cast 无语义。）
 Type: TypeNode = {
+    TypeKeyworded,
+    <name:TypeName> => TypeNode::自定义类型(name),
+    GenericUserType,
+};
+
+// 泛型用户类型：名字<类型实参, ...>（嵌套请写 `盒装<对<整数> >`，`>>` 是右移记号）
+GenericUserType: TypeNode = {
+    <name:TypeName> "<" <args:Comma<Type>> ">" => TypeNode::泛型类型(GenericType {
+        base_type: name,
+        type_arguments: args,
+    }),
+};
+
+// 关键字开头的类型（函数/容器/基础/内建泛型），供 Type 与 `作为` 共用
+TypeKeyworded: TypeNode = {
     "函数" "(" ")" ":" <return_type:Type> => TypeNode::函数类型(FunctionType {
         parameters: vec![],
         return_type: Box::new(return_type),
@@ -2289,9 +2398,6 @@ Type: TypeNode = {
 
     // 基础类型 - 使用关键字而不是标识符
     BasicTypeKeyword,
-
-    // 自定义类型 (struct names, etc.) - 使用TypeName避免冲突
-    <name:TypeName> => TypeNode::自定义类型(name),
 };
 
 FunctionTypeParameterList: Vec<TypeNode> = {

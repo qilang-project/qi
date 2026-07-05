@@ -146,7 +146,8 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
-    /// `通道<T>(cap)` → 句柄指针（当整数）。cap 缺省 0（无缓冲）。
+    /// `通道<T>(cap)` → 句柄指针（Qi类型::通道(元素)，收发两端据元素类型装/还原）。
+    /// cap 缺省 0（无缓冲）。
     pub(super) fn 生成通道创建(
         &mut self,
         c: &ChannelCreateExpression,
@@ -160,6 +161,7 @@ impl<'ctx> 后端<'ctx> {
             }
             None => self.ctx.i64_type().const_zero(),
         };
+        let 元素 = super::类型::元素类型::从标量(self.符号.解析类型(&c.element_type));
         let f = self
             .module
             .get_function("qi_runtime_create_channel")
@@ -172,11 +174,12 @@ impl<'ctx> 后端<'ctx> {
             .try_as_basic_value()
             .basic()
             .ok_or_else(|| "create_channel 未返回".to_string())?;
-        // 句柄按整数（ptr 在 64 位与 i64 等价）暴露给 Qi
-        Ok((ptr, Qi类型::整数))
+        Ok((ptr, Qi类型::通道(元素)))
     }
 
     /// `ch <- v` → qi_runtime_channel_send(ch_ptr, v_i64)。返回状态整数。
+    /// 通道按值传输 i64：浮点 bitcast、字符串/结构体指针 ptr→int、布尔 zext ——
+    /// 接收端按通道元素类型还原（生成通道接收）。
     pub(super) fn 生成通道发送(
         &mut self,
         s: &ChannelSendExpression,
@@ -186,17 +189,40 @@ impl<'ctx> 后端<'ctx> {
             .生成表达式(&s.value)?
             .ok_or_else(|| "通道发送值无值".to_string())?;
         // ARC：发送即转移 —— BORROWED RC 值（字符串/结构体/数组）retain 后发；
-        // OWNED 直接发。（接收端类型退化为整数句柄，永不 release —— 宁泄漏。）
+        // OWNED 直接发。接收端把值当 OWNED 接收（表达式拥有RC 认 通道接收），
+        // 净额平衡：发 +1（或转移），收端槽位/丢弃时 -1。
         if self.弧开() && v.is_pointer_value() {
             self.弧存入槽2(v, &s.value, t);
         }
+        // 值 → i64 位模式（f64 bitcast / ptr ptrtoint / i1 zext）
+        let i64t = self.ctx.i64_type();
+        let v64: BasicValueEnum = if v.is_float_value() {
+            self.builder
+                .build_bit_cast(v.into_float_value(), i64t, "f2bits")
+                .map_err(|e| e.to_string())?
+        } else if v.is_pointer_value() {
+            self.builder
+                .build_ptr_to_int(v.into_pointer_value(), i64t, "p2i")
+                .map_err(|e| e.to_string())?
+                .into()
+        } else {
+            let iv = v.into_int_value();
+            if iv.get_type().get_bit_width() < 64 {
+                self.builder
+                    .build_int_z_extend(iv, i64t, "zext")
+                    .map_err(|e| e.to_string())?
+                    .into()
+            } else {
+                v
+            }
+        };
         let f = self
             .module
             .get_function("qi_runtime_channel_send")
             .ok_or_else(|| "运行时函数未声明: qi_runtime_channel_send".to_string())?;
         let cs = self
             .builder
-            .build_call(f, &[ch.into(), v.into()], "chsend")
+            .build_call(f, &[ch.into(), v64.into()], "chsend")
             .map_err(|e| e.to_string())?;
         let r = cs
             .try_as_basic_value()
@@ -219,7 +245,11 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         r: &ChannelReceiveExpression,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        let ch = self.求通道指针(&r.channel)?;
+        // 通道表达式先生成，其 Qi 类型携带元素类型（通道<字符串> 等按位模式还原）
+        let (chv, cht) = self
+            .生成表达式(&r.channel)?
+            .ok_or_else(|| "通道表达式无值".to_string())?;
+        let ch = self.通道值转指针(chv)?;
         let i64t = self.ctx.i64_type();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         // slot 存 *mut i64（boxed 值的指针）。entry 块 alloca：循环里反复
@@ -242,8 +272,45 @@ impl<'ctx> 后端<'ctx> {
         let v = self
             .builder
             .build_load(i64t, boxed, "recvval")
-            .map_err(|e| e.to_string())?;
-        Ok((v, Qi类型::整数))
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        // 3) 按通道元素类型还原（send 侧按位模式装入 i64）
+        use super::类型::元素类型;
+        let Some(元素) = cht.通道元素() else {
+            // 旧式整数句柄通道：保持 i64 语义
+            return Ok((v.into(), Qi类型::整数));
+        };
+        let (rv, rt): (BasicValueEnum<'ctx>, Qi类型) = match 元素 {
+            元素类型::整数 => (v.into(), Qi类型::整数),
+            元素类型::浮点数 => (
+                self.builder
+                    .build_bit_cast(v, self.ctx.f64_type(), "bits2f")
+                    .map_err(|e| e.to_string())?,
+                Qi类型::浮点数,
+            ),
+            元素类型::布尔 => (
+                self.builder
+                    .build_int_truncate(v, self.ctx.bool_type(), "i2b")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                Qi类型::布尔,
+            ),
+            元素类型::指针 => (
+                self.builder
+                    .build_int_to_ptr(v, ptrt, "i2p")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                Qi类型::字符串,
+            ),
+            元素类型::结构体(i) => (
+                self.builder
+                    .build_int_to_ptr(v, ptrt, "i2p")
+                    .map_err(|e| e.to_string())?
+                    .into(),
+                Qi类型::结构体(i),
+            ),
+        };
+        Ok((rv, rt))
     }
 
     /// `启动 表达式` —— 真并发：把表达式包成 nullary 闭包（fat obj），
@@ -591,7 +658,7 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
-    /// 求通道句柄的 ptr 值（Qi 侧句柄是整数，转回 ptr 传给运行时）。
+    /// 求通道句柄的 ptr 值（通道值是 ptr；旧式整数句柄转回 ptr 传给运行时）。
     fn 求通道指针(
         &mut self,
         node: &AstNode,
@@ -599,10 +666,17 @@ impl<'ctx> 后端<'ctx> {
         let (v, _t) = self
             .生成表达式(node)?
             .ok_or_else(|| "通道表达式无值".to_string())?;
+        self.通道值转指针(v)
+    }
+
+    /// 通道值 → ptr（ptr 原样；i64 句柄 int_to_ptr）。
+    fn 通道值转指针(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         if v.is_pointer_value() {
             Ok(v.into_pointer_value())
         } else {
-            // 句柄是 i64 → int_to_ptr
             let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
             self.builder
                 .build_int_to_ptr(v.into_int_value(), ptrt, "ch2ptr")

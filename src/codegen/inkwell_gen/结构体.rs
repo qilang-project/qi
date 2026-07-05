@@ -21,6 +21,29 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 登记结构体名字(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::结构体声明(sd) = stmt {
+                // 泛型结构体（带 <T>）：模板入注册表（字段 TypeNode 原样存），
+                // 不占具体结构体索引 —— 按 (模板, 实参) 单态实例化。
+                if !sd.type_params.is_empty() {
+                    if sd.type_params.len() > 2 {
+                        return Err(format!(
+                            "泛型结构体 {} 声明了 {} 个类型参数，最多支持 2 个（<T> 或 <T, E>）",
+                            sd.name,
+                            sd.type_params.len()
+                        ));
+                    }
+                    self.符号.泛型结构体模板.insert(
+                        sd.name.clone(),
+                        super::类型检查::泛型结构体模板 {
+                            类型参数: sd.type_params.clone(),
+                            字段: sd
+                                .fields
+                                .iter()
+                                .map(|f| (f.name.clone(), f.type_annotation.clone()))
+                                .collect(),
+                        },
+                    );
+                    continue;
+                }
                 let 字段名: Vec<String> = sd.fields.iter().map(|f| f.name.clone()).collect();
                 // 字段类型先占位（整数），第二趟再解析
                 let 占位: Vec<Qi类型> = sd.fields.iter().map(|_| Qi类型::整数).collect();
@@ -42,6 +65,9 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 解析结构体字段(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::结构体声明(sd) = stmt {
+                if !sd.type_params.is_empty() {
+                    continue; // 泛型模板：实例化时才解析字段
+                }
                 let idx = self
                     .符号
                     .本包结构体索引(&sd.name)
@@ -68,7 +94,14 @@ impl<'ctx> 后端<'ctx> {
     /// 第三趟：据最终字段类型建所有 LLVM struct 类型（顺序与索引一致）。
     pub(super) fn 建结构体llvm类型(&mut self) -> Result<(), String> {
         self.结构体llvm.clear();
-        for i in 0..self.符号.结构体.len() {
+        self.确保结构体llvm齐全();
+        Ok(())
+    }
+
+    /// 补建 结构体llvm 缺口（泛型结构体实例在函数体生成期间迟到登记，
+    /// LLVM 类型在首次使用时惰性补齐）。幂等。
+    pub(super) fn 确保结构体llvm齐全(&mut self) {
+        for i in self.结构体llvm.len()..self.符号.结构体.len() {
             let 字段类型 = self.符号.结构体[i].字段类型.clone();
             let 名字 = self.符号.结构体[i].名字.clone();
             let llvm字段: Vec<BasicTypeEnum> = 字段类型
@@ -87,19 +120,52 @@ impl<'ctx> 后端<'ctx> {
             st.set_body(&llvm字段, false);
             self.结构体llvm.push(st);
         }
-        Ok(())
+    }
+
+    /// 按索引取结构体 LLVM 类型（缺则惰性补建 —— 泛型实例迟到登记的关键）。
+    pub(super) fn 取结构体llvm(
+        &mut self,
+        idx: u32,
+    ) -> Result<inkwell::types::StructType<'ctx>, String> {
+        if idx as usize >= self.结构体llvm.len() {
+            self.确保结构体llvm齐全();
+        }
+        self.结构体llvm
+            .get(idx as usize)
+            .copied()
+            .ok_or_else(|| format!("结构体索引 {} 越界", idx))
     }
 
     /// 结构体字面量 → 堆分配指针 + 逐字段 store。
+    /// 泛型字面量（对<整数> { … }）先按 (模板, 实参) 单态实例化取具体索引。
     pub(super) fn 生成结构体字面量(
         &mut self,
         lit: &StructLiteralExpression,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        let idx = self
-            .符号
-            .结构体索引(&lit.struct_name)
-            .ok_or_else(|| self.符号.结构体解析错误(&lit.struct_name))?;
-        let st = self.结构体llvm[idx as usize];
+        let idx = if !lit.type_arguments.is_empty() {
+            let 实参: Vec<Qi类型> = lit
+                .type_arguments
+                .iter()
+                .map(|t| self.符号.解析类型(t))
+                .collect();
+            if 实参.contains(&Qi类型::未知) {
+                return Err(format!(
+                    "泛型结构体字面量 {} 的类型实参无法解析（未定义的类型？）",
+                    lit.struct_name
+                ));
+            }
+            self.符号.实例化参数结构体(&lit.struct_name, &实参)?
+        } else if let Some(idx) = self.符号.结构体索引(&lit.struct_name) {
+            idx
+        } else if self.符号.泛型结构体模板.contains_key(&lit.struct_name) {
+            return Err(format!(
+                "{} 是泛型结构体，字面量需要带类型实参，例如 新建 {}<整数> {{ … }}",
+                lit.struct_name, lit.struct_name
+            ));
+        } else {
+            return Err(self.符号.结构体解析错误(&lit.struct_name));
+        };
+        let st = self.取结构体llvm(idx)?;
 
         // 堆分配：size = LLVM 结构体大小（用 target-independent 常量占位不可靠，
         // 直接用 store 之前的 GEP 定位；分配大小取字段数*8 的保守上界，够放所有字段，
@@ -187,7 +253,7 @@ impl<'ctx> 后端<'ctx> {
         field: &str,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
         let (base, idx) = self.求结构体指针(object)?;
-        let st = self.结构体llvm[idx as usize];
+        let st = self.取结构体llvm(idx)?;
         let (fidx, ftype) = self
             .符号
             .结构体信息(idx)
@@ -212,7 +278,7 @@ impl<'ctx> 后端<'ctx> {
         value: &AstNode,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
         let (base, idx) = self.求结构体指针(object)?;
-        let st = self.结构体llvm[idx as usize];
+        let st = self.取结构体llvm(idx)?;
         let (fidx, ftype) = self
             .符号
             .结构体信息(idx)

@@ -104,6 +104,9 @@ pub struct VariableDeclaration {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub name: String,
+    /// 泛型类型参数名（如 `最大<T>` → ["T"]；非泛型为空）。
+    /// 泛型函数不直接生成代码，按调用点 (函数名, 类型实参) 单态化。
+    pub type_params: Vec<String>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
@@ -307,6 +310,8 @@ pub struct TypeCastExpression {
 pub struct FunctionCallExpression {
     pub module_qualifier: Option<String>, // 模块前缀，如 "数学" 在 "数学.最大值" 中
     pub callee: String,
+    /// 显式泛型类型实参（如 `最大<整数>(3, 5)` → [整数]；普通调用为空）。
+    pub type_arguments: Vec<TypeNode>,
     pub arguments: Vec<AstNode>,
     pub span: Span,
 }
@@ -419,6 +424,8 @@ pub struct StringConcatExpression {
 #[derive(Debug, Clone)]
 pub struct StructDeclaration {
     pub name: String,
+    /// 泛型类型参数名（如 `对<T>` → ["T"]；非泛型为空）。
+    pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
     pub methods: Vec<MethodDeclaration>,
     pub visibility: Visibility,
@@ -453,6 +460,8 @@ pub struct MethodDeclaration {
 #[derive(Debug, Clone)]
 pub struct EnumDeclaration {
     pub name: String,
+    /// 泛型类型参数名（如 `盒装<T>` → ["T"]；非泛型为空）。
+    pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
     pub visibility: Visibility,
     pub span: Span,
@@ -517,6 +526,8 @@ pub struct EnumType {
 #[derive(Debug, Clone)]
 pub struct StructLiteralExpression {
     pub struct_name: String,
+    /// 泛型类型实参（如 `对<整数> { … }` → [整数]；普通字面量为空）。
+    pub type_arguments: Vec<TypeNode>,
     pub fields: Vec<StructFieldValue>,
     pub span: Span,
 }
@@ -835,6 +846,34 @@ pub struct OptionType {
 pub struct UnionType {
     pub name: String,
     pub variants: Vec<UnionVariant>,
+}
+
+/// 显式泛型调用（turbofish 形态）的语法动作：`最大::<整数>(3, 5)`。
+/// callee 位必须是裸标识符（函数名）。
+/// （LALRPOP 语法文件不能放顶层 fn，动作辅助函数集中在这里。）
+#[allow(non_snake_case)]
+pub fn 泛型调用动作3(
+    callee: AstNode,
+    targs: Vec<TypeNode>,
+    args: Vec<AstNode>,
+) -> Result<
+    AstNode,
+    lalrpop_util::ParseError<usize, lalrpop_util::lexer::Token<'static>, &'static str>,
+> {
+    match callee {
+        AstNode::标识符表达式(id) => {
+            Ok(AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
+                callee: id.name,
+                type_arguments: targs,
+                arguments: args,
+                span: Default::default(),
+            }))
+        }
+        _ => Err(lalrpop_util::ParseError::User {
+            error: "显式泛型类型实参只能跟在函数名后，例如 最大::<整数>(3, 5)",
+        }),
+    }
 }
 
 /// Helper function to unescape string literals

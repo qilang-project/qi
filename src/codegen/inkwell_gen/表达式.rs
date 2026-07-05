@@ -85,6 +85,10 @@ impl<'ctx> 后端<'ctx> {
         if let Some((名, 参数)) = self.识别构造子调用(node) {
             return self.生成构造子(&名, &参数, None).map(Some);
         }
+        // 用户泛型枚举构造（盒装.满(x) / 盒装.空盒）—— 无期望时按载荷反推
+        if let Some((模板, 变体, 参数)) = self.识别泛型枚举构造(node) {
+            return self.生成泛型枚举构造(&模板, &变体, &参数, None).map(Some);
+        }
         match node {
             AstNode::字面量表达式(lit) => Ok(Some(self.生成字面量(&lit.value)?)),
 
@@ -306,6 +310,7 @@ impl<'ctx> 后端<'ctx> {
                         let call = crate::parser::ast::FunctionCallExpression {
                             module_qualifier: None,
                             callee: mc.method_name.clone(),
+                            type_arguments: vec![],
                             arguments: mc.arguments.clone(),
                             span: mc.span.clone(),
                         };
@@ -467,6 +472,27 @@ impl<'ctx> 后端<'ctx> {
                 .build_int_compare(pred, cmp, zero, "strcmp")
                 .map_err(|e| e.to_string())?;
             return Ok((c.into(), Qi类型::布尔));
+        }
+
+        // 复合类型（结构体/装箱枚举/数组/…）不支持算术与比较 —— 人话报错，
+        // 不落进 int 路径（指针值 into_int_value 会 panic）。泛型 T 实例化成
+        // 这类类型时用 `>` 等比较也在此拦截。无载荷枚举是 i64 tag，放行。
+        for (t, 侧) in [(lt, "左"), (rt, "右")] {
+            let 种类 = match t {
+                Qi类型::结构体(_) => Some("结构体"),
+                Qi类型::装箱枚举(_) => Some("带载荷枚举"),
+                Qi类型::数组(_) => Some("数组"),
+                Qi类型::函数值(_) => Some("函数值"),
+                Qi类型::未来(_) => Some("未来"),
+                Qi类型::通道(_) => Some("通道"),
+                _ => None,
+            };
+            if let Some(n) = 种类 {
+                return Err(format!(
+                    "比较/算术运算不支持{}操作数（{}）。比较只对 整数/浮点数/字符串 合法；枚举请用 匹配 解构后再比较",
+                    侧, n
+                ));
+            }
         }
 
         let 用浮点 = lt.是浮点() || rt.是浮点();
@@ -691,6 +717,7 @@ impl<'ctx> 后端<'ctx> {
                 | Qi类型::装箱枚举(_)
                 | Qi类型::函数值(_)
                 | Qi类型::数组(_)
+                | Qi类型::通道(_)
                 | Qi类型::未来(_)
         );
         if 期望.是浮点() && !实际.是浮点() && v.is_int_value() {
@@ -800,6 +827,7 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::结构体(_) => Err("结构体不能直接拼接为字符串".to_string()),
             Qi类型::函数值(_) => Err("函数值不能拼接为字符串".to_string()),
             Qi类型::数组(_) => Err("数组不能直接拼接为字符串".to_string()),
+            Qi类型::通道(_) => Err("通道不能拼接为字符串".to_string()),
             Qi类型::未来(_) => Err("未来不能直接拼接为字符串（先 等待）".to_string()),
             Qi类型::枚举(_) | Qi类型::装箱枚举(_) => {
                 Err("枚举不能直接拼接为字符串（用 匹配 解构）".to_string())
@@ -976,6 +1004,11 @@ impl<'ctx> 后端<'ctx> {
 
         // 同步 / 定时器内建（创建等待组 / 互斥锁 / 定时器 等无限定并发原语）
         if let Some(v) = self.生成同步内建(&call.callee, &call.arguments)? {
+            return Ok(v);
+        }
+
+        // 用户泛型函数：定型（显式类型实参 / 实参推断）→ 单态实例化 → 以实例名调用
+        if let Some(v) = self.生成泛型函数调用(call)? {
             return Ok(v);
         }
 
@@ -1208,6 +1241,7 @@ impl<'ctx> 后端<'ctx> {
                 Qi类型::结构体(_) => return Err("不能直接打印结构体".to_string()),
                 Qi类型::函数值(_) => return Err("不能直接打印函数值".to_string()),
                 Qi类型::数组(_) => return Err("不能直接打印数组".to_string()),
+                Qi类型::通道(_) => return Err("不能直接打印通道".to_string()),
                 Qi类型::未来(_) => return Err("不能直接打印未来（先 等待）".to_string()),
                 Qi类型::空 => return Err("不能打印空值".to_string()),
             };

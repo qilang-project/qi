@@ -163,6 +163,7 @@ fn test_variable_declaration_in_analyzer() {
 fn test_function_declaration_in_analyzer() {
     let func_decl = FunctionDeclaration {
         name: "test".to_string(),
+        type_params: vec![],
         parameters: vec![],
         return_type: None,
         body: vec![],

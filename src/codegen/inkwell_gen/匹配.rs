@@ -209,7 +209,9 @@ impl<'ctx> 后端<'ctx> {
                             .ok_or_else(|| {
                                 format!(
                                     "匹配：枚举 {} 没有变体 {}",
-                                    super::枚举::枚举显示名(&self.符号.枚举[idx as usize].名字),
+                                    super::枚举::枚举显示名(
+                                        &self.符号.枚举[idx as usize].名字
+                                    ),
                                     variant_name
                                 )
                             })?;

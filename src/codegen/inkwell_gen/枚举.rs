@@ -54,6 +54,29 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 登记枚举名字(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::枚举声明(ed) = stmt {
+                // 泛型枚举（带 <T>）：模板入注册表（载荷 TypeNode 原样存，含 T 占位），
+                // 不占具体枚举索引 —— 按 (模板, 实参) 单态实例化。
+                if !ed.type_params.is_empty() {
+                    if ed.type_params.len() > 2 {
+                        return Err(format!(
+                            "泛型枚举 {} 声明了 {} 个类型参数，最多支持 2 个（<T> 或 <T, E>）",
+                            ed.name,
+                            ed.type_params.len()
+                        ));
+                    }
+                    self.符号.泛型枚举模板.insert(
+                        ed.name.clone(),
+                        super::类型检查::泛型枚举模板 {
+                            类型参数: ed.type_params.clone(),
+                            变体: ed
+                                .variants
+                                .iter()
+                                .map(|v| (v.name.clone(), v.payload.clone()))
+                                .collect(),
+                        },
+                    );
+                    continue;
+                }
                 let 变体: Vec<枚举变体信息> = ed
                     .variants
                     .iter()
@@ -81,6 +104,9 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 解析枚举变体(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let AstNode::枚举声明(ed) = stmt {
+                if !ed.type_params.is_empty() {
+                    continue; // 泛型模板：实例化时才解析载荷
+                }
                 let idx = self
                     .符号
                     .本包枚举索引(&ed.name)
@@ -234,6 +260,7 @@ impl<'ctx> 后端<'ctx> {
 
     /// 生成表达式；若目标处有期望类型（返回/变量注解/形参/载荷位），先透传给构造子定型。
     /// 非构造子表达式直接走 生成表达式（期望被忽略）。这是四条定型规则的统一注入点。
+    /// 用户泛型枚举构造（盒装.满(x) / 盒装.空盒）同样在此接收期望。
     pub(super) fn 生成带期望(
         &mut self,
         node: &AstNode,
@@ -241,6 +268,9 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
         if let Some((名, 参数)) = self.识别构造子调用(node) {
             return self.生成构造子(&名, &参数, 期望).map(Some);
+        }
+        if let Some((模板, 变体, 参数)) = self.识别泛型枚举构造(node) {
+            return self.生成泛型枚举构造(&模板, &变体, &参数, 期望).map(Some);
         }
         self.生成表达式(node)
     }

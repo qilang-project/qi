@@ -390,7 +390,9 @@ impl<'ctx> 后端<'ctx> {
             // （Pointer payload +1 移交；String payload 每次 rc_cstr 新分配）。
             // 数值 future 的 await 结果非指针，插桩点先验类型，不受影响。
             AstNode::等待表达式(_) => true,
-            // 其余（字面量 / 标识符 / 字段 / 数组元素 / 赋值值 / 通道收 …）→ BORROWED
+            // 通道接收：发送即转移 —— 发端 retain/转移的那 +1 随值移交接收方
+            AstNode::通道接收表达式(_) => true,
+            // 其余（字面量 / 标识符 / 字段 / 数组元素 / 赋值值 …）→ BORROWED
             _ => false,
         }
     }
@@ -421,6 +423,11 @@ impl<'ctx> 后端<'ctx> {
         // 2) 打印族：无返回值
         if matches!(callee, "打印行" | "println" | "打印" | "print" | "printf") {
             return false;
+        }
+        // 2.5) 泛型函数模板：实例是普通用户函数，遵守返回约定 +1（插桩点先验
+        //      实际类型是 字符串 才动作，非字符串实例不受影响）
+        if self.符号.泛型函数模板.contains_key(callee) {
+            return true;
         }
         // 3) 内建类型转换：int/float→string 是 rc=1 新串；其余非字符串
         match callee {
@@ -498,6 +505,10 @@ impl<'ctx> 后端<'ctx> {
         if self.识别构造子调用(node).is_some() {
             return true;
         }
+        // 用户泛型枚举构造（盒装.满(x) / 盒装.空盒）→ 同上 rc=1 新装箱枚举
+        if self.识别泛型枚举构造(node).is_some() {
+            return true;
+        }
         match node {
             AstNode::结构体实例化表达式(_) => true,
             AstNode::数组字面量表达式(_) => true,
@@ -505,6 +516,8 @@ impl<'ctx> 后端<'ctx> {
             AstNode::闭包表达式(_) => true,
             // `等待 fut`：take 语义，future 内那份 +1 移交（见 表达式拥有字符串 同款注释）
             AstNode::等待表达式(_) => true,
+            // 通道接收：发送即转移，+1 随值移交接收方
+            AstNode::通道接收表达式(_) => true,
             // 顶层函数名当值：镜像 生成表达式 的标识符分发 —— 变量/全局优先
             // （load → BORROWED），都不是且确是已登记函数 → 每次新建 fat obj（OWNED）
             AstNode::标识符表达式(id) => {
@@ -606,6 +619,11 @@ impl<'ctx> 后端<'ctx> {
         if matches!(callee, "打印行" | "println" | "打印" | "print" | "printf") {
             return false;
         }
+        // 2.5) 泛型函数模板：实例是普通用户函数，遵守返回约定 +1（插桩点先验
+        //      实际类型是 RC 才动作）
+        if self.符号.泛型函数模板.contains_key(callee) {
+            return true;
+        }
         // 3) 用户函数（返回约定 +1）
         if let Some((_f, sig)) = self.尝试解析用户函数(callee) {
             return sig.map(|s| 是对象类型(s.返回)).unwrap_or(false);
@@ -622,11 +640,14 @@ impl<'ctx> 后端<'ctx> {
 
     /// 为所有已登记结构体类型 + 两类数组 emit 释放函数（先全部声明再定义，
     /// 递归/互引用类型自然可用；循环引用会泄漏 —— 已知限制，接受）。
-    /// 在 建结构体llvm类型 之后、任何函数体生成之前调用一次。
+    /// 在 建结构体llvm类型 之后、任何函数体生成之前调用一次；
+    /// 末尾再跑一次（幂等）为迟到的泛型结构体实例补定义。
     pub(super) fn 弧生成释放函数(&mut self) -> Result<(), String> {
         if !self.弧 {
             return Ok(());
         }
+        // 泛型结构体实例迟到登记：先补齐 LLVM 类型（释放函数体要做 typed GEP）
+        self.确保结构体llvm齐全();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         let voidt = self.ctx.void_type();
         let sig = voidt.fn_type(&[ptrt.into()], false);
