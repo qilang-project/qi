@@ -49,6 +49,8 @@ mod 枚举;
 mod 泛型;
 #[path = "环检测.rs"]
 mod 环检测;
+#[path = "剖析.rs"]
+mod 剖析;
 #[path = "类型.rs"]
 mod 类型;
 #[path = "类型检查.rs"]
@@ -153,6 +155,13 @@ struct 后端<'ctx> {
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
     )>,
+    /// QI_PROF=1 时为 true：在每个用户函数入口/出口注入 qi_prof_enter/exit 计时。
+    /// 默认关，关时不声明任何 qi_prof_ 原型、不注入任何调用，IR 逐字节不变。见 剖析.rs。
+    剖析: bool,
+    /// 当前正在生成的函数的显示名（immortal 全局常量指针），供各出口 exit 复用。
+    剖析名: Option<PointerValue<'ctx>>,
+    /// 当前函数 entry 块里存进入时刻（i64 纳秒）的 alloca 槽。
+    剖析槽: Option<PointerValue<'ctx>>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -184,6 +193,12 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(true),
             try深度: 0,
             循环栈: Vec::new(),
+            // 剖析默认关（QI_PROF 未设或为 0/false）：零注入、IR 与无此功能一致。
+            剖析: std::env::var("QI_PROF")
+                .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                .unwrap_or(false),
+            剖析名: None,
+            剖析槽: None,
         }
     }
 
@@ -419,6 +434,28 @@ impl<'ctx> 后端<'ctx> {
             None,
         );
 
+        // 剖析器（QI_PROF=1 专用）：仅在开启时声明原型 —— 关时无这三行 declare，
+        // 保证未开启时整个模块 IR 与无此功能逐字节一致（真·零开销）。
+        if self.剖析 {
+            self.module.add_function(
+                "qi_prof_enter",
+                i64t.fn_type(&[ptrt.into()], false),
+                None,
+            );
+            self.module.add_function(
+                "qi_prof_exit",
+                self.ctx
+                    .void_type()
+                    .fn_type(&[ptrt.into(), i64t.into()], false),
+                None,
+            );
+            self.module.add_function(
+                "qi_prof_report",
+                self.ctx.void_type().fn_type(&[], false),
+                None,
+            );
+        }
+
         // future / async（eager future 模型）
         self.声明future运行时();
     }
@@ -448,6 +485,9 @@ impl<'ctx> 后端<'ctx> {
         self.try深度 = 0; // E4
         self.在入口中 = true; // main 返回 i32：bare `返回` 要 ret i32 0
 
+        // 剖析：main（入口）序言计时。atexit 报告在进程退出、main 返回之后打印。
+        self.剖析入口("入口")?;
+
         // 全局变量初始化（所有模块的带初值全局，在 body 之前 store）
         self.生成全局初始化(programs)?;
 
@@ -462,6 +502,7 @@ impl<'ctx> 后端<'ctx> {
         self.符号.退出作用域();
 
         if !self.当前块已终结() {
+            self.剖析出口()?; // 剖析：main 落底出口计时
             // ARC：main 顺利落底时释放入口的字符串局部
             self.弧释放局部()?;
             self.builder

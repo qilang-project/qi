@@ -114,6 +114,7 @@ impl<'ctx> 后端<'ctx> {
                             self.弧消费后释放2(v, t, expr);
                         }
                     }
+                    self.剖析出口()?; // 剖析：main 显式返回出口计时
                     self.弧释放局部()?; // ARC：main 出口释放字符串局部
                     self.弹try帧()?; // E4：try 体内 return 先弹异常 frame
                     let z = self.ctx.i32_type().const_int(0, false);
@@ -132,6 +133,7 @@ impl<'ctx> 后端<'ctx> {
                         // 声明返回 void：忽略返回值，emit ret void
                         if rt == Qi类型::空 {
                             self.弧消费后释放2(v, vt, expr); // 值被丢弃
+                            self.剖析出口()?; // 剖析：void 返回出口计时
                             self.弧释放局部()?;
                             self.弹try帧()?;
                             self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -150,6 +152,7 @@ impl<'ctx> 后端<'ctx> {
                             // ready_string 已把字节拷进 future；OWNED 源释放
                             // （仅字符串 —— 结构体/数组已转移进 future，不释放）
                             self.弧消费后释放(v, vt, expr);
+                            self.剖析出口()?; // 剖析：ready-future 返回出口计时
                             self.弧释放局部()?;
                             self.弹try帧()?;
                             self.builder
@@ -169,6 +172,7 @@ impl<'ctx> 后端<'ctx> {
                             if self.弧开() && 该retain && cv.is_pointer_value() {
                                 self.弧retain任意(cv, rt);
                             }
+                            self.剖析出口()?; // 剖析：普通值返回出口计时
                             // 出口释放全部字符串局部（返回值若来自某局部：上面已
                             // retain +1，槽 release -1，净 +1 交调用方，正确）。
                             self.弧释放局部()?;
@@ -179,6 +183,7 @@ impl<'ctx> 后端<'ctx> {
                         }
                     }
                     None => {
+                        self.剖析出口()?; // 剖析：bare 返回出口计时
                         self.弧释放局部()?;
                         self.弹try帧()?;
                         self.builder.build_return(None).map_err(|e| e.to_string())?;

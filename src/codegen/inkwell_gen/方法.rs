@@ -129,6 +129,10 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
+        // 剖析：序言计时（QI_PROF 关时空操作），显示名 = 接收者类型.方法名（消歧同名方法）
+        let 剖析显示名 = format!("{}.{}", m.receiver_type, m.method_name);
+        self.剖析入口(&剖析显示名)?;
+
         // 接收者 自身：alloca 存指针
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         let recv_ptr = self
@@ -178,6 +182,7 @@ impl<'ctx> 后端<'ctx> {
         }
 
         if !self.当前块已终结() {
+            self.剖析出口()?; // 剖析：落底出口计时
             self.弧释放局部()?; // ARC：落底默认返回前释放字符串局部
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {

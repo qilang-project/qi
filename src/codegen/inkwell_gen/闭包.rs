@@ -551,6 +551,10 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
+        // 剖析：序言计时（QI_PROF 关时空操作），显示名 = 闭包合成符号（__closure_N，天然唯一）
+        let 剖析显示名 = cl.符号名.clone();
+        self.剖析入口(&剖析显示名)?;
+
         let env = func.get_nth_param(0).unwrap().into_pointer_value();
 
         // 从 env 读捕获 → alloca 同名局部
@@ -597,6 +601,7 @@ impl<'ctx> 后端<'ctx> {
             }
         }
         if !self.当前块已终结() {
+            self.剖析出口()?; // 剖析：闭包落底出口计时
             self.弧释放局部()?; // ARC：闭包落底出口释放字符串局部
             match self.llvm基础类型(cl.返回类型) {
                 Some(rt) => {

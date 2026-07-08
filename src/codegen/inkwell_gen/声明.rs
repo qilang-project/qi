@@ -167,6 +167,9 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
+        // 剖析：序言计时（QI_PROF 关时空操作），用中文原名当显示名
+        self.剖析入口(&f.name)?;
+
         // 形参落地为 alloca 局部变量
         for (i, p) in f.parameters.iter().enumerate() {
             let t = sig.参数.get(i).copied().unwrap_or(Qi类型::整数);
@@ -199,6 +202,7 @@ impl<'ctx> 后端<'ctx> {
 
         // body 未显式 return 时补默认返回
         if !self.当前块已终结() {
+            self.剖析出口()?; // 剖析：落底出口计时
             self.弧释放局部()?; // ARC：落底出口释放字符串局部
             match self.llvm基础类型(sig.返回) {
                 Some(rt) => {
