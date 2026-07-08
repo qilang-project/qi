@@ -25,10 +25,14 @@
 
 #[path = "全局.rs"]
 mod 全局;
+#[path = "剖析.rs"]
+mod 剖析;
 #[path = "匹配.rs"]
 mod 匹配;
 #[path = "声明.rs"]
 mod 声明;
+#[path = "外部.rs"]
+mod 外部;
 #[path = "导入.rs"]
 mod 导入;
 #[path = "并发.rs"]
@@ -49,8 +53,6 @@ mod 枚举;
 mod 泛型;
 #[path = "环检测.rs"]
 mod 环检测;
-#[path = "剖析.rs"]
-mod 剖析;
 #[path = "类型.rs"]
 mod 类型;
 #[path = "类型检查.rs"]
@@ -437,11 +439,8 @@ impl<'ctx> 后端<'ctx> {
         // 剖析器（QI_PROF=1 专用）：仅在开启时声明原型 —— 关时无这三行 declare，
         // 保证未开启时整个模块 IR 与无此功能逐字节一致（真·零开销）。
         if self.剖析 {
-            self.module.add_function(
-                "qi_prof_enter",
-                i64t.fn_type(&[ptrt.into()], false),
-                None,
-            );
+            self.module
+                .add_function("qi_prof_enter", i64t.fn_type(&[ptrt.into()], false), None);
             self.module.add_function(
                 "qi_prof_exit",
                 self.ctx
@@ -503,7 +502,7 @@ impl<'ctx> 后端<'ctx> {
 
         if !self.当前块已终结() {
             self.剖析出口()?; // 剖析：main 落底出口计时
-            // ARC：main 顺利落底时释放入口的字符串局部
+                              // ARC：main 顺利落底时释放入口的字符串局部
             self.弧释放局部()?;
             self.builder
                 .build_return(Some(&i32t.const_int(0, false)))
@@ -597,6 +596,13 @@ pub fn compile_to_object_multi(
         后端值.设当前包(p.package_name.clone());
         后端值.登记函数(p)?;
         后端值.登记方法(p)?;
+    }
+
+    // 外部 C 函数声明（`外部 "库" { ... }`）：建 C 名原型 + 存签名。
+    // 在用户函数登记之后 —— 撞名（外部与用户函数同名）在此报错。
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.登记外部(p)?;
     }
 
     // 第三趟：生成所有模块的用户函数体（跳过重复的 入口，只 entry 的算数；

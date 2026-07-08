@@ -129,6 +129,10 @@ impl TypeChecker {
             AstNode::联合体声明(_) => {
                 Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
             }
+            // 外部 C 函数声明块：无函数体，语义分析无需检查（codegen 侧登记原型）。
+            AstNode::外部声明(_) => {
+                Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
+            }
             AstNode::尝试语句(_) => {
                 Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
             }

@@ -1007,6 +1007,11 @@ impl<'ctx> 后端<'ctx> {
             return Ok(v);
         }
 
+        // 外部 C 函数（`外部 "库" { ... }`）：走 C ABI 专用降级（不 mangle、不碰 ARC）。
+        if self.符号.外部函数.contains(&call.callee) {
+            return self.生成外部调用(call);
+        }
+
         // 用户泛型函数：定型（显式类型实参 / 实参推断）→ 单态实例化 → 以实例名调用
         if let Some(v) = self.生成泛型函数调用(call)? {
             return Ok(v);

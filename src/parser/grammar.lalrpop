@@ -154,6 +154,7 @@ Statement: AstNode = {
     EnumDeclaration,
     ExportStatement,
     UnionDeclaration,
+    ExternBlock,
     TraitDeclaration,
     ImplementationBlock,
     ReturnStatement,
@@ -1038,6 +1039,47 @@ TraitMethod: TraitMethod = {
         default_body: None,
         span: Default::default(),
     },
+};
+
+// 外部 C 函数声明块: 外部 "库名" { 函数 名(参数): 类型; ... }
+// 库名为空串 "" 表示不额外链接（符号已在，如已链的 libc）。
+ExternBlock: AstNode = {
+    "外部" <lib:LibName> "{" <fns:ExternFn*> "}" => AstNode::外部声明(ExternBlock {
+        library: lib,
+        functions: fns,
+        span: Default::default(),
+    }),
+    "外部" <lib:LibName> "【" <fns:ExternFn*> "】" => AstNode::外部声明(ExternBlock {
+        library: lib,
+        functions: fns,
+        span: Default::default(),
+    }),
+};
+
+// 库名字符串（复用字符串字面量正则，去掉两端引号并反转义）。
+LibName: String = {
+    <s:r#""([^"\\]|\\.)*""#> => unescape_string(&s[1..s.len()-1]),
+};
+
+// 块内单个外部函数签名（无函数体，分号结尾）。
+ExternFn: ExternFn = {
+    "函数" <name:Identifier> "(" ")" ":" <rt:Type> ExternSemi => ExternFn {
+        name, parameters: vec![], return_type: Some(rt), span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <rt:Type> ExternSemi => ExternFn {
+        name, parameters: params, return_type: Some(rt), span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" ")" ExternSemi => ExternFn {
+        name, parameters: vec![], return_type: None, span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ExternSemi => ExternFn {
+        name, parameters: params, return_type: None, span: Default::default(),
+    },
+};
+
+ExternSemi: () = {
+    ";" => (),
+    "；" => (),
 };
 
 // 实现块: 实现 特性 对于 类型 { 方法... } 或 实现 类型 { 方法... }

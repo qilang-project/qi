@@ -163,8 +163,10 @@ impl QiCompiler {
         } else {
             source_file.with_extension("")
         };
+        // 收集所有 外部 "库" 块声明的链接库（去重、去空串）—— 链接期加 -l<库>。
+        let extern_libs = Self::collect_extern_libs(&programs);
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
-        self.link_objects(&[obj.clone()], &exe)?;
+        self.link_objects(&[obj.clone()], &exe, &extern_libs)?;
         Ok(CompilationResult {
             executable_path: exe,
             ir_paths: Vec::new(),
@@ -199,11 +201,30 @@ impl QiCompiler {
         format!("{}-unknown-linux-gnu", self.目标架构())
     }
 
+    /// 扫所有编译单元的 `外部 "库" { ... }` 块，收集需 `-l` 的库名。
+    /// 去重、去空串（空串 = 不额外链接）；库名如已隐式链接（m/c/pthread/dl）
+    /// 重复 `-l` 无害，故不特判，交链接器处理。
+    fn collect_extern_libs(programs: &[crate::parser::ast::Program]) -> Vec<String> {
+        let mut libs: Vec<String> = Vec::new();
+        for p in programs {
+            for stmt in &p.statements {
+                if let crate::parser::ast::AstNode::外部声明(blk) = stmt {
+                    let lib = blk.library.trim();
+                    if !lib.is_empty() && !libs.iter().any(|l| l == lib) {
+                        libs.push(lib.to_string());
+                    }
+                }
+            }
+        }
+        libs
+    }
+
     /// Link object files into executable
     fn link_objects(
         &self,
         object_files: &[PathBuf],
         executable_path: &PathBuf,
+        extern_libs: &[String],
     ) -> Result<(), CompilerError> {
         // 交叉到 Linux：用 zig cc -target 链接，归档用交叉构建的 libqi_runtime.a。
         // rustls + bundled sqlite 已在归档里，无需 -lssl/-lcrypto/-lsqlite3；zig 自带 libc/pthread/m/dl。
@@ -222,6 +243,10 @@ impl QiCompiler {
                 .arg("-lpthread")
                 .arg("-lm")
                 .arg("-ldl");
+            // 外部块声明的 C 库（-l<库>）
+            for lib in extern_libs {
+                command.arg(format!("-l{}", lib));
+            }
 
             let output = command.output().map_err(CompilerError::Io)?;
             if !output.status.success() {
@@ -303,6 +328,11 @@ impl QiCompiler {
                     .arg("-framework")
                     .arg("AppKit");
             }
+        }
+
+        // 外部块声明的 C 库（-l<库>）。放在系统库之后，确保符号可被解析。
+        for lib in extern_libs {
+            command.arg(format!("-l{}", lib));
         }
 
         let output = command.output().map_err(CompilerError::Io)?;

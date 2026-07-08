@@ -30,6 +30,7 @@ pub enum AstNode {
     特性声明(TraitDeclaration),
     实现块(ImplementationBlock),
     联合体声明(UnionDeclaration),
+    外部声明(ExternBlock),
     如果语句(IfStatement),
     循环语句(LoopStatement),
     当语句(WhileStatement),
@@ -115,6 +116,25 @@ pub struct FunctionDeclaration {
     /// 异步函数标志：编译器把 body 转状态机，等待 表达式是真 yield 点。
     /// 仅当返回类型是 未来<T> 时有意义。详见 docs/编译器异步状态机里程碑.md
     pub is_async: bool,
+    pub span: Span,
+}
+
+/// 外部 C 函数声明块：`外部 "库名" { 函数 名(...): 类型; ... }`。
+/// 块内每个签名对应一个手写 C FFI 绑定；`库名` 决定链接期 `-l<库名>`（空串=不额外链接）。
+#[derive(Debug, Clone)]
+pub struct ExternBlock {
+    /// C 库名（如 "m"/"c"/"crypto"）；空串表示符号已在、不额外链接。
+    pub library: String,
+    pub functions: Vec<ExternFn>,
+    pub span: Span,
+}
+
+/// 单个外部 C 函数签名（无函数体）。参数/返回沿用普通函数声明的类型子集。
+#[derive(Debug, Clone)]
+pub struct ExternFn {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeNode>,
     pub span: Span,
 }
 
