@@ -41,7 +41,7 @@ use std::path::PathBuf;
   qi --target linux --release-runtime compile 程序.qi -o 程序
                                     交叉编译 Linux | Cross-compile for Linux
 
-更多信息 | More: https://qi-lang.org")]
+更多信息 | More: https://qilang.org")]
 pub struct Cli {
     /// 目标平台 | Target platform (Linux, Windows, macOS, Wasm)
     #[arg(short, long, value_enum)]
@@ -1161,7 +1161,7 @@ impl Cli {
     ) -> Result<(), CliError> {
         if version || (!language && !targets) {
             println!("Qi 编译器 v{}", env!("CARGO_PKG_VERSION"));
-            println!("作者: Qi Language Team <team@qi-lang.org>");
+            println!("作者: Qi Language Team <team@qilang.org>");
             println!();
         }
 
