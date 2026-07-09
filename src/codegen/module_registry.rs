@@ -1478,6 +1478,14 @@ impl ModuleRegistry {
             "整数",                                         // 返回条数（-1 失败）
         ));
 
+        // 最近一次非流式请求的 token 用量：JSON {"prompt":..,"completion":..,"total":..}
+        llm_module.add_function(ModuleFunction::new(
+            "用量",
+            "qi_llm_last_usage",
+            vec!["整数".to_string()], // 会话句柄
+            "字符串",                 // 返回用量 JSON
+        ));
+
         // 关闭会话
         llm_module.add_function(ModuleFunction::new(
             "关闭会话",
