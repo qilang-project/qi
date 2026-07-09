@@ -103,8 +103,295 @@ impl QiCompiler {
             source_file
         };
 
+        // 库模式（反向 FFI）：产出 C 静态/动态库 + .h，供外部语言调用 Qi 函数。
+        if self.config.library_kind.is_some() {
+            return self.compile_library(source_file, start_time);
+        }
+
         // inkwell 类型化 IR 后端 —— 唯一后端（旧文本后端已淘汰）。
         self.compile_inkwell(source_file, start_time)
+    }
+
+    /// 解析 entry + 所有被导入的用户模块，返回合并编译用的 programs 列表
+    /// （entry 在最前，其余按路径排序保证确定性）。可执行 / 库模式共用。
+    fn collect_programs(
+        &self,
+        source_file: &PathBuf,
+    ) -> Result<Vec<crate::parser::ast::Program>, CompilerError> {
+        let mut module_registry = crate::semantic::module::ModuleRegistry::new();
+        let mut compiled_modules: std::collections::HashMap<PathBuf, crate::parser::ast::AstNode> =
+            std::collections::HashMap::new();
+        self.parse_and_collect_modules(source_file, &mut module_registry, &mut compiled_modules)?;
+
+        let entry_key = source_file
+            .canonicalize()
+            .unwrap_or_else(|_| source_file.clone());
+        let mut programs: Vec<crate::parser::ast::Program> = Vec::new();
+        if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(&entry_key) {
+            programs.push(p.clone());
+        } else {
+            let content = std::fs::read_to_string(source_file).map_err(CompilerError::Io)?;
+            let p = crate::parser::Parser::new()
+                .parse_source(&content)
+                .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
+            programs.push(p);
+        }
+        let mut 其余: Vec<&PathBuf> = compiled_modules
+            .keys()
+            .filter(|path| **path != entry_key)
+            .collect();
+        其余.sort();
+        for path in 其余 {
+            if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(path) {
+                programs.push(p.clone());
+            }
+        }
+        Ok(programs)
+    }
+
+    /// 库模式编译：Qi → .o（含 C ABI 导出包装，不生成 @main）→ 打包成自包含的
+    /// 静态库(.a) 或动态库(.dylib/.so/.dll) + 生成 C 头文件(.h)。
+    fn compile_library(
+        &self,
+        source_file: PathBuf,
+        start_time: std::time::Instant,
+    ) -> Result<CompilationResult, CompilerError> {
+        let programs = self.collect_programs(&source_file)?;
+
+        let obj = source_file.with_extension("o");
+        let exports = crate::codegen::inkwell_gen::compile_to_object_multi(
+            &programs,
+            &obj,
+            self.config.target_platform,
+            self.config.target_arch.as_deref(),
+            self.config.optimization_level,
+            true, // 库模式：无 @main，生成导出包装 + 构造器
+        )
+        .map_err(CompilerError::Codegen)?;
+
+        if exports.is_empty() {
+            return Err(CompilerError::Codegen(
+                "库模式下未发现任何 `导出 函数` —— 至少导出一个函数才能生成库。".to_string(),
+            ));
+        }
+
+        // 输出库路径：优先 config.output_file，否则按平台约定命名（lib<基名>.<ext>）。
+        let kind = self.config.library_kind.unwrap();
+        let stem = source_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("qilib")
+            .to_string();
+        let lib_out = self.config.output_file.clone().unwrap_or_else(|| {
+            let ext = match (kind, self.config.target_platform) {
+                (config::LibraryKind::静态, _) => "a".to_string(),
+                (config::LibraryKind::动态, config::CompilationTarget::MacOS) => "dylib".to_string(),
+                (config::LibraryKind::动态, config::CompilationTarget::Windows) => "dll".to_string(),
+                (config::LibraryKind::动态, _) => "so".to_string(),
+            };
+            source_file.with_file_name(format!("lib{}.{}", stem, ext))
+        });
+
+        match kind {
+            config::LibraryKind::静态 => self.build_static_library(&obj, &lib_out)?,
+            config::LibraryKind::动态 => self.build_dynamic_library(&obj, &lib_out)?,
+        }
+
+        // 生成 C 头文件（.h）。
+        let header_out = self
+            .config
+            .header_output
+            .clone()
+            .unwrap_or_else(|| lib_out.with_extension("h"));
+        let header = Self::render_c_header(&stem, &exports);
+        std::fs::write(&header_out, header).map_err(CompilerError::Io)?;
+
+        Ok(CompilationResult {
+            executable_path: lib_out,
+            ir_paths: Vec::new(),
+            object_paths: vec![obj],
+            duration_ms: start_time.elapsed().as_millis() as u64,
+            warnings: Vec::new(),
+        })
+    }
+
+    /// 静态库：把用户 .o 与 libqi_runtime.a 合并成一个自包含的 .a。
+    /// 做法：在临时目录 `ar x` 解包运行时归档，连同用户 .o 一起 `ar rcs` 重新打包。
+    /// 这样使用者只需链接这一个 .a，无需再并列运行时。
+    fn build_static_library(
+        &self,
+        obj: &PathBuf,
+        lib_out: &PathBuf,
+    ) -> Result<(), CompilerError> {
+        let runtime = self.find_host_runtime_library()?;
+        let tmp = std::env::temp_dir().join(format!("qi_ar_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).map_err(CompilerError::Io)?;
+
+        // 解包运行时归档到临时目录
+        let out = std::process::Command::new("ar")
+            .arg("x")
+            .arg(&runtime)
+            .current_dir(&tmp)
+            .output()
+            .map_err(CompilerError::Io)?;
+        if !out.status.success() {
+            return Err(CompilerError::Codegen(format!(
+                "解包运行时归档失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )));
+        }
+
+        // 收集解包出的所有 .o
+        let mut members: Vec<PathBuf> = std::fs::read_dir(&tmp)
+            .map_err(CompilerError::Io)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("o"))
+            .collect();
+        members.sort();
+
+        let _ = std::fs::remove_file(lib_out);
+        let abs_out = std::fs::canonicalize(lib_out).unwrap_or_else(|_| {
+            std::env::current_dir()
+                .map(|d| d.join(lib_out))
+                .unwrap_or_else(|_| lib_out.clone())
+        });
+        let abs_obj = std::fs::canonicalize(obj).unwrap_or_else(|_| obj.clone());
+
+        let mut cmd = std::process::Command::new("ar");
+        cmd.arg("rcs").arg(&abs_out).arg(&abs_obj);
+        for m in &members {
+            cmd.arg(m);
+        }
+        let out = cmd.output().map_err(CompilerError::Io)?;
+        let _ = std::fs::remove_dir_all(&tmp);
+        if !out.status.success() {
+            return Err(CompilerError::Codegen(format!(
+                "打包静态库失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )));
+        }
+        Ok(())
+    }
+
+    /// 动态库：clang -shared/-dynamiclib 用户.o + libqi_runtime.a（+ 平台系统库）→ .dylib/.so/.dll。
+    fn build_dynamic_library(
+        &self,
+        obj: &PathBuf,
+        lib_out: &PathBuf,
+    ) -> Result<(), CompilerError> {
+        let runtime = self.find_host_runtime_library()?;
+        let mut cmd = std::process::Command::new("clang");
+        #[cfg(target_os = "macos")]
+        {
+            // 装载名用输出文件名，@rpath 让使用者可 -rpath 定位。
+            let name = lib_out
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "libqilib.dylib".to_string());
+            cmd.arg("-dynamiclib")
+                .arg("-install_name")
+                .arg(format!("@rpath/{}", name));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            cmd.arg("-shared").arg("-fPIC");
+        }
+        cmd.arg("-o").arg(lib_out).arg(obj);
+        // 运行时归档整体拉入（--whole-archive 保证 no_mangle FFI 符号不被丢弃）。
+        #[cfg(target_os = "macos")]
+        {
+            cmd.arg("-Wl,-force_load").arg(&runtime);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            cmd.arg("-Wl,--whole-archive")
+                .arg(&runtime)
+                .arg("-Wl,--no-whole-archive");
+        }
+
+        if cfg!(target_os = "macos") {
+            for fw in [
+                "AudioUnit",
+                "AudioToolbox",
+                "CoreAudio",
+                "Security",
+                "CoreFoundation",
+                "SystemConfiguration",
+                "Cocoa",
+                "QuartzCore",
+                "Carbon",
+                "CoreGraphics",
+                "CoreVideo",
+                "AppKit",
+            ] {
+                cmd.arg("-framework").arg(fw);
+            }
+        } else {
+            cmd.arg("-lpthread").arg("-lm");
+            #[cfg(target_os = "linux")]
+            {
+                cmd.arg("-ldl");
+            }
+        }
+
+        let out = cmd.output().map_err(CompilerError::Io)?;
+        if !out.status.success() {
+            return Err(CompilerError::Codegen(format!(
+                "构建动态库失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )));
+        }
+        Ok(())
+    }
+
+    /// 生成 C 头文件内容（include guard + extern "C" + 每个导出函数原型）。
+    fn render_c_header(stem: &str, exports: &[crate::codegen::inkwell_gen::CExportInfo]) -> String {
+        // include guard：ASCII 字母数字保留，其余转下划线。全中文名（转换后无字母数字）
+        // 会塌成一串下划线并互相撞名，故追加 stem 的稳定 hash 保证唯一。
+        let ascii: String = stem
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let has_alnum = stem.chars().any(|c| c.is_ascii_alphanumeric());
+        let mut hash: u64 = 5381;
+        for b in stem.bytes() {
+            hash = hash.wrapping_mul(33).wrapping_add(b as u64);
+        }
+        let guard = if has_alnum {
+            format!("QI_{}_H", ascii)
+        } else {
+            format!("QI_LIB_{:X}_H", hash)
+        };
+        let mut s = String::new();
+        s.push_str("/* 由 qi 编译器自动生成的 C 头文件（反向 FFI）。\n");
+        s.push_str("   运行时在库加载时自动初始化（constructor），C 侧无需手动 init。\n");
+        s.push_str("   返回 char* 的函数所有权归调用方：用毕请 free()。 */\n");
+        s.push_str(&format!("#ifndef {}\n#define {}\n\n", guard, guard));
+        s.push_str("#include <stdint.h>\n\n");
+        s.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
+        for e in exports {
+            let args = if e.params.is_empty() {
+                "void".to_string()
+            } else {
+                e.params
+                    .iter()
+                    .map(|(t, n)| format!("{} {}", t, n))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            s.push_str(&format!("/* Qi: {} */\n", e.qi_name));
+            s.push_str(&format!("{} {}({});\n\n", e.ret, e.c_name, args));
+        }
+        s.push_str("#ifdef __cplusplus\n}\n#endif\n\n");
+        s.push_str(&format!("#endif /* {} */\n", guard));
+        s
     }
 
     /// inkwell 后端入口：解析 → inkwell 类型化 IR → .o → 复用跨平台链接。
@@ -156,6 +443,7 @@ impl QiCompiler {
             self.config.target_platform,
             self.config.target_arch.as_deref(),
             self.config.optimization_level,
+            false, // 可执行模式：生成 @main
         )
         .map_err(CompilerError::Codegen)?;
         let exe = if cfg!(windows) {

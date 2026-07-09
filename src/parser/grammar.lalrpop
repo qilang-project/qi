@@ -221,6 +221,19 @@ ExportStatement: AstNode = {
         statements: vec![],
         span: Default::default(),
     }),
+    // 反向 FFI：以 C ABI 导出一个 Qi 函数（默认用函数原名当 C 符号）。
+    // 复用完整的 FunctionDeclaration 产生式（参数/返回/中英文括号全支持）。
+    "导出" <f:FunctionDeclaration> => AstNode::导出函数(ExportFunction {
+        c_name: None,
+        decl: Box::new(f),
+        span: Default::default(),
+    }),
+    // 显式 C 符号名：`导出 "qi_add" 函数 ...`（供 Rust/Go 等用干净 ASCII 名链接）。
+    "导出" <s:r#""([^"\\]|\\.)*""#> <f:FunctionDeclaration> => AstNode::导出函数(ExportFunction {
+        c_name: Some(unescape_string(&s[1..s.len()-1])),
+        decl: Box::new(f),
+        span: Default::default(),
+    }),
 };
 
 VariableDeclaration: AstNode = {

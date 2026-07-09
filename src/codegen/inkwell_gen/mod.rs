@@ -33,6 +33,8 @@ mod 匹配;
 mod 声明;
 #[path = "外部.rs"]
 mod 外部;
+#[path = "导出.rs"]
+mod 导出;
 #[path = "导入.rs"]
 mod 导入;
 #[path = "并发.rs"]
@@ -164,6 +166,8 @@ struct 后端<'ctx> {
     剖析名: Option<PointerValue<'ctx>>,
     /// 当前函数 entry 块里存进入时刻（i64 纳秒）的 alloca 槽。
     剖析槽: Option<PointerValue<'ctx>>,
+    /// 反向 FFI：本次编译登记的所有 `导出 函数`（C ABI 包装 + 头文件生成用）。
+    导出表: Vec<导出::导出记录>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -201,6 +205,7 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(false),
             剖析名: None,
             剖析槽: None,
+            导出表: Vec::new(),
         }
     }
 
@@ -519,6 +524,37 @@ impl<'ctx> 后端<'ctx> {
     }
 }
 
+/// 一个 C 导出函数的头文件信息（供 lib.rs 生成 .h）。C 类型已是最终字面量。
+#[derive(Debug, Clone)]
+pub struct CExportInfo {
+    /// 对外 C 符号名。
+    pub c_name: String,
+    /// 函数中文原名（头文件注释用）。
+    pub qi_name: String,
+    /// 参数列表：(C 类型, 参数名)。
+    pub params: Vec<(String, String)>,
+    /// 返回类型的 C 字面量（如 "int64_t" / "char*" / "void"）。
+    pub ret: String,
+}
+
+/// Qi 类型 → C 头文件类型字面量。`是返回` 区分字符串的 const 限定（入参只读 / 返回值 C 拥有）。
+fn qi类型转c(t: Qi类型, 是返回: bool) -> &'static str {
+    match t {
+        Qi类型::整数 | Qi类型::布尔 => "int64_t",
+        Qi类型::浮点数 => "double",
+        Qi类型::字符串 => {
+            if 是返回 {
+                "char*"
+            } else {
+                "const char*"
+            }
+        }
+        Qi类型::指针 => "void*",
+        Qi类型::空 => "void",
+        _ => "int64_t",
+    }
+}
+
 /// 把单个 Program 编译成目标文件（.o）。保留给单文件调用点。
 pub fn compile_to_object(
     program: &Program,
@@ -531,20 +567,26 @@ pub fn compile_to_object(
         target,
         None,
         crate::config::OptimizationLevel::Basic,
+        false,
     )
+    .map(|_| ())
 }
 
 /// 把多个 Program（entry + 所有用户模块）合并进同一个 LLVM 模块，编成一个 .o。
 /// programs[0] 是 entry（含 入口()）。跨模块符号共享同一 mangle，天然可见。
 /// `arch`：交叉编译目标架构（x86_64 / aarch64），None 时默认 x86_64。
 /// `opt`：优化级别（None/Basic/Standard/Maximum → O0/O1/O2/O3 管线 + 同级目标机 opt）。
+///
+/// `库模式`：true 时不生成 @main（不要求 入口()），改为生成所有 `导出 函数` 的 C ABI
+/// 包装 + 库加载构造器；返回导出函数的头文件信息（供 .h 生成）。
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
     target: CompilationTarget,
     arch: Option<&str>,
     opt: crate::config::OptimizationLevel,
-) -> Result<(), String> {
+    库模式: bool,
+) -> Result<Vec<CExportInfo>, String> {
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
     }
@@ -612,16 +654,32 @@ pub fn compile_to_object_multi(
         后端值.登记外部(p)?;
     }
 
+    // 反向 FFI：登记所有 `导出 函数`（建内部 Qi 原型 + 记录导出元数据）。
+    // 在用户函数登记之后 —— 内部原型与普通用户函数共用同一命名空间。
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.登记导出(p)?;
+    }
+
     // 第三趟：生成所有模块的用户函数体（跳过重复的 入口，只 entry 的算数；
     // 泛型函数模板不直接生成 —— 按调用点单态实例化，体在末尾统一合成）
     for p in programs {
         后端值.设当前包(p.package_name.clone());
         for stmt in &p.statements {
-            if let AstNode::函数声明(f) = stmt {
-                if f.name == "入口" || !f.type_params.is_empty() {
-                    continue; // 入口只在最后为 entry 生成 main
+            match stmt {
+                AstNode::函数声明(f) => {
+                    if f.name == "入口" || !f.type_params.is_empty() {
+                        continue; // 入口只在最后为 entry 生成 main
+                    }
+                    后端值.生成函数体(f)?;
                 }
-                后端值.生成函数体(f)?;
+                // 导出函数的内部 Qi 函数体（包装稍后统一转发到它）
+                AstNode::导出函数(ef) => {
+                    if let AstNode::函数声明(f) = ef.decl.as_ref() {
+                        后端值.生成函数体(f)?;
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -632,8 +690,11 @@ pub fn compile_to_object_multi(
         后端值.生成所有方法体(p)?;
     }
 
-    // 入口 → main（entry=programs[0]；全局初始化用所有 programs）
-    后端值.生成入口(programs)?;
+    // 入口 → main（entry=programs[0]；全局初始化用所有 programs）。
+    // 库模式无 main、不要求 入口()；改由导出包装 + global_ctors 承接。
+    if !库模式 {
+        后端值.生成入口(programs)?;
+    }
 
     // 合成所有待处理闭包函数（函数体/方法体/入口里遇到的匿名闭包）+
     // 泛型函数实例体。两者互相可能再产生对方（闭包里调泛型函数 / 泛型体里有
@@ -653,6 +714,12 @@ pub fn compile_to_object_multi(
     // 泛型结构体实例同理：补 qi.release.s<idx> / qi.release.arr.s<idx> 的定义
     //（幂等；内部先 确保结构体llvm齐全）。
     后端值.弧生成释放函数()?;
+
+    // 反向 FFI：库模式下为所有导出函数生成 C ABI 包装 + 运行时构造器。
+    // 放在所有 Qi 函数体 / 闭包 / 泛型实例之后 —— 转发目标全部就位。
+    if 库模式 {
+        后端值.生成导出包装()?;
+    }
 
     后端值
         .module
@@ -721,5 +788,22 @@ pub fn compile_to_object_multi(
     }
     tm.write_to_file(&后端值.module, FileType::Object, out)
         .map_err(|e| e.to_string())?;
-    Ok(())
+
+    // 导出头文件信息（供 lib.rs 生成 .h）。
+    let exports: Vec<CExportInfo> = 后端值
+        .导出表
+        .iter()
+        .map(|r| CExportInfo {
+            c_name: r.c符号.clone(),
+            qi_name: r.原名.clone(),
+            params: r
+                .参数
+                .iter()
+                .zip(r.参数名.iter())
+                .map(|(t, n)| (qi类型转c(*t, false).to_string(), n.clone()))
+                .collect(),
+            ret: qi类型转c(r.返回, true).to_string(),
+        })
+        .collect();
+    Ok(exports)
 }

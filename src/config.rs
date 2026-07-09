@@ -54,6 +54,32 @@ pub struct CompilerConfig {
     pub warnings_as_errors: bool,
     /// Verbose output
     pub verbose: bool,
+    /// 反向 FFI 库模式：Some 时产出 C 静态/动态库 + .h（不生成可执行）。None = 普通可执行。
+    #[serde(default)]
+    pub library_kind: Option<LibraryKind>,
+    /// 库模式的 C 头文件输出路径（None 时与库同基名 .h）。
+    #[serde(default)]
+    pub header_output: Option<PathBuf>,
+}
+
+/// 反向 FFI 产出的库类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LibraryKind {
+    /// 静态库（.a）—— 自包含，已把 libqi_runtime 合并进去。
+    静态,
+    /// 动态库（.dylib / .so / .dll）。
+    动态,
+}
+
+impl LibraryKind {
+    /// 从 CLI 字符串解析（中英文皆可）。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "静态" | "static" | "a" => Some(LibraryKind::静态),
+            "动态" | "dynamic" | "shared" | "dylib" | "so" | "dll" => Some(LibraryKind::动态),
+            _ => None,
+        }
+    }
 }
 
 impl Default for CompilerConfig {
@@ -70,6 +96,8 @@ impl Default for CompilerConfig {
             config_file: None,
             warnings_as_errors: false,
             verbose: false,
+            library_kind: None,
+            header_output: None,
         }
     }
 }

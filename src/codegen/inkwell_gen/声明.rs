@@ -63,7 +63,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 声明单个用户函数的 LLVM 原型，并把签名存入符号表。
-    fn 声明函数原型(
+    pub(super) fn 声明函数原型(
         &mut self,
         f: &FunctionDeclaration,
     ) -> Result<FunctionValue<'ctx>, String> {

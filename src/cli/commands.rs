@@ -125,6 +125,14 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
+        /// 反向 FFI：产出 C 库供外部语言调用（静态|动态 / static|dynamic）| Emit a C library
+        #[arg(long = "库", alias = "lib")]
+        library: Option<String>,
+
+        /// C 头文件输出路径（默认与库同基名 .h）| C header output path
+        #[arg(long = "头", alias = "header")]
+        header: Option<PathBuf>,
+
         /// 显示帮助信息 | Show help information
         #[arg(short, long, action = clap::ArgAction::Help)]
         help: Option<bool>,
@@ -288,8 +296,29 @@ impl Cli {
             Some(Commands::Compile {
                 files,
                 output,
+                library,
+                header,
                 help: _,
-            }) => self.compile_files(files, output, config).await,
+            }) => {
+                let mut config = config;
+                if let Some(ref lib) = library {
+                    match crate::config::LibraryKind::parse(lib) {
+                        Some(k) => config.library_kind = Some(k),
+                        None => {
+                            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                                format!(
+                                    "未知的 --库 类型 `{}` —— 请用 静态/static 或 动态/dynamic。",
+                                    lib
+                                ),
+                            )))
+                        }
+                    }
+                    config.header_output = header;
+                    // 库模式：输出路径直接交给编译器（写到最终库路径），compile_files 不再改名。
+                    config.output_file = output.clone();
+                }
+                self.compile_files(files, output, config).await
+            }
             Some(Commands::Run {
                 file,
                 args,
@@ -393,6 +422,19 @@ impl Cli {
                 )));
             }
 
+            // 库模式：编译器已直接写到最终库路径（+ .h），不走可执行改名逻辑。
+            if config.library_kind.is_some() {
+                println!("生成库文件: {:?}", result.executable_path);
+                let header = result.executable_path.with_extension("h");
+                let header = config.header_output.clone().unwrap_or(header);
+                println!("生成 C 头文件: {:?}", header);
+                // 清理中间 .o
+                for obj in &result.object_paths {
+                    let _ = std::fs::remove_file(obj);
+                }
+                continue;
+            }
+
             // QiCompiler::compile already emits and links the executable.
             // Do not feed the executable back into clang as LLVM IR.
             let final_executable = result.executable_path;
@@ -418,7 +460,7 @@ impl Cli {
             }
         }
 
-        if !config.verbose {
+        if !config.verbose && config.library_kind.is_none() {
             let count = files.len();
             let target = match config.target_platform {
                 crate::config::CompilationTarget::Linux => " (Linux)",

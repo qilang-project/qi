@@ -31,6 +31,7 @@ pub enum AstNode {
     实现块(ImplementationBlock),
     联合体声明(UnionDeclaration),
     外部声明(ExternBlock),
+    导出函数(ExportFunction),
     如果语句(IfStatement),
     循环语句(LoopStatement),
     当语句(WhileStatement),
@@ -126,6 +127,18 @@ pub struct ExternBlock {
     /// C 库名（如 "m"/"c"/"crypto"）；空串表示符号已在、不额外链接。
     pub library: String,
     pub functions: Vec<ExternFn>,
+    pub span: Span,
+}
+
+/// 反向 FFI：把一个 Qi 函数以 C ABI 导出，供 C/Rust/Go 等外部语言调用。
+/// `导出 ["C符号名"] 函数 名(...): 类型 { ... }`。
+/// `c_name`：显式 C 符号名（`导出 "qi_add" 函数 ...`）；None 时用函数原名当符号
+/// （clang/gcc/rustc 均接受 UTF-8 标识符，中文名可直接从 C 侧调用）。
+/// `decl` 恒为 `AstNode::函数声明`（方法/内联不可导出，codegen 侧报错）。
+#[derive(Debug, Clone)]
+pub struct ExportFunction {
+    pub c_name: Option<String>,
+    pub decl: Box<AstNode>,
     pub span: Span,
 }
 

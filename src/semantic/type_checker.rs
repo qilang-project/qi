@@ -133,6 +133,8 @@ impl TypeChecker {
             AstNode::外部声明(_) => {
                 Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
             }
+            // 反向 FFI 导出：检查内部函数声明本体（C ABI 校验在 codegen 侧）。
+            AstNode::导出函数(ef) => self.check(&ef.decl),
             AstNode::尝试语句(_) => {
                 Ok(TypeNode::基础类型(crate::parser::ast::BasicType::空))
             }
