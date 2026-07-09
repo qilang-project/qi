@@ -1411,6 +1411,43 @@ impl ModuleRegistry {
         self.modules
             .insert("标准库.向量".to_string(), vector_module);
 
+        // 向量索引 —— 内存态增量精确 top-K 相似搜索（语义记忆下沉到 Rust，比 Qi 扫描快 ~100x）
+        let mut vindex_module = Module::new("向量索引");
+        vindex_module.add_function(ModuleFunction::new(
+            "重置",
+            "qi_vindex_reset",
+            vec!["整数".to_string()], // 键（用 SQLite 库句柄）
+            "整数",
+        ));
+        vindex_module.add_function(ModuleFunction::new(
+            "添加",
+            "qi_vindex_add",
+            vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()], // 键, id, 向量JSON
+            "整数",                                                             // 返回条数
+        ));
+        vindex_module.add_function(ModuleFunction::new(
+            "搜索",
+            "qi_vindex_search",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 键, 查询向量JSON, k
+            "字符串", // 返回 [{"id":..,"score":..}] JSON
+        ));
+        vindex_module.add_function(ModuleFunction::new(
+            "大小",
+            "qi_vindex_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        vindex_module.add_function(ModuleFunction::new(
+            "卸载",
+            "qi_vindex_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        self.modules
+            .insert("向量索引".to_string(), vindex_module.clone());
+        self.modules
+            .insert("标准库.向量索引".to_string(), vindex_module);
+
         // LLM Module - 大模型模块
         let mut llm_module = Module::new("大模型");
 
