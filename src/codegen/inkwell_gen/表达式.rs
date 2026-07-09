@@ -474,6 +474,62 @@ impl<'ctx> 后端<'ctx> {
             return Ok((c.into(), Qi类型::布尔));
         }
 
+        // 指针比较：任一操作数是 指针 → 两侧统一 ptrtoint 成 i64 再整数比较。
+        // 覆盖 `malloc(n) != 0`（右侧是整数字面量）、指针==指针、指针!=指针。
+        // 指针不参与算术（malloc 结果只能比较/传回 C），算术运算人话报错，
+        // 也避免指针值落进下面的 into_int_value panic。
+        if lt == Qi类型::指针 || rt == Qi类型::指针 {
+            if !matches!(
+                b.operator,
+                等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于
+            ) {
+                return Err(
+                    "指针不支持算术运算 —— 只能做比较（== != 大于 小于 …）或传回 C 函数"
+                        .to_string(),
+                );
+            }
+            let i64t = self.ctx.i64_type();
+            let li = if lv.is_pointer_value() {
+                self.builder
+                    .build_ptr_to_int(lv.into_pointer_value(), i64t, "p2i")
+                    .map_err(|e| e.to_string())?
+            } else {
+                let iv = lv.into_int_value();
+                if iv.get_type().get_bit_width() < 64 {
+                    self.整数加宽到i64(iv)?
+                } else {
+                    iv
+                }
+            };
+            let ri = if rv.is_pointer_value() {
+                self.builder
+                    .build_ptr_to_int(rv.into_pointer_value(), i64t, "p2i")
+                    .map_err(|e| e.to_string())?
+            } else {
+                let iv = rv.into_int_value();
+                if iv.get_type().get_bit_width() < 64 {
+                    self.整数加宽到i64(iv)?
+                } else {
+                    iv
+                }
+            };
+            let pred = match b.operator {
+                等于 => IntPredicate::EQ,
+                不等于 => IntPredicate::NE,
+                // 地址序比较按无符号（指针无正负）
+                大于 => IntPredicate::UGT,
+                小于 => IntPredicate::ULT,
+                大于等于 => IntPredicate::UGE,
+                小于等于 => IntPredicate::ULE,
+                _ => unreachable!(),
+            };
+            let c = self
+                .builder
+                .build_int_compare(pred, li, ri, "ptrcmp")
+                .map_err(|e| e.to_string())?;
+            return Ok((c.into(), Qi类型::布尔));
+        }
+
         // 复合类型（结构体/装箱枚举/数组/…）不支持算术与比较 —— 人话报错，
         // 不落进 int 路径（指针值 into_int_value 会 panic）。泛型 T 实例化成
         // 这类类型时用 `>` 等比较也在此拦截。无载荷枚举是 i64 tag，放行。
@@ -713,6 +769,7 @@ impl<'ctx> 后端<'ctx> {
         let 目标ptr = matches!(
             期望,
             Qi类型::字符串
+                | Qi类型::指针
                 | Qi类型::结构体(_)
                 | Qi类型::装箱枚举(_)
                 | Qi类型::函数值(_)
@@ -833,6 +890,7 @@ impl<'ctx> 后端<'ctx> {
                 Err("枚举不能直接拼接为字符串（用 匹配 解构）".to_string())
             }
             Qi类型::空 => Err("空值不能拼接".to_string()),
+            Qi类型::指针 => Err("C 指针不能直接拼接为字符串（先 作为 整数）".to_string()),
             // 数值类型在 生成拼接操作数 里已转字符串处理，不会走到这里
             Qi类型::整数 | Qi类型::布尔 | Qi类型::浮点数 | Qi类型::未知 => {
                 Err("数值应先经 生成拼接操作数 转字符串".to_string())
@@ -1240,6 +1298,21 @@ impl<'ctx> 后端<'ctx> {
                     },
                     v.into(),
                 ),
+                // C 指针：按整数地址打印（ptr→i64），便于观察句柄是否为空/有效
+                Qi类型::指针 => {
+                    let iv = self
+                        .builder
+                        .build_ptr_to_int(v.into_pointer_value(), self.ctx.i64_type(), "p2i")
+                        .map_err(|e| e.to_string())?;
+                    (
+                        if 换行 {
+                            "qi_runtime_println_int"
+                        } else {
+                            "qi_runtime_print_int"
+                        },
+                        iv.into(),
+                    )
+                }
                 Qi类型::装箱枚举(_) => {
                     return Err("不能直接打印带载荷枚举（用 匹配 解构后打印字段）".to_string())
                 }

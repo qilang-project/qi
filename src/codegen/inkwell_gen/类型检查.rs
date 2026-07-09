@@ -476,6 +476,7 @@ impl 符号表 {
             Qi类型::布尔 => "布尔".to_string(),
             Qi类型::字符串 => "字符串".to_string(),
             Qi类型::空 => "空".to_string(),
+            Qi类型::指针 => "指针".to_string(),
             Qi类型::结构体(i) => self
                 .结构体
                 .get(i as usize)

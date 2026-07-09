@@ -17,6 +17,10 @@ pub enum Qi类型 {
     布尔,   // i1
     字符串, // ptr (i8*)
     空,     // void
+    /// 不透明 C 指针（void*）。C FFI 用：malloc/free/上下文句柄。
+    /// LLVM ptr 表示，**非 RC**（Qi 不分配不回收，不入环图），
+    /// Qi 侧只能存变量/传递/传回 C，不能解引用。
+    指针,
     /// 结构体实例（按指针传递）。u32 是结构体在 结构体注册表 中的索引。
     结构体(u32),
     /// 无载荷枚举（纯 i64 tag，零分配，非 RC）。u32 是枚举注册表索引。
@@ -87,6 +91,9 @@ impl Qi类型 {
             TypeNode::基础类型(BasicType::布尔) => Qi类型::布尔,
             TypeNode::基础类型(BasicType::字符串) => Qi类型::字符串,
             TypeNode::基础类型(BasicType::空) => Qi类型::空,
+            // 不透明 C 指针：裸 `指针`（BasicType::指针）与 `指针<T>` 都当 void* 句柄。
+            TypeNode::基础类型(BasicType::指针) => Qi类型::指针,
+            TypeNode::指针类型(_) => Qi类型::指针,
             _ => Qi类型::未知,
         }
     }
@@ -156,6 +163,7 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::布尔 => self.ctx.bool_type().into(),
             // 装箱枚举 = 堆指针；通道 = 运行时句柄指针
             Qi类型::字符串
+            | Qi类型::指针
             | Qi类型::结构体(_)
             | Qi类型::装箱枚举(_)
             | Qi类型::函数值(_)

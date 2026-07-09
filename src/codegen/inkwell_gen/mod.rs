@@ -294,6 +294,13 @@ impl<'ctx> 后端<'ctx> {
         // 增引用（QI_ARC 插桩用；null/immortal/非 RC 指针皆 no-op）
         let 保留串 = self.ctx.void_type().fn_type(&[ptrt.into()], false);
         self.module.add_function("qi_string_retain", 保留串, None);
+        // C FFI char* 返回：把裸 C 字符串拷贝进 Qi 拥有的堆串（rc=1，带 magic header）。
+        // 原 C 内存不碰 —— getenv 静态串安全，C malloc 串所有权仍归 C（用户按 指针 free）。
+        self.module.add_function(
+            "qi_string_from_cstr",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
 
         // 类型转换
         self.module.add_function(

@@ -318,7 +318,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 计算字段的 typed GEP 指针。
-    fn 字段指针(
+    pub(super) fn 字段指针(
         &self,
         base: PointerValue<'ctx>,
         st: inkwell::types::StructType<'ctx>,

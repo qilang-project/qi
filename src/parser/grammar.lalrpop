@@ -2426,6 +2426,8 @@ TypeKeyworded: TypeNode = {
     }),
 
     // 指针和引用类型
+    // 裸 `指针` = 不透明 C void*（C FFI 句柄：malloc/free/上下文指针）。
+    "指针" => TypeNode::基础类型(BasicType::指针),
     "指针" "<" <target_type:Type> ">" => TypeNode::指针类型(PointerType {
         target_type: Box::new(target_type),
     }),

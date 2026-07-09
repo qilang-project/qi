@@ -400,6 +400,16 @@ impl<'ctx> 后端<'ctx> {
     /// 按名字的调用（函数调用表达式 / 用户模块限定调用）是否返回 OWNED 字符串。
     /// 镜像 生成函数调用 的分发顺序。
     fn 调用拥有字符串(&self, callee: &str) -> bool {
+        // 外部 C 函数：char* 返回在调用点拷贝成 Qi 拥有的堆串（rc=1）→ OWNED。
+        // 其余外部返回（整数/浮点/布尔/指针）非字符串，与此判定无关。
+        if self.符号.外部函数.contains(callee) {
+            return self
+                .符号
+                .函数
+                .get(callee)
+                .map(|s| s.返回 == Qi类型::字符串)
+                .unwrap_or(false);
+        }
         // 1) 间接调用：callee 是函数值局部/全局 → 合成闭包 / trampoline 均遵守
         //    返回约定 +1
         if let Some((_, t)) = self.变量表.get(callee) {
@@ -597,6 +607,15 @@ impl<'ctx> 后端<'ctx> {
 
     /// 按名字的调用是否返回 OWNED 对象（结构体/数组）。镜像 调用拥有字符串。
     fn 调用拥有对象(&self, callee: &str) -> bool {
+        // 外部 C 函数：小结构体按值返回在调用点 store 进新 qi_obj 堆结构体（rc=1）→ OWNED。
+        if self.符号.外部函数.contains(callee) {
+            return self
+                .符号
+                .函数
+                .get(callee)
+                .map(|s| 是对象类型(s.返回))
+                .unwrap_or(false);
+        }
         // 1) 间接调用：函数值变量 → fat call 遵守返回约定 +1
         if let Some((_, t)) = self.变量表.get(callee) {
             if let Some(idx) = t.函数值索引() {
