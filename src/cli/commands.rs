@@ -270,6 +270,49 @@ pub enum Commands {
         help: Option<bool>,
     },
 
+    /// 一体化工程诊断：环检测 + CPU 热点 + 内存泄漏 | All-in-one project diagnosis
+    #[command(visible_aliases = &["诊断"])]
+    #[command(help_template = "\
+{name} - {about}
+
+用法 | Usage: {usage}
+
+参数 | Arguments:
+{positionals}
+
+选项 | Options:
+{options}
+")]
+    Doctor {
+        /// 源文件路径 | Source file path
+        #[arg(required = true)]
+        file: PathBuf,
+
+        /// 运行参数（透传给被诊断程序）| Runtime args passed to the program
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+
+        /// 采集 CPU 热点（QI_PROF 插桩）| Profile CPU hotspots
+        #[arg(long = "测CPU", alias = "cpu")]
+        cpu: bool,
+
+        /// 检查内存泄漏（QI_RC_REPORT 活跃对象计数）| Check memory leaks
+        #[arg(long = "查漏", alias = "leak")]
+        leak: bool,
+
+        /// 长驻服务超时采样秒数（到点发信号收报告）| Timeout seconds for long-running services
+        #[arg(long = "超时", alias = "timeout")]
+        timeout: Option<u64>,
+
+        /// 输出机器可读 JSON | Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+
+        /// 显示帮助信息 | Show help information
+        #[arg(short, long, action = clap::ArgAction::Help)]
+        help: Option<bool>,
+    },
+
     /// 发现并运行测试（*_测.qi）| Discover and run tests
     #[command(visible_aliases = &["测试"])]
     Test {
@@ -354,6 +397,18 @@ impl Cli {
                 name,
                 help: _,
             }) => crate::cli::get::run(spec, name, config.verbose),
+            Some(Commands::Doctor {
+                file,
+                args,
+                cpu,
+                leak,
+                timeout,
+                json,
+                help: _,
+            }) => {
+                self.doctor_file(file, args, cpu, leak, timeout, json, config)
+                    .await
+            }
             Some(Commands::Test {
                 path,
                 filter,

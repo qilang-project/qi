@@ -65,8 +65,12 @@ mod 结构体;
 mod 表达式;
 #[path = "语句.rs"]
 mod 语句;
+#[path = "诊断.rs"]
+mod 诊断;
 #[path = "闭包.rs"]
 mod 闭包;
+
+pub use 诊断::{静态分析, 静态诊断};
 
 use crate::codegen::module_registry::ModuleRegistry;
 use crate::config::CompilationTarget;

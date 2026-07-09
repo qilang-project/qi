@@ -276,6 +276,26 @@ fn 渲染环(图: &引用图, 路径: &[usize]) -> String {
     链.join(" → ")
 }
 
+/// 收集版（供 `qi doctor` 用）：跑同一套 图→SCC→成环判定，但**只返回**渲染好的
+/// 环链列表（如 `["账户 → 交易 → 账户"]`），既不打 stderr 也不受 QI_LINT 开关影响。
+/// 无环时返回空 Vec。与 `检测循环引用` 共用底层 `构建图/求scc/是环/环路径/渲染环`，
+/// 保证 doctor 报告与编译期警告口径一致。
+pub(super) fn 收集循环引用环(符号: &符号表) -> Vec<String> {
+    let 图 = 构建图(符号);
+    let sccs = 求scc(&图);
+
+    let mut 环链: Vec<String> = Vec::new();
+    for 簇 in &sccs {
+        if 是环(&图, 簇) {
+            let 路径 = 环路径(&图, 簇);
+            环链.push(渲染环(&图, &路径));
+        }
+    }
+    环链.sort();
+    环链.dedup();
+    环链
+}
+
 /// 主入口：检测循环引用。按 QI_LINT 模式打警告 / 报错 / 静默。
 /// 在 mod.rs 里类型全部登记后、codegen 主体前调用一次。
 pub(super) fn 检测循环引用(符号: &符号表) -> Result<(), String> {
