@@ -35,7 +35,12 @@ pub(crate) struct 导出记录 {
     pub 原名: String,
     pub 参数名: Vec<String>,
     pub 参数: Vec<Qi类型>,
+    /// C ABI 返回类型。异步导出时是 `未来<T>` 里的 **T**（已解包），
+    /// 因此头文件 / 包装的返回类型都是标量（int64_t / double / char* …）。
     pub 返回: Qi类型,
+    /// 内部 Qi 函数是否返回 `未来<T>`（async 桥）。为真时包装在转发调用后
+    /// 追加一次阻塞 `qi_future_await_*`，把 future 解包成 T 再按 C ABI 返回。
+    pub 是异步: bool,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -66,12 +71,6 @@ impl<'ctx> 后端<'ctx> {
                 f.name
             ));
         }
-        if f.is_async {
-            return Err(format!(
-                "导出函数 {} 不能是异步函数（返回 未来<T>）—— C 侧无法「等待」，请导出同步函数。",
-                f.name
-            ));
-        }
         if f.parameters.iter().any(|p| p.is_variadic) {
             return Err(format!(
                 "导出函数 {} 使用了变参 `...` —— C ABI 导出暂不支持变参。",
@@ -92,11 +91,31 @@ impl<'ctx> 后端<'ctx> {
             参数类型.push(t);
             参数名.push(p.name.clone());
         }
-        let 返回 = f
+        let 声明返回 = f
             .return_type
             .as_ref()
             .map(|t| self.符号.解析类型(t))
             .unwrap_or(Qi类型::空);
+        // async 桥：返回 `未来<T>` 的函数（不管有没有 `异步` 关键字）导出为
+        // 「同步拿到 T」的 C 符号 —— 包装内部 spawn/调用后阻塞 await 出 T。
+        // C ABI 返回类型是解包后的标量 T。
+        let (返回, 是异步) = match 声明返回.未来内部() {
+            Some(元素) => {
+                let 内 = 元素.标量();
+                if !matches!(
+                    内,
+                    Qi类型::整数 | Qi类型::浮点数 | Qi类型::布尔 | Qi类型::字符串
+                ) {
+                    return Err(format!(
+                        "导出异步函数 {} 的 未来<T> 内部类型不被 C ABI 支持 —— \
+                         v1 支持 未来<整数/浮点数/布尔/字符串>。",
+                        f.name
+                    ));
+                }
+                (内, true)
+            }
+            None => (声明返回, false),
+        };
         self.校验导出类型(&f.name, 返回, true)?;
 
         // 建内部 Qi 函数原型（正常 mangle，Qi 内部可调用；导出包装再转发到它）。
@@ -118,6 +137,7 @@ impl<'ctx> 后端<'ctx> {
             参数名,
             参数: 参数类型,
             返回,
+            是异步,
         });
         Ok(())
     }
@@ -233,6 +253,23 @@ impl<'ctx> 后端<'ctx> {
             .build_call(inner, &转发, "qicall")
             .map_err(|e| e.to_string())?;
 
+        // async 桥：inner 返回 `未来<T>`（future 指针）。阻塞 await 出 T 值，
+        // 再走下面与同步完全一致的 C ABI 返回转换。await 在**外部宿主线程**上
+        // 阻塞（qi_future_await_* → 全局 tokio block_on / block_in_place），
+        // 外部线程阻塞自己无害；多外部线程各 await 各的 future，互不干扰。
+        // 归一化到「同步 inner 返回」的表示：布尔→i1、字符串→Qi 拥有 rc 串、
+        // 整数/浮点数→原值，好让后面的 match 分支原样复用。
+        let 结果值: Option<BasicValueEnum> = if r.是异步 && r.返回 != Qi类型::空 {
+            let fut = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or_else(|| "导出异步内部应返回未来指针".to_string())?;
+            let 解包 = self.导出await解包(r.返回, fut)?;
+            Some(解包)
+        } else {
+            None
+        };
+
         // wrapper 拥有的字符串形参拷贝：调用结束即释放（inner 若私藏会先 retain，
         // 释放的是 wrapper 这一份所有权）。字符串返回场景在 strdup 取出返回值**之后**
         // 再释放，规避「函数直接返回入参串」时提前归零导致 strdup 读已释放内存。
@@ -244,6 +281,16 @@ impl<'ctx> 后端<'ctx> {
             };
         }
 
+        // 同步取 inner 返回值；异步时已 await 解包到 结果值。
+        macro_rules! 取返回值 {
+            ($e:expr) => {
+                match 结果值 {
+                    Some(v) => v,
+                    None => call.try_as_basic_value().basic().ok_or_else(|| $e.to_string())?,
+                }
+            };
+        }
+
         match r.返回 {
             Qi类型::空 => {
                 释放字符串参数!();
@@ -251,11 +298,7 @@ impl<'ctx> 后端<'ctx> {
             }
             // 内部 i1 → C i64
             Qi类型::布尔 => {
-                let rv = call
-                    .try_as_basic_value()
-                    .basic()
-                    .ok_or_else(|| "导出内部应返回布尔".to_string())?
-                    .into_int_value();
+                let rv = 取返回值!("导出内部应返回布尔").into_int_value();
                 let w = self
                     .builder
                     .build_int_z_extend(rv, i64t, "b2i64")
@@ -267,10 +310,7 @@ impl<'ctx> 后端<'ctx> {
             }
             // Qi 拥有串 → strdup 交给 C（C free），再 ARC 释放 Qi 串。
             Qi类型::字符串 => {
-                let qs = call
-                    .try_as_basic_value()
-                    .basic()
-                    .ok_or_else(|| "导出内部应返回字符串".to_string())?;
+                let qs = 取返回值!("导出内部应返回字符串");
                 let strdup = self.取strdup();
                 let cptr = self
                     .builder
@@ -287,10 +327,7 @@ impl<'ctx> 后端<'ctx> {
             }
             // 整数 / 浮点数 / 指针：原样
             _ => {
-                let rv = call
-                    .try_as_basic_value()
-                    .basic()
-                    .ok_or_else(|| "导出内部应有返回值".to_string())?;
+                let rv = 取返回值!("导出内部应有返回值");
                 释放字符串参数!();
                 self.builder
                     .build_return(Some(&rv))
@@ -298,6 +335,62 @@ impl<'ctx> 后端<'ctx> {
             }
         }
         Ok(())
+    }
+
+    /// async 桥：阻塞 await 一个 future 指针，取回标量 T，并 free 掉 future 本体。
+    /// 返回值归一化到「同步 inner 返回」的表示（布尔→i1，其余原样），供包装的
+    /// C ABI 返回转换原样复用。
+    fn 导出await解包(
+        &mut self,
+        标量: Qi类型,
+        fut: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let ffi = match 标量 {
+            Qi类型::整数 => "qi_future_await_i64",
+            Qi类型::浮点数 => "qi_future_await_f64",
+            Qi类型::布尔 => "qi_future_await_bool",
+            Qi类型::字符串 => "qi_future_await_string",
+            _ => return Err("导出异步返回类型无对应 await".to_string()),
+        };
+        let awaitf = self
+            .module
+            .get_function(ffi)
+            .ok_or_else(|| format!("future 运行时未声明: {}", ffi))?;
+        let mut v = self
+            .builder
+            .build_call(awaitf, &[fut.into()], "await")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "await 未返回".to_string())?;
+        // await_bool 回来是 i32，截回 i1 以复用同步 布尔 分支（它再 zext 到 i64）
+        if 标量 == Qi类型::布尔 {
+            v = self
+                .builder
+                .build_int_truncate(v.into_int_value(), self.ctx.bool_type(), "b2i1")
+                .map_err(|e| e.to_string())?
+                .into();
+        }
+        // await 出值后 free future 本体（避免每次异步导出调用泄漏一个 Future Box）。
+        // 字符串 payload 已被 await_string 拷成新 rc 串；ptr payload 我们没用
+        // await_ptr（未 take），此处按 future_free 内部逻辑安全回收。
+        let freef = self.取future_free();
+        self.builder
+            .build_call(freef, &[fut.into()], "")
+            .map_err(|e| e.to_string())?;
+        Ok(v)
+    }
+
+    fn 取future_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("qi_future_free") {
+            return f;
+        }
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+        self.module.add_function(
+            "qi_future_free",
+            self.ctx.void_type().fn_type(&[ptrt.into()], false),
+            None,
+        )
     }
 
     fn 取strdup(&self) -> FunctionValue<'ctx> {

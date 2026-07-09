@@ -1,0 +1,8 @@
+# 构建产物（由 构建并压测.sh 生成）
+lib多线程FFI库.a
+lib多线程FFI库.h
+压测
+压测_asan
+压测_tsan
+压测_rust
+*.dSYM/

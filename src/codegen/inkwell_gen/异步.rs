@@ -261,17 +261,20 @@ impl<'ctx> 后端<'ctx> {
                 .build_int_to_ptr(v.into_int_value(), ptrt, "i2p")
                 .map_err(|e| e.to_string())?
         };
-        let f = match self.module.get_function("qi_runtime_string_length") {
+        // 必须是**字节**长度：qi_future_ready_string(ptr, len) 按字节 from_raw_parts。
+        // 用 qi_string_byte_length（不是 qi_runtime_string_length —— 那个返回**字符**
+        // 数，非 ASCII 会把 future payload 截断成半个多字节字符）。
+        let f = match self.module.get_function("qi_string_byte_length") {
             Some(f) => f,
             None => self.module.add_function(
-                "qi_runtime_string_length",
+                "qi_string_byte_length",
                 self.ctx.i64_type().fn_type(&[ptrt.into()], false),
                 None,
             ),
         };
         let len = self
             .builder
-            .build_call(f, &[p.into()], "slen")
+            .build_call(f, &[p.into()], "sbytelen")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()
