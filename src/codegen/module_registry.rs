@@ -1462,6 +1462,22 @@ impl ModuleRegistry {
             "整数",                   // 返回数量
         ));
 
+        // 获取整段历史（OpenAI 消息数组 JSON 串）—— 上下文窗口管理读取口
+        llm_module.add_function(ModuleFunction::new(
+            "历史JSON",
+            "qi_llm_get_history_json",
+            vec!["整数".to_string()], // 会话句柄
+            "字符串",                 // 返回消息数组 JSON
+        ));
+
+        // 用 JSON 数组整体替换历史 —— 上下文压缩写回口，返回替换后条数
+        llm_module.add_function(ModuleFunction::new(
+            "设置历史JSON",
+            "qi_llm_set_history_json",
+            vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 消息数组 JSON
+            "整数",                                         // 返回条数（-1 失败）
+        ));
+
         // 关闭会话
         llm_module.add_function(ModuleFunction::new(
             "关闭会话",

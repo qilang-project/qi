@@ -123,9 +123,20 @@ impl<'ctx> 后端<'ctx> {
         };
         // 包内签名（消歧优先）+ 扁平签名（fallback / 未标包时）
         if let Some(pkg) = self.当前包.clone() {
-            self.符号
-                .函数按包
-                .insert((pkg, f.name.clone()), sig.clone());
+            // 同包跨文件重名函数会 mangle 成同一 LLVM 符号 → 静默 last-write-wins，
+            // 调用点绑到不确定的那个（伪装成「参数个数错 / 结构体无字段 X」，极难查）。
+            // Qi 暂不支持按签名重载，直接编译期拦下，要求改名其一。
+            let key = (pkg, f.name.clone());
+            if self.符号.函数按包.contains_key(&key) {
+                return Err(format!(
+                    "函数重复定义：包「{pkg}」里有多个同名函数「{name}」（通常是同包多个文件各定义了一份）。\n\
+                     Qi 暂不按签名重载解析——同名会 mangle 成同一符号、静默相互覆盖，\n\
+                     调用点绑向不确定的那个。请给其中一个改名。",
+                    pkg = key.0,
+                    name = key.1,
+                ));
+            }
+            self.符号.函数按包.insert(key, sig.clone());
         }
         self.符号.函数.entry(f.name.clone()).or_insert(sig);
         // 记录默认参数值（供调用少传时补齐）

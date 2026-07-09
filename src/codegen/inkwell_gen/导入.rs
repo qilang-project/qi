@@ -60,6 +60,59 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
+    /// 校验：本模块本地定义的函数名，不得与它 destructure 导入进来的同名**函数**冲突。
+    ///
+    /// Qi 目前**不按签名做重载解析**：当一个名字既有本地定义、又被导入时，本地定义会
+    /// 遮蔽导入，调用点静默绑到本地那个。若你本想调导入的那个、实参却不匹配本地签名，
+    /// 就会报成「参数个数错」或「结构体无字段 X」——伪装成别的错误，极难排查
+    /// （qi-harness 的 `评估.运行` vs `代理.运行` 就踩过这个坑）。这里编译期直接拦下。
+    ///
+    /// 必须在 登记函数 之后调用（依赖 符号.函数按包 判定导入项是否为函数）。
+    pub(super) fn 检查导入遮蔽(&self, program: &Program) -> Result<(), String> {
+        use std::collections::HashSet;
+        let mut 本地函数: HashSet<&str> = HashSet::new();
+        for stmt in &program.statements {
+            if let crate::parser::ast::AstNode::函数声明(f) = stmt {
+                本地函数.insert(f.name.as_str());
+            }
+        }
+        if 本地函数.is_empty() {
+            return Ok(());
+        }
+        for imp in &program.imports {
+            let 首段 = match imp.module_path.first() {
+                Some(s) => s.as_str(),
+                None => continue,
+            };
+            if 首段 == "标准库" || 首段 == "." || 首段 == ".." {
+                continue;
+            }
+            let items = match &imp.items {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+            for item in items {
+                // 仅当：本地也定义同名函数，且该名字在来源包里确实是个函数
+                if 本地函数.contains(item.as_str())
+                    && self
+                        .符号
+                        .函数按包
+                        .contains_key(&(首段.to_string(), item.clone()))
+                {
+                    return Err(format!(
+                        "函数名冲突：本模块定义了函数「{name}」，又从 `{src}` 导入了同名函数。\n\
+                         Qi 暂不按签名重载解析——本地定义会遮蔽导入，调用点会静默绑到本地那个，\n\
+                         实参不符时报成「参数个数错」或「结构体无字段 X」，极难排查。\n\
+                         修复：给本地函数改个名（如「{name}套件」之类），或删掉该导入项。",
+                        name = item,
+                        src = imp.module_path.join("."),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 把「接收者(标识符) + 方法名」当作标准库调用尝试解析。
     /// 返回 Ok(None)：不是标准库调用；Ok(Some(...))：已生成调用（可能 void→None）。
     pub(super) fn 尝试标准库调用(
