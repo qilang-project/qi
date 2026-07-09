@@ -125,6 +125,7 @@ impl KeywordTable {
 
         // Additional keywords for new features
         keywords.insert("闭包".to_string(), TokenKind::闭包);
+        keywords.insert("弱".to_string(), TokenKind::弱);
         keywords.insert("匹配".to_string(), TokenKind::匹配);
         keywords.insert("内联".to_string(), TokenKind::内联);
         keywords.insert("联合体".to_string(), TokenKind::联合体);

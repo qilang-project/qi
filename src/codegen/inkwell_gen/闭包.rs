@@ -24,6 +24,9 @@ pub(super) struct 待合成闭包 {
     pub 参数名: Vec<String>,
     pub 返回类型: Qi类型,
     pub 捕获: Vec<(String, Qi类型)>,
+    /// 弱捕获名单（`闭包 [弱 x]`）：这些名字的捕获走 unowned 语义 ——
+    /// 不 retain、env dtor 不 release、闭包体出口不 release，用于打破引用环。
+    pub 弱名单: std::collections::HashSet<String>,
     pub body: Vec<AstNode>,
     /// 登记闭包时所在的包（体在末尾统一合成，须还原包上下文才能解析本包结构体/函数）。
     pub 包: Option<String>,
@@ -118,6 +121,14 @@ impl<'ctx> 后端<'ctx> {
             .filter_map(|n| self.变量表.get(&n).map(|(_, t)| (n, *t)))
             .collect();
 
+        // 弱捕获名单（用户 `[弱 x]` 标注且确实被自动捕获的）。
+        let 弱名单: std::collections::HashSet<String> = c
+            .weak_captures
+            .iter()
+            .filter(|n| 捕获.iter().any(|(名, _)| 名 == *n))
+            .cloned()
+            .collect();
+
         // 登记函数值签名
         let sig = 函数签名 {
             参数: 参数类型.clone(),
@@ -134,6 +145,7 @@ impl<'ctx> 后端<'ctx> {
             参数名,
             返回类型,
             捕获: 捕获.clone(),
+            弱名单: 弱名单.clone(),
             body: c.body.clone(),
             包: self.当前包.clone(),
         });
@@ -157,13 +169,16 @@ impl<'ctx> 后端<'ctx> {
                 .build_load(llvmt, ptr, 名)
                 .map_err(|e| e.to_string())?;
             // ARC：RC 值（字符串/结构体/数组/闭包）捕获进闭包 env（借用 load）
-            // → retain（env 持有一份；env 归零时由下面挂的 dtor 级联归还）
-            self.弧retain任意(v, *t);
+            // → retain（env 持有一份；env 归零时由下面挂的 dtor 级联归还）。
+            // 弱捕获（unowned）：不 retain —— env 不顶住对象计数，环被打破。
+            if !弱名单.contains(名) {
+                self.弧retain任意(v, *t);
+            }
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
-        // ARC（E1）：有 RC 捕获 → 合成 env dtor 并挂到 fat obj（refcount 归零
-        // 时 runtime 调 dtor 释放捕获，再 free env 本体）
-        self.弧挂env析构(obj, &符号名, &捕获)?;
+        // ARC（E1）：有 强 RC 捕获 → 合成 env dtor 并挂到 fat obj（refcount 归零
+        // 时 runtime 调 dtor 释放捕获，再 free env 本体）。弱捕获不入 dtor（未 retain）。
+        self.弧挂env析构(obj, &符号名, &捕获, &弱名单)?;
 
         Ok((obj.into(), Qi类型::函数值(idx)))
     }
@@ -199,6 +214,7 @@ impl<'ctx> 后端<'ctx> {
             参数名: Vec::new(),
             返回类型: Qi类型::空,
             捕获: 捕获.clone(),
+            弱名单: std::collections::HashSet::new(), // nullary 协程闭包无捕获列表语法
             body,
             包: self.当前包.clone(),
         });
@@ -225,8 +241,8 @@ impl<'ctx> 后端<'ctx> {
             self.闭包填槽(obj, i as u64, v, *t)?;
         }
         // ARC（E1）：挂 env dtor（goroutine 跑完 qi_go_tramp 尾部 release env
-        // → 归零时级联释放捕获）
-        self.弧挂env析构(obj, &符号名, &捕获)?;
+        // → 归零时级联释放捕获）。nullary 闭包无弱捕获。
+        self.弧挂env析构(obj, &符号名, &捕获, &std::collections::HashSet::new())?;
         Ok(obj)
     }
 
@@ -239,14 +255,16 @@ impl<'ctx> 后端<'ctx> {
         obj: PointerValue<'ctx>,
         闭包符号名: &str,
         捕获: &[(String, Qi类型)],
+        弱名单: &std::collections::HashSet<String>,
     ) -> Result<(), String> {
         if !self.弧开() {
             return Ok(());
         }
+        // 弱捕获（unowned）不入 dtor —— 填槽时未 retain，dtor 释放会 over-release。
         let rc捕获: Vec<(usize, Qi类型)> = 捕获
             .iter()
             .enumerate()
-            .filter(|(_, (_, t))| super::所有权::是RC类型(*t))
+            .filter(|(_, (名, t))| super::所有权::是RC类型(*t) && !弱名单.contains(名))
             .map(|(i, (_, t))| (i, *t))
             .collect();
         if rc捕获.is_empty() {
@@ -539,6 +557,7 @@ impl<'ctx> 后端<'ctx> {
         // 保存 builder / 变量表 / 返回类型 / try 深度 / 包上下文（合成函数独立环境）
         let 保存位置 = self.builder.get_insert_block();
         let 保存变量 = std::mem::take(&mut self.变量表);
+        let 保存弱局部 = std::mem::take(&mut self.弱局部);
         let 保存返回 = self.当前返回类型;
         let 保存try深度 = self.try深度;
         let 保存包 = self.当前包.clone();
@@ -559,6 +578,7 @@ impl<'ctx> 后端<'ctx> {
 
         // 从 env 读捕获 → alloca 同名局部
         for (i, (名, t)) in cl.捕获.iter().enumerate() {
+            let 是弱 = cl.弱名单.contains(名);
             let v = self.闭包读槽(env, i as u64, *t)?;
             let llvmt = self
                 .llvm基础类型(*t)
@@ -568,8 +588,14 @@ impl<'ctx> 后端<'ctx> {
                 .build_alloca(llvmt, 名)
                 .map_err(|e| e.to_string())?;
             self.builder.build_store(a, v).map_err(|e| e.to_string())?;
-            // ARC：RC 捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡
-            self.弧retain任意(v, *t);
+            // ARC：RC 捕获（env 里的借用）落地进局部槽 → retain，与出口释放平衡。
+            // 弱捕获（unowned）：不 retain，且记入 弱局部 让出口 弧释放局部 跳过它
+            // —— 借裸指针用，不参与计数，对象存活由环结构（持有者活着闭包才被调）保证。
+            if 是弱 {
+                self.弱局部.insert(名.clone());
+            } else {
+                self.弧retain任意(v, *t);
+            }
             self.变量表.insert(名.clone(), (a, *t));
             self.符号.声明变量(名, *t);
         }
@@ -618,6 +644,7 @@ impl<'ctx> 后端<'ctx> {
 
         self.符号.退出作用域();
         self.变量表 = 保存变量;
+        self.弱局部 = 保存弱局部;
         self.当前返回类型 = 保存返回;
         self.try深度 = 保存try深度;
         self.设当前包(保存包);

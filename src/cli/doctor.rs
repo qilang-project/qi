@@ -321,7 +321,19 @@ fn 打印文本(
         for (i, 环) in 静态.环列表.iter().enumerate() {
             println!("    {}. {}", i + 1, 环);
         }
-        println!("    提示: 把环上一条边改用整数 id 间接引用（暂无 weak 语法）以打破环。");
+        println!("    提示: 把环上一条边改用 `弱` 引用或整数 id 间接引用以打破环。");
+    }
+    if 静态.闭包环列表.is_empty() {
+        println!("  闭包环: ✓ 无闭包自引用环");
+    } else {
+        println!(
+            "  闭包环: ⚠ 发现 {} 个闭包自引用环（字段持有闭包 + 闭包强捕获持有者 → 永久泄漏）",
+            静态.闭包环列表.len()
+        );
+        for (i, 环) in 静态.闭包环列表.iter().enumerate() {
+            println!("    {}. {}", i + 1, 环);
+        }
+        println!("    提示: 把闭包写成 `闭包 [弱 持有者] (…) {{ … }}` 弱捕获以打破环。");
     }
 
     // ── CPU 热点 ──
@@ -411,10 +423,11 @@ fn 生成结论(
 ) -> String {
     let mut 片段: Vec<String> = Vec::new();
 
-    if 静态.环列表.is_empty() {
+    if 静态.环列表.is_empty() && 静态.闭包环列表.is_empty() {
         片段.push("内存拓扑健康（无引用环）".to_string());
     } else {
-        片段.push(format!("发现 {} 个引用环需打破", 静态.环列表.len()));
+        let 总 = 静态.环列表.len() + 静态.闭包环列表.len();
+        片段.push(format!("发现 {} 个引用环需打破", 总));
     }
 
     if 测cpu {
@@ -438,6 +451,7 @@ fn 生成结论(
     }
 
     let 有问题 = !静态.环列表.is_empty()
+        || !静态.闭包环列表.is_empty()
         || 内存
             .map(|m| m.对象 > 0 || m.字符串 > 0 || m.闭包 > 0)
             .unwrap_or(false);
@@ -447,7 +461,9 @@ fn 生成结论(
         format!("{}未采集到诊断信号。", 前缀)
     } else {
         let mut 建议 = String::new();
-        if !静态.环列表.is_empty() {
+        if !静态.闭包环列表.is_empty() {
+            建议 = "；建议用 `弱` 捕获打破闭包环".to_string();
+        } else if !静态.环列表.is_empty() {
             建议 = "；建议优先用 id 间接引用打破环".to_string();
         } else if 测cpu && 有明显热点(热点) {
             if let Some(top) = 顶级热点(热点) {
@@ -491,7 +507,14 @@ fn 打印json(
         .map(|c| format!("\"{}\"", esc(c)))
         .collect::<Vec<_>>()
         .join(", ");
-    out.push_str(&format!("    \"cycles\": [{}]\n", 环));
+    out.push_str(&format!("    \"cycles\": [{}],\n", 环));
+    let 闭包环 = 静态
+        .闭包环列表
+        .iter()
+        .map(|c| format!("\"{}\"", esc(c)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.push_str(&format!("    \"closure_cycles\": [{}]\n", 闭包环));
     out.push_str("  },\n");
 
     // CPU

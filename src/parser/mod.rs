@@ -234,6 +234,7 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
         "选择",
         "情况",
         "枚举",
+        "弱",
     ];
     if RESERVED_LANDMINES.contains(&tok) {
         return format!(

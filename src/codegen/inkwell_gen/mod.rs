@@ -33,10 +33,10 @@ mod 匹配;
 mod 声明;
 #[path = "外部.rs"]
 mod 外部;
-#[path = "导出.rs"]
-mod 导出;
 #[path = "导入.rs"]
 mod 导入;
+#[path = "导出.rs"]
+mod 导出;
 #[path = "并发.rs"]
 mod 并发;
 #[path = "异常.rs"]
@@ -63,12 +63,14 @@ mod 类型检查;
 mod 结构体;
 #[path = "表达式.rs"]
 mod 表达式;
-#[path = "语句.rs"]
-mod 语句;
 #[path = "诊断.rs"]
 mod 诊断;
+#[path = "语句.rs"]
+mod 语句;
 #[path = "闭包.rs"]
 mod 闭包;
+#[path = "闭包环.rs"]
+mod 闭包环;
 
 pub use 诊断::{静态分析, 静态诊断};
 
@@ -172,6 +174,9 @@ struct 后端<'ctx> {
     剖析槽: Option<PointerValue<'ctx>>,
     /// 反向 FFI：本次编译登记的所有 `导出 函数`（C ABI 包装 + 头文件生成用）。
     导出表: Vec<导出::导出记录>,
+    /// 当前闭包体内的「弱捕获局部名」集合（`闭包 [弱 x]`）。这些局部走 unowned
+    /// 语义：合成时不 retain、出口 弧释放局部 跳过。合成每个闭包体前后 take/restore。
+    弱局部: std::collections::HashSet<String>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -210,6 +215,7 @@ impl<'ctx> 后端<'ctx> {
             剖析名: None,
             剖析槽: None,
             导出表: Vec::new(),
+            弱局部: std::collections::HashSet::new(),
         }
     }
 
@@ -630,6 +636,30 @@ pub fn compile_to_object_multi(
     // 纯引用计数无环收集器：强引用环 = 永久内存泄漏。默认打警告不阻断；
     // QI_LINT=0 关闭；QI_LINT=strict 升为编译错误（供 CI 卡关）。
     环检测::检测循环引用(&后端值.符号)?;
+
+    // 闭包自引用环（`OBJ.字段 = 闭包 { …OBJ… }`）—— 精确赋值点分析。未用 `弱`
+    // 打破的强环是确定性内存泄漏且修复方式唯一，直接**编译错误**焊死（不受
+    // QI_LINT 门控）；已写 `闭包 [弱 OBJ] {…}` 的环已断，放行。
+    {
+        let 强环 = 闭包环::收集闭包环(programs);
+        let 强环: Vec<_> = 强环.into_iter().filter(|f| !f.已弱).collect();
+        if let Some(f) = 强环.first() {
+            let mut 报告 = String::from(
+                "[闭包环] 错误: 检测到闭包自引用环（引用环 → 内存泄漏，纯 ARC 无环收集器）:\n",
+            );
+            for f in &强环 {
+                报告.push_str(&format!(
+                    "  在 {} 中: {}.{} = 闭包 {{ …引用 {}… }} —— 字段强持有闭包，闭包又强捕获 {}，双方计数永不归零。\n",
+                    f.位置, f.对象, f.字段, f.对象, f.对象
+                ));
+            }
+            报告.push_str(&format!(
+                "  修复: 用弱捕获打破环 —— 把闭包写成 `闭包 [弱 {}] (…) {{ … }}`。\n         弱捕获不增引用计数（unowned 语义）：持有者释放时闭包随之释放，环断开。",
+                f.对象
+            ));
+            return Err(报告);
+        }
+    }
 
     // QI_ARC=1：为所有结构体类型 + 两类数组 emit 释放函数（先声明后定义，
     // 递归类型可用；函数体生成前就位，插桩点直接引用）。关闭时不产生任何 IR。

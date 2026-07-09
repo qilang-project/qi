@@ -613,6 +613,7 @@ impl ParserErrorRecovery {
 
             // New language feature keywords
             TokenKind::闭包 => "闭包".to_string(),
+            TokenKind::弱 => "弱".to_string(),
             TokenKind::匹配 => "匹配".to_string(),
             TokenKind::内联 => "内联".to_string(),
             TokenKind::联合体 => "联合体".to_string(),

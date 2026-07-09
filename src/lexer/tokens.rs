@@ -122,6 +122,7 @@ pub enum TokenKind {
 
     // Additional keywords for new features
     闭包,   // closure/lambda
+    弱,     // weak (弱捕获：闭包 [弱 x] — 打破 ARC 引用环)
     匹配,   // match
     内联,   // inline
     联合体, // union

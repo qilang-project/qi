@@ -744,6 +744,9 @@ pub struct ClosureExpression {
     pub return_type: Option<TypeNode>,
     pub body: Vec<AstNode>,
     pub captures: Vec<String>, // 捕获的外部变量
+    /// 弱捕获名单（`闭包 [弱 自身] {...}` 里标注 `弱` 的变量名）。
+    /// 弱捕获不增引用计数（unowned 语义），用于打破 self.回调 = 闭包{self...} 型引用环。
+    pub weak_captures: Vec<String>,
     pub span: Span,
 }
 

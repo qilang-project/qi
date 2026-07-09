@@ -289,11 +289,12 @@ impl<'ctx> 后端<'ctx> {
         if !self.弧 {
             return Ok(());
         }
+        // 弱捕获局部（unowned）不 release —— 填槽/落地时都未 retain。
         let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = self
             .变量表
-            .values()
-            .filter(|(_, t)| 是RC类型(*t))
-            .map(|(p, t)| (*p, *t))
+            .iter()
+            .filter(|(名, (_, t))| 是RC类型(*t) && !self.弱局部.contains(*名))
+            .map(|(_, (p, t))| (*p, *t))
             .collect();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         for (p, t) in 槽们 {

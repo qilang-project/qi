@@ -1987,13 +1987,15 @@ Atom: AstNode = {
     }),
 };
 
-// 闭包表达式: 闭包 (参数列表) : 返回类型 { 函数体 }
+// 闭包表达式: 闭包 [捕获列表]? (参数列表) : 返回类型 { 函数体 }
+// 捕获列表用于弱捕获标注：`闭包 [弱 自身] {...}` —— 打破 self.回调=闭包{self} 引用环。
 ClosureExpression: AstNode = {
     "闭包" "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: Some(return_type),
         body,
         captures: vec![],
+        weak_captures: vec![],
         span: Default::default(),
     }),
     "闭包" "(" <params:ParameterList> ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
@@ -2001,6 +2003,7 @@ ClosureExpression: AstNode = {
         return_type: None,
         body,
         captures: vec![],
+        weak_captures: vec![],
         span: Default::default(),
     }),
     "闭包" "(" ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
@@ -2008,6 +2011,7 @@ ClosureExpression: AstNode = {
         return_type: Some(return_type),
         body,
         captures: vec![],
+        weak_captures: vec![],
         span: Default::default(),
     }),
     "闭包" "(" ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
@@ -2015,6 +2019,49 @@ ClosureExpression: AstNode = {
         return_type: None,
         body,
         captures: vec![],
+        weak_captures: vec![],
+        span: Default::default(),
+    }),
+    // ── 带捕获列表的形式（[弱 x, ...]）──
+    "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: params,
+        return_type: Some(return_type),
+        body,
+        captures: vec![],
+        weak_captures: caps,
+        span: Default::default(),
+    }),
+    "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: params,
+        return_type: None,
+        body,
+        captures: vec![],
+        weak_captures: caps,
+        span: Default::default(),
+    }),
+    "闭包" <caps:CaptureList> "(" ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: Some(return_type),
+        body,
+        captures: vec![],
+        weak_captures: caps,
+        span: Default::default(),
+    }),
+    "闭包" <caps:CaptureList> "(" ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: None,
+        body,
+        captures: vec![],
+        weak_captures: caps,
+        span: Default::default(),
+    }),
+    // 无参、仅捕获列表：闭包 [弱 按钮] { 按钮.响应(); }
+    "闭包" <caps:CaptureList> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+        parameters: vec![],
+        return_type: None,
+        body,
+        captures: vec![],
+        weak_captures: caps,
         span: Default::default(),
     }),
     // 简化语法: |参数| 表达式
@@ -2026,6 +2073,7 @@ ClosureExpression: AstNode = {
         return_type: None,
         body,
         captures: vec![],
+        weak_captures: vec![],
         span: Default::default(),
     }),
     "|" "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
@@ -2033,8 +2081,20 @@ ClosureExpression: AstNode = {
         return_type: None,
         body,
         captures: vec![],
+        weak_captures: vec![],
         span: Default::default(),
     }),
+};
+
+// 闭包捕获列表：`[弱 x, y, 弱 z]` —— 只返回被标注 `弱` 的变量名（弱捕获名单）。
+// 未标注 `弱` 的条目允许写出（作显式捕获文档），但不影响自动捕获行为。
+CaptureList: Vec<String> = {
+    "[" <es:Comma<CaptureEntry>> "]" => es.into_iter().flatten().collect(),
+};
+
+CaptureEntry: Option<String> = {
+    "弱" <name:FieldIdentifier> => Some(name),
+    <name:FieldIdentifier> => None,
 };
 
 // 竖线闭包专用参数表：仅 名字 / 名字:类型，无默认值、无变参
@@ -2470,7 +2530,7 @@ TypeName: String = {
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
            id == "公开" || id == "私有" || id == "模块" || id == "自己" ||
-           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" ||
+           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" || id == "弱" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
            id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
             return Err(lalrpop_util::ParseError::User {
@@ -2510,7 +2570,7 @@ Identifier: String = {
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
-           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" || id == "弱" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
            id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
            id == "列表" || id == "字典" || id == "集合" || id == "数组" ||
@@ -2542,7 +2602,7 @@ ReceiverIdentifier: String = {
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
-           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" ||
+           id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" || id == "弱" ||
            id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
            id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
            id == "列表" || id == "字典" || id == "集合" || id == "数组" ||

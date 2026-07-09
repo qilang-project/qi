@@ -13,6 +13,8 @@ use inkwell::context::Context;
 pub struct 静态诊断 {
     /// 检测到的引用环链（如 `"账户 → 交易 → 账户"`）。空 = 无环。
     pub 环列表: Vec<String>,
+    /// 检测到的闭包自引用强环（如 `"按钮.回调 ↺ 闭包捕获 按钮"`）。空 = 无。
+    pub 闭包环列表: Vec<String>,
     /// 结构体类型数（含单态化实例）。
     pub 结构体数: usize,
     /// 枚举类型数（含选项/结果/单态化实例）。
@@ -60,6 +62,8 @@ pub fn 静态分析(programs: &[Program]) -> Result<静态诊断, String> {
     后端值.建结构体llvm类型()?;
 
     let 环列表 = super::环检测::收集循环引用环(&后端值.符号);
+    // 闭包自引用环（赋值点分析，纯 AST，不依赖类型登记）。
+    let 闭包环列表 = super::闭包环::收集闭包强环链(programs);
 
     let 结构体数 = 后端值.符号.结构体.len();
     let 枚举数 = 后端值.符号.枚举.len();
@@ -81,6 +85,7 @@ pub fn 静态分析(programs: &[Program]) -> Result<静态诊断, String> {
 
     Ok(静态诊断 {
         环列表,
+        闭包环列表,
         结构体数,
         枚举数,
         函数数,
