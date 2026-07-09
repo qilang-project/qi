@@ -578,7 +578,7 @@ pub fn compile_to_object(
 
 /// 把多个 Program（entry + 所有用户模块）合并进同一个 LLVM 模块，编成一个 .o。
 /// programs[0] 是 entry（含 入口()）。跨模块符号共享同一 mangle，天然可见。
-/// `arch`：交叉编译目标架构（x86_64 / aarch64），None 时默认 x86_64。
+/// `arch`：交叉编译目标架构（x86_64 / aarch64 / loongarch64），None 时默认 x86_64。
 /// `opt`：优化级别（None/Basic/Standard/Maximum → O0/O1/O2/O3 管线 + 同级目标机 opt）。
 ///
 /// `库模式`：true 时不生成 @main（不要求 入口()），改为生成所有 `导出 函数` 的 C ABI

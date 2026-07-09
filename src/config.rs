@@ -147,8 +147,8 @@ impl CompilerConfig {
     pub fn from_cli(cli: &crate::cli::commands::Cli) -> Result<Self, ConfigError> {
         let mut config = Self::default();
 
-        if cli.arch.is_some() {
-            config.target_arch = cli.arch.clone();
+        if let Some(arch) = &cli.arch {
+            config.target_arch = Some(normalize_target_arch(arch)?);
         }
         if cli.release_runtime {
             config.release_runtime = true;
@@ -230,4 +230,24 @@ pub enum ConfigError {
     /// Parse error
     #[error("Failed to parse config file {0}: {1}")]
     Parse(PathBuf, serde_json::Error),
+    /// 非法交叉编译架构
+    #[error("不支持的目标架构 '{0}'。支持的架构：x86_64、aarch64（arm64）、loongarch64（龙芯，loong64）")]
+    InvalidArch(String),
+}
+
+/// 支持的交叉编译目标架构（规范名）。
+pub const SUPPORTED_TARGET_ARCHES: &[&str] = &["x86_64", "aarch64", "loongarch64"];
+
+/// 把 `--arch` 传入的架构名规范化到 LLVM/Rust/zig 三元组统一用的名字。
+/// 接受常见简写/别名（arm64→aarch64、loong64/loongarch→loongarch64、amd64→x86_64），
+/// 非法架构返回 [`ConfigError::InvalidArch`]（错误信息列出全部支持架构）。
+pub fn normalize_target_arch(arch: &str) -> Result<String, ConfigError> {
+    let a = arch.trim().to_ascii_lowercase();
+    let normalized = match a.as_str() {
+        "x86_64" | "x86-64" | "amd64" | "x64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        "loongarch64" | "loong64" | "loongarch" | "la64" => "loongarch64",
+        _ => return Err(ConfigError::InvalidArch(arch.to_string())),
+    };
+    Ok(normalized.to_string())
 }

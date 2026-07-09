@@ -440,7 +440,8 @@ impl QiCompiler {
             && self.config.target_platform == config::CompilationTarget::Linux
     }
 
-    /// 目标架构（x86_64 / aarch64），默认 x86_64。
+    /// 目标架构（x86_64 / aarch64 / loongarch64），默认 x86_64。
+    /// 已在 config::from_cli 规范化，此处只兜默认。
     fn 目标架构(&self) -> String {
         self.config
             .target_arch
@@ -448,9 +449,14 @@ impl QiCompiler {
             .unwrap_or_else(|| "x86_64".to_string())
     }
 
-    /// zig 交叉编译用的目标三元组（glibc 2.34，匹配多数发行版）。
+    /// zig 交叉编译用的目标三元组。
+    /// glibc 版本按架构选：x86_64/aarch64 用 2.34（覆盖绝大多数发行版）；
+    /// loongarch64（龙芯）是较新架构，glibc 支持从 2.36 起 —— 2.34 没有 loong 移植，
+    /// 必须用 2.36（信创发行版如统信 UOS/麒麟龙芯版 glibc ≥ 2.36）。
     fn zig目标三元组(&self) -> String {
-        format!("{}-linux-gnu.2.34", self.目标架构())
+        let arch = self.目标架构();
+        let glibc = if arch == "loongarch64" { "2.36" } else { "2.34" };
+        format!("{}-linux-gnu.{}", arch, glibc)
     }
 
     /// 对应的 Rust 目标三元组（cargo zigbuild 用，定位交叉构建的运行时归档）。

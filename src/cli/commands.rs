@@ -47,7 +47,7 @@ pub struct Cli {
     #[arg(short, long, value_enum)]
     pub target: Option<crate::config::CompilationTarget>,
 
-    /// 交叉编译目标架构 | Target arch for cross-compile (x86_64 | aarch64). 默认 x86_64
+    /// 交叉编译目标架构 | Target arch (x86_64 | aarch64 | loongarch64/龙芯). 默认 x86_64
     #[arg(long)]
     pub arch: Option<String>,
 
@@ -1180,7 +1180,7 @@ impl Cli {
 
         if targets {
             println!("支持的目标平台:");
-            println!("  - Linux x86_64");
+            println!("  - Linux x86_64 / aarch64 / loongarch64（龙芯，信创）");
             println!("    • 完整的系统调用支持");
             println!("    • POSIX 兼容性");
             println!("    • 共享内存和信号量");
