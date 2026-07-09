@@ -427,7 +427,9 @@ impl<'ctx> 后端<'ctx> {
             let 是局部 = self.变量表.contains_key(&id.name)
                 || self.全局变量表.contains_key(&id.name);
             if !是局部 {
-                if let Some((f, _)) = self.尝试解析用户函数(&id.name) {
+                // 回调实参当函数指针：非重载函数 argc 传 0 即经「单一定义」分支正确解析
+                // （重载函数无法当裸指针，会解析失败并落到下面报错）。
+                if let Some((f, _)) = self.尝试解析用户函数(&id.name, 0) {
                     return Ok(f.as_global_value().as_pointer_value());
                 }
             }

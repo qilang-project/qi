@@ -87,6 +87,11 @@ impl<'ctx> 后端<'ctx> {
             if 首段 == "标准库" || 首段 == "." || 首段 == ".." {
                 continue;
             }
+            // 同包导入（来源包 == 本模块所属包）放行：同包内同名不同元数是合法重载，
+            // 共用同一 (包,名) 重载集，不构成「本地遮蔽外部导入」。只拦真正的跨包遮蔽。
+            if program.package_name.as_deref() == Some(首段) {
+                continue;
+            }
             let items = match &imp.items {
                 Some(v) if !v.is_empty() => v,
                 _ => continue,

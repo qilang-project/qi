@@ -108,13 +108,14 @@ pub(crate) fn mangle_function_name(name: &str) -> String {
     format!("_Z_{}", hex)
 }
 
-/// 包内用户函数的唯一 LLVM 符号：把 `包名$函数名` 一起 mangle，避免跨包同名冲突
-/// （如 主程序.注册 vs Harness.注册）。`入口` 不修饰（→ main，单独处理）。
-/// 无包名时退回裸 mangle（与旧行为一致）。
-fn 包内符号名(pkg: Option<&str>, name: &str) -> String {
+/// 包内用户函数的唯一 LLVM 符号：把 `包名$函数名#元数` 一起 mangle。
+/// - 包名：避免跨包同名冲突（主程序.注册 vs Harness.注册）；
+/// - 元数（形参个数）：支持同名不同元数的**重载**得到互异符号（同元数在登记处已报错）。
+/// `入口` 不修饰（→ main，单独处理）。无包名时退回 `名字#元数`。
+fn 包内符号名(pkg: Option<&str>, name: &str, 元数: usize) -> String {
     match pkg {
-        Some(p) => mangle_function_name(&format!("{}${}", p, name)),
-        None => mangle_function_name(name),
+        Some(p) => mangle_function_name(&format!("{}${}#{}", p, name, 元数)),
+        None => mangle_function_name(&format!("{}#{}", name, 元数)),
     }
 }
 

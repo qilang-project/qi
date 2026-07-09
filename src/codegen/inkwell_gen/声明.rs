@@ -113,30 +113,64 @@ impl<'ctx> 后端<'ctx> {
             None => self.ctx.void_type().fn_type(&参数llvm, false),
         };
 
-        // 包内唯一符号，避免跨包同名（主程序.注册 vs Harness.注册）冲突
-        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name);
+        let 元数 = 参数类型.len();
+
+        // 重载校验（同一 (包,名) 下按元数区分多个签名）。不改状态，先查后建。
+        // 本定义是否带默认参数 / 变参 —— 这两者会让「按元数解析」产生歧义，故重载集内禁用。
+        let 本def有默认 = f.parameters.iter().any(|p| p.default_value.is_some());
+        let 本def变参 = f
+            .parameters
+            .last()
+            .map(|p| p.is_variadic)
+            .unwrap_or(false);
+        if let Some(pkg) = self.当前包.clone() {
+            if let Some(现有) = self.符号.函数按包.get(&(pkg.clone(), f.name.clone())) {
+                if !现有.is_empty() {
+                    // 1) 同元数 —— 无法区分
+                    if 现有.iter().any(|s| s.参数.len() == 元数) {
+                        return Err(format!(
+                            "函数「{name}」在包「{pkg}」里有两个形参个数都是 {n} 的定义，无法按元数区分。请改名或调整参数个数。",
+                            name = f.name, pkg = pkg, n = 元数
+                        ));
+                    }
+                    // 2) 返回类型须一致（简化返回类型推断：任一重载的返回类型都通用）
+                    if 现有[0].返回 != 返回类型 {
+                        return Err(format!(
+                            "重载函数「{name}」各定义的返回类型必须一致（现有 {a:?}，新增 {b:?}）。",
+                            name = f.name, a = 现有[0].返回, b = 返回类型
+                        ));
+                    }
+                    // 3) 重载禁默认参数 / 变参
+                    if 本def有默认
+                        || 本def变参
+                        || self.符号.函数默认值.contains_key(&f.name)
+                        || self.符号.函数变参.contains(&f.name)
+                    {
+                        return Err(format!(
+                            "重载函数「{name}」不支持默认参数或变参（会让按元数解析产生歧义）。请去掉默认/变参，或改名。",
+                            name = f.name
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 包内唯一符号：把元数纳入 mangle —— 不同元数的重载得到互异 LLVM 符号，
+        // 同元数已在上面报错。跨包同名（主程序.注册 vs Harness.注册）也天然分开。
+        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name, 元数);
         let func = self.module.add_function(&mangled, fn_type, None);
 
         let sig = 函数签名 {
             参数: 参数类型,
             返回: 返回类型,
         };
-        // 包内签名（消歧优先）+ 扁平签名（fallback / 未标包时）
+        // 包内签名（重载集）+ 扁平签名（fallback / 未标包时）
         if let Some(pkg) = self.当前包.clone() {
-            // 同包跨文件重名函数会 mangle 成同一 LLVM 符号 → 静默 last-write-wins，
-            // 调用点绑到不确定的那个（伪装成「参数个数错 / 结构体无字段 X」，极难查）。
-            // Qi 暂不支持按签名重载，直接编译期拦下，要求改名其一。
-            let key = (pkg, f.name.clone());
-            if self.符号.函数按包.contains_key(&key) {
-                return Err(format!(
-                    "函数重复定义：包「{pkg}」里有多个同名函数「{name}」（通常是同包多个文件各定义了一份）。\n\
-                     Qi 暂不按签名重载解析——同名会 mangle 成同一符号、静默相互覆盖，\n\
-                     调用点绑向不确定的那个。请给其中一个改名。",
-                    pkg = key.0,
-                    name = key.1,
-                ));
-            }
-            self.符号.函数按包.insert(key, sig.clone());
+            self.符号
+                .函数按包
+                .entry((pkg, f.name.clone()))
+                .or_default()
+                .push(sig.clone());
         }
         self.符号.函数.entry(f.name.clone()).or_insert(sig);
         // 记录默认参数值（供调用少传时补齐）
@@ -157,7 +191,9 @@ impl<'ctx> 后端<'ctx> {
 
     /// 第二趟：生成一个用户函数的函数体。
     pub(super) fn 生成函数体(&mut self, f: &FunctionDeclaration) -> Result<(), String> {
-        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name);
+        // mangle / 签名都按本定义的形参个数取 —— 精确对应本 f（重载各元数独立符号）。
+        let 元数 = f.parameters.len();
+        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name, 元数);
         let func = self
             .module
             .get_function(&mangled)
@@ -165,7 +201,7 @@ impl<'ctx> 后端<'ctx> {
 
         let sig = self
             .符号
-            .解析函数(&f.name)
+            .解析重载(&f.name, 元数)
             .cloned()
             .ok_or_else(|| format!("函数签名缺失: {}", f.name))?;
 

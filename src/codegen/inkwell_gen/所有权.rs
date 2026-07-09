@@ -457,9 +457,9 @@ impl<'ctx> 后端<'ctx> {
         }
         // 4) 同步/定时器内建都返回整数句柄，非字符串 —— 若命中同名用户函数下面
         //    误判也无妨：插桩点都先验实际类型是 字符串 才动作。
-        // 5) 用户函数（返回约定 +1）
-        if let Some((_f, sig)) = self.尝试解析用户函数(callee) {
-            return sig.map(|s| s.返回 == Qi类型::字符串).unwrap_or(false);
+        // 5) 用户函数（返回约定 +1）—— 只看返回类型，重载各版本返回类型一致，取任一即可
+        if let Some(s) = self.符号.解析函数(callee) {
+            return s.返回 == Qi类型::字符串;
         }
         // 6) 无模块限定标准库（镜像 尝试无限定标准库）
         if let Some(mf) = self.查任意模块函数(callee.trim_start_matches(':')) {
@@ -644,9 +644,9 @@ impl<'ctx> 后端<'ctx> {
         if self.符号.泛型函数模板.contains_key(callee) {
             return true;
         }
-        // 3) 用户函数（返回约定 +1）
-        if let Some((_f, sig)) = self.尝试解析用户函数(callee) {
-            return sig.map(|s| 是对象类型(s.返回)).unwrap_or(false);
+        // 3) 用户函数（返回约定 +1）—— 只看返回类型，重载各版本返回类型一致，取任一即可
+        if let Some(s) = self.符号.解析函数(callee) {
+            return 是对象类型(s.返回);
         }
         // 4) 标准库 FFI：一般不交对象所有权；例外：返回 浮点数组 的 FFI
         //    （向量.*）按约定 rc=1 新数组交出 → OWNED（镜像 调用拥有字符串 6）

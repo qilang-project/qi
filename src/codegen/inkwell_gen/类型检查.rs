@@ -100,8 +100,9 @@ const 泛型深度上限: usize = 8;
 #[derive(Default)]
 pub struct 符号表 {
     pub 函数: HashMap<String, 函数签名>,
-    /// 包内函数签名：(包名, 函数名) → 签名。用于跨包同名函数消歧。
-    pub 函数按包: HashMap<(String, String), 函数签名>,
+    /// 包内函数签名：(包名, 函数名) → 该名字的**重载集**（按元数区分的多签名）。
+    /// 绝大多数名字只有一个元素；同名不同元数的多定义构成重载。
+    pub 函数按包: HashMap<(String, String), Vec<函数签名>>,
     /// 结构体注册表：索引即 Qi类型::结构体(idx) 的 idx。
     pub 结构体: Vec<结构体信息>,
     /// (声明包, 结构体名) → 索引。跨包同名结构体各占一条，互不干扰。
@@ -214,29 +215,45 @@ impl 符号表 {
         v
     }
 
-    /// 解析函数签名：
-    /// 1) 当前包内同名函数；
-    /// 2) 当前包 destructure 导入的来源包的；
-    /// 3) 全局唯一定义包的；
-    /// 4) 无任何包定义时回退扁平表（无包程序 / 单文件）。
-    ///
+    /// 解析一个函数名对应的**重载集**（同一 (包,名) 下按元数区分的多个签名）：
+    /// 1) 当前包内；2) destructure 导入来源包；3) 全局唯一定义包。
     /// 多包同名且无法定位 → None（不随机挑 —— 调用处按未定义/歧义报错）。
-    pub fn 解析函数(&self, name: &str) -> Option<&函数签名> {
+    pub fn 重载集(&self, name: &str) -> Option<&Vec<函数签名>> {
         if let Some(pkg) = &self.当前包 {
-            if let Some(sig) = self.函数按包.get(&(pkg.clone(), name.to_string())) {
-                return Some(sig);
+            if let Some(v) = self.函数按包.get(&(pkg.clone(), name.to_string())) {
+                return Some(v);
             }
         }
         if let Some(src) = self.导入来源(name) {
-            if let Some(sig) = self.函数按包.get(&(src.to_string(), name.to_string())) {
-                return Some(sig);
+            if let Some(v) = self.函数按包.get(&(src.to_string(), name.to_string())) {
+                return Some(v);
             }
         }
         match self.函数候选包(name).as_slice() {
             [唯一] => self.函数按包.get(&(唯一.clone(), name.to_string())),
-            [] => self.函数.get(name),
-            _ => None, // 多包同名：不猜
+            _ => None,
         }
+    }
+
+    /// 解析函数签名（不区分重载 —— 取重载集第一个；重载均要求返回类型一致，
+    /// 故返回类型推断用它安全）。无包定义时回退扁平表（无包程序 / 单文件）。
+    pub fn 解析函数(&self, name: &str) -> Option<&函数签名> {
+        if let Some(v) = self.重载集(name) {
+            return v.first();
+        }
+        self.函数.get(name)
+    }
+
+    /// 按实参个数解析具体的那个重载。单一定义 → 直接返回它（保留默认参数/变参的
+    /// 下游补齐语义）；多重载 → 按形参个数精确匹配（重载集内禁默认/变参，登记时已保证）。
+    pub fn 解析重载(&self, name: &str, 实参数: usize) -> Option<&函数签名> {
+        if let Some(v) = self.重载集(name) {
+            if v.len() == 1 {
+                return v.first();
+            }
+            return v.iter().find(|s| s.参数.len() == 实参数);
+        }
+        self.函数.get(name)
     }
 
     /// 函数是否存在（当前包优先）。

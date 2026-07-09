@@ -217,10 +217,11 @@ impl<'ctx> 后端<'ctx> {
             }
             None => self.ctx.void_type().fn_type(&参数llvm, false),
         };
-        let mangled = super::包内符号名(模板.包.as_deref(), &实例名);
+        let 元数 = 参数类型.len();
+        let mangled = super::包内符号名(模板.包.as_deref(), &实例名, 元数);
         self.module.add_function(&mangled, fn_type, None);
 
-        // 签名登记：包内 + 扁平（与 声明函数原型 同款）
+        // 签名登记：包内（重载集，实例名唯一→单元素）+ 扁平（与 声明函数原型 同款）
         let sig = 函数签名 {
             参数: 参数类型,
             返回: 返回类型,
@@ -228,7 +229,9 @@ impl<'ctx> 后端<'ctx> {
         if let Some(pkg) = 模板.包.clone() {
             self.符号
                 .函数按包
-                .insert((pkg, 实例名.clone()), sig.clone());
+                .entry((pkg, 实例名.clone()))
+                .or_default()
+                .push(sig.clone());
         }
         self.符号.函数.entry(实例名.clone()).or_insert(sig);
         // 默认参数值 / 变参标志随实例名复制

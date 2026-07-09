@@ -999,43 +999,39 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 尝试解析用户函数(
         &self,
         name: &str,
+        实参数: usize,
     ) -> Option<(
         inkwell::values::FunctionValue<'ctx>,
         Option<super::类型检查::函数签名>,
     )> {
+        // 先按实参个数选定重载签名（单一定义 → 直接它；多重载 → 元数精确匹配）。
+        // 元数（= 选中签名的形参个数）用于 mangle —— 与声明侧一致，重载各得互异符号。
+        let sig = self.符号.解析重载(name, 实参数).cloned();
+        let 元数 = sig.as_ref().map(|s| s.参数.len()).unwrap_or(实参数);
+
         // 当前包符号
-        let 当前 = super::包内符号名(self.当前包.as_deref(), name);
+        let 当前 = super::包内符号名(self.当前包.as_deref(), name, 元数);
         if let Some(f) = self.module.get_function(&当前) {
-            return Some((f, self.符号.解析函数(name).cloned()));
+            return Some((f, sig));
         }
         // destructure 导入指明的来源包
         if let Some(src) = self.符号.导入来源(name) {
-            let sig = self
-                .符号
-                .函数按包
-                .get(&(src.to_string(), name.to_string()))
-                .cloned();
-            let sym = super::包内符号名(Some(src), name);
+            let sym = super::包内符号名(Some(src), name, 元数);
             if let Some(f) = self.module.get_function(&sym) {
                 return Some((f, sig));
             }
         }
         // 全局唯一定义包（多包同名 → 不猜，返回 None 交调用点报歧义）
         if let [唯一] = self.符号.函数候选包(name).as_slice() {
-            let sig = self
-                .符号
-                .函数按包
-                .get(&(唯一.clone(), name.to_string()))
-                .cloned();
-            let sym = super::包内符号名(Some(唯一), name);
+            let sym = super::包内符号名(Some(唯一), name, 元数);
             if let Some(f) = self.module.get_function(&sym) {
                 return Some((f, sig));
             }
         }
-        // 再回退：裸符号（无包）
-        let 裸 = super::mangle_function_name(name);
+        // 再回退：无包符号（无包程序 / 单文件）
+        let 裸 = super::包内符号名(None, name, 元数);
         if let Some(f) = self.module.get_function(&裸) {
-            return Some((f, self.符号.函数.get(name).cloned()));
+            return Some((f, sig.or_else(|| self.符号.函数.get(name).cloned())));
         }
         None
     }
@@ -1077,9 +1073,23 @@ impl<'ctx> 后端<'ctx> {
 
         // 用户函数（跨包同名消歧：当前包符号优先，否则回退裸/任意包符号）；
         // 找不到用户函数时，回退无模块限定的标准库函数（如 MD5哈希(x)、创建等待组()）。
-        let (f, sig) = match self.尝试解析用户函数(&call.callee) {
+        let (f, sig) = match self.尝试解析用户函数(&call.callee, call.arguments.len()) {
             Some(x) => x,
             None => {
+                // 重载存在但没有匹配实参个数的那个 → 清晰报「无匹配重载」
+                if let Some(集) = self.符号.重载集(&call.callee) {
+                    if 集.len() > 1 {
+                        let mut 元数集: Vec<String> =
+                            集.iter().map(|s| s.参数.len().to_string()).collect();
+                        元数集.sort();
+                        return Err(format!(
+                            "函数「{}」有重载，但没有接收 {} 个实参的版本（可选形参个数：{}）。",
+                            call.callee,
+                            call.arguments.len(),
+                            元数集.join(" / ")
+                        ));
+                    }
+                }
                 // 多包同名的用户函数：先报歧义 —— 绝不静默落到同名 stdlib 函数
                 let 候选 = self.符号.函数候选包(&call.callee);
                 if 候选.len() > 1 {

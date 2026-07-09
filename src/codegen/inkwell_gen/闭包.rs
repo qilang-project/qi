@@ -45,14 +45,23 @@ impl<'ctx> 后端<'ctx> {
             Some(t) => t,
             None => return Ok(None),
         };
+        // 重载函数当值会有歧义（不知道取哪个元数的那个）—— 直接报错。
+        if let Some(集) = self.符号.重载集(name) {
+            if 集.len() > 1 {
+                return Err(format!(
+                    "重载函数「{}」不能作为函数值/指针传递（有多个元数版本，无法确定取哪个）。请改名区分，或包装成闭包。",
+                    name
+                ));
+            }
+        }
         let idx = t.函数值索引().ok_or_else(|| "函数值索引缺失".to_string())?;
         let sig = self
             .符号
             .函数值签名(idx)
             .cloned()
             .ok_or_else(|| "函数值签名缺失".to_string())?;
-        // 目标真函数符号：当前包优先，否则任意包，否则裸符号
-        let mangled = self.解析函数符号名(name);
+        // 目标真函数符号：当前包优先，否则任意包，否则裸符号（按该函数形参个数 mangle）
+        let mangled = self.解析函数符号名(name, sig.参数.len());
         let tramp = self.生成trampoline(&mangled, &sig)?;
         let obj = self.创建闭包对象(tramp, 0)?;
         Ok(Some((obj.into(), t)))
@@ -60,24 +69,24 @@ impl<'ctx> 后端<'ctx> {
 
     /// 找一个顶层函数的实际 LLVM 符号名（当前包 → destructure 导入来源包 →
     /// 全局唯一定义包 → 裸）。多包同名不猜（与 尝试解析用户函数 同规则）。
-    fn 解析函数符号名(&self, name: &str) -> String {
-        let 当前 = super::包内符号名(self.当前包.as_deref(), name);
+    fn 解析函数符号名(&self, name: &str, 元数: usize) -> String {
+        let 当前 = super::包内符号名(self.当前包.as_deref(), name, 元数);
         if self.module.get_function(&当前).is_some() {
             return 当前;
         }
         if let Some(src) = self.符号.导入来源(name) {
-            let sym = super::包内符号名(Some(src), name);
+            let sym = super::包内符号名(Some(src), name, 元数);
             if self.module.get_function(&sym).is_some() {
                 return sym;
             }
         }
         if let [唯一] = self.符号.函数候选包(name).as_slice() {
-            let sym = super::包内符号名(Some(唯一), name);
+            let sym = super::包内符号名(Some(唯一), name, 元数);
             if self.module.get_function(&sym).is_some() {
                 return sym;
             }
         }
-        super::mangle_function_name(name)
+        super::包内符号名(None, name, 元数)
     }
 
     /// 真闭包表达式 → 合成函数 + fat obj + 填捕获。
