@@ -993,6 +993,176 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 
+    /// `工具模式(函数名)` —— 编译期从函数签名生成 OpenAI tool 的 parameters JSON schema。
+    /// 参数（标量）→ JSON 类型：整数/浮点数→number、字符串→string、布尔→boolean。
+    /// 返回该 schema 字符串常量（复用字符串字面量 codegen）。非「工具模式(标识符)」→ Ok(None)。
+    pub(super) fn 生成工具模式(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        use crate::parser::ast::LiteralExpression;
+        let 函数名 = match &call.arguments[0] {
+            AstNode::标识符表达式(id) => id.name.clone(),
+            _ => return Ok(None),
+        };
+        let 参数名 = self
+            .符号
+            .函数参数名
+            .get(&函数名)
+            .cloned()
+            .ok_or_else(|| format!("工具模式：找不到函数「{}」的形参信息", 函数名))?;
+        let sig = self
+            .符号
+            .解析函数(&函数名)
+            .cloned()
+            .ok_or_else(|| format!("工具模式：找不到函数「{}」的签名", 函数名))?;
+
+        let json类型 = |t: &Qi类型| -> Result<&'static str, String> {
+            match t {
+                Qi类型::整数 => Ok("integer"),
+                Qi类型::浮点数 => Ok("number"),
+                Qi类型::字符串 => Ok("string"),
+                Qi类型::布尔 => Ok("boolean"),
+                _ => Err(format!(
+                    "工具模式：函数「{}」含非标量参数，v1 仅支持 整数/浮点数/字符串/布尔",
+                    函数名
+                )),
+            }
+        };
+
+        let mut 属性 = String::new();
+        let mut 必需 = String::new();
+        for (i, 名) in 参数名.iter().enumerate() {
+            let t = sig.参数.get(i).copied().unwrap_or(Qi类型::字符串);
+            if i > 0 {
+                属性.push(',');
+                必需.push(',');
+            }
+            属性.push_str(&format!("\"{}\":{{\"type\":\"{}\"}}", 名, json类型(&t)?));
+            必需.push_str(&format!("\"{}\"", 名));
+        }
+        let schema = format!(
+            "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}]}}",
+            属性, 必需
+        );
+
+        // 复用字符串字面量 codegen（得到 RC 字符串值）
+        let lit = AstNode::字面量表达式(LiteralExpression {
+            value: LiteralValue::字符串(schema),
+            span: Default::default(),
+        });
+        self.生成表达式(&lit)
+    }
+
+    /// `工具适配(函数名)` —— 合成一个 `函数(字符串): 字符串` 适配器闭包：
+    /// 收到模型的 JSON args → JSON.解码 → 逐参数 JSON.获取X 拆成类型化实参 → 调原函数。
+    /// 复用闭包 codegen 生成函数值。要求原函数返回 字符串（工具处理约定）、参数为标量。
+    pub(super) fn 生成工具适配(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        use crate::parser::ast::{
+            BasicType, ClosureExpression, FunctionCallExpression, IdentifierExpression,
+            LiteralExpression, MethodCallExpression, Parameter, ReturnStatement, TypeNode,
+            VariableDeclaration,
+        };
+        let 函数名 = match &call.arguments[0] {
+            AstNode::标识符表达式(id) => id.name.clone(),
+            _ => return Ok(None),
+        };
+        let 参数名 = self
+            .符号
+            .函数参数名
+            .get(&函数名)
+            .cloned()
+            .ok_or_else(|| format!("工具适配：找不到函数「{}」的形参信息", 函数名))?;
+        let sig = self
+            .符号
+            .解析函数(&函数名)
+            .cloned()
+            .ok_or_else(|| format!("工具适配：找不到函数「{}」的签名", 函数名))?;
+        if sig.返回 != Qi类型::字符串 {
+            return Err(format!(
+                "工具适配：工具函数「{}」必须返回 字符串（工具结果约定）",
+                函数名
+            ));
+        }
+
+        let id = |name: &str| {
+            AstNode::标识符表达式(IdentifierExpression {
+                name: name.to_string(),
+                span: Default::default(),
+            })
+        };
+        let strlit = |s: &str| {
+            AstNode::字面量表达式(LiteralExpression {
+                value: LiteralValue::字符串(s.to_string()),
+                span: Default::default(),
+            })
+        };
+        let mcall = |obj: AstNode, m: &str, args: Vec<AstNode>| {
+            AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(obj),
+                method_name: m.to_string(),
+                arguments: args,
+                span: Default::default(),
+            })
+        };
+
+        // 每个参数：J.获取X(__args_j, "参数名")
+        let mut 实参: Vec<AstNode> = Vec::new();
+        for (i, 名) in 参数名.iter().enumerate() {
+            let getter = match sig.参数.get(i).copied().unwrap_or(Qi类型::字符串) {
+                Qi类型::整数 => "获取整数",
+                Qi类型::浮点数 => "获取浮点数",
+                Qi类型::字符串 => "获取字符串",
+                Qi类型::布尔 => "获取布尔",
+                _ => {
+                    return Err(format!(
+                        "工具适配：函数「{}」含非标量参数，v1 仅支持标量",
+                        函数名
+                    ))
+                }
+            };
+            实参.push(mcall(id("JSON"), getter, vec![id("__args_j"), strlit(名)]));
+        }
+
+        // 闭包体：变量 __args_j = JSON.解码(参数JSON); 返回 原函数(实参...);
+        let 解码语句 = AstNode::变量声明(VariableDeclaration {
+            name: "__args_j".to_string(),
+            type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
+            initializer: Some(Box::new(mcall(id("JSON"), "解码", vec![id("参数JSON")]))),
+            is_mutable: false,
+            span: Default::default(),
+        });
+        let 返回语句 = AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(AstNode::函数调用表达式(FunctionCallExpression {
+                module_qualifier: None,
+                callee: 函数名.clone(),
+                type_arguments: vec![],
+                arguments: 实参,
+                span: Default::default(),
+            }))),
+            span: Default::default(),
+        });
+
+        let 闭包 = ClosureExpression {
+            parameters: vec![Parameter {
+                name: "参数JSON".to_string(),
+                type_annotation: Some(TypeNode::基础类型(BasicType::字符串)),
+                default_value: None,
+                is_variadic: false,
+                span: Default::default(),
+            }],
+            return_type: Some(TypeNode::基础类型(BasicType::字符串)),
+            body: vec![解码语句, 返回语句],
+            captures: vec![],
+            weak_captures: vec![],
+            span: Default::default(),
+        };
+        self.生成闭包表达式(&闭包).map(Some)
+    }
+
     /// `询问<结构体>(会话, 提示)` 脱糖 —— 类型定向结构化输出。
     /// 编译期从结构体字段生成「字段清单」提示 + 开 provider JSON 模式(response_format)，
     /// 调 `大模型.对话`，`JSON.解码` 后逐字段 `JSON.获取X` 反序列化回强类型结构体。
@@ -1199,6 +1369,22 @@ impl<'ctx> 后端<'ctx> {
         // JSON schema、发 response_format、把回复反序列化回强类型结构体。
         if call.callee == "询问" && !call.type_arguments.is_empty() {
             return self.生成询问(call).map(Some);
+        }
+
+        // 工具 schema 自动生成：`工具模式(某函数)` —— 编译期从函数签名（参数名+类型）
+        // 生成 OpenAI tool 的 parameters JSON schema 字符串，免手写、免与函数漂移。
+        if call.callee == "工具模式" && call.arguments.len() == 1 {
+            if let Some(v) = self.生成工具模式(call)? {
+                return Ok(Some(v));
+            }
+        }
+
+        // 工具参数自动反序列化：`工具适配(某函数)` —— 生成一个 函数(字符串):字符串 适配器，
+        // 把模型给的 JSON args 拆成类型化实参再调该函数。省去每个工具手写解析 + 消除参数错配。
+        if call.callee == "工具适配" && call.arguments.len() == 1 {
+            if let Some(v) = self.生成工具适配(call)? {
+                return Ok(Some(v));
+            }
         }
 
         // 间接调用：callee 是一个函数值变量（如参数 f: 函数(整数):整数）

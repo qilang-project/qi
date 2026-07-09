@@ -173,6 +173,11 @@ impl<'ctx> 后端<'ctx> {
                 .push(sig.clone());
         }
         self.符号.函数.entry(f.name.clone()).or_insert(sig);
+        // 记录形参名（`工具模式` 生成 tool schema 时需要参数名）
+        self.符号
+            .函数参数名
+            .entry(f.name.clone())
+            .or_insert_with(|| f.parameters.iter().map(|p| p.name.clone()).collect());
         // 记录默认参数值（供调用少传时补齐）
         let 默认: Vec<Option<crate::parser::ast::AstNode>> = f
             .parameters

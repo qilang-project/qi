@@ -126,6 +126,8 @@ pub struct 符号表 {
     pub 方法: HashMap<(u32, String), 函数签名>,
     /// 函数默认参数值 AST：函数名 → 每个形参的可选默认值表达式（供调用少传时补齐）。
     pub 函数默认值: HashMap<String, Vec<Option<crate::parser::ast::AstNode>>>,
+    /// 函数形参名：函数名 → 形参名列表（签名只存类型，`工具模式` 生成 schema 需要名字）。
+    pub 函数参数名: HashMap<String, Vec<String>>,
     /// 变参函数集合：末位形参是 `名字...: T`（签名里已按 数组(T) 登记），
     /// 调用点须把多余尾实参打包成数组后再传。
     pub 函数变参: HashSet<String>,
@@ -166,6 +168,7 @@ impl 符号表 {
             符号导入歧义: HashSet::new(),
             方法: HashMap::new(),
             函数默认值: HashMap::new(),
+            函数参数名: HashMap::new(),
             函数变参: HashSet::new(),
             外部函数: HashSet::new(),
             函数值签名: Vec::new(),
