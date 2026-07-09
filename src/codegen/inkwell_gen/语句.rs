@@ -317,6 +317,14 @@ impl<'ctx> 后端<'ctx> {
         f: &crate::parser::ast::ForStatement,
         func: FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // 一等流迭代：`对于 片段 在 流式(会话, 提示) { ... }` —— 开流 → 逐块读到空 → 自动关流。
+        if let crate::parser::ast::AstNode::函数调用表达式(c) = f.range.as_ref() {
+            if c.callee == "流式" && c.arguments.len() == 2 {
+                let c = c.clone();
+                return self.生成对于流(f, &c, func);
+            }
+        }
+
         // range 若不是可识别的区间，先尝试「对于 x 在 数组」遍历；
         // 都不是则退化为不执行（保守，不误生成）。
         let (起, 止, 含端点) = match self.拆区间(&f.range)? {
@@ -389,6 +397,100 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
+        Ok(())
+    }
+
+    /// 一等流迭代：`对于 片段 在 流式(会话, 提示) { ... }`。
+    /// 开流(大模型.流式对话) → 循环读(读取流)到空块 → 循环体（片段在作用域）→ 自动关流(关闭流)。
+    /// stdlib 调用走合成 MethodCall（规范模块名解析，不依赖用户 import 别名）。
+    fn 生成对于流(
+        &mut self,
+        f: &crate::parser::ast::ForStatement,
+        c: &crate::parser::ast::FunctionCallExpression,
+        func: FunctionValue<'ctx>,
+    ) -> Result<(), String> {
+        use crate::parser::ast::{AstNode, IdentifierExpression, MethodCallExpression};
+        let mkid = |n: &str| {
+            AstNode::标识符表达式(IdentifierExpression {
+                name: n.to_string(),
+                span: Default::default(),
+            })
+        };
+        let mkcall = |obj: AstNode, m: &str, args: Vec<AstNode>| {
+            AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(obj),
+                method_name: m.to_string(),
+                arguments: args,
+                span: Default::default(),
+            })
+        };
+
+        let i64t = self.ctx.i64_type();
+
+        // 流 = 大模型.流式对话(会话, 提示) —— 存进 i64 临时（唯一命名）
+        let 开流 = mkcall(
+            mkid("大模型"),
+            "流式对话",
+            vec![c.arguments[0].clone(), c.arguments[1].clone()],
+        );
+        let (流值, _) = self
+            .生成表达式(&开流)?
+            .ok_or_else(|| "流式对话无返回值".to_string())?;
+        let 流ptr = self.入口块alloca(i64t.into(), "__stream")?;
+        self.builder.build_store(流ptr, 流值).map_err(|e| e.to_string())?;
+        let 流名 = format!("__stream{}", self.询问计数);
+        self.询问计数 += 1;
+        self.变量表.insert(流名.clone(), (流ptr, Qi类型::整数));
+
+        // 片段循环变量（字符串）
+        let strt = self
+            .llvm基础类型(Qi类型::字符串)
+            .ok_or_else(|| "字符串类型无效".to_string())?;
+        let 片段ptr = self.入口块alloca(strt, &f.variable)?;
+        self.变量表.insert(f.variable.clone(), (片段ptr, Qi类型::字符串));
+        self.符号.声明变量(&f.variable, Qi类型::字符串);
+
+        let cond_bb = self.ctx.append_basic_block(func, "stream.cond");
+        let body_bb = self.ctx.append_basic_block(func, "stream.body");
+        let end_bb = self.ctx.append_basic_block(func, "stream.end");
+
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
+
+        // cond：片段 = 读取流(流)；字节长度==0 → end，否则 body
+        self.builder.position_at_end(cond_bb);
+        let 读 = mkcall(mkid("大模型"), "读取流", vec![mkid(&流名)]);
+        let (片段值, _) = self
+            .生成表达式(&读)?
+            .ok_or_else(|| "读取流无返回值".to_string())?;
+        self.builder
+            .build_store(片段ptr, 片段值)
+            .map_err(|e| e.to_string())?;
+        let 长 = mkcall(mkid("字符串"), "字节长度", vec![mkid(&f.variable)]);
+        let (len值, _) = self
+            .生成表达式(&长)?
+            .ok_or_else(|| "字节长度无返回值".to_string())?;
+        let is_empty = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, len值.into_int_value(), i64t.const_zero(), "stream.empty")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_conditional_branch(is_empty, end_bb, body_bb)
+            .map_err(|e| e.to_string())?;
+
+        // body：跑循环体（继续→cond 再读一块；跳出→end）
+        self.builder.position_at_end(body_bb);
+        self.循环栈.push((cond_bb, end_bb));
+        let r = self.生成块(&f.body, func);
+        self.循环栈.pop();
+        r?;
+        self.跳转若未终结(cond_bb)?;
+
+        // end：关流
+        self.builder.position_at_end(end_bb);
+        let 关 = mkcall(mkid("大模型"), "关闭流", vec![mkid(&流名)]);
+        self.生成表达式(&关)?;
         Ok(())
     }
 
