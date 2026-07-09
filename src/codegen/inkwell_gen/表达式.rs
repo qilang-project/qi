@@ -993,9 +993,163 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| format!("{} 未返回值", rtname))
     }
 
+    /// `询问<结构体>(会话, 提示)` 脱糖 —— 类型定向结构化输出。
+    /// 编译期从结构体字段生成「字段清单」提示 + 开 provider JSON 模式(response_format)，
+    /// 调 `大模型.对话`，`JSON.解码` 后逐字段 `JSON.获取X` 反序列化回强类型结构体。
+    /// 全部复用现成 codegen（stdlib 方法调用 + 结构体字面量），无重入、无手写 LLVM。
+    /// v1：T 必须是结构体，字段仅限标量（整数/浮点数/字符串/布尔）。
+    pub(super) fn 生成询问(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        use crate::parser::ast::{
+            BinaryExpression, IdentifierExpression, LiteralExpression, MethodCallExpression,
+            StructFieldValue, StructLiteralExpression,
+        };
+        if call.arguments.len() != 2 {
+            return Err("询问<T>(会话, 提示) 需要正好 2 个实参（会话句柄, 提示）".to_string());
+        }
+        let idx = match self.符号.解析类型(&call.type_arguments[0]) {
+            Qi类型::结构体(i) => i,
+            _ => return Err("询问<T> 的 T 必须是结构体类型".to_string()),
+        };
+        let 信息 = self
+            .符号
+            .结构体
+            .get(idx as usize)
+            .ok_or_else(|| "询问<T>：结构体未登记".to_string())?
+            .clone();
+
+        // 字段 → JSON getter（v1 仅标量）
+        let mut 字段规格: Vec<(String, &'static str)> = Vec::new();
+        for (名, ty) in 信息.字段名.iter().zip(信息.字段类型.iter()) {
+            let getter = match ty {
+                Qi类型::整数 => "获取整数",
+                Qi类型::浮点数 => "获取浮点数",
+                Qi类型::字符串 => "获取字符串",
+                Qi类型::布尔 => "获取布尔",
+                _ => {
+                    return Err(format!(
+                        "询问<{}> v1 仅支持标量字段（整数/浮点数/字符串/布尔），字段「{}」类型不支持",
+                        信息.名字, 名
+                    ))
+                }
+            };
+            字段规格.push((名.clone(), getter));
+        }
+        // 字段清单提示（引导模型输出含这些键的 JSON）
+        let mut 清单 = String::new();
+        for (i, (名, _)) in 字段规格.iter().enumerate() {
+            if i > 0 {
+                清单.push('、');
+            }
+            清单.push('"');
+            清单.push_str(名);
+            清单.push('"');
+        }
+        let hint = format!(
+            "\n\n严格要求：只输出一个 JSON 对象，必须包含字段：{}，不要任何解释、不要代码块标记。",
+            清单
+        );
+
+        let n = self.询问计数;
+        self.询问计数 += 1;
+        let 会话名 = format!("__wd_s{}", n);
+        let jj名 = format!("__wd_j{}", n);
+
+        // AST 构造小工具
+        let id = |name: &str| {
+            AstNode::标识符表达式(IdentifierExpression {
+                name: name.to_string(),
+                span: Default::default(),
+            })
+        };
+        let strlit = |s: &str| {
+            AstNode::字面量表达式(LiteralExpression {
+                value: LiteralValue::字符串(s.to_string()),
+                span: Default::default(),
+            })
+        };
+        let mcall = |obj: AstNode, m: &str, args: Vec<AstNode>| {
+            AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(obj),
+                method_name: m.to_string(),
+                arguments: args,
+                span: Default::default(),
+            })
+        };
+
+        // 1) 会话落 i64 临时（非 RC，安全；供多处引用不重复求值）
+        let (sess_v, _) = self
+            .生成表达式(&call.arguments[0])?
+            .ok_or_else(|| "询问：会话参数无值".to_string())?;
+        let s_ptr = self
+            .builder
+            .build_alloca(self.ctx.i64_type(), &会话名)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(s_ptr, sess_v)
+            .map_err(|e| e.to_string())?;
+        self.变量表.insert(会话名.clone(), (s_ptr, Qi类型::整数));
+
+        // 2) 开 JSON 模式
+        let 开 = mcall(
+            id("大模型"),
+            "设置配置",
+            vec![id(&会话名), strlit("response_format"), strlit("json_object")],
+        );
+        self.生成表达式(&开)?;
+
+        // 3) j = JSON.解码(大模型.对话(会话, 提示 + hint))  —— 对话只调一次
+        let 提示加提示 = AstNode::二元操作表达式(BinaryExpression {
+            left: Box::new(call.arguments[1].clone()),
+            operator: BinaryOperator::加,
+            right: Box::new(strlit(&hint)),
+            span: Default::default(),
+        });
+        let 对话 = mcall(id("大模型"), "对话", vec![id(&会话名), 提示加提示]);
+        let 解码 = mcall(id("JSON"), "解码", vec![对话]);
+        let (j_v, _) = self
+            .生成表达式(&解码)?
+            .ok_or_else(|| "询问：解码无值".to_string())?;
+        let j_ptr = self
+            .builder
+            .build_alloca(self.ctx.i64_type(), &jj名)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(j_ptr, j_v)
+            .map_err(|e| e.to_string())?;
+        self.变量表.insert(jj名.clone(), (j_ptr, Qi类型::整数));
+
+        // 4) 复原 response_format
+        let 关 = mcall(
+            id("大模型"),
+            "设置配置",
+            vec![id(&会话名), strlit("response_format"), strlit("")],
+        );
+        self.生成表达式(&关)?;
+
+        // 5) 逐字段反序列化，构造结构体字面量
+        let mut 字段值: Vec<StructFieldValue> = Vec::new();
+        for (名, getter) in &字段规格 {
+            字段值.push(StructFieldValue {
+                name: 名.clone(),
+                value: Box::new(mcall(id("JSON"), getter, vec![id(&jj名), strlit(名)])),
+                span: Default::default(),
+            });
+        }
+        let 字面量 = StructLiteralExpression {
+            struct_name: 信息.名字.clone(),
+            type_arguments: vec![],
+            fields: 字段值,
+            span: Default::default(),
+        };
+        self.生成结构体字面量(&字面量)
+    }
+
     /// 解析用户函数调用目标：当前包 → destructure 导入来源包 → 全局唯一定义包 → 裸符号。
     /// 多包同名且无法定位 → None（**绝不随机挑包** —— 符号与签名必须来自同一个包，
-    /// 否则实参适配/返回类型全错）。调用点据 函数候选包 报歧义错误。
+    /// 否则实参适配/返回类型全错）。调用处据 函数候选包 报歧义错误。
     pub(super) fn 尝试解析用户函数(
         &self,
         name: &str,
@@ -1041,6 +1195,12 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // 类型定向结构化输出：`询问<结构体>(会话, 提示)` —— 编译期从结构体派生
+        // JSON schema、发 response_format、把回复反序列化回强类型结构体。
+        if call.callee == "询问" && !call.type_arguments.is_empty() {
+            return self.生成询问(call).map(Some);
+        }
+
         // 间接调用：callee 是一个函数值变量（如参数 f: 函数(整数):整数）
         if let Some(v) = self.尝试间接调用(&call.callee, &call.arguments)? {
             return Ok(v);
