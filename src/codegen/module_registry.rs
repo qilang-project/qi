@@ -145,6 +145,130 @@ impl ModuleRegistry {
         self.register_web_runtime_module();
         self.register_tls_module();
         self.register_sync_module();
+        self.register_reflect_module();
+        self.register_plugin_module();
+    }
+
+    /// 运行时反射注册表（反射）：Qi 程序自省当前系统的中文函数 / 结构体 / 枚举。
+    /// 元数据由 codegen 在 main 序言里 qi_reflect_register_* 灌入（见 反射.rs）。
+    fn register_reflect_module(&mut self) {
+        let mut m = Module::new("反射");
+        // 列表：返回 数组<字符串>
+        m.add_function(ModuleFunction::new(
+            "函数列表",
+            "qi_reflect_function_list",
+            vec![],
+            "字符串数组",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结构体列表",
+            "qi_reflect_struct_list",
+            vec![],
+            "字符串数组",
+        ));
+        m.add_function(ModuleFunction::new(
+            "枚举列表",
+            "qi_reflect_enum_list",
+            vec![],
+            "字符串数组",
+        ));
+        // 描述文本
+        m.add_function(ModuleFunction::new(
+            "函数签名",
+            "qi_reflect_function_signature",
+            vec!["字符串".to_string()],
+            "字符串",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结构体字段",
+            "qi_reflect_struct_fields",
+            vec!["字符串".to_string()],
+            "字符串",
+        ));
+        // 判定 / 索引遍历
+        // 返回整数 1/0（而非布尔）—— 运行时 FFI 按 i64 返回，避免 i1/i64 ABI 错配。
+        m.add_function(ModuleFunction::new(
+            "有函数",
+            "qi_reflect_has_function",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "函数数量",
+            "qi_reflect_function_count",
+            vec![],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "函数名",
+            "qi_reflect_function_name",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结构体数量",
+            "qi_reflect_struct_count",
+            vec![],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结构体名",
+            "qi_reflect_struct_name",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        self.modules.insert("反射".to_string(), m.clone());
+        self.modules.insert("标准库.反射".to_string(), m);
+    }
+
+    /// dlopen 插件热加载（插件）：运行中加载 Qi 编的 .so/.dylib、调导出函数、卸载换新版。
+    /// 句柄 / 函数指针以不透明整数（i64 位模式）表示，见 plugin_ffi.rs。
+    fn register_plugin_module(&mut self) {
+        let mut m = Module::new("插件");
+        m.add_function(ModuleFunction::new(
+            "加载",
+            "qi_plugin_load",
+            vec!["字符串".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "取函数",
+            "qi_plugin_sym",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "调用整数",
+            "qi_plugin_call_i64",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "调用无参整数",
+            "qi_plugin_call_i64_noarg",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "调用字符串",
+            "qi_plugin_call_str",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+        m.add_function(ModuleFunction::new(
+            "卸载",
+            "qi_plugin_unload",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "错误",
+            "qi_plugin_error",
+            vec![],
+            "字符串",
+        ));
+        self.modules.insert("插件".to_string(), m.clone());
+        self.modules.insert("标准库.插件".to_string(), m);
     }
 
     fn register_tls_module(&mut self) {

@@ -25,6 +25,8 @@
 
 #[path = "全局.rs"]
 mod 全局;
+#[path = "反射.rs"]
+mod 反射;
 #[path = "剖析.rs"]
 mod 剖析;
 #[path = "匹配.rs"]
@@ -479,6 +481,9 @@ impl<'ctx> 后端<'ctx> {
 
         // future / async（eager future 模型）
         self.声明future运行时();
+
+        // 反射注册运行时原型（qi_reflect_register_*）——供 main 序言登记元数据。
+        self.声明反射运行时();
     }
 
     /// 生成 入口() → LLVM main。
@@ -508,6 +513,10 @@ impl<'ctx> 后端<'ctx> {
 
         // 剖析：main（入口）序言计时。atexit 报告在进程退出、main 返回之后打印。
         self.剖析入口("入口")?;
+
+        // 反射：把用户函数 / 结构体 / 枚举 元数据登记进运行时注册表
+        //（早于任何用户代码，含全局初始化）。供 反射.* 自省。
+        self.生成反射注册()?;
 
         // 全局变量初始化（所有模块的带初值全局，在 body 之前 store）
         self.生成全局初始化(programs)?;

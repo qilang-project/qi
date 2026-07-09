@@ -51,15 +51,14 @@ impl<'ctx> 后端<'ctx> {
     }
 
     fn 登记导出函数(&mut self, ef: &ExportFunction) -> Result<(), String> {
-        let f = match ef.decl.as_ref() {
-            AstNode::函数声明(f) => f,
-            _ => {
-                return Err(
+        let f =
+            match ef.decl.as_ref() {
+                AstNode::函数声明(f) => f,
+                _ => return Err(
                     "只能导出普通函数（`导出 函数 名(...)`）—— 方法 / 内联函数不可导出为 C 符号"
                         .to_string(),
-                )
-            }
-        };
+                ),
+            };
         // 泛型 / 异步 / 变参 无法映射到固定 C ABI
         if !f.type_params.is_empty() {
             return Err(format!(
@@ -123,13 +122,13 @@ impl<'ctx> 后端<'ctx> {
         Ok(())
     }
 
-    fn 校验导出类型(&self, 函数名: &str, t: Qi类型, 是返回: bool) -> Result<(), String> {
+    fn 校验导出类型(
+        &self, 函数名: &str, t: Qi类型, 是返回: bool
+    ) -> Result<(), String> {
         match t {
-            Qi类型::整数
-            | Qi类型::浮点数
-            | Qi类型::布尔
-            | Qi类型::字符串
-            | Qi类型::指针 => Ok(()),
+            Qi类型::整数 | Qi类型::浮点数 | Qi类型::布尔 | Qi类型::字符串 | Qi类型::指针 => {
+                Ok(())
+            }
             Qi类型::空 if 是返回 => Ok(()),
             _ => Err(format!(
                 "导出函数 {} 的{}类型不被 C ABI 导出支持 —— \
@@ -190,6 +189,10 @@ impl<'ctx> 后端<'ctx> {
 
         // C 实参 → Qi 值
         let mut 转发: Vec<BasicMetadataValueEnum> = Vec::new();
+        // 字符串形参在 C→Qi 时拷成 wrapper 拥有的 rc=1 堆串（qi_string_from_cstr）。
+        // wrapper 是这些拷贝的所有者：inner 只借用，调用结束后须 ARC 释放，否则每次
+        // 带字符串参数的导出调用泄漏一条串（QI_RC_REPORT 会看到 活跃字符串 累积）。
+        let mut 字符串参数拷贝: Vec<BasicValueEnum> = Vec::new();
         for (i, pt) in r.参数.iter().enumerate() {
             let a = wrapper
                 .get_nth_param(i as u32)
@@ -209,12 +212,15 @@ impl<'ctx> 后端<'ctx> {
                         .module
                         .get_function("qi_string_from_cstr")
                         .ok_or_else(|| "运行时函数未声明: qi_string_from_cstr".to_string())?;
-                    self.builder
+                    let copy = self
+                        .builder
                         .build_call(copyf, &[a.into()], "cstr2qi")
                         .map_err(|e| e.to_string())?
                         .try_as_basic_value()
                         .basic()
-                        .ok_or_else(|| "qi_string_from_cstr 未返回".to_string())?
+                        .ok_or_else(|| "qi_string_from_cstr 未返回".to_string())?;
+                    字符串参数拷贝.push(copy);
+                    copy
                 }
                 // 整数 / 浮点数 / 指针：原样
                 _ => a,
@@ -227,8 +233,20 @@ impl<'ctx> 后端<'ctx> {
             .build_call(inner, &转发, "qicall")
             .map_err(|e| e.to_string())?;
 
+        // wrapper 拥有的字符串形参拷贝：调用结束即释放（inner 若私藏会先 retain，
+        // 释放的是 wrapper 这一份所有权）。字符串返回场景在 strdup 取出返回值**之后**
+        // 再释放，规避「函数直接返回入参串」时提前归零导致 strdup 读已释放内存。
+        macro_rules! 释放字符串参数 {
+            () => {
+                for c in &字符串参数拷贝 {
+                    self.弧release(*c);
+                }
+            };
+        }
+
         match r.返回 {
             Qi类型::空 => {
+                释放字符串参数!();
                 self.builder.build_return(None).map_err(|e| e.to_string())?;
             }
             // 内部 i1 → C i64
@@ -242,6 +260,7 @@ impl<'ctx> 后端<'ctx> {
                     .builder
                     .build_int_z_extend(rv, i64t, "b2i64")
                     .map_err(|e| e.to_string())?;
+                释放字符串参数!();
                 self.builder
                     .build_return(Some(&w))
                     .map_err(|e| e.to_string())?;
@@ -261,6 +280,7 @@ impl<'ctx> 后端<'ctx> {
                     .basic()
                     .ok_or_else(|| "strdup 未返回".to_string())?;
                 self.弧release(qs); // ARC 关时 no-op
+                释放字符串参数!(); // strdup 已取出返回值，此刻释放入参拷贝安全
                 self.builder
                     .build_return(Some(&cptr))
                     .map_err(|e| e.to_string())?;
@@ -271,6 +291,7 @@ impl<'ctx> 后端<'ctx> {
                     .try_as_basic_value()
                     .basic()
                     .ok_or_else(|| "导出内部应有返回值".to_string())?;
+                释放字符串参数!();
                 self.builder
                     .build_return(Some(&rv))
                     .map_err(|e| e.to_string())?;
