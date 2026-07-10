@@ -1448,6 +1448,43 @@ impl ModuleRegistry {
         self.modules
             .insert("标准库.向量索引".to_string(), vindex_module);
 
+        // 词法索引 —— BM25 词法检索（中文 单字+bigram，ASCII 切词），与 向量索引 成对做混合检索
+        let mut lexidx_module = Module::new("词法索引");
+        lexidx_module.add_function(ModuleFunction::new(
+            "重置",
+            "qi_lexidx_reset",
+            vec!["整数".to_string()], // 键（惯例：与向量库同句柄）
+            "整数",
+        ));
+        lexidx_module.add_function(ModuleFunction::new(
+            "添加",
+            "qi_lexidx_add",
+            vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()], // 键, id, 文本
+            "整数",                                                             // 返回文档数
+        ));
+        lexidx_module.add_function(ModuleFunction::new(
+            "搜索",
+            "qi_lexidx_search",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()], // 键, 查询文本, k
+            "字符串", // 返回 [{"id":..,"score":..}] JSON
+        ));
+        lexidx_module.add_function(ModuleFunction::new(
+            "大小",
+            "qi_lexidx_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        lexidx_module.add_function(ModuleFunction::new(
+            "卸载",
+            "qi_lexidx_free",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        self.modules
+            .insert("词法索引".to_string(), lexidx_module.clone());
+        self.modules
+            .insert("标准库.词法索引".to_string(), lexidx_module);
+
         // LLM Module - 大模型模块
         let mut llm_module = Module::new("大模型");
 
