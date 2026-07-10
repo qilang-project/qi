@@ -146,6 +146,10 @@ struct 后端<'ctx> {
     闭包计数: u32,
     /// 待合成的泛型函数实例（调用点登记签名+原型，体末尾统一生成，同闭包模式）。
     待合成泛型实例: Vec<泛型::待合成泛型实例>,
+    /// 待合成的 `尝试询问::<T>` 包装函数（调用点声明原型 + 改写成普通调用，体统一生成）。
+    /// (函数声明 AST, 声明包)。已合成集合防重复（键 = 合成函数名）。
+    待合成询问: Vec<(crate::parser::ast::FunctionDeclaration, Option<String>)>,
+    已合成询问: std::collections::HashSet<String>,
     /// 已实例化的泛型函数实例名（幂等去重）。
     已实例化泛型函数: std::collections::HashSet<String>,
     /// 是否正在生成 入口→main（main 返回 i32，bare `返回` 要 emit ret i32 0）。
@@ -203,6 +207,8 @@ impl<'ctx> 后端<'ctx> {
             待合成闭包: Vec::new(),
             闭包计数: 0,
             待合成泛型实例: Vec::new(),
+            待合成询问: Vec::new(),
+            已合成询问: std::collections::HashSet::new(),
             已实例化泛型函数: std::collections::HashSet::new(),
             在入口中: false,
             当前包: None,
@@ -761,7 +767,11 @@ pub fn compile_to_object_multi(
     loop {
         后端值.合成待处理闭包()?;
         后端值.合成待处理泛型实例()?;
-        if 后端值.待合成闭包.is_empty() && 后端值.待合成泛型实例.is_empty() {
+        后端值.合成待处理询问()?;
+        if 后端值.待合成闭包.is_empty()
+            && 后端值.待合成泛型实例.is_empty()
+            && 后端值.待合成询问.is_empty()
+        {
             break;
         }
     }
