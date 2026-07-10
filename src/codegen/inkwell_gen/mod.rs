@@ -415,6 +415,12 @@ impl<'ctx> 后端<'ctx> {
             ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
             None,
         );
+        // 无捕获顶层函数取址为值：不朽单例缓存（免每次引用泄漏一个闭包）
+        self.module.add_function(
+            "qi_closure_intern",
+            ptrt.fn_type(&[ptrt.into()], false),
+            None,
+        );
         self.module.add_function(
             "qi_closure_get_fn",
             ptrt.fn_type(&[ptrt.into()], false),

@@ -63,7 +63,18 @@ impl<'ctx> 后端<'ctx> {
         // 目标真函数符号：当前包优先，否则任意包，否则裸符号（按该函数形参个数 mangle）
         let mangled = self.解析函数符号名(name, sig.参数.len());
         let tramp = self.生成trampoline(&mangled, &sig)?;
-        let obj = self.创建闭包对象(tramp, 0)?;
+        // 顶层函数无捕获 → 走不朽单例缓存（qi_closure_intern）：同一函数全程序共享一个
+        // 闭包、不重复分配、不朽不计泄漏。免了「存进指针列表(图/工具注册表)漏闭包」。
+        let intern = self.module.get_function("qi_closure_intern").unwrap();
+        let cs = self
+            .builder
+            .build_call(intern, &[tramp.into()], "clo.intern")
+            .map_err(|e| e.to_string())?;
+        let obj = cs
+            .try_as_basic_value()
+            .basic()
+            .map(|v| v.into_pointer_value())
+            .ok_or_else(|| "closure_intern 未返回".to_string())?;
         Ok(Some((obj.into(), t)))
     }
 
@@ -161,7 +172,21 @@ impl<'ctx> 后端<'ctx> {
 
         // 声明合成函数原型（body 稍后生成），建 fat obj
         let fn_val = self.声明闭包原型(&符号名, &捕获, self.待合成闭包.last().unwrap())?;
-        let obj = self.创建闭包对象(fn_val, 捕获.len() as u64)?;
+        // 0 捕获闭包 = 无状态单例（如 工具适配 生成的适配器）→ 走不朽单例缓存，
+        // 免「存进注册表/列表无人释放」的闭包泄漏；带捕获的按实例正常建。
+        let obj = if 捕获.is_empty() {
+            let intern = self.module.get_function("qi_closure_intern").unwrap();
+            let cs = self
+                .builder
+                .build_call(intern, &[fn_val.into()], "clo.intern")
+                .map_err(|e| e.to_string())?;
+            cs.try_as_basic_value()
+                .basic()
+                .map(|v| v.into_pointer_value())
+                .ok_or_else(|| "closure_intern 未返回".to_string())?
+        } else {
+            self.创建闭包对象(fn_val, 捕获.len() as u64)?
+        };
 
         // 填捕获：从当前作用域 load 值 → qi_closure_set_int/set_ptr
         for (i, (名, t)) in 捕获.iter().enumerate() {
