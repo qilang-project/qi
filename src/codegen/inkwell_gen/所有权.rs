@@ -325,6 +325,13 @@ impl<'ctx> 后端<'ctx> {
                         || 推断表达式类型(&b.right, &self.符号) == Qi类型::字符串)
             }
 
+            // 格式字符串：含插值 → 脱糖后必是拼接产物（新建堆串 OWNED）；
+            // 纯文本 → 字面量（immortal，BORROWED）
+            AstNode::格式字符串表达式(fs) => fs
+                .parts
+                .iter()
+                .any(|p| matches!(p, crate::parser::ast::FormatStringPart::表达式 { .. })),
+
             AstNode::函数调用表达式(call) => self.调用拥有字符串(&call.callee),
 
             AstNode::方法调用表达式(mc) => {

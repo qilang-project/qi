@@ -392,6 +392,8 @@ impl<'ctx> 后端<'ctx> {
             // 匹配（match）：语句语义的 if-else 链降级（见 匹配.rs），不产生值
             AstNode::匹配表达式(m) => self.生成匹配(m),
 
+            AstNode::格式字符串表达式(fs) => self.生成格式字符串(fs).map(Some),
+
             _ => Ok(None),
         }
     }
@@ -1737,6 +1739,50 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "填充模板：拼接无值".to_string())
     }
 
+    /// `f"文本{表达式}更多{另一个}"` 格式字符串 —— 脱糖成类型感知的字符串拼接。
+    ///
+    /// 与 `生成填充模板` 同款范式：字面段 → 字符串字面量节点，插值段 → 原表达式，
+    /// 合成左结合 `+` 加链后喂给现成 codegen。`生成拼接操作数` 已按类型自动转字符串
+    /// （整数/布尔 → int_to_string，浮点数 → float_to_string，字符串直用），
+    /// 临时串的释放由 `拼接字符串带释放` 兜底，不泄漏。
+    ///
+    /// 链首保证是字符串字面量：`f"{甲}{乙}"`（甲乙均为整数）若直接拼成 `甲 + 乙`
+    /// 会退化成整数加法，故插值开头时垫一个空串。
+    pub(super) fn 生成格式字符串(
+        &mut self,
+        fs: &crate::parser::ast::FormatStringExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        use crate::parser::ast::{BinaryExpression, FormatStringPart};
+
+        // 各段 → AST 节点（字面段包字符串字面量，插值段用原表达式）
+        let mut 段: Vec<AstNode> = fs
+            .parts
+            .iter()
+            .map(|p| match p {
+                FormatStringPart::文本(t) => 询_str(t),
+                FormatStringPart::表达式 { expr, .. } => (**expr).clone(),
+            })
+            .collect();
+
+        // 链首必须是字符串：首段为字面段则直接用它起链，否则垫空串
+        let 首是文本 = matches!(fs.parts.first(), None | Some(FormatStringPart::文本(_)));
+        let mut 表达式 = if 首是文本 && !段.is_empty() {
+            段.remove(0)
+        } else {
+            询_str("")
+        };
+        for 节 in 段 {
+            表达式 = AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(表达式),
+                operator: BinaryOperator::加,
+                right: Box::new(节),
+                span: Default::default(),
+            });
+        }
+        self.生成表达式(&表达式)?
+            .ok_or_else(|| "格式字符串：拼接无值".to_string())
+    }
+
     /// 生成所有待合成 `尝试询问` 包装函数的函数体（循环到清空；体内的结构体字面量
     /// 不会再产生新的 询问，但保持与闭包/泛型同款的循环调用习惯）。
     pub(super) fn 合成待处理询问(&mut self) -> Result<(), String> {
@@ -2174,6 +2220,11 @@ fn 是新建字符串表达式(node: &AstNode) -> bool {
     match node {
         AstNode::字符串连接表达式(_) => true,
         AstNode::二元操作表达式(b) => b.operator == crate::parser::ast::BinaryOperator::加,
+        // 格式字符串：含插值 → 脱糖后必是拼接产物（新建堆串）；纯文本 → 字面量（immortal）
+        AstNode::格式字符串表达式(fs) => fs
+            .parts
+            .iter()
+            .any(|p| matches!(p, crate::parser::ast::FormatStringPart::表达式 { .. })),
         _ => false,
     }
 }

@@ -916,6 +916,7 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             }
         }
         AstNode::字符串连接表达式(_) => Qi类型::字符串,
+        AstNode::格式字符串表达式(_) => Qi类型::字符串,
         AstNode::一元操作表达式(u) => 推断表达式类型(&u.operand, 表),
         AstNode::函数调用表达式(call) => {
             // 优先：callee 是局部函数值变量 → 用其签名返回类型（间接调用）
