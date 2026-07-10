@@ -412,7 +412,22 @@ impl Lexer {
             // Format string literals (f"...")
             'f' if self.peek_char() == Some('"') => {
                 self.advance(); // Skip 'f'
-                self.scan_format_string_literal(start_pos, start_line, start_column)
+                self.scan_format_string_literal(start_pos, start_line, start_column, 1)
+                    .map(Some)
+            }
+
+            // 中文插值字符串：模板"你好{名字}"（模版 为容错异写，规范用 模板）。
+            // token text 归一化成 f"..." —— 重组源码后被 LALRPOP 的 f"..." 规则接住，
+            // grammar 零改动。前缀 2 个中文字 = 6 字节。
+            '模' if {
+                let mut it = self.source[self.position..].chars();
+                it.next(); // 模
+                matches!(it.next(), Some('板') | Some('版')) && it.next() == Some('"')
+            } =>
+            {
+                self.advance(); // Skip 模
+                self.advance(); // Skip 板/版
+                self.scan_format_string_literal(start_pos, start_line, start_column, 6)
                     .map(Some)
             }
 
@@ -635,29 +650,33 @@ impl Lexer {
         })
     }
 
-    /// Scan a format string literal (f"..." with interpolation)
+    /// Scan a format string literal (f"..." / 模板"..." with interpolation)。
+    /// `prefix_bytes` 是引号前前缀的字节数（f=1，模板/模版=6）；token text 统一
+    /// 归一化为 `f"..."` 形式，让 LALRPOP 的 f"..." 规则零改动接住中文前缀。
+    /// 洞的花括号全/半角等价（{名}、｛名｝ 都行 —— 中文输入法不用切换）。
     fn scan_format_string_literal(
         &mut self,
         start_pos: usize,
         start_line: usize,
         start_column: usize,
+        prefix_bytes: usize,
     ) -> Result<Token, LexicalError> {
-        // start_pos is at 'f', we need to skip 'f' and '"'
-        self.advance(); // Skip opening quote (f was already skipped in next_token)
+        // 前缀已在 next_token 跳过，此刻停在开引号上
+        self.advance(); // Skip opening quote
 
         while !self.is_at_end() && self.current_char() != Some('"') {
             if self.current_char() == Some('\\') {
                 self.advance(); // Skip escape character
-            } else if self.current_char() == Some('{') {
+            } else if matches!(self.current_char(), Some('{') | Some('｛')) {
                 // Skip over interpolation expression - we just need to find balanced braces
                 self.advance(); // Skip '{'
                 let mut brace_depth = 1;
                 while !self.is_at_end() && brace_depth > 0 {
                     match self.current_char() {
-                        Some('{') => {
+                        Some('{') | Some('｛') => {
                             brace_depth += 1;
                         }
-                        Some('}') => {
+                        Some('}') | Some('｝') => {
                             brace_depth -= 1;
                         }
                         Some('\\') => {
@@ -692,7 +711,8 @@ impl Lexer {
 
         Ok(Token {
             kind: TokenKind::格式字符串字面量,
-            text: self.source[start_pos..end_pos].to_string(),
+            // 归一化：任何前缀都变成 f —— 后续重组/解析只认一种形态
+            text: format!("f{}", &self.source[start_pos + prefix_bytes..end_pos]),
             span: tokens::Span::new(start_pos, end_pos),
             line: start_line,
             column: start_column,

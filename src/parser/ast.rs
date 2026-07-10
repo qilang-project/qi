@@ -962,7 +962,8 @@ pub fn parse_format_string(content: &str) -> AstNode {
             continue;
         }
 
-        if chars[i] == '{' {
+        // 洞的花括号全/半角等价：{名字} 与 ｛名字｝ 都是插值洞（中文输入法免切换）
+        if chars[i] == '{' || chars[i] == '｛' {
             // Save current text if any
             if !current_text.is_empty() {
                 parts.push(FormatStringPart::文本(current_text.clone()));
@@ -974,9 +975,9 @@ pub fn parse_format_string(content: &str) -> AstNode {
             let mut brace_depth = 1;
             i += 1;
             while i < chars.len() && brace_depth > 0 {
-                if chars[i] == '{' {
+                if chars[i] == '{' || chars[i] == '｛' {
                     brace_depth += 1;
-                } else if chars[i] == '}' {
+                } else if chars[i] == '}' || chars[i] == '｝' {
                     brace_depth -= 1;
                 }
                 if brace_depth > 0 {
@@ -984,7 +985,7 @@ pub fn parse_format_string(content: &str) -> AstNode {
                 }
             }
 
-            if i < chars.len() && chars[i] == '}' {
+            if i < chars.len() && (chars[i] == '}' || chars[i] == '｝') {
                 let expr_str: String = chars[start..i].iter().collect();
                 let expr_str = expr_str.trim();
 
