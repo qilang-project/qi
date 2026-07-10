@@ -449,6 +449,13 @@ impl<'ctx> 后端<'ctx> {
         let 片段ptr = self.入口块alloca(strt, &f.variable)?;
         self.变量表.insert(f.variable.clone(), (片段ptr, Qi类型::字符串));
         self.符号.声明变量(&f.variable, Qi类型::字符串);
+        // ARC：片段槽 null 初始化 —— 下面每轮读新块前要 release 旧块（首轮 release(null) 安全）。
+        if self.弧开() {
+            let 空指针 = self.ctx.ptr_type(inkwell::AddressSpace::default()).const_null();
+            self.builder
+                .build_store(片段ptr, 空指针)
+                .map_err(|e| e.to_string())?;
+        }
 
         let cond_bb = self.ctx.append_basic_block(func, "stream.cond");
         let body_bb = self.ctx.append_basic_block(func, "stream.body");
@@ -464,6 +471,8 @@ impl<'ctx> 后端<'ctx> {
         let (片段值, _) = self
             .生成表达式(&读)?
             .ok_or_else(|| "读取流无返回值".to_string())?;
+        // ARC：释放上一块（首轮为 null，安全），再存新块 —— 否则长流每块都泄漏。
+        self.弧释放槽旧值(片段ptr)?;
         self.builder
             .build_store(片段ptr, 片段值)
             .map_err(|e| e.to_string())?;

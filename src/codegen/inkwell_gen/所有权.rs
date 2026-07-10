@@ -435,6 +435,10 @@ impl<'ctx> 后端<'ctx> {
         if matches!(callee, "打印行" | "println" | "打印" | "print" | "printf") {
             return false;
         }
+        // 2.1) 工具模式(f)：返回编译期生成的 rc=1 新字符串（schema），自有。
+        if callee == "工具模式" {
+            return true;
+        }
         // 2.5) 泛型函数模板：实例是普通用户函数，遵守返回约定 +1（插桩点先验
         //      实际类型是 字符串 才动作，非字符串实例不受影响）
         if self.符号.泛型函数模板.contains_key(callee) {
@@ -638,6 +642,10 @@ impl<'ctx> 后端<'ctx> {
         // 2) 打印族 / 内建转换 / 同步内建：不返回对象
         if matches!(callee, "打印行" | "println" | "打印" | "print" | "printf") {
             return false;
+        }
+        // 2.1) 询问::<结构体>(...)：脱糖后返回一个 rc=1 的新结构体（自有），赋值不应再 retain。
+        if callee == "询问" {
+            return true;
         }
         // 2.5) 泛型函数模板：实例是普通用户函数，遵守返回约定 +1（插桩点先验
         //      实际类型是 RC 才动作）
