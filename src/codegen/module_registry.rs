@@ -1471,7 +1471,19 @@ impl ModuleRegistry {
             "字符串",                                       // 返回LLM响应
         ));
 
-        // 设置配置
+        // 多模态图像对话：文本提示 + 单张图 URL（按会话 provider 构造带图消息）
+        llm_module.add_function(ModuleFunction::new(
+            "对话图像",
+            "qi_llm_chat_image",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 会话句柄, 提示, 图像URL
+            "字符串", // 返回LLM响应
+        ));
+
+        // 设置配置（含 provider："openai"/"anthropic"/"gemini"，默认 openai）
         llm_module.add_function(ModuleFunction::new(
             "设置配置",
             "qi_llm_set_config",

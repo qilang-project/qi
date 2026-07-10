@@ -50,27 +50,58 @@ struct LLM会话 {
     工具名称映射: HashMap<String, String>,
     /// 配置参数
     配置: HashMap<String, String>,
+    /// 提供商："openai"（默认）/"anthropic"/"gemini"。经 设置配置(会话,"provider",..) 切换。
+    /// 历史始终以 OpenAI 消息格式为内部规范表示，请求时按提供商翻译形状。
+    提供商: String,
 }
 
 impl LLM会话 {
-    fn 标准化端点(端点: String) -> String {
-        let 去尾端点 = 端点.trim_end_matches('/').to_string();
-        if 去尾端点.ends_with("/chat/completions") {
-            去尾端点
-        } else {
-            format!("{}/chat/completions", 去尾端点)
-        }
-    }
-
     fn 创建(端点: String, 模型: String, 密钥: Option<String>) -> Self {
         Self {
-            端点: Self::标准化端点(端点),
+            // 存原始端点（去尾斜杠），实际请求 URL 由 请求端点() 按提供商推导。
+            端点: 端点.trim_end_matches('/').to_string(),
             密钥,
             模型,
             历史: Vec::new(),
             工具列表: Vec::new(),
             工具名称映射: HashMap::new(),
             配置: HashMap::new(),
+            提供商: "openai".to_string(),
+        }
+    }
+
+    /// 按提供商推导实际请求 URL：
+    /// - openai：base + /chat/completions（已带则原样，兼容旧行为）
+    /// - anthropic：base + /v1/messages（base 已到 /v1 则补 /messages）
+    /// - gemini：base + /models/<model>:generateContent（已含 :generateContent 则原样）
+    fn 请求端点(&self) -> String {
+        let 基 = self.端点.trim_end_matches('/');
+        match self.提供商.as_str() {
+            "anthropic" => {
+                if 基.ends_with("/messages") {
+                    基.to_string()
+                } else if 基.ends_with("/v1") {
+                    format!("{}/messages", 基)
+                } else {
+                    format!("{}/v1/messages", 基)
+                }
+            }
+            "gemini" => {
+                if 基.contains(":generateContent") {
+                    基.to_string()
+                } else if 基.ends_with("/models") {
+                    format!("{}/{}:generateContent", 基, self.模型)
+                } else {
+                    format!("{}/models/{}:generateContent", 基, self.模型)
+                }
+            }
+            _ => {
+                if 基.ends_with("/chat/completions") {
+                    基.to_string()
+                } else {
+                    format!("{}/chat/completions", 基)
+                }
+            }
         }
     }
 
@@ -92,14 +123,46 @@ impl LLM会话 {
         }
     }
 
-    fn 构建请求体(&self, 提示: &str, 流式: bool, 使用工具: bool) -> Value {
+    /// 组装 OpenAI 规范格式消息列表（内部统一表示）：历史 + 可选新 user 消息 + 系统消息。
+    fn 组装消息(&self, 用户内容: Option<Value>) -> Vec<Value> {
         let mut 消息列表 = self.历史.clone();
-        消息列表.push(json!({
-            "role": "user",
-            "content": 提示
-        }));
+        if let Some(内容) = 用户内容 {
+            消息列表.push(json!({
+                "role": "user",
+                "content": 内容
+            }));
+        }
         self.注入系统消息(&mut 消息列表);
+        消息列表
+    }
 
+    fn 构建请求体(&self, 提示: &str, 流式: bool, 使用工具: bool) -> Value {
+        self.构建请求体带内容(Some(json!(提示)), 流式, 使用工具)
+    }
+
+    fn 构建继续请求体(&self, 使用工具: bool) -> Value {
+        self.构建请求体带内容(None, false, 使用工具)
+    }
+
+    /// 按提供商分支构造请求体。用户内容 为 None 表示 continue（历史已含最新消息）。
+    fn 构建请求体带内容(
+        &self,
+        用户内容: Option<Value>,
+        流式: bool,
+        使用工具: bool,
+    ) -> Value {
+        let 消息列表 = self.组装消息(用户内容);
+        match self.提供商.as_str() {
+            "anthropic" => self.构建Anthropic请求体(消息列表, 流式, 使用工具),
+            "gemini" => self.构建Gemini请求体(消息列表, 使用工具),
+            _ => self.构建OpenAI请求体(消息列表, 流式, 使用工具),
+        }
+    }
+
+    /// OpenAI chat completions 形状（现状路径，字段不变）。
+    fn 构建OpenAI请求体(
+        &self, 消息列表: Vec<Value>, 流式: bool, 使用工具: bool
+    ) -> Value {
         let mut 请求体 = json!({
             "model": self.模型,
             "messages": 消息列表,
@@ -123,38 +186,314 @@ impl LLM会话 {
         请求体
     }
 
-    fn 构建继续请求体(&self, 使用工具: bool) -> Value {
-        let mut 消息列表 = self.历史.clone();
-        self.注入系统消息(&mut 消息列表);
+    /// Anthropic Messages API 形状：顶层 model/max_tokens(必填)/messages/system(可选)/tools。
+    fn 构建Anthropic请求体(
+        &self, 消息列表: Vec<Value>, 流式: bool, 使用工具: bool
+    ) -> Value {
+        let (系统, 消息) = Self::转Anthropic消息(&消息列表);
         let mut 请求体 = json!({
             "model": self.模型,
-            "messages": 消息列表,
-            "temperature": self.配置.get("temperature")
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.7),
             "max_tokens": self.配置.get("max_tokens")
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(2000),
+            "messages": 消息,
+            "temperature": self.配置.get("temperature")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.7),
         });
-
-        if 使用工具 && !self.工具列表.is_empty() {
-            请求体["tools"] = Value::Array(self.工具列表.clone());
-            请求体["tool_choice"] = json!("auto");
+        if let Some(s) = 系统 {
+            if !s.is_empty() {
+                请求体["system"] = json!(s);
+            }
         }
-
+        if 流式 {
+            请求体["stream"] = json!(true);
+        }
+        if 使用工具 && !self.工具列表.is_empty() {
+            let 工具: Vec<Value> = self.工具列表.iter().map(Self::转Anthropic工具).collect();
+            请求体["tools"] = Value::Array(工具);
+        }
         请求体
     }
 
+    /// OpenAI 消息列表 → (顶层 system 文本, Anthropic messages)。
+    fn 转Anthropic消息(消息列表: &[Value]) -> (Option<String>, Vec<Value>) {
+        let mut 系统: Option<String> = None;
+        let mut 消息 = Vec::new();
+        for m in 消息列表 {
+            let 角色 = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+            match 角色 {
+                "system" => {
+                    let 文本 = m
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    系统 = Some(match 系统 {
+                        Some(旧) => format!("{}\n{}", 旧, 文本),
+                        None => 文本,
+                    });
+                }
+                "tool" => {
+                    let id = m.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let 内容 = m.get("content").cloned().unwrap_or(json!(""));
+                    消息.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": 内容
+                        }]
+                    }));
+                }
+                "assistant" => {
+                    let mut 块 = Vec::new();
+                    if let Some(t) = m.get("content").and_then(|c| c.as_str()) {
+                        if !t.is_empty() {
+                            块.push(json!({"type": "text", "text": t}));
+                        }
+                    }
+                    if let Some(调用列表) = m.get("tool_calls").and_then(|v| v.as_array()) {
+                        for c in 调用列表 {
+                            let id = c.get("id").cloned().unwrap_or(json!(""));
+                            let 函数 = c.get("function");
+                            let 名 = 函数
+                                .and_then(|f| f.get("name"))
+                                .cloned()
+                                .unwrap_or(json!(""));
+                            let 入参 = 函数
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                                .unwrap_or(json!({}));
+                            块.push(json!({
+                                "type": "tool_use",
+                                "id": id,
+                                "name": 名,
+                                "input": 入参
+                            }));
+                        }
+                    }
+                    消息.push(json!({"role": "assistant", "content": 块}));
+                }
+                _ => {
+                    let 内容 = m.get("content").cloned().unwrap_or(json!(""));
+                    消息.push(json!({
+                        "role": "user",
+                        "content": Self::转Anthropic用户内容(内容)
+                    }));
+                }
+            }
+        }
+        (系统, 消息)
+    }
+
+    /// user content 翻译：字符串原样；OpenAI 多模态数组 → Anthropic 块。
+    fn 转Anthropic用户内容(内容: Value) -> Value {
+        match 内容 {
+            Value::Array(块列表) => Value::Array(
+                块列表
+                    .into_iter()
+                    .map(|块| {
+                        let 类型 = 块.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if 类型 == "image_url" {
+                            let url = 块
+                                .get("image_url")
+                                .and_then(|i| i.get("url"))
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("");
+                            json!({
+                                "type": "image",
+                                "source": {"type": "url", "url": url}
+                            })
+                        } else {
+                            块
+                        }
+                    })
+                    .collect(),
+            ),
+            其他 => 其他,
+        }
+    }
+
+    /// OpenAI 工具定义 → Anthropic：{name, description, input_schema}。
+    fn 转Anthropic工具(工具: &Value) -> Value {
+        let f = 工具.get("function").unwrap_or(工具);
+        json!({
+            "name": f.get("name").cloned().unwrap_or(json!("")),
+            "description": f.get("description").cloned().unwrap_or(json!("")),
+            "input_schema": f.get("parameters").cloned()
+                .unwrap_or(json!({"type": "object", "properties": {}}))
+        })
+    }
+
+    /// Gemini generateContent 形状：顶层 contents/systemInstruction/generationConfig。
+    fn 构建Gemini请求体(&self, 消息列表: Vec<Value>, 使用工具: bool) -> Value {
+        let (系统, 内容) = Self::转Gemini内容(&消息列表);
+        let mut 请求体 = json!({
+            "contents": 内容,
+            "generationConfig": {
+                "temperature": self.配置.get("temperature")
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.7),
+                "maxOutputTokens": self.配置.get("max_tokens")
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(2000),
+            },
+        });
+        if let Some(s) = 系统 {
+            if !s.is_empty() {
+                请求体["systemInstruction"] = json!({"parts": [{"text": s}]});
+            }
+        }
+        if 使用工具 && !self.工具列表.is_empty() {
+            let 声明: Vec<Value> = self
+                .工具列表
+                .iter()
+                .map(|t| {
+                    let f = t.get("function").unwrap_or(t);
+                    json!({
+                        "name": f.get("name").cloned().unwrap_or(json!("")),
+                        "description": f.get("description").cloned().unwrap_or(json!("")),
+                        "parameters": f.get("parameters").cloned()
+                            .unwrap_or(json!({"type": "object", "properties": {}}))
+                    })
+                })
+                .collect();
+            请求体["tools"] = json!([{"functionDeclarations": 声明}]);
+        }
+        请求体
+    }
+
+    /// OpenAI 消息列表 → (systemInstruction 文本, Gemini contents)。
+    fn 转Gemini内容(消息列表: &[Value]) -> (Option<String>, Vec<Value>) {
+        let mut 系统: Option<String> = None;
+        let mut 内容列表 = Vec::new();
+        for m in 消息列表 {
+            let 角色 = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+            match 角色 {
+                "system" => {
+                    let 文本 = m
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    系统 = Some(match 系统 {
+                        Some(旧) => format!("{}\n{}", 旧, 文本),
+                        None => 文本,
+                    });
+                }
+                "tool" => {
+                    let 名 = m.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                    let 结果 = m.get("content").cloned().unwrap_or(json!(""));
+                    内容列表.push(json!({
+                        "role": "user",
+                        "parts": [{
+                            "functionResponse": {
+                                "name": 名,
+                                "response": {"result": 结果}
+                            }
+                        }]
+                    }));
+                }
+                "assistant" => {
+                    let mut 部件 =
+                        Self::转Gemini部件(m.get("content").cloned().unwrap_or(Value::Null));
+                    if let Some(调用列表) = m.get("tool_calls").and_then(|v| v.as_array()) {
+                        for c in 调用列表 {
+                            let 函数 = c.get("function");
+                            let 名 = 函数
+                                .and_then(|f| f.get("name"))
+                                .cloned()
+                                .unwrap_or(json!(""));
+                            let 入参 = 函数
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                                .unwrap_or(json!({}));
+                            部件.push(json!({"functionCall": {"name": 名, "args": 入参}}));
+                        }
+                    }
+                    内容列表.push(json!({"role": "model", "parts": 部件}));
+                }
+                _ => {
+                    内容列表.push(json!({
+                        "role": "user",
+                        "parts": Self::转Gemini部件(
+                            m.get("content").cloned().unwrap_or(json!(""))
+                        )
+                    }));
+                }
+            }
+        }
+        (系统, 内容列表)
+    }
+
+    /// content → Gemini parts：字符串 → [{text}]；OpenAI 多模态数组 →
+    /// text → {text}，image_url → {file_data:{file_uri}}。
+    fn 转Gemini部件(内容: Value) -> Vec<Value> {
+        match 内容 {
+            Value::String(s) => {
+                if s.is_empty() {
+                    vec![]
+                } else {
+                    vec![json!({"text": s})]
+                }
+            }
+            Value::Array(块列表) => 块列表
+                .into_iter()
+                .filter_map(|块| {
+                    let 类型 = 块.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    match 类型 {
+                        "text" => {
+                            Some(json!({"text": 块.get("text").cloned().unwrap_or(json!(""))}))
+                        }
+                        "image_url" => {
+                            let url = 块
+                                .get("image_url")
+                                .and_then(|i| i.get("url"))
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            Some(json!({"file_data": {"file_uri": url}}))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    /// 按提供商决定端点 + 鉴权头：
+    /// openai: Authorization: Bearer <key>
+    /// anthropic: x-api-key: <key> + anthropic-version: 2023-06-01
+    /// gemini: x-goog-api-key: <key>
     fn 发送请求体(&self, 请求体: Value) -> Result<reqwest::blocking::Response, String> {
         use reqwest::blocking::Client;
 
         let 客户端 = Client::new();
         let mut 请求构建器 = 客户端
-            .post(&self.端点)
+            .post(self.请求端点())
             .header("Content-Type", "application/json");
 
-        if let Some(ref 密钥) = self.密钥 {
-            请求构建器 = 请求构建器.header("Authorization", format!("Bearer {}", 密钥));
+        match self.提供商.as_str() {
+            "anthropic" => {
+                if let Some(ref 密钥) = self.密钥 {
+                    请求构建器 = 请求构建器.header("x-api-key", 密钥.as_str());
+                }
+                请求构建器 = 请求构建器.header("anthropic-version", "2023-06-01");
+            }
+            "gemini" => {
+                if let Some(ref 密钥) = self.密钥 {
+                    请求构建器 = 请求构建器.header("x-goog-api-key", 密钥.as_str());
+                }
+            }
+            _ => {
+                if let Some(ref 密钥) = self.密钥 {
+                    请求构建器 = 请求构建器.header("Authorization", format!("Bearer {}", 密钥));
+                }
+            }
         }
 
         let 响应 = 请求构建器
@@ -173,13 +512,94 @@ impl LLM会话 {
         Ok(响应)
     }
 
-    fn 提取消息(响应体: &Value) -> Result<Value, String> {
-        响应体
-            .get("choices")
-            .and_then(|choices| choices.get(0))
-            .and_then(|choice| choice.get("message"))
-            .cloned()
-            .ok_or_else(|| "响应格式错误：无法提取 message".to_string())
+    /// 提取 assistant 消息并归一化为 OpenAI 消息形状（content 文本 + tool_calls）。
+    fn 提取消息(&self, 响应体: &Value) -> Result<Value, String> {
+        match self.提供商.as_str() {
+            "anthropic" => Self::提取Anthropic消息(响应体),
+            "gemini" => Self::提取Gemini消息(响应体),
+            _ => 响应体
+                .get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| choice.get("message"))
+                .cloned()
+                .ok_or_else(|| "响应格式错误：无法提取 message".to_string()),
+        }
+    }
+
+    /// Anthropic 响应：content 是块数组，text 块拼文本，tool_use 块 → tool_calls。
+    fn 提取Anthropic消息(响应体: &Value) -> Result<Value, String> {
+        let 块列表 = 响应体
+            .get("content")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| "响应格式错误：无法提取 content 块".to_string())?;
+        let mut 文本 = String::new();
+        let mut 调用 = Vec::new();
+        for 块 in 块列表 {
+            match 块.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                "text" => 文本.push_str(块.get("text").and_then(|t| t.as_str()).unwrap_or("")),
+                "tool_use" => {
+                    let 入参 = 块.get("input").cloned().unwrap_or(json!({}));
+                    调用.push(json!({
+                        "id": 块.get("id").cloned().unwrap_or(json!("")),
+                        "type": "function",
+                        "function": {
+                            "name": 块.get("name").cloned().unwrap_or(json!("")),
+                            "arguments": 入参.to_string()
+                        }
+                    }));
+                }
+                _ => {}
+            }
+        }
+        let mut 消息 = json!({"role": "assistant"});
+        消息["content"] = if 文本.is_empty() && !调用.is_empty() {
+            Value::Null
+        } else {
+            json!(文本)
+        };
+        if !调用.is_empty() {
+            消息["tool_calls"] = Value::Array(调用);
+        }
+        Ok(消息)
+    }
+
+    /// Gemini 响应：candidates[0].content.parts，text 拼文本，functionCall → tool_calls。
+    fn 提取Gemini消息(响应体: &Value) -> Result<Value, String> {
+        let 部件列表 = 响应体
+            .get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())
+            .ok_or_else(|| "响应格式错误：无法提取 candidates".to_string())?;
+        let mut 文本 = String::new();
+        let mut 调用 = Vec::new();
+        for (序, 部件) in 部件列表.iter().enumerate() {
+            if let Some(t) = 部件.get("text").and_then(|t| t.as_str()) {
+                文本.push_str(t);
+            }
+            if let Some(fc) = 部件.get("functionCall") {
+                let 入参 = fc.get("args").cloned().unwrap_or(json!({}));
+                调用.push(json!({
+                    "id": format!("call_{}", 序),
+                    "type": "function",
+                    "function": {
+                        "name": fc.get("name").cloned().unwrap_or(json!("")),
+                        "arguments": 入参.to_string()
+                    }
+                }));
+            }
+        }
+        let mut 消息 = json!({"role": "assistant"});
+        消息["content"] = if 文本.is_empty() && !调用.is_empty() {
+            Value::Null
+        } else {
+            json!(文本)
+        };
+        if !调用.is_empty() {
+            消息["tool_calls"] = Value::Array(调用);
+        }
+        Ok(消息)
     }
 
     fn 提取文本(消息: &Value) -> Result<String, String> {
@@ -198,8 +618,26 @@ impl LLM会话 {
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
-        let 消息 = Self::提取消息(&响应体)?;
+        let 消息 = self.提取消息(&响应体)?;
         Self::提取文本(&消息)
+    }
+
+    /// 多模态图像对话：文本 + 单图 URL。内部以 OpenAI 多模态 content 数组为规范表示，
+    /// 各提供商在 构建请求体带内容 分支里翻译形状。返回 (规范 user content, 回答文本)。
+    fn 调用图像API(&self, 提示: &str, 图像URL: &str) -> Result<(Value, String), String> {
+        let 用户内容 = json!([
+            {"type": "text", "text": 提示},
+            {"type": "image_url", "image_url": {"url": 图像URL}}
+        ]);
+        let 请求体 = self.构建请求体带内容(Some(用户内容.clone()), false, false);
+        let 响应体: Value = self
+            .发送请求体(请求体)?
+            .json()
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        let 消息 = self.提取消息(&响应体)?;
+        let 文本 = Self::提取文本(&消息)?;
+        Ok((用户内容, 文本))
     }
 
     /// 带工具定义发送请求，返回完整 assistant message JSON
@@ -210,7 +648,7 @@ impl LLM会话 {
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
-        Self::提取消息(&响应体)
+        self.提取消息(&响应体)
     }
 
     /// 继续工具对话，通常在添加 tool 结果后调用
@@ -221,7 +659,7 @@ impl LLM会话 {
             .json()
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
-        Self::提取消息(&响应体)
+        self.提取消息(&响应体)
     }
 
     /// 打开流式响应
@@ -552,6 +990,50 @@ pub extern "C" fn qi_llm_chat(session_handle: i64, prompt: *const c_char) -> *mu
     }
 
     std::ptr::null_mut()
+}
+
+/// 多模态图像对话：文本提示 + 单张图 URL。
+///
+/// 按会话 provider 构造带图消息（openai: image_url / anthropic: image+source.url /
+/// gemini: file_data.file_uri）。返回回答文本（需 qi_llm_free_string 释放）。
+#[no_mangle]
+pub extern "C" fn qi_llm_chat_image(
+    session_handle: i64,
+    prompt: *const c_char,
+    image_url: *const c_char,
+) -> *mut c_char {
+    if prompt.is_null() || image_url.is_null() {
+        return 转为C字符串指针("LLM调用失败: 提示或图像URL为空".to_string());
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        unsafe {
+            let 提示 = CStr::from_ptr(prompt).to_string_lossy().to_string();
+            let 图像 = CStr::from_ptr(image_url).to_string_lossy().to_string();
+
+            match 会话.调用图像API(&提示, &图像) {
+                Ok((用户内容, 响应)) => {
+                    会话.历史.push(json!({
+                        "role": "user",
+                        "content": 用户内容
+                    }));
+                    会话.历史.push(json!({
+                        "role": "assistant",
+                        "content": 响应.clone()
+                    }));
+
+                    return 转为C字符串指针(响应);
+                }
+                Err(错误) => {
+                    return 转为C字符串指针(format!("LLM调用失败: {}", 错误));
+                }
+            }
+        }
+    }
+
+    转为C字符串指针("LLM调用失败: 无效会话句柄".to_string())
 }
 
 /// 打开流式 LLM 对话。
@@ -1050,6 +1532,10 @@ pub extern "C" fn qi_llm_set_config(
         unsafe {
             let 键 = CStr::from_ptr(key).to_string_lossy().to_string();
             let 值 = CStr::from_ptr(value).to_string_lossy().to_string();
+            // provider 走配置口切换："openai"（默认）/"anthropic"/"gemini"
+            if 键 == "provider" {
+                会话.提供商 = 值.trim().to_ascii_lowercase();
+            }
             会话.配置.insert(键, 值);
             return 1;
         }
@@ -1199,5 +1685,137 @@ pub extern "C" fn qi_llm_chat_async(session_handle: i64, prompt: *const c_char) 
         });
 
         Box::into_raw(future)
+    }
+}
+
+// ───────────────── Provider 形状单元测试（与 qi-runtime 孪生副本同步；不打网络） ─────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn 建会话(提供商: &str) -> LLM会话 {
+        let mut 会话 = LLM会话::创建(
+            "https://example.com".to_string(),
+            "test-model".to_string(),
+            Some("test-key".to_string()),
+        );
+        会话.提供商 = 提供商.to_string();
+        会话
+    }
+
+    #[test]
+    fn openai_请求体形状不变() {
+        let mut 会话 = 建会话("openai");
+        会话
+            .配置
+            .insert("system".to_string(), "你是助手".to_string());
+        let 体 = 会话.构建请求体("你好", false, false);
+        assert_eq!(体["model"], json!("test-model"));
+        assert!(体["messages"].is_array());
+        assert_eq!(体["messages"][0]["role"], json!("system"));
+        assert_eq!(体["messages"][1]["content"], json!("你好"));
+        assert!(体.get("system").is_none());
+        assert!(体.get("contents").is_none());
+        assert_eq!(会话.请求端点(), "https://example.com/chat/completions");
+    }
+
+    #[test]
+    fn anthropic_请求体形状() {
+        let mut 会话 = 建会话("anthropic");
+        会话
+            .配置
+            .insert("system".to_string(), "你是助手".to_string());
+        会话.历史.push(json!({"role": "user", "content": "1+1=?"}));
+        会话.历史.push(json!({"role": "assistant", "content": "2"}));
+        let 体 = 会话.构建请求体("再加一", false, false);
+        assert!(体["max_tokens"].is_i64(), "anthropic 必须有顶层 max_tokens");
+        assert_eq!(体["system"], json!("你是助手"));
+        let 消息 = 体["messages"].as_array().unwrap();
+        assert!(消息.iter().all(|m| m["role"] != json!("system")));
+        assert_eq!(体["model"], json!("test-model"));
+        assert_eq!(会话.请求端点(), "https://example.com/v1/messages");
+    }
+
+    #[test]
+    fn anthropic_图像块() {
+        let 会话 = 建会话("anthropic");
+        let 内容 = json!([
+            {"type": "text", "text": "什么颜色?"},
+            {"type": "image_url", "image_url": {"url": "https://img.example/red.png"}}
+        ]);
+        let 体 = 会话.构建请求体带内容(Some(内容), false, false);
+        let 块 = &体["messages"][0]["content"];
+        assert_eq!(块[1]["type"], json!("image"));
+        assert_eq!(块[1]["source"]["type"], json!("url"));
+        assert_eq!(块[1]["source"]["url"], json!("https://img.example/red.png"));
+    }
+
+    #[test]
+    fn anthropic_响应归一化() {
+        let 会话 = 建会话("anthropic");
+        let 响应 = json!({
+            "content": [
+                {"type": "text", "text": "好的。"},
+                {"type": "tool_use", "id": "tu_1", "name": "get_weather", "input": {"city": "东京"}}
+            ],
+            "stop_reason": "tool_use"
+        });
+        let 消息 = 会话.提取消息(&响应).unwrap();
+        assert_eq!(消息["content"], json!("好的。"));
+        assert_eq!(消息["tool_calls"][0]["id"], json!("tu_1"));
+        assert_eq!(
+            消息["tool_calls"][0]["function"]["name"],
+            json!("get_weather")
+        );
+    }
+
+    #[test]
+    fn gemini_请求体形状() {
+        let mut 会话 = 建会话("gemini");
+        会话
+            .配置
+            .insert("system".to_string(), "你是助手".to_string());
+        会话.历史.push(json!({"role": "user", "content": "1+1=?"}));
+        会话.历史.push(json!({"role": "assistant", "content": "2"}));
+        let 体 = 会话.构建请求体("再加一", false, false);
+        let 内容 = 体["contents"].as_array().unwrap();
+        assert_eq!(内容[0]["role"], json!("user"));
+        assert_eq!(内容[1]["role"], json!("model"));
+        assert_eq!(
+            体["systemInstruction"]["parts"][0]["text"],
+            json!("你是助手")
+        );
+        assert!(体["generationConfig"]["maxOutputTokens"].is_i64());
+        assert!(体.get("messages").is_none());
+        assert_eq!(
+            会话.请求端点(),
+            "https://example.com/models/test-model:generateContent"
+        );
+    }
+
+    #[test]
+    fn gemini_图像部件() {
+        let 会话 = 建会话("gemini");
+        let 内容 = json!([
+            {"type": "text", "text": "什么颜色?"},
+            {"type": "image_url", "image_url": {"url": "https://img.example/red.png"}}
+        ]);
+        let 体 = 会话.构建请求体带内容(Some(内容), false, false);
+        let 部件 = &体["contents"][0]["parts"];
+        assert_eq!(
+            部件[1]["file_data"]["file_uri"],
+            json!("https://img.example/red.png")
+        );
+    }
+
+    #[test]
+    fn gemini_响应归一化() {
+        let 会话 = 建会话("gemini");
+        let 响应 = json!({
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "答案是 3"}]}}]
+        });
+        let 消息 = 会话.提取消息(&响应).unwrap();
+        assert_eq!(消息["content"], json!("答案是 3"));
     }
 }
