@@ -1190,26 +1190,48 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "询问<T>：结构体未登记".to_string())?
             .clone();
 
-        // 字段 → JSON getter（v1 仅标量）
-        let mut 字段规格: Vec<(String, &'static str)> = Vec::new();
+        // 字段规格：(字段名, 标量getter或空, 枚举候选名CSV或空)。枚举字段走 枚举序号 反序列化。
+        let mut 字段规格: Vec<(String, &'static str, String)> = Vec::new();
+        let mut 枚举约束: String = String::new(); // 追加进 hint，约束模型只输出合法变体名
         for (名, ty) in 信息.字段名.iter().zip(信息.字段类型.iter()) {
-            let getter = match ty {
-                Qi类型::整数 => "获取整数",
-                Qi类型::浮点数 => "获取浮点数",
-                Qi类型::字符串 => "获取字符串",
-                Qi类型::布尔 => "获取布尔",
+            let (getter, csv) = match ty {
+                Qi类型::整数 => ("获取整数", String::new()),
+                Qi类型::浮点数 => ("获取浮点数", String::new()),
+                Qi类型::字符串 => ("获取字符串", String::new()),
+                Qi类型::布尔 => ("获取布尔", String::new()),
+                Qi类型::枚举(eidx) => {
+                    // 无载荷枚举（i64 tag）：从 JSON 字符串（变体名）→ tag
+                    let ei = self
+                        .符号
+                        .枚举
+                        .get(*eidx as usize)
+                        .ok_or_else(|| format!("询问：字段「{}」的枚举未登记", 名))?;
+                    if ei.装箱 {
+                        return Err(format!(
+                            "询问<{}> v1 不支持带载荷枚举字段「{}」（仅无载荷枚举）",
+                            信息.名字, 名
+                        ));
+                    }
+                    let names: Vec<String> = ei.变体.iter().map(|v| v.名字.clone()).collect();
+                    枚举约束.push_str(&format!(
+                        "\n字段「{}」的值必须是以下之一：{}。",
+                        名,
+                        names.join(" / ")
+                    ));
+                    ("", names.join(","))
+                }
                 _ => {
                     return Err(format!(
-                        "询问<{}> v1 仅支持标量字段（整数/浮点数/字符串/布尔），字段「{}」类型不支持",
+                        "询问<{}> v1 字段类型仅支持 整数/浮点数/字符串/布尔/无载荷枚举，字段「{}」不支持",
                         信息.名字, 名
                     ))
                 }
             };
-            字段规格.push((名.clone(), getter));
+            字段规格.push((名.clone(), getter, csv));
         }
         // 字段清单提示（引导模型输出含这些键的 JSON）
         let mut 清单 = String::new();
-        for (i, (名, _)) in 字段规格.iter().enumerate() {
+        for (i, (名, _, _)) in 字段规格.iter().enumerate() {
             if i > 0 {
                 清单.push('、');
             }
@@ -1218,8 +1240,8 @@ impl<'ctx> 后端<'ctx> {
             清单.push('"');
         }
         let hint = format!(
-            "\n\n严格要求：只输出一个 JSON 对象，必须包含字段：{}，不要任何解释、不要代码块标记。",
-            清单
+            "\n\n严格要求：只输出一个 JSON 对象，必须包含字段：{}，不要任何解释、不要代码块标记。{}",
+            清单, 枚举约束
         );
 
         let n = self.询问计数;
@@ -1301,10 +1323,24 @@ impl<'ctx> 后端<'ctx> {
 
         // 5) 逐字段反序列化，构造结构体字面量
         let mut 字段值: Vec<StructFieldValue> = Vec::new();
-        for (名, getter) in &字段规格 {
+        for (名, getter, csv) in &字段规格 {
+            let 值ast = if csv.is_empty() {
+                // 标量：JSON.获取X(j, "字段")
+                mcall(id("JSON"), getter, vec![id(&jj名), strlit(名)])
+            } else {
+                // 无载荷枚举：JSON.枚举序号("变体CSV", JSON.获取字符串(j, "字段")) → tag(i64)
+                mcall(
+                    id("JSON"),
+                    "枚举序号",
+                    vec![
+                        strlit(csv),
+                        mcall(id("JSON"), "获取字符串", vec![id(&jj名), strlit(名)]),
+                    ],
+                )
+            };
             字段值.push(StructFieldValue {
                 name: 名.clone(),
-                value: Box::new(mcall(id("JSON"), getter, vec![id(&jj名), strlit(名)])),
+                value: Box::new(值ast),
                 span: Default::default(),
             });
         }

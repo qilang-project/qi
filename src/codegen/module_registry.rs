@@ -3047,6 +3047,14 @@ impl ModuleRegistry {
             "整数",                   // 返回状态
         ));
 
+        // 枚举序号：候选名(逗号分隔) 里找值的下标 —— 询问::<T> 反序列化枚举字段用
+        json_module.add_function(ModuleFunction::new(
+            "枚举序号",
+            "qi_json_enum_tag",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
         // Register module with both Chinese and path formats
         self.modules.insert("JSON".to_string(), json_module.clone());
         self.modules.insert("标准库.JSON".to_string(), json_module);
