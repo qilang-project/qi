@@ -1597,6 +1597,83 @@ impl<'ctx> 后端<'ctx> {
         Ok(改写)
     }
 
+    /// `填充模板(模板字面量, 实参...)` —— 编译期类型安全插值。
+    /// 模板必须是字符串**字面量**（编译期能看见才能查洞）；`{洞名}` 按出现序对应
+    /// 后续实参；洞数≠实参数 → **编译错误**（报出洞清单）。脱糖成 段+实参+段… 拼接。
+    pub(super) fn 生成填充模板(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        use crate::parser::ast::BinaryExpression;
+        let 模板 = match &call.arguments[0] {
+            AstNode::字面量表达式(l) => match &l.value {
+                LiteralValue::字符串(s) => s.clone(),
+                _ => return Err("填充模板：第 1 个实参必须是字符串字面量".to_string()),
+            },
+            _ => {
+                return Err(
+                    "填充模板：模板必须是字符串**字面量**（编译期查洞需要在编译期看见它）；\
+                     运行时模板请用 Harness.提示模板.填充"
+                        .to_string(),
+                )
+            }
+        };
+        // 拆模板：段/洞交替
+        let mut 段: Vec<String> = Vec::new();
+        let mut 洞: Vec<String> = Vec::new();
+        let mut 当前 = String::new();
+        let mut 洞中 = false;
+        for c in 模板.chars() {
+            match c {
+                '{' => {
+                    段.push(std::mem::take(&mut 当前));
+                    洞中 = true;
+                }
+                '}' if 洞中 => {
+                    洞.push(std::mem::take(&mut 当前));
+                    洞中 = false;
+                }
+                _ => 当前.push(c),
+            }
+        }
+        if 洞中 {
+            return Err("填充模板：模板有未闭合的 `{`".to_string());
+        }
+        段.push(当前);
+
+        let 实参数 = call.arguments.len() - 1;
+        if 洞.len() != 实参数 {
+            return Err(format!(
+                "填充模板：模板有 {} 个洞（{}），但给了 {} 个实参。洞与实参必须一一对应。",
+                洞.len(),
+                洞.iter()
+                    .map(|h| format!("{{{}}}", h))
+                    .collect::<Vec<_>>()
+                    .join("、"),
+                实参数
+            ));
+        }
+
+        // 脱糖：段0 + 实参1 + 段1 + 实参2 + … + 段n 的左结合加链
+        let mut 表达式 = 询_str(&段[0]);
+        for (i, a) in call.arguments[1..].iter().enumerate() {
+            表达式 = AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(表达式),
+                operator: BinaryOperator::加,
+                right: Box::new(a.clone()),
+                span: Default::default(),
+            });
+            表达式 = AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(表达式),
+                operator: BinaryOperator::加,
+                right: Box::new(询_str(&段[i + 1])),
+                span: Default::default(),
+            });
+        }
+        self.生成表达式(&表达式)?
+            .ok_or_else(|| "填充模板：拼接无值".to_string())
+    }
+
     /// 生成所有待合成 `尝试询问` 包装函数的函数体（循环到清空；体内的结构体字面量
     /// 不会再产生新的 询问，但保持与闭包/泛型同款的循环调用习惯）。
     pub(super) fn 合成待处理询问(&mut self) -> Result<(), String> {
@@ -1686,6 +1763,29 @@ impl<'ctx> 后端<'ctx> {
             if let Some(v) = self.生成工具适配(call)? {
                 return Ok(Some(v));
             }
+        }
+
+        // 编译期模板：`填充模板("查{城市}天气", 城市值, ...)` —— 模板须为字符串字面量，
+        // 编译期拆 {洞}，**洞数与实参数不符直接编译错误**（编译期查洞），脱糖成拼接。
+        if call.callee == "填充模板" && !call.arguments.is_empty() {
+            return self.生成填充模板(call).map(Some);
+        }
+
+        // 流在表达式位置：`变量 s = 流式(会话, 提示)` → 流句柄（整数），配合
+        // 大模型.读取流/关闭流 手动迭代。`对于 … 在 流式(…)` 的 for-in 快路径在
+        // 语句层已拦截（自动关流）；这里覆盖手动模式。脱糖为 大模型.流式对话。
+        if call.callee == "流式" && call.arguments.len() == 2 {
+            use crate::parser::ast::{IdentifierExpression, MethodCallExpression};
+            let 改写 = AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(AstNode::标识符表达式(IdentifierExpression {
+                    name: "大模型".to_string(),
+                    span: Default::default(),
+                })),
+                method_name: "流式对话".to_string(),
+                arguments: call.arguments.clone(),
+                span: call.span.clone(),
+            });
+            return self.生成表达式(&改写);
         }
 
         // 间接调用：callee 是一个函数值变量（如参数 f: 函数(整数):整数）

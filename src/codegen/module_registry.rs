@@ -1523,6 +1523,20 @@ impl ModuleRegistry {
             "字符串",                 // 返回用量 JSON
         ));
 
+        // 会话 token 预算：设上限(0=不限)后自动累计，超限直接拒绝调用（不打 API）
+        llm_module.add_function(ModuleFunction::new(
+            "设置预算",
+            "qi_llm_set_budget",
+            vec!["整数".to_string(), "整数".to_string()], // 会话句柄, token 上限
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "已用预算",
+            "qi_llm_budget_used",
+            vec!["整数".to_string()], // 会话句柄
+            "整数",                   // 累计已用 token
+        ));
+
         // 关闭会话
         llm_module.add_function(ModuleFunction::new(
             "关闭会话",
