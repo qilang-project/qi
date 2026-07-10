@@ -1857,6 +1857,19 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // 内建 `长度(数组)`：读数组长度头。必须在裸函数 stdlib 回退**之前**拦截——
+        // 否则会命中 向量.长度（模长，返回浮点），整数数组读成垃圾、浮点数组变 √Σx²。
+        // （a.长度 字段形式一直正确；此分支让调用形式与其一致。向量模长请显式写
+        //  向量.长度(x)。）
+        if call.callee == "长度" && call.arguments.len() == 1 && call.type_arguments.is_empty() {
+            let t = 推断表达式类型(&call.arguments[0], &self.符号);
+            if t.数组元素().is_some() {
+                if let Some((av, _)) = self.生成表达式(&call.arguments[0])? {
+                    return self.生成数组长度(av.into_pointer_value()).map(Some);
+                }
+            }
+        }
+
         // 类型定向结构化输出：`询问<结构体>(会话, 提示)` —— 编译期从结构体派生
         // JSON schema、发 response_format、把回复反序列化回强类型结构体。
         if call.callee == "询问" && !call.type_arguments.is_empty() {
