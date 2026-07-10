@@ -421,6 +421,11 @@ impl Lexer {
                 .scan_string_literal(start_pos, start_line, start_column)
                 .map(Some),
 
+            // Raw string literals (`...`): no escapes, may span lines
+            '`' => self
+                .scan_raw_string_literal(start_pos, start_line, start_column)
+                .map(Some),
+
             // Numbers
             '0'..='9' => Ok(Some(self.scan_number(
                 start_pos,
@@ -584,6 +589,42 @@ impl Lexer {
         let end_pos = self.position;
 
         let _content = self.source[start_content..end_content].to_string();
+
+        Ok(Token {
+            kind: TokenKind::字符串字面量,
+            text: self.source[start_pos..end_pos].to_string(),
+            span: tokens::Span::new(start_pos, end_pos),
+            line: start_line,
+            column: start_column,
+        })
+    }
+
+    /// Scan a raw string literal (`...`): content is taken verbatim,
+    /// no escape processing, double quotes and newlines allowed inside.
+    fn scan_raw_string_literal(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> Result<Token, LexicalError> {
+        self.advance(); // Skip opening backtick
+
+        while !self.is_at_end() && self.current_char() != Some('`') {
+            self.advance();
+        }
+
+        if self.is_at_end() {
+            self.report_unterminated_string_error(
+                start_pos,
+                start_line,
+                start_column,
+                "原始字符串缺少右反引号 `，请在字符串末尾添加 `",
+            );
+            return Err(LexicalError::UnterminatedString(start_line, start_column));
+        }
+
+        self.advance(); // Skip closing backtick
+        let end_pos = self.position;
 
         Ok(Token {
             kind: TokenKind::字符串字面量,

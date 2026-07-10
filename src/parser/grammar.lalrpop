@@ -2262,6 +2262,12 @@ StringLiteral: AstNode = {
         value: LiteralValue::字符串(unescape_string(&s[1..s.len()-1])),
         span: Default::default(),
     }),
+    // 原始字符串字面量：反引号包裹，内部**不做转义**，" 直接写、可跨行。
+    // 用于内嵌 JSON / 正则 / Windows 路径 / 模板，免去满屏 \"。
+    <s:r#"`[^`]*`"#> => AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::字符串(s[1..s.len()-1].to_string()),
+        span: Default::default(),
+    }),
 };
 
 // Format string literal: f"text {expression} more text"
