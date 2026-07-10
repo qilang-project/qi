@@ -3069,6 +3069,26 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 对象字段(JSON数组) → Qi 原生数组（询问 数组字段反序列化；rc=1 交出）
+        json_module.add_function(ModuleFunction::new(
+            "字段字符串数组",
+            "qi_json_field_str_array",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串数组",
+        ));
+        json_module.add_function(ModuleFunction::new(
+            "字段整数数组",
+            "qi_json_field_int_array",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数数组",
+        ));
+        json_module.add_function(ModuleFunction::new(
+            "字段浮点数组",
+            "qi_json_field_float_array",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "浮点数组",
+        ));
+
         // Register module with both Chinese and path formats
         self.modules.insert("JSON".to_string(), json_module.clone());
         self.modules.insert("标准库.JSON".to_string(), json_module);

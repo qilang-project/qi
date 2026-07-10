@@ -1243,9 +1243,25 @@ impl<'ctx> 后端<'ctx> {
                         self.询问建结构体(*子idx, 子句柄)?,
                     )
                 }
+                Qi类型::数组(元素) => {
+                    // 数组字段：runtime 一步转成 Qi 原生数组（rc=1 交出）
+                    use super::类型::元素类型;
+                    let getter = match 元素 {
+                        元素类型::整数 => "字段整数数组",
+                        元素类型::浮点数 => "字段浮点数组",
+                        元素类型::指针 => "字段字符串数组",
+                        _ => {
+                            return Err(format!(
+                                "询问：数组字段「{}」元素仅支持 整数/浮点数/字符串",
+                                名
+                            ))
+                        }
+                    };
+                    询_mcall(询_id("JSON"), getter, vec![句柄.clone(), 询_str(名)])
+                }
                 _ => {
                     return Err(format!(
-                        "询问：字段「{}」类型不支持（v1：标量/无载荷枚举/嵌套结构体；数组暂不支持）",
+                        "询问：字段「{}」类型不支持（v1：标量/无载荷枚举/嵌套结构体/标量数组）",
                         名
                     ))
                 }
@@ -1262,6 +1278,44 @@ impl<'ctx> 后端<'ctx> {
             fields: 字段值,
             span: Default::default(),
         })
+    }
+
+    /// 结构体是否（递归）含数组字段。含则不宜用 json_schema strict：实测部分 provider
+    /// （qwen3.7-plus）在 strict 下对**中文字符串数组**输出乱码空串，而 json_object 模式
+    /// 靠文字 hint 反而正常。→ 含数组时退回 json_object。
+    pub(super) fn 询问含数组(&self, idx: u32, 深: u32) -> bool {
+        if 深 > 5 {
+            return false;
+        }
+        let 信息 = match self.符号.结构体.get(idx as usize) {
+            Some(s) => s.clone(),
+            None => return false,
+        };
+        for ty in 信息.字段类型.iter() {
+            match ty {
+                Qi类型::数组(_) => return true,
+                Qi类型::结构体(子) => {
+                    if self.询问含数组(*子, 深 + 1) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// 结构化输出的 response_format 配置值：含数组 → "json_object"（hint 兜底，兼容性好）；
+    /// 否则 → 完整 json_schema strict 对象（服务端语法级保证）。
+    pub(super) fn 询问响应格式(&self, idx: u32) -> Result<String, String> {
+        if self.询问含数组(idx, 0) {
+            Ok("json_object".to_string())
+        } else {
+            Ok(format!(
+                "{{\"type\":\"json_schema\",\"json_schema\":{{\"name\":\"resp\",\"strict\":true,\"schema\":{}}}}}",
+                self.询问schema(idx, 0)?
+            ))
+        }
     }
 
     /// 递归生成结构体的 **JSON Schema**（strict 模式用）：标量映射 string/integer/number/boolean，
@@ -1296,6 +1350,21 @@ impl<'ctx> 后端<'ctx> {
                     format!("{{\"type\":\"string\",\"enum\":[{}]}}", 候选.join(","))
                 }
                 Qi类型::结构体(子idx) => self.询问schema(*子idx, 深 + 1)?,
+                Qi类型::数组(元素) => {
+                    use super::类型::元素类型;
+                    let item = match 元素 {
+                        元素类型::整数 => "{\"type\":\"integer\"}",
+                        元素类型::浮点数 => "{\"type\":\"number\"}",
+                        元素类型::指针 => "{\"type\":\"string\"}", // 数组<字符串>
+                        _ => {
+                            return Err(format!(
+                                "询问：数组字段「{}」元素仅支持 整数/浮点数/字符串",
+                                名
+                            ))
+                        }
+                    };
+                    format!("{{\"type\":\"array\",\"items\":{}}}", item)
+                }
                 _ => return Err(format!("询问：字段「{}」类型不支持 schema 生成", 名)),
             };
             props.push(format!("\"{}\":{}", 名, 子));
@@ -1392,13 +1461,10 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         self.变量表.insert(会话名.clone(), (s_ptr, Qi类型::整数));
 
-        // 2) 开结构化输出：编译期生成完整 json_schema **strict** 模式（服务端语法约束，
-        // 支持的 provider 如 OpenAI/qwen 严格保证结构；不支持的 provider 会忽略/报错——
-        // 文字 hint（上面已拼进提示）仍在，作为兜底。
-        let strict = format!(
-            "{{\"type\":\"json_schema\",\"json_schema\":{{\"name\":\"resp\",\"strict\":true,\"schema\":{}}}}}",
-            self.询问schema(idx, 0)?
-        );
+        // 2) 开结构化输出：无数组 → json_schema strict（服务端语法保证）；含数组 →
+        // json_object（实测 qwen strict 对中文字符串数组输出乱码，json_object+hint 反而稳）。
+        // 文字 hint（上面已拼进提示）始终在，作为兜底。
+        let strict = self.询问响应格式(idx)?;
         let 开 = mcall(
             id("大模型"),
             "设置配置",
@@ -1480,10 +1546,7 @@ impl<'ctx> 后端<'ctx> {
         }
 
         // ── 构造包装函数 AST ──
-        let strict = format!(
-            "{{\"type\":\"json_schema\",\"json_schema\":{{\"name\":\"resp\",\"strict\":true,\"schema\":{}}}}}",
-            self.询问schema(idx, 0)?
-        );
+        let strict = self.询问响应格式(idx)?;
         let hint = format!(
             "\n\n严格要求：只输出一个 JSON 对象，含字段：{}。不要任何解释、不要代码块标记。",
             self.询问字段说明(idx, 0)?
