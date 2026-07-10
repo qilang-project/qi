@@ -360,7 +360,16 @@ Visibility: Visibility = {
 // 泛型类型参数声明：`<T>` / `<T, E>`（函数/枚举/结构体声明名字后可选）。
 // 名字任意标识符；个数上限由 codegen 校验（1 或 2）。
 TypeParamsDecl: Vec<String> = {
-    "<" <tps:Comma<Identifier>> ">" => tps,
+    "<" <tps:Comma<TypeParamDecl>> ">" => tps,
+};
+
+// 单个类型参数：`T` 或带特性约束的 `T: 可比较`。
+// 约束编码成 "T:可比较" 随 Vec<String> 流转（AST 不变），
+// 登记泛型函数模板 时拆开校验；结构体/枚举模板不支持约束（登记处报错）。
+TypeParamDecl: String = {
+    <n:Identifier> => n,
+    <n:Identifier> ":" <b:Identifier> => format!("{}:{}", n, b),
+    <n:Identifier> "：" <b:Identifier> => format!("{}:{}", n, b),
 };
 
 FunctionDeclaration: AstNode = {
@@ -1050,6 +1059,39 @@ TraitMethod: TraitMethod = {
         return_type: None,
         has_default_impl: false,
         default_body: None,
+        span: Default::default(),
+    },
+    // ── 带默认实现的特性方法：签名后跟 `{ ... }` 体（实现块未覆盖时按具体类型合成）──
+    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => TraitMethod {
+        name,
+        parameters: vec![],
+        return_type: Some(return_type),
+        has_default_impl: true,
+        default_body: Some(body),
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => TraitMethod {
+        name,
+        parameters: params,
+        return_type: Some(return_type),
+        has_default_impl: true,
+        default_body: Some(body),
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => TraitMethod {
+        name,
+        parameters: vec![],
+        return_type: None,
+        has_default_impl: true,
+        default_body: Some(body),
+        span: Default::default(),
+    },
+    "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => TraitMethod {
+        name,
+        parameters: params,
+        return_type: None,
+        has_default_impl: true,
+        default_body: Some(body),
         span: Default::default(),
     },
 };

@@ -86,10 +86,19 @@ pub struct 泛型结构体模板 {
 }
 
 /// 用户泛型函数模板：AST 原样存档 + 声明包（实例体在末尾统一合成时还原包上下文）。
+/// `约束`：与 声明.type_params 逐位对齐的特性约束（`<T: 可比较>` → Some("可比较")）。
 #[derive(Clone)]
 pub struct 泛型函数模板 {
     pub 声明: crate::parser::ast::FunctionDeclaration,
     pub 包: Option<String>,
+    pub 约束: Vec<Option<String>>,
+}
+
+/// 特性信息：方法签名表（含默认体 AST，供实现块合成缺省方法）。
+/// v1 特性名全局共享（跨包不消歧，与泛型模板同款）。
+#[derive(Clone)]
+pub struct 特性信息 {
+    pub 方法: Vec<crate::parser::ast::TraitMethod>,
 }
 
 /// 泛型实例名嵌套深度上限（`盒装$盒装$…` 中 `$` 的个数）。
@@ -151,6 +160,12 @@ pub struct 符号表 {
     /// 类型参数绑定栈：解析类型 时 `自定义类型("T")` 先查栈顶。
     /// 泛型函数实例体生成期间压该实例的绑定；实例化枚举/结构体模板时临时再压一层。
     类型参数栈: Vec<HashMap<String, Qi类型>>,
+    // ───────── 特性（trait）─────────
+    /// 特性注册表：特性名 → 方法签名表（含默认体）。
+    pub 特性: HashMap<String, 特性信息>,
+    /// 特性实现注册表：(特性名, 结构体索引) —— `实现 特性X 对于 类型Y` 收集。
+    /// 泛型约束 `<T: 特性X>` 单态化时据此校验实参类型。
+    pub 特性实现: HashSet<(String, u32)>,
 }
 
 impl 符号表 {
@@ -179,6 +194,35 @@ impl 符号表 {
             泛型结构体模板: HashMap::new(),
             泛型函数模板: HashMap::new(),
             类型参数栈: Vec::new(),
+            特性: HashMap::new(),
+            特性实现: HashSet::new(),
+        }
+    }
+
+    /// 名字是否为已声明的特性（且不与具体类型撞名 —— 结构体/枚举优先）。
+    pub fn 是特性名(&self, name: &str) -> bool {
+        self.特性.contains_key(name)
+            && self.结构体索引(name).is_none()
+            && self.枚举索引(name).is_none()
+    }
+
+    /// 类型 t 是否实现了特性（仅结构体可实现；其他类型一律否）。
+    pub fn 类型实现特性(&self, t: Qi类型, 特性名: &str) -> bool {
+        match t.结构体索引() {
+            Some(idx) => self.特性实现.contains(&(特性名.to_string(), idx)),
+            None => false,
+        }
+    }
+
+    /// 面向用户报错的类型显示名（结构体给裸名，不带索引前缀）。
+    pub fn 类型显示名(&self, t: Qi类型) -> String {
+        match t {
+            Qi类型::结构体(i) => self
+                .结构体
+                .get(i as usize)
+                .map(|s| s.名字.clone())
+                .unwrap_or_else(|| format!("结构体{}", i)),
+            _ => self.类型名(t),
         }
     }
 

@@ -159,6 +159,41 @@ impl<'ctx> 后端<'ctx> {
         模板: &泛型函数模板,
         实参类型: &[Qi类型],
     ) -> Result<String, String> {
+        // 特性约束校验（`<T: 可比较>`）：实参类型必须有 `实现 可比较 对于 该类型`。
+        // 在实例名缓存之前 —— 不合格的实例绝不落表。
+        for ((tp, 约束), t) in 模板
+            .声明
+            .type_params
+            .iter()
+            .zip(模板.约束.iter())
+            .zip(实参类型.iter())
+        {
+            let Some(特性名) = 约束 else { continue };
+            if !self.符号.类型实现特性(*t, 特性名) {
+                // 隐式泛型（特性作参数类型，合成名 __T0）：报错用 `函数(参数: 特性)` 形态
+                let 用法 = if tp.starts_with("__T") {
+                    let 参数名 = 模板
+                        .声明
+                        .parameters
+                        .iter()
+                        .find(|p| matches!(&p.type_annotation, Some(crate::parser::ast::TypeNode::自定义类型(x)) if x == tp))
+                        .map(|p| p.name.clone())
+                        .unwrap_or_default();
+                    format!("{}({}: {})", 模板名, 参数名, 特性名)
+                } else {
+                    format!("{}<{}: {}>", 模板名, tp, 特性名)
+                };
+                return Err(format!(
+                    "类型「{}」没有实现特性「{}」，无法用于 {}。请添加 `实现 {} 对于 {} {{ ... }}`",
+                    self.符号.类型显示名(*t),
+                    特性名,
+                    用法,
+                    特性名,
+                    self.符号.类型显示名(*t)
+                ));
+            }
+        }
+
         let 实例名 = self.符号.泛型实例名(模板名, 实参类型);
         self.符号.泛型深度检查(&实例名)?;
         if self.已实例化泛型函数.contains(&实例名) {

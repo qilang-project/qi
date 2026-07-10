@@ -23,6 +23,12 @@ impl<'ctx> 后端<'ctx> {
                     self.登记泛型函数模板(f)?;
                     continue;
                 }
+                // 特性作参数类型（impl-Trait 式）：`函数 让它叫(动物: 会叫)` →
+                // 隐式泛型化成 `让它叫<__T0: 会叫>(动物: __T0)`，复用泛型单态化全套机制。
+                if let Some(g) = self.试隐式泛型化(f)? {
+                    self.登记泛型函数模板(&g)?;
+                    continue;
+                }
                 self.声明函数原型(f)?;
                 // 预登记「函数名当值」的签名索引，供函数值传递
                 self.符号.预登记函数值(&f.name);
@@ -32,6 +38,8 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 登记一个泛型函数模板（AST 原样入表，供调用点单态化）。
+    /// type_params 里可能带编码的特性约束（`"T:可比较"`，见 grammar TypeParamDecl）：
+    /// 此处拆成 裸名 + 约束表，约束必须是已声明的特性；存表的 声明.type_params 只留裸名。
     fn 登记泛型函数模板(&mut self, f: &FunctionDeclaration) -> Result<(), String> {
         if f.type_params.len() > 2 {
             return Err(format!(
@@ -52,14 +60,82 @@ impl<'ctx> 后端<'ctx> {
                 f.name
             ));
         }
+        // 拆约束：`T:可比较` → (T, Some(可比较))；裸 `T` → (T, None)
+        let mut 名表: Vec<String> = Vec::new();
+        let mut 约束表: Vec<Option<String>> = Vec::new();
+        for tp in &f.type_params {
+            match tp.split_once(':') {
+                Some((n, b)) => {
+                    if !self.符号.特性.contains_key(b) {
+                        return Err(format!(
+                            "泛型函数 {} 的类型参数 {} 的约束「{}」不是已声明的特性。约束只能写特性名，如 <{}: 某特性>",
+                            f.name, n, b, n
+                        ));
+                    }
+                    名表.push(n.to_string());
+                    约束表.push(Some(b.to_string()));
+                }
+                None => {
+                    名表.push(tp.clone());
+                    约束表.push(None);
+                }
+            }
+        }
+        let mut 声明 = f.clone();
+        声明.type_params = 名表;
         self.符号.泛型函数模板.insert(
             f.name.clone(),
             super::类型检查::泛型函数模板 {
-                声明: f.clone(),
+                声明,
                 包: self.当前包.clone(),
+                约束: 约束表,
             },
         );
         Ok(())
+    }
+
+    /// 特性作参数类型的隐式泛型化：参数注解是**裸特性名**（不与结构体/枚举撞名）
+    /// 的非泛型函数，改写成带约束的泛型模板 —— 每个特性参数一个独立类型参数
+    /// `__T0: 特性`（多个特性参数各自独立，互不要求同型）。
+    /// 无特性参数 → Ok(None)（走普通函数登记）。
+    /// 返回类型是特性名 → v1 明确报错（不静默生成错误代码）。
+    fn 试隐式泛型化(
+        &mut self,
+        f: &FunctionDeclaration,
+    ) -> Result<Option<FunctionDeclaration>, String> {
+        use crate::parser::ast::TypeNode;
+        // 有没有特性参数？（先扫一遍，多数函数在此直接出去）
+        let 有特性参数 = f.parameters.iter().any(|p| {
+            matches!(&p.type_annotation, Some(TypeNode::自定义类型(n)) if self.符号.是特性名(n))
+        });
+        // 返回类型是特性名：v1 不支持（无论有没有特性参数都要拦）
+        if let Some(TypeNode::自定义类型(n)) = &f.return_type {
+            if self.符号.是特性名(n) {
+                return Err(format!(
+                    "函数 {} 的返回类型是特性「{}」—— 暂不支持特性作返回类型（需要装箱/存在类型，Phase 2）。请改成具体类型或泛型 <T: {}>",
+                    f.name, n, n
+                ));
+            }
+        }
+        if !有特性参数 {
+            return Ok(None);
+        }
+        // 改写：特性参数 → 合成类型参数 __TN（编码约束 "__TN:特性"，登记泛型函数模板 拆）
+        let mut g = f.clone();
+        let mut n = 0usize;
+        for p in g.parameters.iter_mut() {
+            let Some(TypeNode::自定义类型(名)) = &p.type_annotation else {
+                continue;
+            };
+            if !self.符号.是特性名(名) {
+                continue;
+            }
+            let tp = format!("__T{}", n);
+            n += 1;
+            g.type_params.push(format!("{}:{}", tp, 名));
+            p.type_annotation = Some(TypeNode::自定义类型(tp));
+        }
+        Ok(Some(g))
     }
 
     /// 声明单个用户函数的 LLVM 原型，并把签名存入符号表。

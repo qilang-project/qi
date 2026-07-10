@@ -64,6 +64,14 @@ impl<'ctx> 后端<'ctx> {
                             ed.type_params.len()
                         ));
                     }
+                    // 特性约束（`<T: 特性>`）v1 只支持泛型函数，枚举模板明确报错
+                    if let Some(tp) = ed.type_params.iter().find(|t| t.contains(':')) {
+                        return Err(format!(
+                            "泛型枚举 {} 的类型参数 <{}> 带特性约束 —— 枚举暂不支持约束（目前只有泛型函数支持 <T: 特性>）",
+                            ed.name,
+                            tp.replace(':', ": ")
+                        ));
+                    }
                     self.符号.泛型枚举模板.insert(
                         ed.name.clone(),
                         super::类型检查::泛型枚举模板 {

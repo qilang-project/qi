@@ -55,6 +55,8 @@ mod 方法;
 mod 枚举;
 #[path = "泛型.rs"]
 mod 泛型;
+#[path = "特性.rs"]
+mod 特性;
 #[path = "环检测.rs"]
 mod 环检测;
 #[path = "类型.rs"]
@@ -647,6 +649,16 @@ pub fn compile_to_object_multi(
         后端值.设当前包(p.package_name.clone());
         后端值.登记枚举名字(p)?;
     }
+    // 特性两趟：先收全部声明（特性可跨模块引用），再登记实现关系 + 完整性校验。
+    // 在函数登记之前 —— 泛型约束 `<T: 特性>` / 特性作参数类型 都要查特性注册表。
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.登记特性(p)?;
+    }
+    for p in programs {
+        后端值.设当前包(p.package_name.clone());
+        后端值.登记特性实现(p)?;
+    }
     for p in programs {
         后端值.设当前包(p.package_name.clone());
         后端值.解析结构体字段(p)?;
@@ -733,7 +745,11 @@ pub fn compile_to_object_multi(
         for stmt in &p.statements {
             match stmt {
                 AstNode::函数声明(f) => {
-                    if f.name == "入口" || !f.type_params.is_empty() {
+                    if f.name == "入口"
+                        || !f.type_params.is_empty()
+                        // 特性作参数类型 → 登记时已隐式泛型化（AST 上 type_params 仍空）
+                        || 后端值.符号.泛型函数模板.contains_key(&f.name)
+                    {
                         continue; // 入口只在最后为 entry 生成 main
                     }
                     后端值.生成函数体(f)?;

@@ -24,7 +24,7 @@ fn 方法符号(pkg: Option<&str>, receiver_type: &str, method: &str) -> String 
 impl<'ctx> 后端<'ctx> {
     /// 登记所有方法签名 + LLVM 原型（顶层 方法声明 + 结构体内嵌方法）。
     pub(super) fn 登记方法(&mut self, program: &Program) -> Result<(), String> {
-        let 方法们 = 收集方法(program);
+        let 方法们 = 收集方法(program, &self.符号);
         for m in &方法们 {
             self.声明方法原型(m)?;
         }
@@ -33,7 +33,7 @@ impl<'ctx> 后端<'ctx> {
 
     /// 生成所有方法体。
     pub(super) fn 生成所有方法体(&mut self, program: &Program) -> Result<(), String> {
-        let 方法们 = 收集方法(program);
+        let 方法们 = 收集方法(program, &self.符号);
         for m in &方法们 {
             self.生成方法体(m)?;
         }
@@ -315,8 +315,12 @@ impl<'ctx> 后端<'ctx> {
     }
 }
 
-/// 收集所有方法声明：顶层 方法声明 + 结构体内嵌 methods。
-fn 收集方法(program: &Program) -> Vec<MethodDeclaration> {
+/// 收集所有方法声明：顶层 方法声明 + 结构体内嵌 methods + 实现块方法
+/// （含特性默认方法的按类型合成）。
+fn 收集方法(
+    program: &Program,
+    符号: &super::类型检查::符号表,
+) -> Vec<MethodDeclaration> {
     let mut out = Vec::new();
     for stmt in &program.statements {
         match stmt {
@@ -335,6 +339,33 @@ fn 收集方法(program: &Program) -> Vec<MethodDeclaration> {
                         m.receiver_type = imp.target_type.clone();
                     }
                     out.push(m);
+                }
+                // 特性默认方法：特性里带默认体、实现块没覆盖的方法 →
+                // 拿默认体 AST 以具体类型合成普通方法（`自己` 即绑定到该类型，
+                // 体内 自己.抽象方法() 走正常方法解析 —— 模板方法模式）。
+                // 覆盖优先：实现块写了同名方法就用实现块的。
+                if let Some(特性名) = &imp.trait_name {
+                    if let Some(info) = 符号.特性.get(特性名) {
+                        for tm in &info.方法 {
+                            let Some(默认体) = &tm.default_body else {
+                                continue;
+                            };
+                            if imp.methods.iter().any(|m| m.method_name == tm.name) {
+                                continue; // 已覆盖
+                            }
+                            out.push(MethodDeclaration {
+                                receiver_name: "自己".to_string(),
+                                receiver_type: imp.target_type.clone(),
+                                is_receiver_mutable: false,
+                                method_name: tm.name.clone(),
+                                parameters: tm.parameters.clone(),
+                                return_type: tm.return_type.clone(),
+                                body: 默认体.clone(),
+                                visibility: crate::parser::ast::Visibility::公开,
+                                span: tm.span,
+                            });
+                        }
+                    }
                 }
             }
             _ => {}

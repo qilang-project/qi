@@ -31,6 +31,14 @@ impl<'ctx> 后端<'ctx> {
                             sd.type_params.len()
                         ));
                     }
+                    // 特性约束（`<T: 特性>`）v1 只支持泛型函数，结构体模板明确报错
+                    if let Some(tp) = sd.type_params.iter().find(|t| t.contains(':')) {
+                        return Err(format!(
+                            "泛型结构体 {} 的类型参数 <{}> 带特性约束 —— 结构体暂不支持约束（目前只有泛型函数支持 <T: 特性>）",
+                            sd.name,
+                            tp.replace(':', ": ")
+                        ));
+                    }
                     self.符号.泛型结构体模板.insert(
                         sd.name.clone(),
                         super::类型检查::泛型结构体模板 {
