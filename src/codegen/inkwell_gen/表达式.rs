@@ -1754,15 +1754,28 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
         use crate::parser::ast::{BinaryExpression, FormatStringPart};
 
-        // 各段 → AST 节点（字面段包字符串字面量，插值段用原表达式）
-        let mut 段: Vec<AstNode> = fs
-            .parts
-            .iter()
-            .map(|p| match p {
+        // 各段 → AST 节点（字面段包字符串字面量，插值段用原表达式）。
+        // parse_format_string 对洞只造「裸标识符」节点（洞原文整串当名字）——
+        // 简单变量够用，但 {加一(n)}、{a*2+1} 会变成怪名字。这里补真解析：
+        // 名字含非标识符字符（调用/运算/索引…）时用 LALRPOP 的 pub Expr 入口重解析。
+        let 需真解析 = |名: &str| 名.chars().any(|c| !c.is_alphanumeric() && c != '_');
+        let mut 段: Vec<AstNode> = Vec::with_capacity(fs.parts.len());
+        for p in fs.parts.iter() {
+            let 节 = match p {
                 FormatStringPart::文本(t) => 询_str(t),
-                FormatStringPart::表达式 { expr, .. } => (**expr).clone(),
-            })
-            .collect();
+                FormatStringPart::表达式 { expr, .. } => match &**expr {
+                    AstNode::标识符表达式(id) if 需真解析(&id.name) => {
+                        crate::parser::ExprParser::new()
+                            .parse(&id.name)
+                            .map_err(|e| {
+                                format!("格式字符串插值 `{{{}}}` 不是合法表达式: {:?}", id.name, e)
+                            })?
+                    }
+                    other => other.clone(),
+                },
+            };
+            段.push(节);
+        }
 
         // 链首必须是字符串：首段为字面段则直接用它起链，否则垫空串
         let 首是文本 = matches!(fs.parts.first(), None | Some(FormatStringPart::文本(_)));

@@ -1259,7 +1259,7 @@ StatementList: Vec<AstNode> = {
 
 // Expression hierarchy using tiered approach like Solang
 // Each level handles operators of the same precedence
-Expr: AstNode = {
+pub Expr: AstNode = {
     Precedence1,
 };
 

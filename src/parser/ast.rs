@@ -975,7 +975,16 @@ pub fn parse_format_string(content: &str) -> AstNode {
             let mut brace_depth = 1;
             i += 1;
             while i < chars.len() && brace_depth > 0 {
-                if chars[i] == '{' || chars[i] == '｛' {
+                if chars[i] == '"' {
+                    // 洞内字符串字面量：整串跳过，其中的 {}/｛｝ 不参与平衡
+                    i += 1;
+                    while i < chars.len() && chars[i] != '"' {
+                        if chars[i] == '\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                } else if chars[i] == '{' || chars[i] == '｛' {
                     brace_depth += 1;
                 } else if chars[i] == '}' || chars[i] == '｝' {
                     brace_depth -= 1;

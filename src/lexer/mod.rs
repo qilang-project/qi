@@ -683,8 +683,16 @@ impl Lexer {
                             self.advance(); // Skip escape in string
                         }
                         Some('"') => {
-                            // Unescaped quote inside interpolation - error
-                            break;
+                            // 洞里的字符串字面量参数（如 {对话(会话, "问题")}）：
+                            // 整串跳过（含转义），里面的 {}/引号不参与花括号平衡
+                            self.advance(); // 进入内层字符串
+                            while !self.is_at_end() && self.current_char() != Some('"') {
+                                if self.current_char() == Some('\\') {
+                                    self.advance();
+                                }
+                                self.advance();
+                            }
+                            // 此刻停在内层闭引号上，交给循环尾部的 advance 跳过
                         }
                         _ => {}
                     }
