@@ -169,7 +169,7 @@ fn test_future_struct_compilation_pipeline() {
 }
 
 函数 创建点(x值: 整数, y值: 整数) : 未来<点> {
-    变量 新点: 点 = (点 { x: x值, y: y值 });
+    变量 新点: 点 = 新建 点 { x: x值, y: y值 };
     返回 新点;
 }
 

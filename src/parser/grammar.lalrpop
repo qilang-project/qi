@@ -1960,31 +1960,8 @@ Atom: AstNode = {
         fields: vec![],
         span: Default::default(),
     }),
-    // Struct literals with parentheses (backwards compatible syntax)
-    "(" <name:Identifier> "{" <fields:StructFieldValueList> "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
-        struct_name: name,
-        type_arguments: vec![],
-        fields,
-        span: Default::default(),
-    }),
-    "(" <name:Identifier> "{" "}" ")" => AstNode::结构体实例化表达式(StructLiteralExpression {
-        struct_name: name,
-        type_arguments: vec![],
-        fields: vec![],
-        span: Default::default(),
-    }),
-    "（" <name:Identifier> "{" <fields:StructFieldValueList> "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
-        struct_name: name,
-        type_arguments: vec![],
-        fields,
-        span: Default::default(),
-    }),
-    "（" <name:Identifier> "{" "}" "）" => AstNode::结构体实例化表达式(StructLiteralExpression {
-        struct_name: name,
-        type_arguments: vec![],
-        fields: vec![],
-        span: Default::default(),
-    }),
+    // 括号结构体字面量 (名 { ... }) 已删除 —— 统一用 新建 名 { ... }。
+    // 删除原因：括号形式语义不直观（看着像普通括号表达式）；新建 一词自带语义。
 };
 
 // 闭包表达式: 闭包 [捕获列表]? (参数列表) : 返回类型 { 函数体 }
