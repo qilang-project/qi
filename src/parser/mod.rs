@@ -470,6 +470,66 @@ impl Parser {
         }
         let cleaned = normalize_colons(&cleaned);
 
+        // 中文插值前缀归一化：字符串外的 模板"/模版" → f"。
+        // 自定义 lexer 路径（run/compile）在 token text 里已做过同样归一化；
+        // parse_source 直喂 LALRPOP（check/测试走这里），必须补齐，否则
+        // qi check 对 模板"..." 误报语法错误。带字符串/字符/反引号状态机，
+        // 绝不动字面量内部的「模板"」（如 "我的模板" 的闭引号）。
+        fn normalize_template_prefix(s: &str) -> String {
+            let chars: Vec<char> = s.chars().collect();
+            let mut out = String::with_capacity(s.len());
+            let mut i = 0;
+            let (mut in_str, mut in_char, mut in_raw, mut escape) = (false, false, false, false);
+            while i < chars.len() {
+                let c = chars[i];
+                if in_raw {
+                    out.push(c);
+                    if c == '`' {
+                        in_raw = false;
+                    }
+                } else if in_str || in_char {
+                    out.push(c);
+                    if escape {
+                        escape = false;
+                    } else if c == '\\' {
+                        escape = true;
+                    } else if in_str && c == '"' {
+                        in_str = false;
+                    } else if in_char && c == '\'' {
+                        in_char = false;
+                    }
+                } else {
+                    match c {
+                        '"' => {
+                            in_str = true;
+                            out.push(c);
+                        }
+                        '\'' => {
+                            in_char = true;
+                            out.push(c);
+                        }
+                        '`' => {
+                            in_raw = true;
+                            out.push(c);
+                        }
+                        '模' if i + 2 < chars.len()
+                            && (chars[i + 1] == '板' || chars[i + 1] == '版')
+                            && chars[i + 2] == '"' =>
+                        {
+                            out.push('f');
+                            out.push('"');
+                            in_str = true;
+                            i += 2; // 吃掉 板/版 和引号
+                        }
+                        _ => out.push(c),
+                    }
+                }
+                i += 1;
+            }
+            out
+        }
+        let cleaned = normalize_template_prefix(&cleaned);
+
         // Use LALRPOP-generated parser with cleaned string input
         use crate::parser::__parse__Program::ProgramParser;
         ProgramParser::new()
