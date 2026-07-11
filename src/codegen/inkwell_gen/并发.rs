@@ -255,6 +255,48 @@ impl<'ctx> 后端<'ctx> {
             .try_as_basic_value()
             .basic()
             .ok_or_else(|| "channel_send 未返回".to_string())?;
+
+        // R5 park-wake 背压：协程体内、有界通道满（try_send 返 1）→ 把当前协程连同值
+        // park 进 send_waiters，挂起；接收方腾空位时补值并唤醒本协程（视作已发）。
+        if self.协程开() && self.协程当前.is_some() {
+            let ptrt = self.ctx.ptr_type(AddressSpace::default());
+            let func = self
+                .builder
+                .get_insert_block()
+                .and_then(|b| b.get_parent())
+                .ok_or_else(|| "通道发送：无当前函数".to_string())?;
+            let 满 = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::NE,
+                    r.into_int_value(),
+                    self.ctx.i32_type().const_zero(),
+                    "chsend.full",
+                )
+                .map_err(|e| e.to_string())?;
+            let park_bb = self.ctx.append_basic_block(func, "chsend.park");
+            let done_bb = self.ctx.append_basic_block(func, "chsend.done");
+            self.builder
+                .build_conditional_branch(满, park_bb, done_bb)
+                .map_err(|e| e.to_string())?;
+            self.builder.position_at_end(park_bb);
+            let park = self.取或声明函数(
+                "qi_coro_chan_park_send",
+                self.ctx
+                    .void_type()
+                    .fn_type(&[ptrt.into(), i64t.into()], false),
+            );
+            self.builder
+                .build_call(park, &[ch.into(), v64.into()], "")
+                .map_err(|e| e.to_string())?;
+            self.生成挂起点(false)?; // resume 后值已被接收方补进缓冲 → 视作已发送
+            self.builder
+                .build_unconditional_branch(done_bb)
+                .map_err(|e| e.to_string())?;
+            self.builder.position_at_end(done_bb);
+            return Ok((self.ctx.i64_type().const_zero().into(), Qi类型::整数));
+        }
+
         // i32 状态 → 扩到 i64
         let r64 = self
             .builder
@@ -331,14 +373,15 @@ impl<'ctx> 后端<'ctx> {
             // wait：协程体内→让出+挂起；顶层→驱动执行器一步。都回 check 重试。
             self.builder.position_at_end(wait_bb);
             if 在协程体内 {
-                let yr = self.取或声明函数(
-                    "qi_coro_yield_ready",
-                    self.ctx.void_type().fn_type(&[], false),
+                // R5 park-wake：把当前协程 park 进通道 recv_waiters（不空转），发送方
+                // 到来时唤醒。挂起 → 控制权回 executor；resume 后回 check 重试 try_recv。
+                let park = self.取或声明函数(
+                    "qi_coro_chan_park_recv",
+                    self.ctx.void_type().fn_type(&[ptrt.into()], false),
                 );
                 self.builder
-                    .build_call(yr, &[], "")
+                    .build_call(park, &[ch.into()], "")
                     .map_err(|e| e.to_string())?;
-                // 复用协程挂起点：coro.suspend → 控制权回 executor，resume 后落到其 0-case 块
                 self.生成挂起点(false)?;
                 self.builder
                     .build_unconditional_branch(check_bb)
