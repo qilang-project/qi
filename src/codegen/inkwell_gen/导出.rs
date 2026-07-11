@@ -129,7 +129,8 @@ impl<'ctx> 后端<'ctx> {
                 c符号
             ));
         }
-        let qi内部符号 = super::包内符号名(self.当前包.as_deref(), &f.name, f.parameters.len());
+        let qi内部符号 =
+            super::包内符号名(self.当前包.as_deref(), &f.name, f.parameters.len());
         self.导出表.push(导出记录 {
             c符号,
             qi内部符号,
@@ -286,7 +287,10 @@ impl<'ctx> 后端<'ctx> {
             ($e:expr) => {
                 match 结果值 {
                     Some(v) => v,
-                    None => call.try_as_basic_value().basic().ok_or_else(|| $e.to_string())?,
+                    None => call
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or_else(|| $e.to_string())?,
                 }
             };
         }

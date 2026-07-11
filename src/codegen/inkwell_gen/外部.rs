@@ -362,7 +362,10 @@ impl<'ctx> 后端<'ctx> {
             .生成带期望(a, Some(Qi类型::结构体(idx)))?
             .ok_or_else(|| "外部结构体实参无值".to_string())?;
         let 实idx = vt.结构体索引().ok_or_else(|| {
-            format!("外部函数结构体实参类型不符（期望结构体 {}，实为 {:?}）", idx, vt)
+            format!(
+                "外部函数结构体实参类型不符（期望结构体 {}，实为 {:?}）",
+                idx, vt
+            )
         })?;
         if 实idx != idx {
             return Err(format!(
@@ -424,8 +427,8 @@ impl<'ctx> 后端<'ctx> {
         use crate::parser::ast::AstNode;
         if let AstNode::标识符表达式(id) = a {
             // 必须是顶层函数（不是持有闭包的局部/全局变量）
-            let 是局部 = self.变量表.contains_key(&id.name)
-                || self.全局变量表.contains_key(&id.name);
+            let 是局部 =
+                self.变量表.contains_key(&id.name) || self.全局变量表.contains_key(&id.name);
             if !是局部 {
                 // 回调实参当函数指针：非重载函数 argc 传 0 即经「单一定义」分支正确解析
                 // （重载函数无法当裸指针，会解析失败并落到下面报错）。

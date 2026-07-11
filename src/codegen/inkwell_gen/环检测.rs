@@ -29,7 +29,7 @@
 //!   - 通道/未来/函数值字段 **不建边**（通道/未来非 RC 拥有语义；函数值→闭包 env
 //!     捕获类型在此阶段拿不到，见局限说明）。
 
-use super::类型::{元素类型, Qi类型};
+use super::类型::{Qi类型, 元素类型};
 use super::类型检查::符号表;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -45,7 +45,9 @@ fn 读模式() -> 模式 {
         Ok(v) if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off") => {
             模式::关闭
         }
-        Ok(v) if v.eq_ignore_ascii_case("strict") || v.eq_ignore_ascii_case("error") => 模式::严格,
+        Ok(v) if v.eq_ignore_ascii_case("strict") || v.eq_ignore_ascii_case("error") => {
+            模式::严格
+        }
         _ => 模式::警告,
     }
 }

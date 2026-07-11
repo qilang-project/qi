@@ -24,11 +24,7 @@ const 热点门槛毫秒: f64 = 50.0;
 
 /// 程序是否跑得够久、值得报 CPU 热点（以最大 total_ms —— 通常是 入口帧 —— 为整体耗时）。
 fn 有明显热点(热点: &[热点行]) -> bool {
-    热点
-        .iter()
-        .map(|h| h.总耗时ms)
-        .fold(0.0f64, f64::max)
-        >= 热点门槛毫秒
+    热点.iter().map(|h| h.总耗时ms).fold(0.0f64, f64::max) >= 热点门槛毫秒
 }
 
 /// 内存活跃计数（从 `[qi-rc]` 行解析）。
@@ -136,9 +132,7 @@ impl Cli {
         if json {
             打印json(&file, &静态, &热点, 内存, 测cpu, 查漏, &动态错误);
         } else {
-            打印文本(
-                &file, &静态, &热点, 内存, 测cpu, 查漏, 超时, &动态错误,
-            );
+            打印文本(&file, &静态, &热点, 内存, 测cpu, 查漏, 超时, &动态错误);
         }
         Ok(())
     }
@@ -157,9 +151,7 @@ fn 运行并捕获(
     use std::process::{Command, Stdio};
 
     let mut cmd = Command::new(exe);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -455,7 +447,11 @@ fn 生成结论(
         || 内存
             .map(|m| m.对象 > 0 || m.字符串 > 0 || m.闭包 > 0)
             .unwrap_or(false);
-    let 前缀 = if 有问题 { "需要关注：" } else { "✓ 整体健康：" };
+    let 前缀 = if 有问题 {
+        "需要关注："
+    } else {
+        "✓ 整体健康："
+    };
 
     if 片段.is_empty() {
         format!("{}未采集到诊断信号。", 前缀)
@@ -492,7 +488,10 @@ fn 打印json(
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!("  \"file\": \"{}\",\n", esc(&file.display().to_string())));
+    out.push_str(&format!(
+        "  \"file\": \"{}\",\n",
+        esc(&file.display().to_string())
+    ));
 
     // 静态
     out.push_str("  \"static\": {\n");
@@ -519,17 +518,18 @@ fn 打印json(
 
     // CPU
     if 测cpu {
-        let rows = 热点
-            .iter()
-            .take(8)
-            .map(|h| {
-                format!(
+        let rows =
+            热点
+                .iter()
+                .take(8)
+                .map(|h| {
+                    format!(
                     "{{\"name\": \"{}\", \"calls\": \"{}\", \"total_ms\": {:.3}, \"pct\": {:.1}}}",
                     esc(&h.名), esc(&h.调用次数), h.总耗时ms, h.占比
                 )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
         out.push_str(&format!("  \"cpu\": [{}],\n", rows));
     }
 

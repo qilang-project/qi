@@ -173,8 +173,8 @@ impl<'ctx> 后端<'ctx> {
                                 self.弧retain任意(cv, rt);
                             }
                             self.剖析出口()?; // 剖析：普通值返回出口计时
-                            // 出口释放全部字符串局部（返回值若来自某局部：上面已
-                            // retain +1，槽 release -1，净 +1 交调用方，正确）。
+                                              // 出口释放全部字符串局部（返回值若来自某局部：上面已
+                                              // retain +1，槽 release -1，净 +1 交调用方，正确）。
                             self.弧释放局部()?;
                             self.弹try帧()?;
                             self.builder
@@ -437,7 +437,9 @@ impl<'ctx> 后端<'ctx> {
             .生成表达式(&开流)?
             .ok_or_else(|| "流式对话无返回值".to_string())?;
         let 流ptr = self.入口块alloca(i64t.into(), "__stream")?;
-        self.builder.build_store(流ptr, 流值).map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(流ptr, 流值)
+            .map_err(|e| e.to_string())?;
         let 流名 = format!("__stream{}", self.询问计数);
         self.询问计数 += 1;
         self.变量表.insert(流名.clone(), (流ptr, Qi类型::整数));
@@ -447,11 +449,15 @@ impl<'ctx> 后端<'ctx> {
             .llvm基础类型(Qi类型::字符串)
             .ok_or_else(|| "字符串类型无效".to_string())?;
         let 片段ptr = self.入口块alloca(strt, &f.variable)?;
-        self.变量表.insert(f.variable.clone(), (片段ptr, Qi类型::字符串));
+        self.变量表
+            .insert(f.variable.clone(), (片段ptr, Qi类型::字符串));
         self.符号.声明变量(&f.variable, Qi类型::字符串);
         // ARC：片段槽 null 初始化 —— 下面每轮读新块前要 release 旧块（首轮 release(null) 安全）。
         if self.弧开() {
-            let 空指针 = self.ctx.ptr_type(inkwell::AddressSpace::default()).const_null();
+            let 空指针 = self
+                .ctx
+                .ptr_type(inkwell::AddressSpace::default())
+                .const_null();
             self.builder
                 .build_store(片段ptr, 空指针)
                 .map_err(|e| e.to_string())?;
@@ -482,7 +488,12 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "字节长度无返回值".to_string())?;
         let is_empty = self
             .builder
-            .build_int_compare(IntPredicate::EQ, len值.into_int_value(), i64t.const_zero(), "stream.empty")
+            .build_int_compare(
+                IntPredicate::EQ,
+                len值.into_int_value(),
+                i64t.const_zero(),
+                "stream.empty",
+            )
             .map_err(|e| e.to_string())?;
         self.builder
             .build_conditional_branch(is_empty, end_bb, body_bb)

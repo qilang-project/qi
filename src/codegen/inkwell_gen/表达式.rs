@@ -1160,13 +1160,15 @@ impl<'ctx> 后端<'ctx> {
             span: Default::default(),
         });
         let 返回语句 = AstNode::返回语句(ReturnStatement {
-            value: Some(Box::new(AstNode::函数调用表达式(FunctionCallExpression {
-                module_qualifier: None,
-                callee: 函数名.clone(),
-                type_arguments: vec![],
-                arguments: 实参,
-                span: Default::default(),
-            }))),
+            value: Some(Box::new(AstNode::函数调用表达式(
+                FunctionCallExpression {
+                    module_qualifier: None,
+                    callee: 函数名.clone(),
+                    type_arguments: vec![],
+                    arguments: 实参,
+                    span: Default::default(),
+                },
+            ))),
             span: Default::default(),
         });
 
@@ -1205,14 +1207,18 @@ impl<'ctx> 后端<'ctx> {
         let mut 字段值: Vec<StructFieldValue> = Vec::new();
         for (名, ty) in 信息.字段名.iter().zip(信息.字段类型.iter()) {
             let 值 = match ty {
-                Qi类型::整数 => 询_mcall(询_id("JSON"), "获取整数", vec![句柄.clone(), 询_str(名)]),
+                Qi类型::整数 => {
+                    询_mcall(询_id("JSON"), "获取整数", vec![句柄.clone(), 询_str(名)])
+                }
                 Qi类型::浮点数 => {
                     询_mcall(询_id("JSON"), "获取浮点数", vec![句柄.clone(), 询_str(名)])
                 }
                 Qi类型::字符串 => {
                     询_mcall(询_id("JSON"), "获取字符串", vec![句柄.clone(), 询_str(名)])
                 }
-                Qi类型::布尔 => 询_mcall(询_id("JSON"), "获取布尔", vec![句柄.clone(), 询_str(名)]),
+                Qi类型::布尔 => {
+                    询_mcall(询_id("JSON"), "获取布尔", vec![句柄.clone(), 询_str(名)])
+                }
                 Qi类型::枚举(eidx) => {
                     let ei = self
                         .符号
@@ -1407,7 +1413,11 @@ impl<'ctx> 后端<'ctx> {
                     format!("\"{}\"(必须是: {})", 名, 候选)
                 }
                 Qi类型::结构体(子idx) => {
-                    format!("\"{}\"(对象，含 {})", 名, self.询问字段说明(*子idx, 深 + 1)?)
+                    format!(
+                        "\"{}\"(对象，含 {})",
+                        名,
+                        self.询问字段说明(*子idx, 深 + 1)?
+                    )
                 }
                 _ => format!("\"{}\"", 名),
             };
@@ -1599,7 +1609,11 @@ impl<'ctx> 后端<'ctx> {
         let 解码 = AstNode::变量声明(VariableDeclaration {
             name: "__j".to_string(),
             type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
-            initializer: Some(Box::new(询_mcall(询_id("JSON"), "解码", vec![询_id("__r")]))),
+            initializer: Some(Box::new(询_mcall(
+                询_id("JSON"),
+                "解码",
+                vec![询_id("__r")],
+            ))),
             is_mutable: false,
             span: Default::default(),
         });

@@ -194,11 +194,7 @@ impl<'ctx> 后端<'ctx> {
         // 重载校验（同一 (包,名) 下按元数区分多个签名）。不改状态，先查后建。
         // 本定义是否带默认参数 / 变参 —— 这两者会让「按元数解析」产生歧义，故重载集内禁用。
         let 本def有默认 = f.parameters.iter().any(|p| p.default_value.is_some());
-        let 本def变参 = f
-            .parameters
-            .last()
-            .map(|p| p.is_variadic)
-            .unwrap_or(false);
+        let 本def变参 = f.parameters.last().map(|p| p.is_variadic).unwrap_or(false);
         if let Some(pkg) = self.当前包.clone() {
             if let Some(现有) = self.符号.函数按包.get(&(pkg.clone(), f.name.clone())) {
                 if !现有.is_empty() {

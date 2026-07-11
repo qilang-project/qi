@@ -42,7 +42,9 @@ impl<'ctx> 后端<'ctx> {
     /// 所有模块的 登记特性 跑完后再跑（特性可能声明在别的模块）。
     pub(super) fn 登记特性实现(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
-            let AstNode::实现块(imp) = stmt else { continue };
+            let AstNode::实现块(imp) = stmt else {
+                continue;
+            };
             let Some(特性名) = &imp.trait_name else {
                 continue; // 固有实现 `实现 类型 { ... }`：与特性无关
             };

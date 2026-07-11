@@ -4297,8 +4297,18 @@ impl ModuleRegistry {
         math_module.add_function(一元("双曲正切", "qi_math_tanh")); // 神经网络激活
         math_module.add_function(二元("最大", "qi_math_max"));
         math_module.add_function(二元("最小", "qi_math_min"));
-        math_module.add_function(ModuleFunction::new("圆周率", "qi_math_pi", vec![], "double"));
-        math_module.add_function(ModuleFunction::new("自然常数", "qi_math_e", vec![], "double"));
+        math_module.add_function(ModuleFunction::new(
+            "圆周率",
+            "qi_math_pi",
+            vec![],
+            "double",
+        ));
+        math_module.add_function(ModuleFunction::new(
+            "自然常数",
+            "qi_math_e",
+            vec![],
+            "double",
+        ));
         self.modules.insert("数学".to_string(), math_module.clone());
         self.modules.insert("标准库.数学".to_string(), math_module);
     }

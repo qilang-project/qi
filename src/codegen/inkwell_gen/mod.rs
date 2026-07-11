@@ -25,12 +25,12 @@
 
 #[path = "全局.rs"]
 mod 全局;
-#[path = "反射.rs"]
-mod 反射;
 #[path = "剖析.rs"]
 mod 剖析;
 #[path = "匹配.rs"]
 mod 匹配;
+#[path = "反射.rs"]
+mod 反射;
 #[path = "声明.rs"]
 mod 声明;
 #[path = "外部.rs"]

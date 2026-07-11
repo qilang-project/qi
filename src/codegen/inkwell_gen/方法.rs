@@ -318,8 +318,7 @@ impl<'ctx> 后端<'ctx> {
 /// 收集所有方法声明：顶层 方法声明 + 结构体内嵌 methods + 实现块方法
 /// （含特性默认方法的按类型合成）。
 fn 收集方法(
-    program: &Program,
-    符号: &super::类型检查::符号表,
+    program: &Program, 符号: &super::类型检查::符号表
 ) -> Vec<MethodDeclaration> {
     let mut out = Vec::new();
     for stmt in &program.statements {

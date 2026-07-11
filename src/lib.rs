@@ -185,8 +185,12 @@ impl QiCompiler {
         let lib_out = self.config.output_file.clone().unwrap_or_else(|| {
             let ext = match (kind, self.config.target_platform) {
                 (config::LibraryKind::静态, _) => "a".to_string(),
-                (config::LibraryKind::动态, config::CompilationTarget::MacOS) => "dylib".to_string(),
-                (config::LibraryKind::动态, config::CompilationTarget::Windows) => "dll".to_string(),
+                (config::LibraryKind::动态, config::CompilationTarget::MacOS) => {
+                    "dylib".to_string()
+                }
+                (config::LibraryKind::动态, config::CompilationTarget::Windows) => {
+                    "dll".to_string()
+                }
                 (config::LibraryKind::动态, _) => "so".to_string(),
             };
             source_file.with_file_name(format!("lib{}.{}", stem, ext))
@@ -218,11 +222,7 @@ impl QiCompiler {
     /// 静态库：把用户 .o 与 libqi_runtime.a 合并成一个自包含的 .a。
     /// 做法：在临时目录 `ar x` 解包运行时归档，连同用户 .o 一起 `ar rcs` 重新打包。
     /// 这样使用者只需链接这一个 .a，无需再并列运行时。
-    fn build_static_library(
-        &self,
-        obj: &PathBuf,
-        lib_out: &PathBuf,
-    ) -> Result<(), CompilerError> {
+    fn build_static_library(&self, obj: &PathBuf, lib_out: &PathBuf) -> Result<(), CompilerError> {
         let runtime = self.find_host_runtime_library()?;
         let tmp = std::env::temp_dir().join(format!("qi_ar_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -275,11 +275,7 @@ impl QiCompiler {
     }
 
     /// 动态库：clang -shared/-dynamiclib 用户.o + libqi_runtime.a（+ 平台系统库）→ .dylib/.so/.dll。
-    fn build_dynamic_library(
-        &self,
-        obj: &PathBuf,
-        lib_out: &PathBuf,
-    ) -> Result<(), CompilerError> {
+    fn build_dynamic_library(&self, obj: &PathBuf, lib_out: &PathBuf) -> Result<(), CompilerError> {
         let runtime = self.find_host_runtime_library()?;
         let mut cmd = std::process::Command::new("clang");
         #[cfg(target_os = "macos")]
@@ -455,7 +451,11 @@ impl QiCompiler {
     /// 必须用 2.36（信创发行版如统信 UOS/麒麟龙芯版 glibc ≥ 2.36）。
     fn zig目标三元组(&self) -> String {
         let arch = self.目标架构();
-        let glibc = if arch == "loongarch64" { "2.36" } else { "2.34" };
+        let glibc = if arch == "loongarch64" {
+            "2.36"
+        } else {
+            "2.34"
+        };
         format!("{}-linux-gnu.{}", arch, glibc)
     }
 
