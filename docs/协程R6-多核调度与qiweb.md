@@ -67,3 +67,27 @@ tokio work-stealing 池，供 `启动 <非协程>` 用。R6 的协程调度器�
 多线程调度器的 bug 是**非确定性数据竞争**，跑几次绿≠正确。必须：独立实现 + 大量重复
 压测 + 可能 tsan。这是专项工程，不宜与其它任务混做或仓促上线（否则砸 R1-R5 的稳定招牌）。
 建议：R6 单独一轮，带压测脚本；绿透了再上 R7。
+
+---
+
+## R6 实现进展（2026-07-12，feat/coro-round6-wip 分支）
+
+**已实现并验证的部分**（分支上，非 main）：
+- 全局 `Mutex<VecDeque>+Condvar` 就绪队列、通道 `Mutex` 化、RUNNING/LIVE 终止+死锁检测、
+  park/wake 锁内重检（关 try/park race）、`QI_CORO_WORKERS` 门控（默认 1=R5 逐字节同）。
+- ✅ **多核 CPU 密集加速已证明**：多核加速测（8 协程各数 30 万素数）
+  `WORKERS=1` 116ms → `WORKERS=8` 34ms = **3.4× 加速**，结果一致（207976）。
+- ✅ WORKERS=1 与 R5 逐字节同行为（R1-R5 八测全过）。
+- ✅ 轻通道多 worker：通道统一测 WORKERS=8 正常。
+
+**未解卡点（为何未合 main）**：
+- 🔴 **通道重 fanout + 多 worker 确定性 hang**：百消费（100 消费者 + cap4 通道 +
+  WORKERS=8）100% 卡死（退出 124，无输出无死锁告警 → run_all 内 RUNNING>0 疑似卡在某
+  coro 的 resume 或 worker 忙等 livelock）。ordering 修复（push_ready 先于 RUNNING--）
+  + notify_all 未解。
+- 需 **tsan 构建** + 加调度日志定位（确定性 hang，可复现，好查）。怀疑点：
+  ① worker wait/notify 与 wake 的时序 livelock；② 大量 recv_waiters 下某个 wake 链断裂；
+  ③ 生成代码 resume 在多 worker 下的某路径不返回。
+
+**决定**：main 保 R5（磐石、已上线）；R6 在本 WIP 分支续，绿透（含 tsan + 50× 压测）
+再合。ARC 原子（绿灯）+ 多核加速（3.4× 已证）说明方向对、地基牢，只差把并发 hang 收干净。
