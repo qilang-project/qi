@@ -1548,11 +1548,133 @@ impl<'ctx> 后端<'ctx> {
     /// 调 `大模型.对话`，`JSON.解码` 后**递归**反序列化回强类型结构体（支持嵌套结构体、
     /// 无载荷枚举字段）。全部复用现成 codegen（stdlib 方法调用 + 结构体字面量）。
     /// v1：T 必须是结构体；字段支持 标量/无载荷枚举/嵌套结构体；数组字段暂不支持。
-    pub(super) fn 生成询问(
+    /// 询问 / 尝试询问 共用：构造「首问 → 解码失败则带反馈追问（≤2 次）」的前缀语句
+    /// （Instructor / instructor-py 式的校验反馈重试）。产出：
+    ///   设 response_format → 首问 → 解码 → `当(解码失败 且 已重试<2)` 追问 → 复原 format。
+    /// 追问提示把上次原始回复截断（文本.子串 0..200，字节安全）拼进反馈，诱导模型只出 JSON。
+    /// 局部：`__提示`(mut) / `__r`(mut 最近回复) / `__j`(mut 解码句柄，≤0 视为失败) / `__次`(mut 已重试)。
+    /// 尾部（成功建结构体 / 失败返回）由各调用方追加。裸赋值一律包 表达式语句（否则被静默跳过）。
+    fn 询问重试前缀(strict: &str, hint: &str) -> Vec<AstNode> {
+        use crate::parser::ast::{
+            AssignmentExpression, BasicType, BinaryExpression, ExpressionStatement,
+            LiteralExpression, TypeNode, VariableDeclaration, WhileStatement,
+        };
+        let 语句 = |e: AstNode| {
+            AstNode::表达式语句(ExpressionStatement {
+                expression: Box::new(e),
+                span: Default::default(),
+            })
+        };
+        let 加 = |a: AstNode, b: AstNode| {
+            AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(a),
+                operator: BinaryOperator::加,
+                right: Box::new(b),
+                span: Default::default(),
+            })
+        };
+        let 整数字面 = |n: i64| {
+            AstNode::字面量表达式(LiteralExpression {
+                value: LiteralValue::整数(n),
+                span: Default::default(),
+            })
+        };
+        let 比较 = |a: AstNode, op: BinaryOperator, b: AstNode| {
+            AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(a),
+                operator: op,
+                right: Box::new(b),
+                span: Default::default(),
+            })
+        };
+        let 变声明 = |名: &str, t: BasicType, 初: AstNode| {
+            AstNode::变量声明(VariableDeclaration {
+                name: 名.to_string(),
+                type_annotation: Some(TypeNode::基础类型(t)),
+                initializer: Some(Box::new(初)),
+                is_mutable: true,
+                span: Default::default(),
+            })
+        };
+        let 赋 = |名: &str, v: AstNode| {
+            语句(AstNode::赋值表达式(AssignmentExpression {
+                target: Box::new(询_id(名)),
+                value: Box::new(v),
+                span: Default::default(),
+            }))
+        };
+        let 对话 = || {
+            询_mcall(
+                询_id("大模型"),
+                "对话",
+                vec![询_id("会话"), 询_id("__提示")],
+            )
+        };
+        let 解码 = || 询_mcall(询_id("JSON"), "解码", vec![询_id("__r")]);
+        let 设格式 = |v: &str| {
+            语句(询_mcall(
+                询_id("大模型"),
+                "设置配置",
+                vec![询_id("会话"), 询_str("response_format"), 询_str(v)],
+            ))
+        };
+
+        // 首问提示 = 提示 + hint
+        let 首问提示 = 加(询_id("提示"), 询_str(hint));
+        // 追问提示 = 提示 + hint + 反馈前缀 + 文本.子串(__r,0,200) + 反馈后缀
+        let 追问提示 = 加(
+            加(
+                加(
+                    加(询_id("提示"), 询_str(hint)),
+                    询_str("\n\n注意：你上次的输出无法解析为 JSON（片段："),
+                ),
+                询_mcall(
+                    询_id("文本"),
+                    "子串",
+                    vec![询_id("__r"), 整数字面(0), 整数字面(200)],
+                ),
+            ),
+            询_str("）。请严格只输出一个合法 JSON 对象。"),
+        );
+
+        let 循环 = AstNode::当语句(WhileStatement {
+            condition: Box::new(比较(
+                比较(询_id("__j"), BinaryOperator::小于, 整数字面(1)),
+                BinaryOperator::与,
+                比较(询_id("__次"), BinaryOperator::小于, 整数字面(2)),
+            )),
+            body: vec![
+                赋("__提示", 追问提示),
+                赋("__r", 对话()),
+                赋("__j", 解码()),
+                赋("__次", 加(询_id("__次"), 整数字面(1))),
+            ],
+            span: Default::default(),
+        });
+
+        vec![
+            设格式(strict),
+            变声明("__提示", BasicType::字符串, 首问提示),
+            变声明("__r", BasicType::字符串, 对话()),
+            变声明("__j", BasicType::整数, 解码()),
+            变声明("__次", BasicType::整数, 整数字面(0)),
+            循环,
+            设格式(""),
+        ]
+    }
+
+    /// `询问::<T>(会话, 提示)` —— 合成包装函数 `__询问$T(会话:整数,提示:字符串): T`，
+    /// 体走 询问重试前缀（校验反馈重试 ≤2 次），末尾 `返回 T{…递归反序列化…}`。
+    /// 与 尝试询问 对称（都走 待合成询问 队列延迟生成体），调用点改写成普通函数调用。
+    /// 最终仍失败 → 用 ≤0 句柄建空结构体（getter 取默认值），保持既有兜底行为。
+    pub(super) fn 登记询问(
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
-    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        use crate::parser::ast::BinaryExpression;
+    ) -> Result<crate::parser::ast::FunctionCallExpression, String> {
+        use crate::parser::ast::{
+            BasicType, FunctionCallExpression, FunctionDeclaration, Parameter, ReturnStatement,
+            TypeNode, Visibility,
+        };
         if call.arguments.len() != 2 {
             return Err("询问<T>(会话, 提示) 需要正好 2 个实参（会话句柄, 提示）".to_string());
         }
@@ -1560,79 +1682,60 @@ impl<'ctx> 后端<'ctx> {
             Qi类型::结构体(i) => i,
             _ => return Err("询问<T> 的 T 必须是结构体类型".to_string()),
         };
+        let t名 = self
+            .符号
+            .结构体
+            .get(idx as usize)
+            .map(|s| s.名字.clone())
+            .ok_or_else(|| "询问：结构体未登记".to_string())?;
+        let 函数名 = format!("__询问${}", t名);
+        let 改写 = FunctionCallExpression {
+            module_qualifier: None,
+            callee: 函数名.clone(),
+            type_arguments: vec![],
+            arguments: call.arguments.clone(),
+            span: call.span.clone(),
+        };
+        if self.已合成询问.contains(&函数名) {
+            return Ok(改写);
+        }
 
-        // 递归结构说明 → hint（含嵌套结构体展开 + 枚举候选）
+        // 结构化输出格式 + 递归结构说明 hint（含嵌套结构体展开 + 枚举候选）
+        let strict = self.询问响应格式(idx)?;
         let hint = format!(
             "\n\n严格要求：只输出一个 JSON 对象，含字段：{}。不要任何解释、不要代码块标记。",
             self.询问字段说明(idx, 0)?
         );
-
-        let n = self.询问计数;
-        self.询问计数 += 1;
-        let 会话名 = format!("__wd_s{}", n);
-        let jj名 = format!("__wd_j{}", n);
-
-        // AST 构造小工具
-        let id = 询_id;
-        let strlit = 询_str;
-        let mcall = 询_mcall;
-
-        // 1) 会话落 i64 临时（非 RC，安全；供多处引用不重复求值）
-        let (sess_v, _) = self
-            .生成表达式(&call.arguments[0])?
-            .ok_or_else(|| "询问：会话参数无值".to_string())?;
-        let s_ptr = self
-            .builder
-            .build_alloca(self.ctx.i64_type(), &会话名)
-            .map_err(|e| e.to_string())?;
-        self.builder
-            .build_store(s_ptr, sess_v)
-            .map_err(|e| e.to_string())?;
-        self.变量表.insert(会话名.clone(), (s_ptr, Qi类型::整数));
-
-        // 2) 开结构化输出：无数组 → json_schema strict（服务端语法保证）；含数组 →
-        // json_object（实测 qwen strict 对中文字符串数组输出乱码，json_object+hint 反而稳）。
-        // 文字 hint（上面已拼进提示）始终在，作为兜底。
-        let strict = self.询问响应格式(idx)?;
-        let 开 = mcall(
-            id("大模型"),
-            "设置配置",
-            vec![id(&会话名), strlit("response_format"), strlit(&strict)],
-        );
-        self.生成表达式(&开)?;
-
-        // 3) j = JSON.解码(大模型.对话(会话, 提示 + hint))  —— 对话只调一次
-        let 提示加提示 = AstNode::二元操作表达式(BinaryExpression {
-            left: Box::new(call.arguments[1].clone()),
-            operator: BinaryOperator::加,
-            right: Box::new(strlit(&hint)),
+        let mut body = Self::询问重试前缀(&strict, &hint);
+        // 返回 T{…递归反序列化（嵌套结构体自动递归）…}
+        body.push(AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(AstNode::结构体实例化表达式(
+                self.询问建结构体(idx, 询_id("__j"))?,
+            ))),
             span: Default::default(),
-        });
-        let 对话 = mcall(id("大模型"), "对话", vec![id(&会话名), 提示加提示]);
-        let 解码 = mcall(id("JSON"), "解码", vec![对话]);
-        let (j_v, _) = self
-            .生成表达式(&解码)?
-            .ok_or_else(|| "询问：解码无值".to_string())?;
-        let j_ptr = self
-            .builder
-            .build_alloca(self.ctx.i64_type(), &jj名)
-            .map_err(|e| e.to_string())?;
-        self.builder
-            .build_store(j_ptr, j_v)
-            .map_err(|e| e.to_string())?;
-        self.变量表.insert(jj名.clone(), (j_ptr, Qi类型::整数));
-
-        // 4) 复原 response_format
-        let 关 = mcall(
-            id("大模型"),
-            "设置配置",
-            vec![id(&会话名), strlit("response_format"), strlit("")],
-        );
-        self.生成表达式(&关)?;
-
-        // 5) 递归反序列化，构造结构体字面量（嵌套结构体自动递归）
-        let 字面量 = self.询问建结构体(idx, id(&jj名))?;
-        self.生成结构体字面量(&字面量)
+        }));
+        let 参 = |n: &str, t: BasicType| Parameter {
+            name: n.to_string(),
+            type_annotation: Some(TypeNode::基础类型(t)),
+            default_value: None,
+            is_variadic: false,
+            span: Default::default(),
+        };
+        let f = FunctionDeclaration {
+            name: 函数名.clone(),
+            type_params: vec![],
+            parameters: vec![参("会话", BasicType::整数), 参("提示", BasicType::字符串)],
+            return_type: Some(TypeNode::自定义类型(t名)),
+            body,
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        self.已合成询问.insert(函数名);
+        Ok(改写)
     }
 
     /// 判定枚举实例是否为内建 选项<T>（实例名 `选项$…`、无包、有/无 双变体），
@@ -2110,9 +2213,8 @@ impl<'ctx> 后端<'ctx> {
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<crate::parser::ast::FunctionCallExpression, String> {
         use crate::parser::ast::{
-            AstNode, BasicType, BinaryExpression, ExpressionStatement, FunctionCallExpression,
-            FunctionDeclaration, IfStatement, Parameter, ResultType, ReturnStatement, TypeNode,
-            VariableDeclaration, Visibility,
+            AstNode, BasicType, BinaryExpression, FunctionCallExpression, FunctionDeclaration,
+            IfStatement, Parameter, ResultType, ReturnStatement, TypeNode, Visibility,
         };
         if call.arguments.len() != 2 {
             return Err("尝试询问<T>(会话, 提示) 需要正好 2 个实参".to_string());
@@ -2142,17 +2244,12 @@ impl<'ctx> 后端<'ctx> {
         }
 
         // ── 构造包装函数 AST ──
+        // 前缀（首问 + 校验反馈重试 ≤2 次）与 询问 完全共用；本函数只追加成/败尾部。
         let strict = self.询问响应格式(idx)?;
         let hint = format!(
             "\n\n严格要求：只输出一个 JSON 对象，含字段：{}。不要任何解释、不要代码块标记。",
             self.询问字段说明(idx, 0)?
         );
-        let 语句 = |e: AstNode| {
-            AstNode::表达式语句(ExpressionStatement {
-                expression: Box::new(e),
-                span: Default::default(),
-            })
-        };
         let 参 = |n: &str, t: BasicType| Parameter {
             name: n.to_string(),
             type_annotation: Some(TypeNode::基础类型(t)),
@@ -2160,47 +2257,7 @@ impl<'ctx> 后端<'ctx> {
             is_variadic: false,
             span: Default::default(),
         };
-        // body
-        let 开 = 语句(询_mcall(
-            询_id("大模型"),
-            "设置配置",
-            vec![询_id("会话"), 询_str("response_format"), 询_str(&strict)],
-        ));
-        let 取回复 = AstNode::变量声明(VariableDeclaration {
-            name: "__r".to_string(),
-            type_annotation: Some(TypeNode::基础类型(BasicType::字符串)),
-            initializer: Some(Box::new(询_mcall(
-                询_id("大模型"),
-                "对话",
-                vec![
-                    询_id("会话"),
-                    AstNode::二元操作表达式(BinaryExpression {
-                        left: Box::new(询_id("提示")),
-                        operator: BinaryOperator::加,
-                        right: Box::new(询_str(&hint)),
-                        span: Default::default(),
-                    }),
-                ],
-            ))),
-            is_mutable: false,
-            span: Default::default(),
-        });
-        let 关 = 语句(询_mcall(
-            询_id("大模型"),
-            "设置配置",
-            vec![询_id("会话"), 询_str("response_format"), 询_str("")],
-        ));
-        let 解码 = AstNode::变量声明(VariableDeclaration {
-            name: "__j".to_string(),
-            type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
-            initializer: Some(Box::new(询_mcall(
-                询_id("JSON"),
-                "解码",
-                vec![询_id("__r")],
-            ))),
-            is_mutable: false,
-            span: Default::default(),
-        });
+        let 前缀 = Self::询问重试前缀(&strict, &hint);
         let 构造子 = |名: &str, 实参: AstNode| {
             AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
@@ -2239,6 +2296,11 @@ impl<'ctx> 后端<'ctx> {
             span: Default::default(),
         });
 
+        // body = 重试前缀（设格式/首问/解码/重试循环/复原格式）+ 失败分支 + 成功返回
+        let mut body = 前缀;
+        body.push(失败分支);
+        body.push(成功返回);
+
         let f = FunctionDeclaration {
             name: 函数名.clone(),
             type_params: vec![],
@@ -2247,7 +2309,7 @@ impl<'ctx> 后端<'ctx> {
                 ok_type: Box::new(TypeNode::自定义类型(t名)),
                 err_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
             })),
-            body: vec![开, 取回复, 关, 解码, 失败分支, 成功返回],
+            body,
             visibility: Visibility::私有,
             is_inline: false,
             is_async: false,
@@ -2471,7 +2533,8 @@ impl<'ctx> 后端<'ctx> {
         // 类型定向结构化输出：`询问<结构体>(会话, 提示)` —— 编译期从结构体派生
         // JSON schema、发 response_format、把回复反序列化回强类型结构体。
         if call.callee == "询问" && !call.type_arguments.is_empty() {
-            return self.生成询问(call).map(Some);
+            let 改写 = self.登记询问(call)?;
+            return self.生成函数调用(&改写);
         }
 
         // 可失败版：`尝试询问::<T>(会话, 提示)` 返回 结果<T, 字符串> —— 解析失败走 败(原始回复)，
