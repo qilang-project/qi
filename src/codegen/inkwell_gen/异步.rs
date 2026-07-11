@@ -218,12 +218,18 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?
                 .into()
         };
+        // 结构体 future 单独走「延迟解码」路径：payload 可能是
+        // - 结构体指针（普通 eager future）→ 原样返回；
+        // - 原始回复字符串（异步询问::<T> 的在飞 future）→ 调 __异步询问收$T
+        //   （JSON 解码 + 建 T）。运行时按 RC header magic 区分（qi_rc_is_string）。
+        if let 元素类型::结构体(i) = 内部 {
+            return self.生成结构体等待(fut, i);
+        }
         let (ffi, ret) = match 内部 {
             元素类型::浮点数 => ("qi_future_await_f64", Qi类型::浮点数),
             元素类型::布尔 => ("qi_future_await_bool", Qi类型::布尔),
             元素类型::指针 => ("qi_future_await_ptr", Qi类型::字符串),
-            // 结构体 future：await_ptr take 出对象指针，类型精确到 结构体(idx)
-            元素类型::结构体(i) => ("qi_future_await_ptr", Qi类型::结构体(i)),
+            元素类型::结构体(_) => unreachable!("结构体 future 已在上方分流"),
             元素类型::整数 => ("qi_future_await_i64", Qi类型::整数),
         };
         let f = self
@@ -246,6 +252,115 @@ impl<'ctx> 后端<'ctx> {
                 .into();
         }
         Ok((val, ret))
+    }
+
+    /// `等待 未来<结构体 T>` 的延迟解码 IR：
+    /// ```text
+    ///   p  = qi_future_await_ptr(fut)          ; take payload
+    ///   is = qi_rc_is_string(p)                ; STR magic 判别
+    ///   br is != 0, 解码块, 汇合块
+    /// 解码块:                                   ; 异步询问 的原始回复串
+    ///   sv = __异步询问收$T(p)                  ; JSON 解码 + 建 T（owned 交出）
+    ///   release(p)                              ; 回复串消费完毕（ARC 门控）
+    ///   br 汇合块
+    /// 汇合块:
+    ///   phi [p, 直通], [sv, 解码块尾]           ; 两路都是 T 结构体指针（owned）
+    /// ```
+    /// 普通 eager 结构体 future（payload 是结构体指针）走直通路，行为不变。
+    fn 生成结构体等待(
+        &mut self,
+        fut: BasicValueEnum<'ctx>,
+        idx: u32,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+        let i64t = self.ctx.i64_type();
+
+        let await_f = self
+            .module
+            .get_function("qi_future_await_ptr")
+            .ok_or_else(|| "future 运行时未声明: qi_future_await_ptr".to_string())?;
+        let p = self
+            .builder
+            .build_call(await_f, &[fut.into()], "await")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "await 未返回".to_string())?;
+
+        // is = qi_rc_is_string(p)（原型幂等补声明）
+        let is_str_f = match self.module.get_function("qi_rc_is_string") {
+            Some(f) => f,
+            None => self.module.add_function(
+                "qi_rc_is_string",
+                i64t.fn_type(&[ptrt.into()], false),
+                None,
+            ),
+        };
+        let is_str = self
+            .builder
+            .build_call(is_str_f, &[p.into()], "is_str")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "qi_rc_is_string 未返回".to_string())?
+            .into_int_value();
+        let cond = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                is_str,
+                i64t.const_zero(),
+                "is_str_b",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let 当前函数 = self
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_parent())
+            .ok_or_else(|| "等待：无当前函数".to_string())?;
+        let 直通块 = self
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| "等待：无当前块".to_string())?;
+        let 解码块 = self.ctx.append_basic_block(当前函数, "await_decode");
+        let 汇合块 = self.ctx.append_basic_block(当前函数, "await_merge");
+        self.builder
+            .build_conditional_branch(cond, 解码块, 汇合块)
+            .map_err(|e| e.to_string())?;
+
+        // 解码块：直接 IR 调 __异步询问收$T(p)（param 借用字符串，返回 owned T）。
+        // 不落 变量表 / 不建条件块内 alloca —— 避免 ARC 作用域清理的支配性问题。
+        self.builder.position_at_end(解码块);
+        let 收名 = self.登记异步询问收(idx)?;
+        let (收f, _) = self
+            .尝试解析用户函数(&收名, 1)
+            .ok_or_else(|| format!("异步询问收未声明: {}", 收名))?;
+        let sv = self
+            .builder
+            .build_call(收f, &[p.into()], "aw_decode")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "异步询问收：无返回值".to_string())?;
+        // 回复串消费完毕（await_ptr 交出的 +1）—— ARC 门控释放
+        self.弧release(p);
+        let 解码尾块 = self
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| "等待：解码块丢失".to_string())?;
+        self.builder
+            .build_unconditional_branch(汇合块)
+            .map_err(|e| e.to_string())?;
+
+        // 汇合：两路都是 T 结构体指针（owned +1 交调用方）
+        self.builder.position_at_end(汇合块);
+        let phi = self
+            .builder
+            .build_phi(ptrt, "await_s")
+            .map_err(|e| e.to_string())?;
+        phi.add_incoming(&[(&p, 直通块), (&sv, 解码尾块)]);
+        Ok((phi.as_basic_value(), Qi类型::结构体(idx)))
     }
 
     /// 计算一个字符串值（i8* 或整数句柄）的字节长度 —— 调 qi_runtime_string_length。

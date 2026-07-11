@@ -1738,6 +1738,149 @@ impl<'ctx> 后端<'ctx> {
         Ok(改写)
     }
 
+    /// `异步询问::<T>(会话, 提示)` → `未来<T>` —— 语言级并行结构化输出（延迟解码 future）。
+    ///
+    /// 实现路径（真并行，不是 eager）：调用点内联
+    ///   设 response_format → `大模型.异步对话`（qi_llm_chat_async **同步克隆会话**后
+    ///   spawn HTTP 线程，立即返回在飞 future）→ 复原 response_format，
+    /// 把该 未来<字符串> **重新定型为 未来<结构体 T>** 交出。JSON→T 的解码推迟到
+    /// `等待`：await 拿到 payload 后按 RC header magic 区分（qi_rc_is_string）——
+    /// 字符串（本糖产物）→ 调 `__异步询问收$T` 解码建 T；结构体指针（普通 eager
+    /// future）→ 原样返回。见 异步.rs 生成等待。
+    ///
+    /// 取舍（如实记录）：
+    /// - N 个 异步询问 = N 条并发 HTTP 线程，await 时才收割 —— 真并行；
+    /// - v1 无「校验反馈重试」（同步 询问 有）：重试需在 await 后串行追问，
+    ///   会把并行收割点变成阻塞重问；解码失败按 询问 兜底语义给空结构体；
+    /// - API 失败的 future 被 等待 时沿既有语义抛 Qi 异常（尝试 可捕获），
+    ///   与 大模型.异步对话 行为一致。
+    pub(super) fn 生成异步询问(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        use crate::parser::ast::BinaryExpression;
+        if call.arguments.len() != 2 {
+            return Err("异步询问<T>(会话, 提示) 需要正好 2 个实参（会话句柄, 提示）".to_string());
+        }
+        let idx = match self.符号.解析类型(&call.type_arguments[0]) {
+            Qi类型::结构体(i) => i,
+            _ => return Err("异步询问<T> 的 T 必须是结构体类型".to_string()),
+        };
+        let strict = self.询问响应格式(idx)?;
+        let hint = format!(
+            "\n\n严格要求：只输出一个 JSON 对象，含字段：{}。不要任何解释、不要代码块标记。",
+            self.询问字段说明(idx, 0)?
+        );
+
+        // 会话落 i64 临时（多处引用不重复求值）
+        let n = self.询问计数;
+        self.询问计数 += 1;
+        let 会话名 = format!("__aw_s{}", n);
+        let (sess_v, _) = self
+            .生成表达式(&call.arguments[0])?
+            .ok_or_else(|| "异步询问：会话参数无值".to_string())?;
+        let s_ptr = self
+            .builder
+            .build_alloca(self.ctx.i64_type(), &会话名)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(s_ptr, sess_v)
+            .map_err(|e| e.to_string())?;
+        self.变量表.insert(会话名.clone(), (s_ptr, Qi类型::整数));
+
+        // 开结构化输出 → 异步对话（同步克隆会话配置后 spawn，立即返回）→ 复原
+        let 开 = 询_mcall(
+            询_id("大模型"),
+            "设置配置",
+            vec![询_id(&会话名), 询_str("response_format"), 询_str(&strict)],
+        );
+        self.生成表达式(&开)?;
+        let 提示加提示 = AstNode::二元操作表达式(BinaryExpression {
+            left: Box::new(call.arguments[1].clone()),
+            operator: BinaryOperator::加,
+            right: Box::new(询_str(&hint)),
+            span: Default::default(),
+        });
+        let 发 = 询_mcall(
+            询_id("大模型"),
+            "异步对话",
+            vec![询_id(&会话名), 提示加提示],
+        );
+        let (fut_v, _) = self
+            .生成表达式(&发)?
+            .ok_or_else(|| "异步询问：异步对话无值".to_string())?;
+        let 关 = 询_mcall(
+            询_id("大模型"),
+            "设置配置",
+            vec![询_id(&会话名), 询_str("response_format"), 询_str("")],
+        );
+        self.生成表达式(&关)?;
+
+        // 预登记解码接收器（幂等）—— 等待 处也会登记；这里先登记保证 T 的
+        // 嵌套辅助（枚举/数组/选项）在 ask 编译单元内就绪。
+        self.登记异步询问收(idx)?;
+
+        Ok((fut_v, Qi类型::未来(super::类型::元素类型::结构体(idx))))
+    }
+
+    /// 异步询问 的延迟解码接收器：合成 `__异步询问收$T(__r: 字符串) : T`
+    ///   变量 __j = JSON.解码(__r); 返回 T{…递归反序列化…};
+    /// `等待 未来<T>` 的 IR 在 payload 是字符串时调它。幂等，入 待合成询问 队列。
+    pub(super) fn 登记异步询问收(&mut self, idx: u32) -> Result<String, String> {
+        use crate::parser::ast::{
+            BasicType, FunctionDeclaration, Parameter, ReturnStatement, TypeNode,
+            VariableDeclaration, Visibility,
+        };
+        let t名 = self
+            .符号
+            .结构体
+            .get(idx as usize)
+            .map(|s| s.名字.clone())
+            .ok_or_else(|| "异步询问：结构体未登记".to_string())?;
+        let 函数名 = format!("__异步询问收${}", t名);
+        if self.已合成询问.contains(&函数名) {
+            return Ok(函数名);
+        }
+        let 解码 = AstNode::变量声明(VariableDeclaration {
+            name: "__j".to_string(),
+            type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
+            initializer: Some(Box::new(询_mcall(
+                询_id("JSON"),
+                "解码",
+                vec![询_id("__r")],
+            ))),
+            is_mutable: false,
+            span: Default::default(),
+        });
+        let 返回 = AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(AstNode::结构体实例化表达式(
+                self.询问建结构体(idx, 询_id("__j"))?,
+            ))),
+            span: Default::default(),
+        });
+        let f = FunctionDeclaration {
+            name: 函数名.clone(),
+            type_params: vec![],
+            parameters: vec![Parameter {
+                name: "__r".to_string(),
+                type_annotation: Some(TypeNode::基础类型(BasicType::字符串)),
+                default_value: None,
+                is_variadic: false,
+                span: Default::default(),
+            }],
+            return_type: Some(TypeNode::自定义类型(t名)),
+            body: vec![解码, 返回],
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        self.已合成询问.insert(函数名.clone());
+        Ok(函数名)
+    }
+
     /// 判定枚举实例是否为内建 选项<T>（实例名 `选项$…`、无包、有/无 双变体），
     /// 是则返回内类型 T。用户枚举不可能撞名（标识符里不含 `$`）。
     pub(super) fn 选项内类型(&self, eidx: u32) -> Option<Qi类型> {
@@ -2543,6 +2686,12 @@ impl<'ctx> 后端<'ctx> {
         if call.callee == "尝试询问" && !call.type_arguments.is_empty() {
             let 改写 = self.登记尝试询问(call)?;
             return self.生成函数调用(&改写);
+        }
+
+        // 并行版：`异步询问::<T>(会话, 提示)` 返回 未来<T> —— 立即发出请求（HTTP 在
+        // 独立线程在飞），`等待` 时才解码建 T。多个 异步询问 天然并行。
+        if call.callee == "异步询问" && !call.type_arguments.is_empty() {
+            return self.生成异步询问(call).map(Some);
         }
 
         // 工具 schema 自动生成：`工具模式(某函数)` —— 编译期从函数签名（参数名+类型）
