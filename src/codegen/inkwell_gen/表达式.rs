@@ -2660,6 +2660,14 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // QI_CORO 协程内建（如 执行器运行全部()）—— 无模块限定、无类型实参时拦截。
+        // QI_CORO 关时 生成协程内建 恒返回 None，逐字节不变。
+        if call.module_qualifier.is_none() && call.type_arguments.is_empty() {
+            if let Some(结果) = self.生成协程内建(&call.callee, &call.arguments)? {
+                return Ok(结果);
+            }
+        }
+
         // 内建 `长度(数组)`：读数组长度头。必须在裸函数 stdlib 回退**之前**拦截——
         // 否则会命中 向量.长度（模长，返回浮点），整数数组读成垃圾、浮点数组变 √Σx²。
         // （a.长度 字段形式一直正确；此分支让调用形式与其一致。向量模长请显式写
@@ -2921,7 +2929,15 @@ impl<'ctx> 后端<'ctx> {
             self.弧release任意(v, vt);
         }
         match cs.try_as_basic_value().basic() {
-            Some(v) => Ok(Some((v, ret))),
+            Some(v) => {
+                // QI_CORO：coroutine ramp 返回裸 handle → 包成 coro future（QiCoro*）。
+                if self.是协程函数(f) {
+                    let w = self.协程包装spawn(v)?;
+                    Ok(Some((w, ret)))
+                } else {
+                    Ok(Some((v, ret)))
+                }
+            }
             None => Ok(None),
         }
     }

@@ -190,7 +190,7 @@ fn 查引用(node: &AstNode, name: &str, 屏蔽: &HashSet<String>, 命中: &mut 
 
 /// 返回一个节点的所有子表达式 / 子语句（用于两趟递归）。
 /// 覆盖常见语句/表达式；漏掉的冷门形态只会漏报（宁可少报，不误报/不崩）。
-fn 子节点(node: &AstNode) -> Vec<&AstNode> {
+pub(super) fn 子节点(node: &AstNode) -> Vec<&AstNode> {
     let mut v: Vec<&AstNode> = Vec::new();
     match node {
         AstNode::变量声明(vd) => {

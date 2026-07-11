@@ -202,6 +202,13 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         expr: &AstNode,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        // QI_CORO：协程体内 `等待 让出()` / `等待 异步睡眠(ms)` = 真挂起点（交回 executor）。
+        // 非挂起原语的 等待（如 等待 某 future）在协程内仍走下方 eager 路径。
+        if self.协程当前.is_some() {
+            if let Some(r) = self.尝试协程挂起(expr)? {
+                return Ok(r);
+            }
+        }
         let (v, t) = self
             .生成表达式(expr)?
             .ok_or_else(|| "等待操作数无值".to_string())?;

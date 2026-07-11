@@ -123,6 +123,11 @@ impl<'ctx> 后端<'ctx> {
                         .map_err(|e| e.to_string())?;
                     return Ok(());
                 }
+                // QI_CORO：协程体内 返回 → 存 promise + final suspend（真挂起点）。
+                if self.协程当前.is_some() {
+                    self.生成协程返回(ret.value.as_deref())?;
+                    return Ok(());
+                }
                 match &ret.value {
                     Some(expr) => {
                         // 规则①：返回语句以声明返回类型为构造子期望（选项/结果 定型）
