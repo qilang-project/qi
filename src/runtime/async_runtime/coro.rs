@@ -259,6 +259,38 @@ pub extern "C" fn qi_coro_step_once() -> i64 {
     step() as i64
 }
 
+/// R4：协作式 await 的**非阻塞轮询**。1 = 已就绪（可取值）；0 = 未就绪（应让出）。
+/// 统一处理两类 future：
+/// - 协程 future（QiCoro，magic 命中）：看 `done` 标志；
+/// - eager `Future`（含 异步询问/异步对话 的**异步 IO** pending future）：看 state
+///   —— Completed/Failed 即就绪，Pending 未就绪。
+///
+/// 协程体内 `等待 <future>` 编译成「poll；未就绪则 让出+挂起；resume 再 poll」的
+/// 协作式循环（见 codegen 异步.rs 协程等待轮询）。这样：① 协程内 await 另一协程时
+/// 让出执行权、由外层执行器驱动被等协程到完成（不再 re-entrant 驱动崩溃）；② await
+/// 异步 IO 时让出，HTTP 后台线程在飞、同执行器上别的协程得以运行 —— 真 IO 上车。
+/// 取值仍走既有 qi_future_await_*（此刻已就绪，立即返回不阻塞）。
+///
+/// # Safety
+/// `fut` 为 null 或指向 QiCoro / eager `Future` 的有效指针。
+#[no_mangle]
+pub extern "C" fn qi_coro_await_poll(fut: *const c_void) -> i32 {
+    if fut.is_null() {
+        return 1; // null → 视为已就绪（await 取默认值，不死等）
+    }
+    if unsafe { is_coro(fut) } {
+        return unsafe { (*(fut as *const QiCoro)).done } as i32;
+    }
+    // eager Future（异步 IO pending future）：Completed/Failed 即就绪。
+    use crate::runtime::async_runtime::future::{Future, FutureState};
+    let f = unsafe { &*(fut as *const Future) };
+    let st = f.state.lock().unwrap().clone();
+    match st {
+        FutureState::Pending => 0,
+        _ => 1,
+    }
+}
+
 // ───────────────────────── Round 3：协程原生通道 ─────────────────────────
 //
 // 与 tokio 版 `qi_runtime_channel_*`（跨线程、阻塞、boxed-i64 ABI）不同：本通道

@@ -225,6 +225,12 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?
                 .into()
         };
+        // R4：协程体内 `等待 <future>` → 协作式轮询（poll 未就绪则 让出+挂起，resume 再 poll）。
+        // 就绪后再走下方取值（此刻已就绪，await FFI 立即返回不阻塞、协程 future 也不再
+        // re-entrant 驱动）。① 协程内 await 另一协程不崩；② await 异步 IO 让出 → 真 IO 上车。
+        if self.协程当前.is_some() {
+            self.协程等待轮询(fut)?;
+        }
         // 结构体 future 单独走「延迟解码」路径：payload 可能是
         // - 结构体指针（普通 eager future）→ 原样返回；
         // - 原始回复字符串（异步询问::<T> 的在飞 future）→ 调 __异步询问收$T
@@ -259,6 +265,92 @@ impl<'ctx> 后端<'ctx> {
                 .into();
         }
         Ok((val, ret))
+    }
+
+    /// R4：协程体内 `等待 <future>` 的协作式轮询循环（仅 协程当前.is_some() 时调）。
+    /// ```text
+    ///   br poll
+    /// poll:
+    ///   st = qi_coro_await_poll(fut)     ; 1=就绪 0=未就绪
+    ///   br st!=0, ready, wait
+    /// wait:
+    ///   qi_coro_yield_ready()
+    ///   <生成挂起点(false)>              ; 挂起 → 控制权回 executor（驱动被等协程/等 IO）
+    ///   br poll
+    /// ready:                             ; builder 停在此，后续取值
+    /// ```
+    fn 协程等待轮询(&mut self, fut: BasicValueEnum<'ctx>) -> Result<(), String> {
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+        let i32t = self.ctx.i32_type();
+        let func = self
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_parent())
+            .ok_or_else(|| "协程等待轮询：无当前函数".to_string())?;
+        let futp = if fut.is_pointer_value() {
+            fut
+        } else {
+            self.builder
+                .build_int_to_ptr(fut.into_int_value(), ptrt, "f2p")
+                .map_err(|e| e.to_string())?
+                .into()
+        };
+        let poll = match self.module.get_function("qi_coro_await_poll") {
+            Some(f) => f,
+            None => self.module.add_function(
+                "qi_coro_await_poll",
+                i32t.fn_type(&[ptrt.into()], false),
+                None,
+            ),
+        };
+        let yr = match self.module.get_function("qi_coro_yield_ready") {
+            Some(f) => f,
+            None => self.module.add_function(
+                "qi_coro_yield_ready",
+                self.ctx.void_type().fn_type(&[], false),
+                None,
+            ),
+        };
+        let poll_bb = self.ctx.append_basic_block(func, "coawait.poll");
+        let wait_bb = self.ctx.append_basic_block(func, "coawait.wait");
+        let ready_bb = self.ctx.append_basic_block(func, "coawait.ready");
+        self.builder
+            .build_unconditional_branch(poll_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(poll_bb);
+        let st = self
+            .builder
+            .build_call(poll, &[futp.into()], "coawait.st")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "qi_coro_await_poll 无返回".to_string())?
+            .into_int_value();
+        let 就绪 = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                st,
+                i32t.const_zero(),
+                "coawait.rdy",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_conditional_branch(就绪, ready_bb, wait_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(wait_bb);
+        self.builder
+            .build_call(yr, &[], "")
+            .map_err(|e| e.to_string())?;
+        self.生成挂起点(false)?; // 挂起：resume 后落到其 0-case 块
+        self.builder
+            .build_unconditional_branch(poll_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(ready_bb);
+        Ok(())
     }
 
     /// `等待 未来<结构体 T>` 的延迟解码 IR：
