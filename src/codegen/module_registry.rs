@@ -4263,6 +4263,44 @@ impl ModuleRegistry {
             .insert("随机".to_string(), random_module.clone());
         self.modules
             .insert("标准库.随机".to_string(), random_module);
+
+        // ── 数学 模块：浮点标量数学函数（math_ffi.rs，底层 libm）──
+        let mut math_module = Module::new("数学");
+        let 一元 = |名: &str, ffi: &str| {
+            ModuleFunction::new(名, ffi, vec!["浮点数".to_string()], "double")
+        };
+        let 二元 = |名: &str, ffi: &str| {
+            ModuleFunction::new(
+                名,
+                ffi,
+                vec!["浮点数".to_string(), "浮点数".to_string()],
+                "double",
+            )
+        };
+        math_module.add_function(一元("指数", "qi_math_exp")); // e^x
+        math_module.add_function(一元("自然对数", "qi_math_ln"));
+        math_module.add_function(一元("对数10", "qi_math_log10"));
+        math_module.add_function(一元("对数2", "qi_math_log2"));
+        math_module.add_function(一元("开方", "qi_math_sqrt"));
+        math_module.add_function(一元("立方根", "qi_math_cbrt"));
+        math_module.add_function(二元("幂", "qi_math_pow")); // 底^指
+        math_module.add_function(一元("绝对值", "qi_math_abs"));
+        math_module.add_function(一元("向上取整", "qi_math_ceil"));
+        math_module.add_function(一元("向下取整", "qi_math_floor"));
+        math_module.add_function(一元("四舍五入", "qi_math_round"));
+        math_module.add_function(一元("正弦", "qi_math_sin"));
+        math_module.add_function(一元("余弦", "qi_math_cos"));
+        math_module.add_function(一元("正切", "qi_math_tan"));
+        math_module.add_function(一元("反正弦", "qi_math_asin"));
+        math_module.add_function(一元("反余弦", "qi_math_acos"));
+        math_module.add_function(一元("反正切", "qi_math_atan"));
+        math_module.add_function(一元("双曲正切", "qi_math_tanh")); // 神经网络激活
+        math_module.add_function(二元("最大", "qi_math_max"));
+        math_module.add_function(二元("最小", "qi_math_min"));
+        math_module.add_function(ModuleFunction::new("圆周率", "qi_math_pi", vec![], "double"));
+        math_module.add_function(ModuleFunction::new("自然常数", "qi_math_e", vec![], "double"));
+        self.modules.insert("数学".to_string(), math_module.clone());
+        self.modules.insert("标准库.数学".to_string(), math_module);
     }
 
     /// 注册环境变量模块
