@@ -271,6 +271,10 @@ impl<'ctx> 后端<'ctx> {
         // mangle / 签名都按本定义的形参个数取 —— 精确对应本 f（重载各元数独立符号）。
         let 元数 = f.parameters.len();
         let mangled = super::包内符号名(self.当前包.as_deref(), &f.name, 元数);
+        // QI_CORO：协程函数（返回 未来<T> 且含 等待）走 coro 变换（llvm.coro.*）。
+        if self.协程函数集.contains(&mangled) {
+            return self.生成协程函数体(f);
+        }
         let func = self
             .module
             .get_function(&mangled)

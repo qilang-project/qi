@@ -29,6 +29,8 @@ mod 全局;
 mod 剖析;
 #[path = "匹配.rs"]
 mod 匹配;
+#[path = "协程.rs"]
+mod 协程;
 #[path = "反射.rs"]
 mod 反射;
 #[path = "声明.rs"]
@@ -188,6 +190,16 @@ struct 后端<'ctx> {
     /// 当前闭包体内的「弱捕获局部名」集合（`闭包 [弱 x]`）。这些局部走 unowned
     /// 语义：合成时不 retain、出口 弧释放局部 跳过。合成每个闭包体前后 take/restore。
     弱局部: std::collections::HashSet<String>,
+    /// QI_CORO=1 时为 true：把「返回 未来<T> 且含 等待」的用户函数编译成 LLVM
+    /// coroutine（llvm.coro.* stackless 状态机）。默认关，关时逐字节不变（eager future）。
+    /// 见 协程.rs。
+    协程: bool,
+    /// 协程函数的 mangled 符号名集合（QI_CORO 下调用点据此把返回的 handle 包成
+    /// coro future）。声明阶段扫描全部函数体填充；QI_CORO 关时恒空。
+    协程函数集: std::collections::HashSet<String>,
+    /// 当前正在生成的 coroutine 上下文（frame handle / promise / 公共块）。
+    /// 仅在协程体生成期间为 Some：`等待 让出/睡眠` 与 `返回` 据此发挂起点 / 存返回值。
+    协程当前: Option<协程::协程上下文<'ctx>>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -230,7 +242,18 @@ impl<'ctx> 后端<'ctx> {
             剖析槽: None,
             导出表: Vec::new(),
             弱局部: std::collections::HashSet::new(),
+            // 协程默认关（QI_CORO 未设或为 0/false）：走 eager future 老路，逐字节不变。
+            协程: std::env::var("QI_CORO")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            协程函数集: std::collections::HashSet::new(),
+            协程当前: None,
         }
+    }
+
+    /// QI_CORO 门控：是否启用真协程变换。
+    pub(super) fn 协程开(&self) -> bool {
+        self.协程
     }
 
     /// 设置当前包（同步到符号表，供签名解析）。
@@ -536,6 +559,12 @@ impl<'ctx> 后端<'ctx> {
         //（早于任何用户代码，含全局初始化）。供 反射.* 自省。
         self.生成反射注册()?;
 
+        // QI_CORO：有协程函数时，main 序言注册 coro intrinsic 包装（executor 回调用）。
+        // 早于任何 启动协程 / 等待 —— resume/done/destroy/promise 就位。关时不触发。
+        if self.协程开() && !self.协程函数集.is_empty() {
+            self.注册协程ops()?;
+        }
+
         // 全局变量初始化（所有模块的带初值全局，在 body 之前 store）
         self.生成全局初始化(programs)?;
 
@@ -727,6 +756,10 @@ pub fn compile_to_object_multi(
         后端值.检查导入遮蔽(p)?;
     }
 
+    // QI_CORO：收集协程函数（返回 未来<T> 且含 等待）的 mangled 名 —— 在生成任何
+    // 函数体 / 调用点之前就位（调用点据此把返回 handle 包成 coro future）。关时恒空。
+    后端值.收集协程函数(programs);
+
     // 外部 C 函数声明（`外部 "库" { ... }`）：建 C 名原型 + 存签名。
     // 在用户函数登记之后 —— 撞名（外部与用户函数同名）在此报错。
     for p in programs {
@@ -843,11 +876,24 @@ pub fn compile_to_object_multi(
         inkwell::targets::TargetTriple::create(&t)
     };
     // 优化级别 → (目标机 codegen 级别, 新 PassManager 管线串)
-    let (tm_opt, pass_pipeline) = match opt {
+    let (tm_opt, pass_pipeline): (LlvmOpt, Option<String>) = match opt {
         crate::config::OptimizationLevel::None => (LlvmOpt::None, None),
-        crate::config::OptimizationLevel::Basic => (LlvmOpt::Less, Some("default<O1>")),
-        crate::config::OptimizationLevel::Standard => (LlvmOpt::Default, Some("default<O2>")),
-        crate::config::OptimizationLevel::Maximum => (LlvmOpt::Aggressive, Some("default<O3>")),
+        crate::config::OptimizationLevel::Basic => (LlvmOpt::Less, Some("default<O1>".into())),
+        crate::config::OptimizationLevel::Standard => {
+            (LlvmOpt::Default, Some("default<O2>".into()))
+        }
+        crate::config::OptimizationLevel::Maximum => {
+            (LlvmOpt::Aggressive, Some("default<O3>".into()))
+        }
+    };
+    // QI_CORO：确保 coroutine 变换的 CoroEarly/CoroSplit/CoroCleanup 一定运行。
+    // - default<O1/O2/O3> 已含 coro pass（对无协程模块 no-op）→ 保持不变。
+    // - -O0（pass_pipeline=None）下须显式补 coro-only 管线，否则 llvm.coro.* 不 lower。
+    // QI_CORO 关时此块不触发 → 默认路径逐字节不变。
+    let pass_pipeline = if 后端值.协程开() && pass_pipeline.is_none() {
+        Some("coro-early,cgscc(coro-split),coro-cleanup".to_string())
+    } else {
+        pass_pipeline
     };
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let tm = target
@@ -868,7 +914,7 @@ pub fn compile_to_object_multi(
         .set_data_layout(&tm.get_target_data().get_data_layout());
     // 模块级优化管线（新 PassManager）。setjmp 已带 returns_twice、
     // retain/release 是不透明外部调用，O3 下语义安全。
-    if let Some(pipeline) = pass_pipeline {
+    if let Some(pipeline) = &pass_pipeline {
         后端值
             .module
             .run_passes(pipeline, &tm, inkwell::passes::PassBuilderOptions::create())
