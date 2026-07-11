@@ -1226,7 +1226,22 @@ impl<'ctx> 后端<'ctx> {
                         .get(*eidx as usize)
                         .ok_or_else(|| format!("询问：字段「{}」枚举未登记", 名))?
                         .装箱;
-                    if 装箱 {
+                    if let Some(内) = self.选项内类型(*eidx) {
+                        // 选项<T> 可选字段：缺键/null → 无，存在 → 有(值)。
+                        // 辅助函数按内类型复用（键名作参数）：__询问选项$字符串(句柄, 键)
+                        let 函数名 = self
+                            .登记询问选项(内)
+                            .map_err(|e| format!("询问：字段「{}」：{}", 名, e))?;
+                        crate::parser::ast::AstNode::函数调用表达式(
+                            crate::parser::ast::FunctionCallExpression {
+                                module_qualifier: None,
+                                callee: 函数名,
+                                type_arguments: vec![],
+                                arguments: vec![句柄.clone(), 询_str(名)],
+                                span: Default::default(),
+                            },
+                        )
+                    } else if 装箱 {
                         // 带载荷枚举：合成一个 if 链辅助函数按判别键构造对应变体，
                         // 字段值 = 辅助函数(获取该字段对应的 JSON 子对象)
                         let 函数名 = self.登记询问枚举(*eidx)?;
@@ -1340,7 +1355,10 @@ impl<'ctx> 后端<'ctx> {
         for ty in 信息.字段类型.iter() {
             match ty {
                 Qi类型::数组(_) => return true,
-                // 带载荷枚举：oneOf/判别在 strict 下 provider 支持不一，退 json_object+hint
+                // 带载荷枚举：oneOf/判别在 strict 下 provider 支持不一，退 json_object+hint。
+                // 选项<T> 可选字段也走这条：OpenAI 系 strict 要求 required 列全字段、
+                // 可选性只能用 type:[X,"null"] 表达，而缺键语义靠 json_object+hint
+                // （「不知道就省略这个键」）实测最稳，故统一退 json_object。
                 Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) => {
                     if self
                         .符号
@@ -1449,6 +1467,21 @@ impl<'ctx> 后端<'ctx> {
         let mut 部件: Vec<String> = Vec::new();
         for (名, ty) in 信息.字段名.iter().zip(信息.字段类型.iter()) {
             let 描述 = match ty {
+                // 选项<T> 可选字段：明示「可省略」——不知道就整个键不输出（也别写 null）
+                Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) if self.选项内类型(*eidx).is_some() =>
+                {
+                    let 内名 = match self.选项内类型(*eidx).unwrap() {
+                        Qi类型::字符串 => "字符串",
+                        Qi类型::整数 => "整数",
+                        Qi类型::浮点数 => "数字",
+                        Qi类型::布尔 => "布尔(true/false)",
+                        _ => "值",
+                    };
+                    format!(
+                        "\"{}\"(可选，值为{}；不知道或不适用就**完全省略这个键**，不要输出 null，不要编造)",
+                        名, 内名
+                    )
+                }
                 Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) => {
                     let ei = self.符号.枚举.get(*eidx as usize);
                     match ei {
@@ -1600,6 +1633,126 @@ impl<'ctx> 后端<'ctx> {
         // 5) 递归反序列化，构造结构体字面量（嵌套结构体自动递归）
         let 字面量 = self.询问建结构体(idx, id(&jj名))?;
         self.生成结构体字面量(&字面量)
+    }
+
+    /// 判定枚举实例是否为内建 选项<T>（实例名 `选项$…`、无包、有/无 双变体），
+    /// 是则返回内类型 T。用户枚举不可能撞名（标识符里不含 `$`）。
+    pub(super) fn 选项内类型(&self, eidx: u32) -> Option<Qi类型> {
+        let ei = self.符号.枚举.get(eidx as usize)?;
+        if ei.包.is_none()
+            && ei.名字.starts_with("选项$")
+            && ei.变体.len() == 2
+            && ei.变体[0].名字 == "有"
+            && ei.变体[1].名字 == "无"
+        {
+            ei.变体[0].载荷.first().copied()
+        } else {
+            None
+        }
+    }
+
+    /// 选项<T> 可选字段反序列化：合成
+    /// `__询问选项$<内类型>(__句柄:整数, __键:字符串): 选项<内T>`
+    ///   如果 JSON.是否包含键(__句柄, __键) == 0 { 返回 无; }   // 缺键或值为 null
+    ///   返回 有(<按内类型 getter>);
+    /// 键名作参数 ⇒ 同内类型全局复用同一个辅助函数。v1 内类型仅标量
+    /// （字符串/整数/浮点数/布尔）；选项<结构体>/选项<数组>/选项<枚举> 留 v2。
+    /// 函数体入 待合成询问 队列延迟生成（与 登记询问枚举 同款）。
+    pub(super) fn 登记询问选项(&mut self, 内: Qi类型) -> Result<String, String> {
+        use crate::parser::ast::{
+            AstNode, BasicType, BinaryExpression, FunctionDeclaration, IfStatement,
+            LiteralExpression, OptionType, Parameter, ReturnStatement, TypeNode, Visibility,
+        };
+        let (标, 内节点, getter) = match 内 {
+            Qi类型::字符串 => ("字符串", BasicType::字符串, "获取字符串"),
+            Qi类型::整数 => ("整数", BasicType::整数, "获取整数"),
+            Qi类型::浮点数 => ("浮点数", BasicType::浮点数, "获取浮点数"),
+            Qi类型::布尔 => ("布尔", BasicType::布尔, "获取布尔"),
+            _ => return Err(
+                "选项字段 v1 仅支持 选项<字符串/整数/浮点数/布尔>（选项<结构体>/选项<数组> 留 v2）"
+                    .to_string(),
+            ),
+        };
+        let 函数名 = format!("__询问选项${}", 标);
+        if self.已合成询问.contains(&函数名) {
+            return Ok(函数名);
+        }
+        let 整数字面 = |n: i64| {
+            AstNode::字面量表达式(LiteralExpression {
+                value: LiteralValue::整数(n),
+                span: Default::default(),
+            })
+        };
+        // 如果 (JSON.是否包含键(__句柄, __键) == 0) { 返回 无; }
+        let 缺键分支 = AstNode::如果语句(IfStatement {
+            condition: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(询_mcall(
+                    询_id("JSON"),
+                    "是否包含键",
+                    vec![询_id("__句柄"), 询_id("__键")],
+                )),
+                operator: BinaryOperator::等于,
+                right: Box::new(整数字面(0)),
+                span: Default::default(),
+            })),
+            then_branch: vec![AstNode::返回语句(ReturnStatement {
+                value: Some(Box::new(询_id("无"))),
+                span: Default::default(),
+            })],
+            else_branch: None,
+            span: Default::default(),
+        });
+        // 取值：布尔 getter 返回 整数(0/1)，比较成真布尔再进 有()
+        let 取值 = {
+            let g = 询_mcall(询_id("JSON"), getter, vec![询_id("__句柄"), 询_id("__键")]);
+            if matches!(内, Qi类型::布尔) {
+                AstNode::二元操作表达式(BinaryExpression {
+                    left: Box::new(g),
+                    operator: BinaryOperator::等于,
+                    right: Box::new(整数字面(1)),
+                    span: Default::default(),
+                })
+            } else {
+                g
+            }
+        };
+        // 返回 有(取值); —— 有/无 是内置裸名构造子，由返回类型 选项<内T> 定型（规则①）
+        let 有返回 = AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(AstNode::函数调用表达式(
+                crate::parser::ast::FunctionCallExpression {
+                    module_qualifier: None,
+                    callee: "有".to_string(),
+                    type_arguments: vec![],
+                    arguments: vec![取值],
+                    span: Default::default(),
+                },
+            ))),
+            span: Default::default(),
+        });
+        let 参 = |名: &str, t: BasicType| Parameter {
+            name: 名.to_string(),
+            type_annotation: Some(TypeNode::基础类型(t)),
+            default_value: None,
+            is_variadic: false,
+            span: Default::default(),
+        };
+        let f = FunctionDeclaration {
+            name: 函数名.clone(),
+            type_params: vec![],
+            parameters: vec![参("__句柄", BasicType::整数), 参("__键", BasicType::字符串)],
+            return_type: Some(TypeNode::选项类型(OptionType {
+                inner_type: Box::new(TypeNode::基础类型(内节点)),
+            })),
+            body: vec![缺键分支, 有返回],
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        self.已合成询问.insert(函数名.clone());
+        Ok(函数名)
     }
 
     /// `尝试询问::<T>(会话, 提示)` 登记：合成 `__尝试询问$T名(会话,提示): 结果<T,字符串>`
