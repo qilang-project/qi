@@ -2521,6 +2521,47 @@ impl<'ctx> 后端<'ctx> {
             return self.生成表达式(&改写);
         }
 
+        // 语言级嵌入糖：`嵌入(会话, 文本)` → 大模型.嵌入(会话, 文本) : 数组<浮点数>。
+        // 脱糖走 qi_llm_embed（会话端点 base + /embeddings）。若用户自定义了 2 参 嵌入
+        // 函数则让路（harness 的 嵌入 是 4 参，不冲突）。
+        if call.callee == "嵌入"
+            && call.arguments.len() == 2
+            && call.type_arguments.is_empty()
+            && self.尝试解析用户函数(&call.callee, 2).is_none()
+        {
+            use crate::parser::ast::{IdentifierExpression, MethodCallExpression};
+            let 改写 = AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(AstNode::标识符表达式(IdentifierExpression {
+                    name: "大模型".to_string(),
+                    span: Default::default(),
+                })),
+                method_name: "嵌入".to_string(),
+                arguments: call.arguments.clone(),
+                span: call.span.clone(),
+            });
+            return self.生成表达式(&改写);
+        }
+
+        // 语言级相似度糖：`相似度(v1, v2)` → 向量.余弦相似度(v1, v2) : 浮点数。
+        // 两个 数组<浮点数> → 余弦相似度。用户自定义 2 参 相似度 则让路。
+        if call.callee == "相似度"
+            && call.arguments.len() == 2
+            && call.type_arguments.is_empty()
+            && self.尝试解析用户函数(&call.callee, 2).is_none()
+        {
+            use crate::parser::ast::{IdentifierExpression, MethodCallExpression};
+            let 改写 = AstNode::方法调用表达式(MethodCallExpression {
+                object: Box::new(AstNode::标识符表达式(IdentifierExpression {
+                    name: "向量".to_string(),
+                    span: Default::default(),
+                })),
+                method_name: "余弦相似度".to_string(),
+                arguments: call.arguments.clone(),
+                span: call.span.clone(),
+            });
+            return self.生成表达式(&改写);
+        }
+
         // 间接调用：callee 是一个函数值变量（如参数 f: 函数(整数):整数）
         if let Some(v) = self.尝试间接调用(&call.callee, &call.arguments)? {
             return Ok(v);

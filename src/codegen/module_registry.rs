@@ -1508,6 +1508,16 @@ impl ModuleRegistry {
             "字符串",                                       // 返回LLM响应
         ));
 
+        // 文本嵌入：走会话端点 base + /embeddings（OpenAI 兼容），model 用会话模型
+        // （建嵌入会话时传嵌入模型，如 text-embedding-v4）。返回 数组<浮点数>（rc=1 交出）。
+        // 语言级糖 `嵌入(会话, 文本)` 脱糖到此。
+        llm_module.add_function(ModuleFunction::new(
+            "嵌入",
+            "qi_llm_embed",
+            vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 文本
+            "浮点数组",                                     // 返回 数组<浮点数>
+        ));
+
         // 多模态图像对话：文本提示 + 单张图 URL（按会话 provider 构造带图消息）
         llm_module.add_function(ModuleFunction::new(
             "对话图像",
