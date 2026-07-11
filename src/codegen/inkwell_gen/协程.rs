@@ -1,4 +1,5 @@
-//! 协程 —— Round 1 真协程变换（Plan A：LLVM 21 `llvm.coro.*` stackless 状态机）。
+//! 协程 —— 真协程变换（Plan A：LLVM 21 `llvm.coro.*` stackless 状态机）。
+//! Round 1：标量协程 + 最小 executor；Round 2：ARC 跨挂起点（RC 局部/参数/返回值）。
 //!
 //! ## 门控
 //! `QI_CORO=1` 时启用。**不设时默认路径逐字节不变**（走 异步.rs 的 eager future
@@ -46,8 +47,24 @@
 //! 包，因为 CoroSplit 会把 `susp` 克隆进 resume/destroy，在那里包会重复 spawn。
 //!
 //! ## frame 布局
-//! 完全交给 LLVM CoroSplit：入口块 alloca（含 %promise、跨挂起的标量局部）自动
-//! 搬进堆 frame。整数/浮点跨挂起随便；返回值经 %promise（i64 位模式）交回。
+//! 完全交给 LLVM CoroSplit：入口块 alloca（含 %promise、跨挂起的局部槽）自动
+//! 搬进堆 frame。整数/浮点直接跨挂起；返回值经 %promise（i64 位模式）交回。
+//!
+//! ## R2：ARC 跨挂起点（RC 局部/参数/返回值）
+//! RC 释放从普通函数的 per-exit `弧释放局部` 模型改挂到 **coroutine cleanup 路径**
+//! （见 填协程cleanup）：cleanup 块是 destroy 克隆的唯一路径 —— 正常完成（final
+//! suspend 后 executor destroy）与提前 destroy（`取消未来`，停在中途挂起点）都走它，
+//! frame 内每个 RC 槽在 coro.free 之前恰好释放一次。三条纪律：
+//! 1. **槽**：RC 参数落地 retain +1、RC 局部按既有声明/赋值纪律持 +1；每个 RC 槽的
+//!    alloca 后紧跟 `store null`（destroy 早于声明执行时 cleanup 读 null 安全跳过）；
+//!    cleanup 逐槽 load + release（null 安全）。cleanup 引用槽也迫使 CoroSplit 把
+//!    它们搬进 frame。
+//! 2. **返回值**：`返回 rc值` 与普通返回同纪律（BORROWED retain / OWNED 转移），
+//!    promise 持 +1；executor 在 destroy **之前**把 promise 读进 coro future 值槽，
+//!    `等待` 时 take（+1 移交调用方，二次 take 得 null，杜绝双释放）。
+//! 3. **等待 RC payload**：qi_future_await_ptr/string 按 magic 分发到
+//!    qi_coro_take_ptr（take 语义）；`等待 未来<结构体>` 的延迟解码分支
+//!    （qi_rc_is_string）对协程结构体指针天然走直通路，不受影响。
 //!
 //! ## executor 协议（与 qi-runtime/async_runtime/coro.rs 对接）
 //! - runtime 无法直接发 `llvm.coro.*` intrinsic，故 codegen emit 四个薄封装
@@ -59,13 +76,19 @@
 //! - 同步上下文 `等待 <coro future>` → 老 `qi_future_await_T` 里按 magic 分发到
 //!   `qi_coro_await_i64`（未完成先驱动 executor，再取 %promise 值）。
 //!
-//! ## Round 1 限制（如实文档化）
-//! - **跨挂起点的 RC 局部（字符串/结构体/数组）本轮不支持**：`等待` 之后再用之前
-//!   创建的 RC 局部，其 retain/release 纪律与 CoroSplit 的 frame 搬迁未协同，会在
-//!   Round 2 处理。本轮示例只用**标量**（整数/浮点/布尔）跨挂起与返回值 —— 这些
-//!   由 CoroSplit 自动搬进 frame，安全。QI_RC_REPORT 因此可全 0。
-//! - 协程体内暂不注入 QI_PROF 计时（出口在 final suspend，与序言/出口配对模型冲突）。
-//! - Round 2：ARC 跨挂起点；Round 3：调度器 / 真 IO / 大模型 pending future 集成。
+//! ## 剩余限制（R2 后的能力边界，如实文档化）
+//! - **已支持**：标量 + RC 对象（字符串/结构体/数组/闭包/装箱枚举**槽**）跨挂起；
+//!   协程返回 字符串/结构体（经 promise +1 take）；提前 destroy 释放 frame 内 RC 槽。
+//! - **表达式临时值跨挂起不覆盖**：`等待` 出现在复合表达式中间时（如
+//!   `f(拼接串, 等待 让出())`），挂起前算出的 OWNED 临时不在任何槽里 ——
+//!   提前 destroy 会漏。写法上把临时先落变量即可。
+//! - **取消后勿再 等待 该未来**：`取消未来` 后值槽为 0/null，await 得空值。
+//! - **同名遮蔽**：循环内重声明同名 RC 变量产生的旧 alloca 不再被追踪（与
+//!   变量表 flat 语义一致），旧槽值可能泄漏（宁泄漏不双释放）。
+//! - 协程体内 `尝试/抛出`（setjmp 跨 coroutine frame）未定义；QI_PROF 不注入。
+//! - `未来<数组>` 返回值未验证（内部元素类型经 指针 退化为 字符串 语义，与 eager 同）。
+//! - Round 3：调度器 / 真 IO / 大模型 pending future 集成；协程内 await 另一协程
+//!   的真嵌套挂起（现走 eager 阻塞驱动，可能相互等待）。
 
 use super::后端;
 use super::类型::{Qi类型, 元素类型};
@@ -205,12 +228,8 @@ impl<'ctx> 后端<'ctx> {
             .build_return(Some(&hdl_ptr))
             .map_err(|e| e.to_string())?;
 
-        // 填 cleanup 块：coro.free + free + br suspend。
-        self.builder.position_at_end(cleanup_bb);
-        unsafe { self.协程free(id_token, hdl)? };
-        self.builder
-            .build_unconditional_branch(suspend_bb)
-            .map_err(|e| e.to_string())?;
+        // cleanup 块**延后填充**（体生成完才知道全部 RC 槽）——见 填协程cleanup。
+        // 它是正常完成（final suspend 后 destroy）与提前 destroy 共用的唯一销毁路径。
 
         self.协程当前 = Some(协程上下文 {
             id_token,
@@ -238,7 +257,9 @@ impl<'ctx> 后端<'ctx> {
             self.builder
                 .build_store(ptr, arg)
                 .map_err(|e| e.to_string())?;
-            // Round 1：协程参数应为标量（RC 参数跨挂起不支持）；不套 retain 纪律。
+            // R2：RC 参数与普通函数同纪律 —— 落地进槽 retain 一次；
+            // 与 cleanup 路径「释放所有 RC 槽」平衡（正常完成与提前 destroy 共用）。
+            self.弧retain任意(arg, t);
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -255,8 +276,93 @@ impl<'ctx> 后端<'ctx> {
             self.生成协程返回(None)?;
         }
 
+        // R2：体生成完毕，RC 槽全部已知 —— 现在填 cleanup 块（释放所有 RC 槽 +
+        // coro.free）并给每个 RC 槽在 alloca 后补 null 初始化。
+        self.填协程cleanup(cleanup_bb, suspend_bb, id_token, hdl)?;
+
         self.协程当前 = None;
         self.符号.退出作用域();
+        Ok(())
+    }
+
+    /// R2 核心：填 coroutine 的公共 cleanup 块 + RC 槽 null 初始化。
+    ///
+    /// cleanup 是 destroy 克隆的唯一路径：**正常完成**（final suspend 后 executor
+    /// destroy）与**提前 destroy**（`取消未来`，停在中途挂起点）都走它 —— RC 释放
+    /// 挂在这里恰好各执行一次，替代普通函数的 per-exit `弧释放局部` 模型。
+    ///
+    /// 形状：
+    /// ```text
+    /// coro.cleanup:
+    ///   %v = load ptr, %rc槽_i      ; 逐个 RC 槽（frame 内）
+    ///   call release(%v)            ; null 安全（qi_string_free 判 header /
+    ///                               ;  qi.release.sN 带 is_null 检查）
+    ///   …
+    ///   %mem = llvm.coro.free(%id, %hdl)
+    ///   call free(%mem)
+    ///   br coro.susp
+    /// ```
+    /// null 初始化：每个 RC 槽的 alloca 之后立刻插 `store null` —— 提前 destroy
+    /// 发生在声明语句执行之前时，cleanup 读到 null 安全跳过（不释放垃圾指针）。
+    /// null store 紧跟 alloca，先于任何真实 store，不覆盖已赋的值。
+    /// cleanup 引用这些槽也迫使 CoroSplit 把它们搬进 frame（跨挂起存活）。
+    fn 填协程cleanup(
+        &mut self,
+        cleanup_bb: BasicBlock<'ctx>,
+        suspend_bb: BasicBlock<'ctx>,
+        id_token: LLVMValueRef,
+        hdl: LLVMValueRef,
+    ) -> Result<(), String> {
+        let 保存 = self.builder.get_insert_block();
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+
+        // RC 槽收集（同 弧释放局部 的过滤：RC 类型且非弱局部）。QI_ARC=0 时不收集
+        // （与普通函数「关 ARC 不释放」一致）。
+        let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = if self.弧开() {
+            self.变量表
+                .iter()
+                .filter(|(名, (_, t))| super::所有权::是RC类型(*t) && !self.弱局部.contains(*名))
+                .map(|(_, (p, t))| (*p, *t))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // 每个 RC 槽：alloca 后紧跟 store null（见函数注释）。
+        for (p, _) in &槽们 {
+            if let Some(inst) = p.as_instruction() {
+                match inst.get_next_instruction() {
+                    Some(next) => self.builder.position_before(&next),
+                    None => {
+                        let bb = inst
+                            .get_parent()
+                            .ok_or_else(|| "RC 槽 alloca 无所在块".to_string())?;
+                        self.builder.position_at_end(bb);
+                    }
+                }
+                self.builder
+                    .build_store(*p, ptrt.const_null())
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        // 填 cleanup：释放所有 RC 槽 → coro.free → free → br suspend。
+        self.builder.position_at_end(cleanup_bb);
+        for (p, t) in 槽们 {
+            let v = self
+                .builder
+                .build_load(ptrt, p, "coro.rc")
+                .map_err(|e| e.to_string())?;
+            self.弧release任意(v, t);
+        }
+        unsafe { self.协程free(id_token, hdl)? };
+        self.builder
+            .build_unconditional_branch(suspend_bb)
+            .map_err(|e| e.to_string())?;
+
+        if let Some(b) = 保存 {
+            self.builder.position_at_end(b);
+        }
         Ok(())
     }
 
@@ -306,6 +412,11 @@ impl<'ctx> 后端<'ctx> {
 
     /// 协程体内的 `返回 [expr]`：把值编码进 promise，再发 final suspend。
     /// 由 语句.rs 的 返回语句 分派进来（当 `协程当前.is_some()`）。
+    ///
+    /// R2 RC 返回值：与普通 返回 同纪律 —— promise 持有 +1（BORROWED 先 retain，
+    /// OWNED 直接转移）。final suspend 后 executor 把 promise 读进 coro future 的
+    /// 值槽；cleanup 释放的是各 RC **槽**（局部/参数），promise 的 +1 不受影响，
+    /// 随 `等待` 的 take 语义移交调用方。
     pub(super) fn 生成协程返回(&mut self, expr: Option<&AstNode>) -> Result<(), String> {
         if let Some(e) = expr {
             let 内部 = self.当前返回类型.未来内部().unwrap_or(元素类型::整数);
@@ -313,6 +424,15 @@ impl<'ctx> 后端<'ctx> {
             let (v, vt) = self
                 .生成带期望(e, Some(期望))?
                 .ok_or_else(|| "协程返回表达式无值".to_string())?;
+            // RC 值 → promise 收 +1（镜像 语句.rs 普通返回的 该retain 判定）
+            let 该retain = if 期望 == Qi类型::字符串 {
+                vt == Qi类型::字符串 && !self.表达式拥有字符串(e)
+            } else {
+                super::所有权::是RC类型(期望) && !self.表达式拥有RC(e, 期望)
+            };
+            if self.弧开() && 该retain && v.is_pointer_value() {
+                self.弧retain任意(v, 期望);
+            }
             let i64v = self.标量编码i64(v, vt)?;
             let promise = self.协程当前.as_ref().unwrap().promise;
             self.builder
@@ -555,17 +675,59 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 生成协程内建(
         &mut self,
         callee: &str,
-        _arguments: &[AstNode],
+        arguments: &[AstNode],
     ) -> Result<Option<Option<(BasicValueEnum<'ctx>, Qi类型)>>, String> {
         if !self.协程开() {
             return Ok(None);
         }
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
         match callee {
             "执行器运行全部" | "运行执行器" | "协程运行全部" => {
                 let run =
                     self.取或声明("qi_coro_run_all", self.ctx.void_type().fn_type(&[], false));
                 self.builder
                     .build_call(run, &[], "")
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(None)) // void
+            }
+            // 单步驱动：resume 一个就绪协程一次。返回 1=还有排队协程 / 0=队列已空。
+            "执行器单步" | "协程单步" => {
+                let step = self.取或声明(
+                    "qi_coro_step_once",
+                    self.ctx.i64_type().fn_type(&[], false),
+                );
+                let r = self
+                    .builder
+                    .build_call(step, &[], "coro.step")
+                    .map_err(|e| e.to_string())?
+                    .try_as_basic_value()
+                    .basic()
+                    .ok_or_else(|| "qi_coro_step_once 无返回".to_string())?;
+                Ok(Some(Some((r, Qi类型::整数))))
+            }
+            // 提前销毁：destroy 未完成的协程（走 cleanup 路径释放 frame 内 RC 槽）。
+            // 已完成/已取消的 no-op。取消后勿再 等待 该未来（值槽为 0/null）。
+            "取消未来" | "取消协程" => {
+                if arguments.is_empty() {
+                    return Err("取消未来 需要 1 个实参（协程未来）".to_string());
+                }
+                let (v, _t) = self
+                    .生成表达式(&arguments[0])?
+                    .ok_or_else(|| "取消未来 实参无值".to_string())?;
+                let p = if v.is_pointer_value() {
+                    v
+                } else {
+                    self.builder
+                        .build_int_to_ptr(v.into_int_value(), ptrt, "f2p")
+                        .map_err(|e| e.to_string())?
+                        .into()
+                };
+                let cancel = self.取或声明(
+                    "qi_coro_cancel",
+                    self.ctx.void_type().fn_type(&[ptrt.into()], false),
+                );
+                self.builder
+                    .build_call(cancel, &[p.into()], "")
                     .map_err(|e| e.to_string())?;
                 Ok(Some(None)) // void
             }
