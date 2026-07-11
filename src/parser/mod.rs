@@ -136,7 +136,7 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
     // 把 LALRPOP 的原始正则终结符（如 [0-9]+、"([^"\\]|\\.)*" 等）映射成
     // 人话名字，否则报错里的「期望：」会直接吐一串难懂的正则。
     let mut specials: Vec<&str> = Vec::new();
-    let mut push_special = |name: &'static str, bag: &mut Vec<&'static str>| {
+    let push_special = |name: &'static str, bag: &mut Vec<&'static str>| {
         if !bag.contains(&name) {
             bag.push(name);
         }

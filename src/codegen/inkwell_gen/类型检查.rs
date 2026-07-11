@@ -508,6 +508,35 @@ impl 符号表 {
         self.枚举.get(idx as usize)
     }
 
+    /// 装箱枚举类型归一化：把结构体字段/枚举载荷里记成 `枚举(i)` 但 i 实际装箱的
+    /// 类型升级为 `装箱枚举(i)`。
+    /// 背景：`解析结构体字段` 跑在 `解析枚举变体`（回填 装箱 标志）之前，且枚举
+    /// 载荷解析期间前向引用的枚举装箱标志也未回填 —— 两处都可能残留裸 `枚举(i)`。
+    /// 裸 `枚举` 非 RC 类型：LLVM 槽是 i64、释放函数跳过该字段/载荷 → 装箱枚举
+    /// 本体 + 载荷级联泄漏。所有类型登记完成后调用一次（建 LLVM 类型之前）。
+    pub fn 归一化装箱枚举(&mut self) {
+        let 装箱表: Vec<bool> = self.枚举.iter().map(|e| e.装箱).collect();
+        let 升级 = |t: &mut Qi类型| {
+            if let Qi类型::枚举(i) = t {
+                if 装箱表.get(*i as usize).copied().unwrap_or(false) {
+                    *t = Qi类型::装箱枚举(*i);
+                }
+            }
+        };
+        for s in &mut self.结构体 {
+            for t in &mut s.字段类型 {
+                升级(t);
+            }
+        }
+        for e in &mut self.枚举 {
+            for v in &mut e.变体 {
+                for t in &mut v.载荷 {
+                    升级(t);
+                }
+            }
+        }
+    }
+
     /// 名字是否为已登记枚举类型（构造点消歧用）。
     pub fn 是枚举名(&self, name: &str) -> bool {
         self.枚举索引(name).is_some()

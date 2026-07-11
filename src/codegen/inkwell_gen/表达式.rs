@@ -1193,7 +1193,7 @@ impl<'ctx> 后端<'ctx> {
     /// 标量→JSON.获取X；无载荷枚举→枚举序号；**嵌套结构体→递归**（句柄换成 JSON.获取对象）。
     /// 句柄 是产出该 JSON 对象的表达式（顶层 = id(临时j)，嵌套 = 获取对象(父句柄,字段)）。
     pub(super) fn 询问建结构体(
-        &self,
+        &mut self,
         idx: u32,
         句柄: crate::parser::ast::AstNode,
     ) -> Result<crate::parser::ast::StructLiteralExpression, String> {
@@ -1219,29 +1219,50 @@ impl<'ctx> 后端<'ctx> {
                 Qi类型::布尔 => {
                     询_mcall(询_id("JSON"), "获取布尔", vec![句柄.clone(), 询_str(名)])
                 }
-                Qi类型::枚举(eidx) => {
-                    let ei = self
+                Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) => {
+                    let 装箱 = self
                         .符号
                         .枚举
                         .get(*eidx as usize)
-                        .ok_or_else(|| format!("询问：字段「{}」枚举未登记", 名))?;
-                    if ei.装箱 {
-                        return Err(format!("询问 v1 不支持带载荷枚举字段「{}」", 名));
+                        .ok_or_else(|| format!("询问：字段「{}」枚举未登记", 名))?
+                        .装箱;
+                    if 装箱 {
+                        // 带载荷枚举：合成一个 if 链辅助函数按判别键构造对应变体，
+                        // 字段值 = 辅助函数(获取该字段对应的 JSON 子对象)
+                        let 函数名 = self.登记询问枚举(*eidx)?;
+                        let 子对象 =
+                            询_mcall(询_id("JSON"), "获取对象", vec![句柄.clone(), 询_str(名)]);
+                        crate::parser::ast::AstNode::函数调用表达式(
+                            crate::parser::ast::FunctionCallExpression {
+                                module_qualifier: None,
+                                callee: 函数名,
+                                type_arguments: vec![],
+                                arguments: vec![子对象],
+                                span: Default::default(),
+                            },
+                        )
+                    } else {
+                        // 无载荷枚举：变体名 CSV → tag（i64）
+                        let ei = &self.符号.枚举[*eidx as usize];
+                        let csv: String = ei
+                            .变体
+                            .iter()
+                            .map(|v| v.名字.clone())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        询_mcall(
+                            询_id("JSON"),
+                            "枚举序号",
+                            vec![
+                                询_str(&csv),
+                                询_mcall(
+                                    询_id("JSON"),
+                                    "获取字符串",
+                                    vec![句柄.clone(), 询_str(名)],
+                                ),
+                            ],
+                        )
                     }
-                    let csv: String = ei
-                        .变体
-                        .iter()
-                        .map(|v| v.名字.clone())
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    询_mcall(
-                        询_id("JSON"),
-                        "枚举序号",
-                        vec![
-                            询_str(&csv),
-                            询_mcall(询_id("JSON"), "获取字符串", vec![句柄.clone(), 询_str(名)]),
-                        ],
-                    )
                 }
                 Qi类型::结构体(子idx) => {
                     // 嵌套：递归从子对象句柄建子结构体
@@ -1252,20 +1273,37 @@ impl<'ctx> 后端<'ctx> {
                     )
                 }
                 Qi类型::数组(元素) => {
-                    // 数组字段：runtime 一步转成 Qi 原生数组（rc=1 交出）
                     use super::类型::元素类型;
-                    let getter = match 元素 {
-                        元素类型::整数 => "字段整数数组",
-                        元素类型::浮点数 => "字段浮点数组",
-                        元素类型::指针 => "字段字符串数组",
-                        _ => {
-                            return Err(format!(
-                                "询问：数组字段「{}」元素仅支持 整数/浮点数/字符串",
-                                名
-                            ))
-                        }
-                    };
-                    询_mcall(询_id("JSON"), getter, vec![句柄.clone(), 询_str(名)])
+                    if let 元素类型::结构体(子idx) = 元素 {
+                        // 数组of结构体：合成 __询问数组$ 辅助函数，逐元素递归建结构体。
+                        // 字段值 = 辅助函数(该字段对应的 JSON 子数组句柄)
+                        let 函数名 = self.登记询问数组(*子idx)?;
+                        let 子数组 =
+                            询_mcall(询_id("JSON"), "获取数组", vec![句柄.clone(), 询_str(名)]);
+                        crate::parser::ast::AstNode::函数调用表达式(
+                            crate::parser::ast::FunctionCallExpression {
+                                module_qualifier: None,
+                                callee: 函数名,
+                                type_arguments: vec![],
+                                arguments: vec![子数组],
+                                span: Default::default(),
+                            },
+                        )
+                    } else {
+                        // 标量数组字段：runtime 一步转成 Qi 原生数组（rc=1 交出）
+                        let getter = match 元素 {
+                            元素类型::整数 => "字段整数数组",
+                            元素类型::浮点数 => "字段浮点数组",
+                            元素类型::指针 => "字段字符串数组",
+                            _ => {
+                                return Err(format!(
+                                    "询问：数组字段「{}」元素仅支持 整数/浮点数/字符串/结构体",
+                                    名
+                                ))
+                            }
+                        };
+                        询_mcall(询_id("JSON"), getter, vec![句柄.clone(), 询_str(名)])
+                    }
                 }
                 _ => {
                     return Err(format!(
@@ -1302,6 +1340,18 @@ impl<'ctx> 后端<'ctx> {
         for ty in 信息.字段类型.iter() {
             match ty {
                 Qi类型::数组(_) => return true,
+                // 带载荷枚举：oneOf/判别在 strict 下 provider 支持不一，退 json_object+hint
+                Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) => {
+                    if self
+                        .符号
+                        .枚举
+                        .get(*eidx as usize)
+                        .map(|e| e.装箱)
+                        .unwrap_or(false)
+                    {
+                        return true;
+                    }
+                }
                 Qi类型::结构体(子) => {
                     if self.询问含数组(*子, 深 + 1) {
                         return true;
@@ -1399,22 +1449,56 @@ impl<'ctx> 后端<'ctx> {
         let mut 部件: Vec<String> = Vec::new();
         for (名, ty) in 信息.字段名.iter().zip(信息.字段类型.iter()) {
             let 描述 = match ty {
-                Qi类型::枚举(eidx) => {
+                Qi类型::枚举(eidx) | Qi类型::装箱枚举(eidx) => {
                     let ei = self.符号.枚举.get(*eidx as usize);
-                    let 候选 = ei
-                        .map(|e| {
-                            e.变体
+                    match ei {
+                        // 带载荷枚举：字段是对象 {变体, 参数1, ...}。候选名保持**裸名**
+                        // （实测把「(需 参数1)」等装饰混进候选列表，模型会原样抄进
+                        // "变体" 值），带参变体的参数键单独说明。
+                        Some(e) if e.装箱 => {
+                            let 名字表: Vec<String> =
+                                e.变体.iter().map(|v| v.名字.clone()).collect();
+                            let 带参说明: Vec<String> = e
+                                .变体
+                                .iter()
+                                .filter(|v| !v.载荷.is_empty())
+                                .map(|v| {
+                                    let 参: Vec<String> = (1..=v.载荷.len())
+                                        .map(|i| format!("\"参数{}\"", i))
+                                        .collect();
+                                    format!("选 {} 时另加 {}", v.名字, 参.join("、"))
+                                })
+                                .collect();
+                            format!(
+                                "\"{}\"(对象，其 \"变体\" 字段只能原样填以下之一（只写名字本身，不加括号或其它字）: {}；{})",
+                                名,
+                                名字表.join("/"),
+                                带参说明.join("；")
+                            )
+                        }
+                        Some(e) => {
+                            let 候选 = e
+                                .变体
                                 .iter()
                                 .map(|v| v.名字.clone())
                                 .collect::<Vec<_>>()
-                                .join("/")
-                        })
-                        .unwrap_or_default();
-                    format!("\"{}\"(必须是: {})", 名, 候选)
+                                .join("/");
+                            format!("\"{}\"(必须是: {})", 名, 候选)
+                        }
+                        None => format!("\"{}\"", 名),
+                    }
                 }
                 Qi类型::结构体(子idx) => {
                     format!(
                         "\"{}\"(对象，含 {})",
+                        名,
+                        self.询问字段说明(*子idx, 深 + 1)?
+                    )
+                }
+                // 数组of结构体：说明每项的对象结构（递归展开）
+                Qi类型::数组(super::类型::元素类型::结构体(子idx)) => {
+                    format!(
+                        "\"{}\"(数组，每项是对象，含 {})",
                         名,
                         self.询问字段说明(*子idx, 深 + 1)?
                     )
@@ -1521,6 +1605,353 @@ impl<'ctx> 后端<'ctx> {
     /// `尝试询问::<T>(会话, 提示)` 登记：合成 `__尝试询问$T名(会话,提示): 结果<T,字符串>`
     /// 包装函数（声明原型 + 入待合成队列，体稍后统一生成——成/败 靠函数返回类型标注
     /// 统一为 结果<T,字符串>），返回改写后的普通调用 AST。幂等（同 T 只合成一次）。
+    /// 带载荷枚举字段反序列化：合成 `__询问枚举$枚举名(子对象): 枚举` 辅助函数——
+    /// 按判别键 "变体"→tag 走 if 链，构造对应变体（带载荷调 变体名(载荷getter)，
+    /// 无载荷用 枚举名.变体）。位置载荷在 JSON 里用键「参数1/参数2/…」。
+    /// 兜底走第一个无载荷变体（要求枚举至少有一个无载荷变体）。函数体入
+    /// 待合成询问 队列，与 尝试询问 同款延迟合成。返回辅助函数名。
+    pub(super) fn 登记询问枚举(&mut self, eidx: u32) -> Result<String, String> {
+        use super::类型::元素类型;
+        use crate::parser::ast::{
+            AstNode, BasicType, BinaryExpression, FunctionDeclaration, IfStatement,
+            LiteralExpression, Parameter, ReturnStatement, TypeNode, VariableDeclaration,
+            Visibility,
+        };
+        let ei = self
+            .符号
+            .枚举
+            .get(eidx as usize)
+            .ok_or_else(|| "询问：枚举未登记".to_string())?
+            .clone();
+        let 函数名 = format!("__询问枚举${}", ei.名字);
+        if self.已合成询问.contains(&函数名) {
+            return Ok(函数名);
+        }
+        // 兜底：第一个无载荷变体
+        let 兜底 = ei
+            .变体
+            .iter()
+            .find(|v| v.载荷.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "询问：带载荷枚举「{}」需至少一个无载荷变体作兜底（如 未知）",
+                    ei.名字
+                )
+            })?
+            .名字
+            .clone();
+        let csv: String = ei
+            .变体
+            .iter()
+            .map(|v| v.名字.clone())
+            .collect::<Vec<_>>()
+            .join(",");
+        // 变体构造 AST：无载荷 → 枚举名.变体（字段访问）；带载荷 → 变体名(载荷getter…)
+        let 枚举名 = ei.名字.clone();
+        let 建变体 = |v: &super::类型检查::枚举变体信息| -> Result<AstNode, String> {
+            if v.载荷.is_empty() {
+                Ok(AstNode::字段访问表达式(
+                    crate::parser::ast::FieldAccessExpression {
+                        object: Box::new(询_id(&枚举名)),
+                        field: v.名字.clone(),
+                        span: Default::default(),
+                    },
+                ))
+            } else {
+                let mut 实参: Vec<AstNode> = Vec::new();
+                for (i, ty) in v.载荷.iter().enumerate() {
+                    let 键 = format!("参数{}", i + 1);
+                    let 值 = match ty {
+                        Qi类型::整数 => {
+                            询_mcall(询_id("JSON"), "获取整数", vec![询_id("__对象"), 询_str(&键)])
+                        }
+                        Qi类型::浮点数 => 询_mcall(
+                            询_id("JSON"),
+                            "获取浮点数",
+                            vec![询_id("__对象"), 询_str(&键)],
+                        ),
+                        Qi类型::字符串 => 询_mcall(
+                            询_id("JSON"),
+                            "获取字符串",
+                            vec![询_id("__对象"), 询_str(&键)],
+                        ),
+                        Qi类型::布尔 => {
+                            询_mcall(询_id("JSON"), "获取布尔", vec![询_id("__对象"), 询_str(&键)])
+                        }
+                        Qi类型::数组(元素类型::指针) => 询_mcall(
+                            询_id("JSON"),
+                            "字段字符串数组",
+                            vec![询_id("__对象"), 询_str(&键)],
+                        ),
+                        Qi类型::数组(元素类型::整数) => 询_mcall(
+                            询_id("JSON"),
+                            "字段整数数组",
+                            vec![询_id("__对象"), 询_str(&键)],
+                        ),
+                        _ => {
+                            return Err(format!(
+                                "询问：带载荷枚举「{}」变体「{}」的载荷类型暂不支持（v1：标量/字符串数组/整数数组）",
+                                枚举名, v.名字
+                            ))
+                        }
+                    };
+                    实参.push(值);
+                }
+                // 自定义带载荷变体构造是 枚举名.变体名(载荷)（裸名仅内置 成/败/有 特例）。
+                // 用「方法调用表达式」表达 枚举名.变体名(...)。
+                Ok(AstNode::方法调用表达式(
+                    crate::parser::ast::MethodCallExpression {
+                        object: Box::new(询_id(&枚举名)),
+                        method_name: v.名字.clone(),
+                        arguments: 实参,
+                        span: Default::default(),
+                    },
+                ))
+            }
+        };
+        // body：变量 __t = 枚举序号(csv, 获取字符串(__对象,"变体")); if 链; 兜底 return
+        let mut body: Vec<AstNode> = Vec::new();
+        body.push(AstNode::变量声明(VariableDeclaration {
+            name: "__t".to_string(),
+            type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
+            initializer: Some(Box::new(询_mcall(
+                询_id("JSON"),
+                "枚举序号",
+                vec![
+                    询_str(&csv),
+                    询_mcall(
+                        询_id("JSON"),
+                        "获取字符串",
+                        vec![询_id("__对象"), 询_str("变体")],
+                    ),
+                ],
+            ))),
+            is_mutable: false,
+            span: Default::default(),
+        }));
+        for v in ei.变体.iter() {
+            body.push(AstNode::如果语句(IfStatement {
+                condition: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                    left: Box::new(询_id("__t")),
+                    operator: BinaryOperator::等于,
+                    right: Box::new(AstNode::字面量表达式(LiteralExpression {
+                        value: LiteralValue::整数(v.tag),
+                        span: Default::default(),
+                    })),
+                    span: Default::default(),
+                })),
+                then_branch: vec![AstNode::返回语句(ReturnStatement {
+                    value: Some(Box::new(建变体(v)?)),
+                    span: Default::default(),
+                })],
+                else_branch: None,
+                span: Default::default(),
+            }));
+        }
+        // 兜底
+        let 兜底变体 = ei.变体.iter().find(|v| v.名字 == 兜底).unwrap();
+        body.push(AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(建变体(兜底变体)?)),
+            span: Default::default(),
+        }));
+
+        let f = FunctionDeclaration {
+            name: 函数名.clone(),
+            type_params: vec![],
+            parameters: vec![Parameter {
+                name: "__对象".to_string(),
+                type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
+                default_value: None,
+                is_variadic: false,
+                span: Default::default(),
+            }],
+            return_type: Some(TypeNode::自定义类型(枚举名.clone())),
+            body,
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        self.已合成询问.insert(函数名.clone());
+        Ok(函数名)
+    }
+
+    /// 数组of结构体字段反序列化：合成 `__询问数组$<idx>_<结构体名>(JSON数组句柄:整数):
+    /// 数组<结构体>` 辅助函数 —— n=JSON.数组长度 → out=JSON.分配对象数组(n)
+    /// （槽零初始化 rc=1）→ 当 循环逐元素 JSON.数组获取对象 + 递归 询问建结构体
+    /// 构造结构体字面量存槽（rc=1 转移进槽）→ 返回 out（返回约定 +1，转移给
+    /// 字段槽；数组释放走类型化 qi.release.arr.s<idx> 级联）。函数体入
+    /// 待合成询问 队列延迟合成。幂等；先占坑再建体防自引用无限递归。
+    pub(super) fn 登记询问数组(&mut self, idx: u32) -> Result<String, String> {
+        let 结构体名 = self
+            .符号
+            .结构体
+            .get(idx as usize)
+            .ok_or_else(|| "询问：数组元素结构体未登记".to_string())?
+            .名字
+            .clone();
+        let 函数名 = format!("__询问数组${}_{}", idx, 结构体名);
+        if self.已合成询问.contains(&函数名) {
+            return Ok(函数名);
+        }
+        // 先占坑：元素结构体里再嵌 数组<同结构体>（自引用）时直接复用名字，不无限递归
+        self.已合成询问.insert(函数名.clone());
+        match self.登记询问数组体(idx, &结构体名, &函数名) {
+            Ok(()) => Ok(函数名),
+            Err(e) => {
+                self.已合成询问.remove(&函数名);
+                Err(e)
+            }
+        }
+    }
+
+    /// 登记询问数组 的函数体构造（拆出来便于失败时回滚占坑）。
+    fn 登记询问数组体(
+        &mut self,
+        idx: u32,
+        结构体名: &str,
+        函数名: &str,
+    ) -> Result<(), String> {
+        use crate::parser::ast::{
+            ArrayAccessExpression, ArrayType, AssignmentExpression, AstNode, BasicType,
+            BinaryExpression, ExpressionStatement, FunctionDeclaration, LiteralExpression,
+            Parameter, ReturnStatement, TypeNode, VariableDeclaration, Visibility, WhileStatement,
+        };
+        // 赋值当语句用必须包 表达式语句 —— 生成语句 对裸 赋值表达式 走 `_ => Ok(())`
+        // 静默跳过（血泪：漏包时 __i 永不自增 → 死循环）
+        let 语句 = |e: AstNode| {
+            AstNode::表达式语句(ExpressionStatement {
+                expression: Box::new(e),
+                span: Default::default(),
+            })
+        };
+        let 整数节点 = || TypeNode::基础类型(BasicType::整数);
+        let 数组类型节点 = || {
+            TypeNode::数组类型(ArrayType {
+                element_type: Box::new(TypeNode::自定义类型(结构体名.to_string())),
+                size: None,
+            })
+        };
+        let 零 = AstNode::字面量表达式(LiteralExpression {
+            value: LiteralValue::整数(0),
+            span: Default::default(),
+        });
+        let 一 = AstNode::字面量表达式(LiteralExpression {
+            value: LiteralValue::整数(1),
+            span: Default::default(),
+        });
+
+        // 元素结构体字面量（句柄 = __元素）——递归支持嵌套结构体/枚举/数组字段
+        let 元素字面量 =
+            AstNode::结构体实例化表达式(self.询问建结构体(idx, 询_id("__元素"))?);
+
+        let mut body: Vec<AstNode> = Vec::new();
+        // 变量 __n: 整数 = JSON.数组长度(__数组)
+        body.push(AstNode::变量声明(VariableDeclaration {
+            name: "__n".to_string(),
+            type_annotation: Some(整数节点()),
+            initializer: Some(Box::new(询_mcall(
+                询_id("JSON"),
+                "数组长度",
+                vec![询_id("__数组")],
+            ))),
+            is_mutable: false,
+            span: Default::default(),
+        }));
+        // 变量 __出: 数组<结构体> = JSON.分配对象数组(__n)
+        body.push(AstNode::变量声明(VariableDeclaration {
+            name: "__出".to_string(),
+            type_annotation: Some(数组类型节点()),
+            initializer: Some(Box::new(询_mcall(
+                询_id("JSON"),
+                "分配对象数组",
+                vec![询_id("__n")],
+            ))),
+            is_mutable: true,
+            span: Default::default(),
+        }));
+        // 变量 __i: 整数 = 0
+        body.push(AstNode::变量声明(VariableDeclaration {
+            name: "__i".to_string(),
+            type_annotation: Some(整数节点()),
+            initializer: Some(Box::new(零)),
+            is_mutable: true,
+            span: Default::default(),
+        }));
+        // 当 (__i < __n) { 变量 __元素 = JSON.数组获取对象(__数组, __i);
+        //                  __出[__i] = 元素字面量; __i = __i + 1; }
+        let 循环体: Vec<AstNode> = vec![
+            AstNode::变量声明(VariableDeclaration {
+                name: "__元素".to_string(),
+                type_annotation: Some(整数节点()),
+                initializer: Some(Box::new(询_mcall(
+                    询_id("JSON"),
+                    "数组获取对象",
+                    vec![询_id("__数组"), 询_id("__i")],
+                ))),
+                is_mutable: false,
+                span: Default::default(),
+            }),
+            语句(AstNode::赋值表达式(AssignmentExpression {
+                target: Box::new(AstNode::数组访问表达式(ArrayAccessExpression {
+                    array: Box::new(询_id("__出")),
+                    index: Box::new(询_id("__i")),
+                    span: Default::default(),
+                })),
+                value: Box::new(元素字面量),
+                span: Default::default(),
+            })),
+            语句(AstNode::赋值表达式(AssignmentExpression {
+                target: Box::new(询_id("__i")),
+                value: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                    left: Box::new(询_id("__i")),
+                    operator: BinaryOperator::加,
+                    right: Box::new(一),
+                    span: Default::default(),
+                })),
+                span: Default::default(),
+            })),
+        ];
+        body.push(AstNode::当语句(WhileStatement {
+            condition: Box::new(AstNode::二元操作表达式(BinaryExpression {
+                left: Box::new(询_id("__i")),
+                operator: BinaryOperator::小于,
+                right: Box::new(询_id("__n")),
+                span: Default::default(),
+            })),
+            body: 循环体,
+            span: Default::default(),
+        }));
+        // 返回 __出
+        body.push(AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(询_id("__出"))),
+            span: Default::default(),
+        }));
+
+        let f = FunctionDeclaration {
+            name: 函数名.to_string(),
+            type_params: vec![],
+            parameters: vec![Parameter {
+                name: "__数组".to_string(),
+                type_annotation: Some(整数节点()),
+                default_value: None,
+                is_variadic: false,
+                span: Default::default(),
+            }],
+            return_type: Some(数组类型节点()),
+            body,
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        Ok(())
+    }
+
     pub(super) fn 登记尝试询问(
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
