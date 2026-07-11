@@ -162,10 +162,23 @@ impl<'ctx> 后端<'ctx> {
             None => self.ctx.i64_type().const_zero(),
         };
         let 元素 = super::类型::元素类型::从标量(self.符号.解析类型(&c.element_type));
-        let f = self
-            .module
-            .get_function("qi_runtime_create_channel")
-            .ok_or_else(|| "运行时函数未声明: qi_runtime_create_channel".to_string())?;
+        // R3：协程模式用协程原生通道（单线程执行器内、非阻塞、i64 直传）。
+        let ffi = if self.协程开() {
+            "qi_coro_chan_new"
+        } else {
+            "qi_runtime_create_channel"
+        };
+        let f = match self.module.get_function(ffi) {
+            Some(f) => f,
+            None => {
+                let ptrt = self.ctx.ptr_type(AddressSpace::default());
+                self.module.add_function(
+                    ffi,
+                    ptrt.fn_type(&[self.ctx.i64_type().into()], false),
+                    None,
+                )
+            }
+        };
         let cs = self
             .builder
             .build_call(f, &[cap.into()], "chan")
@@ -216,10 +229,24 @@ impl<'ctx> 后端<'ctx> {
                 v
             }
         };
-        let f = self
-            .module
-            .get_function("qi_runtime_channel_send")
-            .ok_or_else(|| "运行时函数未声明: qi_runtime_channel_send".to_string())?;
+        // R3：协程模式走协程原生 try_send（无界恒成功；软上限满返 1）。签名同为 (ptr,i64)->i32。
+        let f = if self.协程开() {
+            let ptrt = self.ctx.ptr_type(AddressSpace::default());
+            match self.module.get_function("qi_coro_chan_try_send") {
+                Some(f) => f,
+                None => self.module.add_function(
+                    "qi_coro_chan_try_send",
+                    self.ctx
+                        .i32_type()
+                        .fn_type(&[ptrt.into(), i64t.into()], false),
+                    None,
+                ),
+            }
+        } else {
+            self.module
+                .get_function("qi_runtime_channel_send")
+                .ok_or_else(|| "运行时函数未声明: qi_runtime_channel_send".to_string())?
+        };
         let cs = self
             .builder
             .build_call(f, &[ch.into(), v64.into()], "chsend")
@@ -252,28 +279,109 @@ impl<'ctx> 后端<'ctx> {
         let ch = self.通道值转指针(chv)?;
         let i64t = self.ctx.i64_type();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
-        // slot 存 *mut i64（boxed 值的指针）。entry 块 alloca：循环里反复
-        // 接收不吃栈；FFI 每次调用前后完整写/读该槽，复用安全。
-        let slot = self.入口块alloca(ptrt.into(), "recvslot")?;
-        let f = self
-            .module
-            .get_function("qi_runtime_channel_receive")
-            .ok_or_else(|| "运行时函数未声明: qi_runtime_channel_receive".to_string())?;
-        self.builder
-            .build_call(f, &[ch.into(), slot.into()], "chrecv")
-            .map_err(|e| e.to_string())?;
-        // 1) load boxed 指针
-        let boxed = self
-            .builder
-            .build_load(ptrt, slot, "recvbox")
-            .map_err(|e| e.to_string())?
-            .into_pointer_value();
-        // 2) deref 得真正 i64 值
-        let v = self
-            .builder
-            .build_load(i64t, boxed, "recvval")
-            .map_err(|e| e.to_string())?
-            .into_int_value();
+
+        // ── R3：协程模式走协程原生通道 —— 值按 i64 单层直取（不 box）。空通道时：
+        //    · 协程体内：让出+挂起（协作式，不占线程），resume 再试 → 唤醒语义；
+        //    · 同步顶层：单步驱动执行器（qi_coro_step_once）让发送方协程产出后再试。
+        let v: inkwell::values::IntValue<'ctx> = if self.协程开() {
+            let func = self
+                .builder
+                .get_insert_block()
+                .and_then(|b| b.get_parent())
+                .ok_or_else(|| "通道接收：无当前函数".to_string())?;
+            let slot = self.入口块alloca(i64t.into(), "corecvslot")?;
+            let try_recv = self.取或声明函数(
+                "qi_coro_chan_try_recv",
+                self.ctx
+                    .i32_type()
+                    .fn_type(&[ptrt.into(), ptrt.into()], false),
+            );
+            let 在协程体内 = self.协程当前.is_some();
+
+            let check_bb = self.ctx.append_basic_block(func, "corecv.check");
+            let wait_bb = self.ctx.append_basic_block(func, "corecv.wait");
+            let got_bb = self.ctx.append_basic_block(func, "corecv.got");
+            self.builder
+                .build_unconditional_branch(check_bb)
+                .map_err(|e| e.to_string())?;
+
+            // check：try_recv；0=取到→got，1=空→wait
+            self.builder.position_at_end(check_bb);
+            let rc = self
+                .builder
+                .build_call(try_recv, &[ch.into(), slot.into()], "corecv.try")
+                .map_err(|e| e.to_string())?
+                .try_as_basic_value()
+                .basic()
+                .ok_or_else(|| "qi_coro_chan_try_recv 无返回".to_string())?
+                .into_int_value();
+            let 取到 = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    rc,
+                    self.ctx.i32_type().const_zero(),
+                    "corecv.ok",
+                )
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_conditional_branch(取到, got_bb, wait_bb)
+                .map_err(|e| e.to_string())?;
+
+            // wait：协程体内→让出+挂起；顶层→驱动执行器一步。都回 check 重试。
+            self.builder.position_at_end(wait_bb);
+            if 在协程体内 {
+                let yr = self.取或声明函数(
+                    "qi_coro_yield_ready",
+                    self.ctx.void_type().fn_type(&[], false),
+                );
+                self.builder
+                    .build_call(yr, &[], "")
+                    .map_err(|e| e.to_string())?;
+                // 复用协程挂起点：coro.suspend → 控制权回 executor，resume 后落到其 0-case 块
+                self.生成挂起点(false)?;
+                self.builder
+                    .build_unconditional_branch(check_bb)
+                    .map_err(|e| e.to_string())?;
+            } else {
+                let step = self.取或声明函数("qi_coro_step_once", i64t.fn_type(&[], false));
+                self.builder
+                    .build_call(step, &[], "")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_unconditional_branch(check_bb)
+                    .map_err(|e| e.to_string())?;
+            }
+
+            // got：单层 load i64
+            self.builder.position_at_end(got_bb);
+            self.builder
+                .build_load(i64t, slot, "corecv.val")
+                .map_err(|e| e.to_string())?
+                .into_int_value()
+        } else {
+            // slot 存 *mut i64（boxed 值的指针）。entry 块 alloca：循环里反复
+            // 接收不吃栈；FFI 每次调用前后完整写/读该槽，复用安全。
+            let slot = self.入口块alloca(ptrt.into(), "recvslot")?;
+            let f = self
+                .module
+                .get_function("qi_runtime_channel_receive")
+                .ok_or_else(|| "运行时函数未声明: qi_runtime_channel_receive".to_string())?;
+            self.builder
+                .build_call(f, &[ch.into(), slot.into()], "chrecv")
+                .map_err(|e| e.to_string())?;
+            // 1) load boxed 指针
+            let boxed = self
+                .builder
+                .build_load(ptrt, slot, "recvbox")
+                .map_err(|e| e.to_string())?
+                .into_pointer_value();
+            // 2) deref 得真正 i64 值
+            self.builder
+                .build_load(i64t, boxed, "recvval")
+                .map_err(|e| e.to_string())?
+                .into_int_value()
+        };
         // 3) 按通道元素类型还原（send 侧按位模式装入 i64）
         use super::类型::元素类型;
         let Some(元素) = cht.通道元素() else {
@@ -327,6 +435,17 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         g: &GoroutineSpawnExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // R3 统一：`启动 <协程函数调用>` → 入同一 M:N 协程执行器（而非 tokio 池）。
+        // 调用点代码本身就会 ramp+qi_coro_spawn（把协程排进 PENDING），这里生成表达式
+        // 并丢弃返回的 coro future 即完成「fire-and-forget 调度到执行器」。父协程之后
+        // 让出（等待/通道挂起）时执行器轮转即会驱动它。非协程调用仍走下面的 tokio 路径。
+        if let AstNode::函数调用表达式(call) = &*g.expression {
+            if self.调用是协程(call) {
+                self.生成表达式(&g.expression)?;
+                return Ok(None);
+            }
+        }
+
         let i64t = self.ctx.i64_type();
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
 

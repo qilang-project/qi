@@ -87,8 +87,31 @@
 //!   变量表 flat 语义一致），旧槽值可能泄漏（宁泄漏不双释放）。
 //! - 协程体内 `尝试/抛出`（setjmp 跨 coroutine frame）未定义；QI_PROF 不注入。
 //! - `未来<数组>` 返回值未验证（内部元素类型经 指针 退化为 字符串 语义，与 eager 同）。
-//! - Round 3：调度器 / 真 IO / 大模型 pending future 集成；协程内 await 另一协程
-//!   的真嵌套挂起（现走 eager 阻塞驱动，可能相互等待）。
+//!
+//! ## Round 3：goroutine / future 统一到一个 M:N 执行器（QI_CORO=1）
+//! - **启动 = 调度协程**：`启动 <协程函数调用>`（返回 未来 且含 等待/挂起）不再丢
+//!   tokio 池，而是走调用点的 ramp+`qi_coro_spawn` 排进同一执行器（见 并发.rs
+//!   生成协程启动 + `调用是协程`）。非协程表达式的 `启动` 仍走 tokio（真线程）。
+//! - **通道可挂起**：QI_CORO=1 下 `通道<T>/发送/接收` 走**协程原生通道**
+//!   （coro.rs `qi_coro_chan_*`，单线程执行器内、i64 直传不 box）。协程体内 `<- ch`
+//!   编译成「try_recv；空→`qi_coro_yield_ready`+`生成挂起点(false)`；resume 再试」的
+//!   **协作式挂起**循环 —— 收空通道让出而非占线程；同步顶层 `<- ch` 则单步驱动执行器
+//!   （`qi_coro_step_once`）等发送方产出。RC 值经通道：发送端 retain、接收端 OWNED 接管。
+//! - 铁证：示例/高级/协程/通道统一测 —— `启动` 生产者+消费者到同一执行器，
+//!   经可挂起通道通信，交错时序 + RC 全 0。
+//!
+//! ## Round 3 剩余边界（如实，留 R4）
+//! - **协程内 await 另一协程**：`等待 <另一协程future>` 仍走 eager 嵌套驱动
+//!   （run_until_done 再入执行器），re-entrant 可能崩溃 —— 请在同步顶层收割，或用
+//!   通道通信（铁证即用后者规避）。真·嵌套挂起（await future 挂起当前协程、完成后
+//!   唤醒）留 R4。
+//! - **同步顶层 `<- ch` 无生产者 → 忙等**：执行器已空且通道空时当前不检测死锁而空转，
+//!   R4 加 drained 检测。
+//! - **通道背压不挂起**：`ch <- v` 无界恒成功 / 软上限满返 1，发送端不挂起等待
+//!   接收（真背压挂起 R4）。
+//! - **真 IO 上车**：`异步询问`/`异步对话`（自 spawn OS 线程做 HTTP）未接入执行器
+//!   唤醒 —— 其 future 完成不唤醒挂在其上的协程（R4：future complete → scheduler wake）。
+//! - `启动 <非协程表达式>` 仍走 tokio 池，与协程原生通道不互通（跨世界）。
 
 use super::后端;
 use super::类型::{Qi类型, 元素类型};
@@ -160,6 +183,20 @@ impl<'ctx> 后端<'ctx> {
             .map(|s| s.返回.未来内部().is_some())
             .unwrap_or(false);
         是未来 && 含等待(&f.body)
+    }
+
+    /// R3：判定一个「函数调用表达式」是否调用协程函数（供 `启动` 决定入执行器还是 tokio）。
+    /// 按当前包 + 元数 mangling 查 协程函数集（同一文件的调用命中；跨模块限定留 R4）。
+    pub(super) fn 调用是协程(
+        &self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> bool {
+        if !self.协程开() || call.module_qualifier.is_some() {
+            return false;
+        }
+        let mangled =
+            super::包内符号名(self.当前包.as_deref(), &call.callee, call.arguments.len());
+        self.协程函数集.contains(&mangled)
     }
 
     /// 调用点判定：`f`（LLVM 函数）是否 coroutine（其返回 handle 需包成 coro future）。
@@ -446,7 +483,8 @@ impl<'ctx> 后端<'ctx> {
     /// 发一个挂起点：coro.save + coro.suspend + switch。
     /// `is_final=false`：普通挂起，`0→resume（续接体）, 1→cleanup, default→suspend`。
     /// `is_final=true` ：final suspend，`0→unreachable, 1→cleanup, default→suspend`。
-    fn 生成挂起点(&mut self, is_final: bool) -> Result<(), String> {
+    /// R3：通道协作式挂起（生成通道接收）也复用此挂起点，故 pub(super)。
+    pub(super) fn 生成挂起点(&mut self, is_final: bool) -> Result<(), String> {
         let (cleanup_bb, suspend_bb) = {
             let c = self
                 .协程当前
@@ -692,10 +730,8 @@ impl<'ctx> 后端<'ctx> {
             }
             // 单步驱动：resume 一个就绪协程一次。返回 1=还有排队协程 / 0=队列已空。
             "执行器单步" | "协程单步" => {
-                let step = self.取或声明(
-                    "qi_coro_step_once",
-                    self.ctx.i64_type().fn_type(&[], false),
-                );
+                let step =
+                    self.取或声明("qi_coro_step_once", self.ctx.i64_type().fn_type(&[], false));
                 let r = self
                     .builder
                     .build_call(step, &[], "coro.step")
