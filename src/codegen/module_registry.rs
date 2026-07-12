@@ -2571,6 +2571,166 @@ impl ModuleRegistry {
             "void",
         ));
 
+        // ===== egui 控件层（immediate mode GUI）=====
+        // 新 API 家族，与上面老 40 个渲染 FFI 并存。
+        let s = || "字符串".to_string();
+        let i = || "整数".to_string();
+
+        // 应用创建(标题,宽,高) → 句柄
+        gui_module.add_function(ModuleFunction::new(
+            "应用创建",
+            "qi_gui_egui_app_create",
+            vec![s(), i(), i()],
+            "整数",
+        ));
+        // 帧开始(句柄) → 整数（1=存活，0=已关闭）
+        gui_module.add_function(ModuleFunction::new(
+            "帧开始",
+            "qi_gui_egui_frame_begin",
+            vec![i()],
+            "整数",
+        ));
+        // 帧结束(句柄)
+        gui_module.add_function(ModuleFunction::new(
+            "帧结束",
+            "qi_gui_egui_frame_end",
+            vec![i()],
+            "void",
+        ));
+        // 关闭应用(句柄)
+        gui_module.add_function(ModuleFunction::new(
+            "关闭应用",
+            "qi_gui_egui_app_close",
+            vec![i()],
+            "void",
+        ));
+        // 标签(文本)
+        gui_module.add_function(ModuleFunction::new(
+            "标签",
+            "qi_gui_egui_label",
+            vec![s()],
+            "void",
+        ));
+        // 标题文本(文本)：大号标题
+        gui_module.add_function(ModuleFunction::new(
+            "标题文本",
+            "qi_gui_egui_heading",
+            vec![s()],
+            "void",
+        ));
+        // 彩色标签(文本,r,g,b)
+        gui_module.add_function(ModuleFunction::new(
+            "彩色标签",
+            "qi_gui_egui_colored_label",
+            vec![s(), i(), i(), i()],
+            "void",
+        ));
+        // 按钮(文本) → 整数（本帧点击 1/0）
+        gui_module.add_function(ModuleFunction::new(
+            "按钮",
+            "qi_gui_egui_button",
+            vec![s()],
+            "整数",
+        ));
+        // 输入框(id, 当前值) → 新值字符串
+        gui_module.add_function(ModuleFunction::new(
+            "输入框",
+            "qi_gui_egui_text_edit",
+            vec![s(), s()],
+            "字符串",
+        ));
+        // 多行输入(id, 当前值) → 新值字符串
+        gui_module.add_function(ModuleFunction::new(
+            "多行输入",
+            "qi_gui_egui_text_edit_multiline",
+            vec![s(), s()],
+            "字符串",
+        ));
+        // 滑条(id, 当前, 最小, 最大) → 新值整数
+        gui_module.add_function(ModuleFunction::new(
+            "滑条",
+            "qi_gui_egui_slider",
+            vec![s(), i(), i(), i()],
+            "整数",
+        ));
+        // 复选框(id, 文本, 当前) → 新值整数（1/0）
+        gui_module.add_function(ModuleFunction::new(
+            "复选框",
+            "qi_gui_egui_checkbox",
+            vec![s(), s(), i()],
+            "整数",
+        ));
+        // 下拉选择(id, 选项CSV, 当前序号) → 新序号
+        gui_module.add_function(ModuleFunction::new(
+            "下拉选择",
+            "qi_gui_egui_combo",
+            vec![s(), s(), i()],
+            "整数",
+        ));
+        // 分隔线()
+        gui_module.add_function(ModuleFunction::new(
+            "分隔线",
+            "qi_gui_egui_separator",
+            vec![],
+            "void",
+        ));
+        // 空行()
+        gui_module.add_function(ModuleFunction::new(
+            "空行",
+            "qi_gui_egui_space",
+            vec![],
+            "void",
+        ));
+        // 水平开始()
+        gui_module.add_function(ModuleFunction::new(
+            "水平开始",
+            "qi_gui_egui_horizontal_begin",
+            vec![],
+            "void",
+        ));
+        // 水平结束()
+        gui_module.add_function(ModuleFunction::new(
+            "水平结束",
+            "qi_gui_egui_horizontal_end",
+            vec![],
+            "void",
+        ));
+        // 分组开始(标题)
+        gui_module.add_function(ModuleFunction::new(
+            "分组开始",
+            "qi_gui_egui_group_begin",
+            vec![s()],
+            "void",
+        ));
+        // 分组结束()
+        gui_module.add_function(ModuleFunction::new(
+            "分组结束",
+            "qi_gui_egui_group_end",
+            vec![],
+            "void",
+        ));
+        // 进度条(0-100)
+        gui_module.add_function(ModuleFunction::new(
+            "进度条",
+            "qi_gui_egui_progress",
+            vec![i()],
+            "void",
+        ));
+        // 折线图(id, 值CSV, 宽, 高)
+        gui_module.add_function(ModuleFunction::new(
+            "折线图",
+            "qi_gui_egui_plot",
+            vec![s(), s(), i(), i()],
+            "void",
+        ));
+        // 消息弹窗(文本)
+        gui_module.add_function(ModuleFunction::new(
+            "消息弹窗",
+            "qi_gui_egui_message",
+            vec![s()],
+            "void",
+        ));
+
         // Register module with various names
         self.modules
             .insert("图形化".to_string(), gui_module.clone());
