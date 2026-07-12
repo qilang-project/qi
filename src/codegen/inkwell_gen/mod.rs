@@ -922,6 +922,9 @@ pub fn compile_to_object_multi(
             .run_passes(pipeline, &tm, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| format!("优化管线失败({}): {}", pipeline, e))?;
     }
+    if let Ok(p) = std::env::var("QI_EMIT_LL_POST") {
+        let _ = 后端值.module.print_to_file(Path::new(&p));
+    }
     tm.write_to_file(&后端值.module, FileType::Object, out)
         .map_err(|e| e.to_string())?;
 
