@@ -190,8 +190,8 @@ struct 后端<'ctx> {
     /// 当前闭包体内的「弱捕获局部名」集合（`闭包 [弱 x]`）。这些局部走 unowned
     /// 语义：合成时不 retain、出口 弧释放局部 跳过。合成每个闭包体前后 take/restore。
     弱局部: std::collections::HashSet<String>,
-    /// QI_CORO=1 时为 true：把「返回 未来<T> 且含 等待」的用户函数编译成 LLVM
-    /// coroutine（llvm.coro.* stackless 状态机）。默认关，关时逐字节不变（eager future）。
+    /// 默认 true：把「返回 未来<T> 且含 等待」的用户函数编译成 LLVM
+    /// coroutine（llvm.coro.* stackless 状态机）。QI_CORO=0 退回 eager future（逐字节不变）。
     /// 见 协程.rs。
     协程: bool,
     /// 协程函数的 mangled 符号名集合（QI_CORO 下调用点据此把返回的 handle 包成
@@ -242,10 +242,12 @@ impl<'ctx> 后端<'ctx> {
             剖析槽: None,
             导出表: Vec::new(),
             弱局部: std::collections::HashSet::new(),
-            // 协程默认关（QI_CORO 未设或为 0/false）：走 eager future 老路，逐字节不变。
+            // 协程默认开(R1-R6 绿:llvm.coro 状态机/多核 M:N/直接交接/park-wake/ARC 跨挂起/
+            // 死锁检测)。门控是函数级:仅「返回 未来<T> 且含 等待」的函数变协程状态机,普通程序
+            // 零影响。QI_CORO=0 退回 eager future(调试用)。
             协程: std::env::var("QI_CORO")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
+                .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                .unwrap_or(true),
             协程函数集: std::collections::HashSet::new(),
             协程当前: None,
         }

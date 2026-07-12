@@ -134,3 +134,25 @@ recv_waiter。单线程可复现，故好查好验。
 正确性：百消费/多核扇出各 15/15 无 hang RC0；协程全测(10)+518+407 全绿。
 
 **结论**：qi 协程调度在这台机上 4 项微基准全面 ≥ Go。加上计算 +15%，全维度进 Go 联盟。
+
+---
+
+## ✅ QI_CORO 默认开（2026-07-12）
+
+门控翻转：`qi/src/codegen/inkwell_gen/mod.rs` 的 `协程` 字段默认 `true`（照 `弧` 先例，
+`QI_CORO=0/false` 退回 eager future）。门控是**函数级**：无 `未来<T>+等待` 的普通程序 IR
+逐字节不变（已验：`计算.qi` 开/关 IR 二进制一致；纯计算程序耗时不变）。
+
+**回归全绿（默认态=开箱即协程）**：协程 12 例 11 PASS（`真IO上车测` 需 `QI_CHAT_URL`，配好即过）、
+异步 7 例、`cargo test` 518 + qi-runtime 407、多核加速 98ms→21ms（≈4.7×，12 逻辑核）、
+harness 询问/并行询问/尝试询问、qi-web 同步服务 curl、AIOne `服务.qi`（47318）/run+/judge（3/3 及格）
+含 6 并发压令牌通道无 hang。RC 报告全 0。
+
+**顺带修 select×协程通道**：`生成选择`（`并发.rs`）曾对协程原生通道调 eager FFI
+（`qi_runtime_channel_try_*`）→ 类型混淆（`选择发送` 静默"发送失败"）。已按 `协程开()` 分支到
+`qi_coro_chan_try_send/recv`（slot 单层 i64、wait 分支驱动 `qi_coro_step_once`）。默认开与
+`QI_CORO=0` 输出一致。
+
+**通道×非协程上下文结论**：带缓冲通道做信号量（aione 令牌通道、tokio handler、顶层裸用）在协程模式
+按非阻塞轮询正确工作；空通道在非协程上下文 busy-poll（`step_once` 驱动执行器），功能正确，
+高并发下有 CPU 空转的效率代价（非阻塞语义所致，非死锁）。

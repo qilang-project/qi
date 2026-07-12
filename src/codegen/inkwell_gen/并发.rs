@@ -611,19 +611,37 @@ impl<'ctx> 后端<'ctx> {
         let i64t = self.ctx.i64_type();
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
 
-        // FFI 原型（幂等声明）
+        // FFI 原型（幂等声明）。R3+：协程模式下通道由 qi_coro_chan_new 创建（QiCoroChan
+        // 布局），必须用协程原生非阻塞收发；否则把 QiCoroChan* 当 eager 通道解引用 → 类型
+        // 混淆（select 发送/接收静默失败）。签名一致：try_recv=(ptr,ptr)->i32、
+        // try_send=(ptr,i64)->i32。差异仅在 slot 语义（下方 recv 体处理）。
+        let 协程通道 = self.协程开();
         let try_recv = self.取或声明函数(
-            "qi_runtime_channel_try_receive",
+            if 协程通道 {
+                "qi_coro_chan_try_recv"
+            } else {
+                "qi_runtime_channel_try_receive"
+            },
             i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
         );
         let try_send = self.取或声明函数(
-            "qi_runtime_channel_try_send",
+            if 协程通道 {
+                "qi_coro_chan_try_send"
+            } else {
+                "qi_runtime_channel_try_send"
+            },
             i32t.fn_type(&[ptrt.into(), i64t.into()], false),
         );
         let backoff = self.取或声明函数(
             "qi_runtime_select_backoff",
             self.ctx.void_type().fn_type(&[], false),
         );
+        // 协程模式顶层 select 需驱动执行器（否则发送方协程永不运行 → 全未就绪空转）。
+        let step_once = if 协程通道 {
+            Some(self.取或声明函数("qi_coro_step_once", i64t.fn_type(&[], false)))
+        } else {
+            None
+        };
 
         // 预求值：各 case 的通道指针 / 发送值（避免每轮轮询重复副作用）。
         // (是否发送, 通道 ptr, 发送值 i64)
@@ -685,8 +703,13 @@ impl<'ctx> 后端<'ctx> {
             None => None,
         };
 
-        // 接收 slot（entry 块 alloca，轮询循环里复用不吃栈）
-        let slot = self.入口块alloca(ptrt.into(), "sel.slot")?;
+        // 接收 slot（entry 块 alloca，轮询循环里复用不吃栈）。协程通道 try_recv 写裸 i64
+        // （单层）；eager try_receive 写 boxed 指针（双层）。故槽类型按模式分。
+        let slot = if 协程通道 {
+            self.入口块alloca(i64t.into(), "sel.slot")?
+        } else {
+            self.入口块alloca(ptrt.into(), "sel.slot")?
+        };
 
         let poll_bb = self.ctx.append_basic_block(func, "select.poll");
         let end_bb = self.ctx.append_basic_block(func, "select.end");
@@ -756,6 +779,11 @@ impl<'ctx> 后端<'ctx> {
                 .build_conditional_branch(到期, to_bb, wait_bb)
                 .map_err(|e| e.to_string())?;
             self.builder.position_at_end(wait_bb);
+            if let Some(step) = step_once {
+                self.builder
+                    .build_call(step, &[], "")
+                    .map_err(|e| e.to_string())?;
+            }
             self.builder
                 .build_call(backoff, &[], "")
                 .map_err(|e| e.to_string())?;
@@ -766,7 +794,13 @@ impl<'ctx> 后端<'ctx> {
             self.生成块(&tc.body, func)?;
             self.跳转若未终结(end_bb)?;
         } else {
-            // 无 默认/超时：退避后再轮询（阻塞语义）
+            // 无 默认/超时：退避后再轮询（阻塞语义）。协程模式先驱动执行器一步，
+            // 让发送/接收方协程有机会推进，否则顶层 select 永远看不到就绪。
+            if let Some(step) = step_once {
+                self.builder
+                    .build_call(step, &[], "")
+                    .map_err(|e| e.to_string())?;
+            }
             self.builder
                 .build_call(backoff, &[], "")
                 .map_err(|e| e.to_string())?;
@@ -783,16 +817,21 @@ impl<'ctx> 后端<'ctx> {
                 ..
             } = &case.kind
             {
-                // slot → boxed 指针 → i64 值（与 生成通道接收 一致的两层 load）
-                let boxed = self
-                    .builder
-                    .build_load(ptrt, slot, "sel.box")
-                    .map_err(|e| e.to_string())?
-                    .into_pointer_value();
-                let v = self
-                    .builder
-                    .build_load(i64t, boxed, "sel.val")
-                    .map_err(|e| e.to_string())?;
+                // 协程通道：slot 直接是 i64（单层）；eager：slot 是 boxed 指针（双层）。
+                let v = if 协程通道 {
+                    self.builder
+                        .build_load(i64t, slot, "sel.val")
+                        .map_err(|e| e.to_string())?
+                } else {
+                    let boxed = self
+                        .builder
+                        .build_load(ptrt, slot, "sel.box")
+                        .map_err(|e| e.to_string())?
+                        .into_pointer_value();
+                    self.builder
+                        .build_load(i64t, boxed, "sel.val")
+                        .map_err(|e| e.to_string())?
+                };
                 let var = self.入口块alloca(i64t.into(), name)?;
                 self.builder
                     .build_store(var, v)

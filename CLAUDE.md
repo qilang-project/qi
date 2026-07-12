@@ -132,6 +132,13 @@ Qi uses the `未来<T>` (Future) type for asynchronous operations:
 
 **Note**: Qi uses explicit `未来<T>` type annotations instead of `async/await` keywords. Functions returning `未来<T>` automatically wrap return values in Futures.
 
+**真协程默认开（2026-07-12）**：`QI_CORO` 默认开启（R1-R6 全绿）。「返回 `未来<T>` 且含 `等待`」的函数
+编译成 LLVM coroutine（`llvm.coro.*` 状态机），由多核 M:N 执行器调度（默认 worker 数 = CPU 逻辑核数，
+`QI_CORO_WORKERS` 可覆盖）。门控是**函数级**：无 `未来<T>+等待` 的普通程序 IR 逐字节不变、性能零回退。
+通道（`通道<T>`/`<-`/`发送`/`select 选择`）在协程模式走协程原生实现（park-wake 背压 + 死锁检测）；
+非协程上下文（顶层、tokio handler）里裸用带缓冲通道做信号量按非阻塞轮询正常工作。
+`QI_CORO=0` 退回 eager future（调试用）。
+
 ## Important Implementation Details
 
 ### Chinese Name Handling
