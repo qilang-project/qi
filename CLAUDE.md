@@ -93,7 +93,7 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 - **Type System**: Basic types (整数, 浮点数, 字符串, 布尔)
 - **Functions**: Regular functions with Chinese names
 - **Async/Future**: Asynchronous programming using `未来<T>` (Future) type
-- **Control Flow**: 如果/否则, 当, 对于 loops
+- **Control Flow**: 如果/否则/否则如果 (else if 链，连写 `否则如果` 或空格分开 `否则 如果` 等价，脱糖为嵌套 else{if}), 当, 对于 loops
 - **Structs/Enums**: Chinese field names and variant names
 
 ### Async Programming with Future Types

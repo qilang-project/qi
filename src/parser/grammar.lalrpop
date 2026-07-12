@@ -693,6 +693,11 @@ IfStatement: AstNode = {
 };
 
 // If statements with else (higher precedence to resolve dangling-else)
+//
+// `否则如果`（else if 链）：语法层直接用连续两个 token `"否则" "如果"` 匹配。
+// LALRPOP 内部词法器最大匹配：源码里连写 `否则如果` 与空格分开 `否则 如果`
+// 都会被切成 `否则`+`如果` 两个 token（终结符表里没有 `否则如果` 组合词），
+// 因此两种写法天然都对。语义上脱糖为 else { if ... } 嵌套（codegen 零改动）。
 IfWithElse: AstNode = {
     "如果" <condition:Expr> <then_branch:Block> "否则" <else_branch:Block> => {
         AstNode::如果语句(IfStatement {
@@ -705,7 +710,7 @@ IfWithElse: AstNode = {
             span: Default::default(),
         })
     },
-    "如果" <condition:Expr> <then_branch:Block> "否则如果" <else_if:IfWithElse> => {
+    "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithElse> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
@@ -715,13 +720,21 @@ IfWithElse: AstNode = {
     },
 };
 
-// If statements without else
+// If statements without else — 也支持 else-if 链但整条链末尾没有 `否则` 兜底分支。
 IfWithoutElse: AstNode = {
     "如果" <condition:Expr> <then_branch:Block> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
             else_branch: None,
+            span: Default::default(),
+        })
+    },
+    "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithoutElse> => {
+        AstNode::如果语句(IfStatement {
+            condition: Box::new(condition),
+            then_branch,
+            else_branch: Some(Box::new(else_if)),
             span: Default::default(),
         })
     },

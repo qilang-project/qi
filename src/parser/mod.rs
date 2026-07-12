@@ -530,6 +530,67 @@ impl Parser {
         }
         let cleaned = normalize_template_prefix(&cleaned);
 
+        // `否则如果`（else if 连写）归一化：字符串外的连写 `否则如果` → `否则 如果`。
+        // LALRPOP 内建词法器最大匹配：连写的 `否则如果` 会被中文标识符正则整吞成
+        // 一个 4 字标识符（长度 4 > 关键字 `否则` 长度 2），于是 else-if 链解析失败。
+        // 插一个空格后 LALRPOP 稳定切成 `否则`+`如果` 两个关键字 token，与用户
+        // 手写空格分开的 `否则 如果` 归一，语法层统一按连续两 token 处理。
+        // 自定义 lexer 路径（run/compile）把连写读成一个标识符 token，parse() 重组源码
+        // 后仍是连写，同样在这里被接住 —— 双解析路径共用此归一化。
+        fn normalize_else_if(s: &str) -> String {
+            let chars: Vec<char> = s.chars().collect();
+            let mut out = String::with_capacity(s.len() + 8);
+            let mut i = 0;
+            let (mut in_str, mut in_char, mut in_raw, mut escape) = (false, false, false, false);
+            while i < chars.len() {
+                let c = chars[i];
+                if in_raw {
+                    out.push(c);
+                    if c == '`' {
+                        in_raw = false;
+                    }
+                    i += 1;
+                } else if in_str || in_char {
+                    out.push(c);
+                    if escape {
+                        escape = false;
+                    } else if c == '\\' {
+                        escape = true;
+                    } else if in_str && c == '"' {
+                        in_str = false;
+                    } else if in_char && c == '\'' {
+                        in_char = false;
+                    }
+                    i += 1;
+                } else if c == '"' {
+                    in_str = true;
+                    out.push(c);
+                    i += 1;
+                } else if c == '\'' {
+                    in_char = true;
+                    out.push(c);
+                    i += 1;
+                } else if c == '`' {
+                    in_raw = true;
+                    out.push(c);
+                    i += 1;
+                } else if c == '否'
+                    && i + 3 < chars.len()
+                    && chars[i + 1] == '则'
+                    && chars[i + 2] == '如'
+                    && chars[i + 3] == '果'
+                {
+                    out.push_str("否则 如果");
+                    i += 4;
+                } else {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+            out
+        }
+        let cleaned = normalize_else_if(&cleaned);
+
         // Use LALRPOP-generated parser with cleaned string input
         use crate::parser::__parse__Program::ProgramParser;
         ProgramParser::new()
