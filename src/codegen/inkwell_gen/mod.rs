@@ -582,8 +582,9 @@ impl<'ctx> 后端<'ctx> {
 
         if !self.当前块已终结() {
             self.剖析出口()?; // 剖析：main 落底出口计时
-                              // ARC：main 顺利落底时释放入口的字符串局部
+                              // ARC：main 顺利落底时释放入口的字符串局部 + 全局 RC
             self.弧释放局部()?;
+            self.弧释放全局()?;
             self.builder
                 .build_return(Some(&i32t.const_int(0, false)))
                 .map_err(|e| e.to_string())?;

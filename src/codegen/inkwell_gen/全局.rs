@@ -8,6 +8,7 @@
 //! 读写：`表达式.rs` 的标识符 / 赋值分支在 变量表(局部) miss 后 fallback 到 全局变量表。
 
 use super::后端;
+use super::所有权::是RC类型;
 use super::类型::Qi类型;
 use super::类型检查::推断表达式类型;
 use crate::parser::ast::{AstNode, Program};
@@ -92,6 +93,32 @@ impl<'ctx> 后端<'ctx> {
                         .map_err(|e| e.to_string())?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// main 出口（每个 ret 之前，仅入口函数）：release 全局变量表里所有 RC 类型
+    /// （字符串/结构体/数组/闭包/装箱枚举）。全局初始化时 弧存入槽2 已 retain/转移 +1，
+    /// 出口 release -1 归零，QI_RC_REPORT 不再报活跃对象泄漏。
+    /// 全局 zeroinit（未初始化则为 null），release(null) 安全；main 多个 ret 路径
+    /// 运行期只走一条，逐条释放不会 double-free。
+    pub(super) fn 弧释放全局(&mut self) -> Result<(), String> {
+        if !self.弧开() {
+            return Ok(());
+        }
+        let 槽们: Vec<(inkwell::values::PointerValue<'ctx>, Qi类型)> = self
+            .全局变量表
+            .values()
+            .filter(|(_, t)| 是RC类型(*t))
+            .map(|(g, t)| (g.as_pointer_value(), *t))
+            .collect();
+        let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
+        for (p, t) in 槽们 {
+            let v = self
+                .builder
+                .build_load(ptrt, p, "arc.global.exit")
+                .map_err(|e| e.to_string())?;
+            self.弧release任意(v, t);
         }
         Ok(())
     }

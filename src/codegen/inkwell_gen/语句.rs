@@ -116,6 +116,7 @@ impl<'ctx> 后端<'ctx> {
                     }
                     self.剖析出口()?; // 剖析：main 显式返回出口计时
                     self.弧释放局部()?; // ARC：main 出口释放字符串局部
+                    self.弧释放全局()?; // ARC：main 出口释放全局 RC
                     self.弹try帧()?; // E4：try 体内 return 先弹异常 frame
                     let z = self.ctx.i32_type().const_int(0, false);
                     self.builder
