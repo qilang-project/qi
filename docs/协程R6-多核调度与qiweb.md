@@ -156,3 +156,45 @@ harness 询问/并行询问/尝试询问、qi-web 同步服务 curl、AIOne `服
 **通道×非协程上下文结论**：带缓冲通道做信号量（aione 令牌通道、tokio handler、顶层裸用）在协程模式
 按非阻塞轮询正确工作；空通道在非协程上下文 busy-poll（`step_once` 驱动执行器），功能正确，
 高并发下有 CPU 空转的效率代价（非阻塞语义所致，非死锁）。
+
+## 默认开后基线与攻坚（2026-07-12）
+
+微基准（M2 Pro 12 逻辑核 = 8P+4E，Go 1.26.4，QI_CORO 默认开，各 3 次取中位，qi 用 release 运行时归档）。
+
+**说明与 R6 旧记录的出入**：R6 曾记「多核加速 98ms→21ms ≈4.7×」——那是 `QI_CORO_WORKERS=1` 对
+`=12` 的自比（单核 turbo 基线偏高，放大了比值）；本轮改用与 Go 同写法逐负载对照，数字口径不同。
+
+| 负载 | 攻坚前 qi | Go | 攻坚后 qi | 结论 |
+|---|---|---|---|---|
+| 上下文切换100万(pingpong) | 58ms | 153ms | 57ms | 保持 2.6× 胜 |
+| 通道收发50万(1对1) | 19ms | 22ms | 19ms | 保持略胜 |
+| 纯创建5万(各1次让出) | 20ms | 27ms | 21ms | 保持略胜 |
+| CPU密集(8×30万素数) | 33ms | 15ms | 33ms | 非调度器瓶颈（见下） |
+| **高扇入汇聚(5万发送者→1消费者)** | **215ms** | 49ms | **~30ms** | **7× 提速，反超 Go** |
+
+### 输项①：高扇入汇聚 —— **调度器 bug（惊群 futex 风暴 + 缺 work-stealing）**，已修
+根因（instrumentation 精确定位）：单消费者串行地每 recv 唤醒一个 parked 发送者（发送者仅剩
+`返回`），R6 里每次唤醒都**推全局 READY + `notify_one`**。12 worker 全睡，被逐个 futex 唤醒
+干一点点活又睡 —— `wait≈4.9 万`、`notify≈4.9 万`，futex 往返≈全部耗时。worker 曲线铁证：
+`WORKERS=1` 仅 19ms（已胜 Go），`=12` 却 230ms（越多 worker 越慢）。
+
+三处根治（`coro.rs`，R7）：
+1. **每 worker 本地队列 `LOCALQ` + 批量偷取**：NEXT 单槽已占后的溢出唤醒落本地队列（自 push 几乎
+   无争用），空闲 worker 一次偷一半（摊薄全局锁争用），取代「12 worker 抢全局单个」。
+2. **IDLE 门控 notify**：只有真有 worker park 在 Condvar 才 `notify_one`，消灭空发 notify。
+3. **HANDOFF 计数修死锁误判**：NEXT 在途协程精确计数，死锁检测要 `RUNNING==0 && HANDOFF==0`
+   （旧代码靠 2ms 采样概率躲，work-stealing 改时序后 pingpong 偶发假死锁，此修根治）。
+
+优化前 215ms → 优化后 ~30ms（3 次 25/30/32），反超 Go 49ms。pingpong/chan/纯创建无回退。
+
+### 输项②：CPU 密集多核 —— **非调度器瓶颈（单核 codegen + turbo）**，如实报告硬边界
+逐一验证候选后否定「让出成本 / worker 空转 / direct-handoff 副作用」：`让出()` 走全局 READY 非 NEXT；
+8 协程 120 次让出可忽略；`让出` 频率减半/顶端让出（模拟 initial-suspend）耗时不变。真相：
+- **调度扩展本身没问题**：大负载（2M 素数）实测 `W=1 1288ms → W=8 248ms = 5.2×`，逼近 Go 5.9×。
+- **小负载差距 = 单核 codegen + turbo**：`qi W=1 110ms vs Go 77ms = 1.43×`（素数循环 LLVM O1 vs Go）。
+  `qi run` 默认 `Basic`(O1)；且 300k 小负载下 W=1 单核 turbo 抬高，放大 W=8 相对差。
+结论：协程调度器在此负载**无可摘的果子**；剩余差距属编译期优化（默认 O 级别）与硬件 turbo，
+不在本轮调度器攻坚范围。未强改 initial-suspend codegen（实测无收益且会危及①/纯创建的战果）。
+
+`QI_CORO_SPIN`（默认 0）保留 park 前自旋旋钮：IDLE 门控+批量偷取已消除 futex 风暴，自旋在
+过订阅（worker>物理核）时抢核反拖累 pingpong，故默认关。
