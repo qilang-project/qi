@@ -73,6 +73,7 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 #### Parser (`src/parser/grammar.lalrpop`)
 - Uses LALRPOP for parsing Chinese grammar
 - Supports all Chinese keywords: `如果/否则`, `当`, `函数`, `变量`, etc.
+- 中文逻辑运算符：`且`/`与`==`&&`，`或`==`||`，`非`==`!`（优先级与 `&& || !` 一致）
 - Handles operator precedence with 8-level expression hierarchy
 - Generates AST with Chinese node variants
 

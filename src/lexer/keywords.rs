@@ -42,6 +42,7 @@ impl KeywordTable {
         keywords.insert("字符".to_string(), TokenKind::类型关键词(BasicType::字符));
         keywords.insert("空".to_string(), TokenKind::类型关键词(BasicType::空));
         keywords.insert("与".to_string(), TokenKind::与);
+        keywords.insert("且".to_string(), TokenKind::与); // `且` 为 `与` 的等价逻辑与关键字
         keywords.insert("或".to_string(), TokenKind::或);
         keywords.insert("参数".to_string(), TokenKind::参数);
 

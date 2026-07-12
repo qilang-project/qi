@@ -1463,6 +1463,13 @@ Precedence3: AstNode = {
         right: Box::new(right),
         span: Default::default(),
     }),
+    // `且` 是 `与` / `&&` 的等价写法（逻辑与），优先级完全一致。
+    <left:Precedence3> "且" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+        left: Box::new(left),
+        operator: BinaryOperator::与,
+        right: Box::new(right),
+        span: Default::default(),
+    }),
     Precedence4,
 };
 
