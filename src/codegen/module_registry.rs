@@ -2770,15 +2770,16 @@ impl ModuleRegistry {
             vec!["整数".to_string(), "字符串".to_string()],
             "整数",
         ));
+        // 包含键 / 删除键：通用分派（整数/浮点/字符串表统一），此前只认整数表
         map_module.add_function(ModuleFunction::new(
             "包含键",
-            "qi_hashmap_int_contains",
+            "qi_hashmap_contains",
             vec!["整数".to_string(), "字符串".to_string()],
             "整数",
         ));
         map_module.add_function(ModuleFunction::new(
             "删除键",
-            "qi_hashmap_int_remove",
+            "qi_hashmap_remove",
             vec!["整数".to_string(), "字符串".to_string()],
             "整数",
         ));
