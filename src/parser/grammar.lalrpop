@@ -770,10 +770,17 @@ ForStatement: AstNode = {
 };
 
 // 对于 循环目标：普通表达式（数组遍历）或整数区间。
-// `起..止` 半开（不含 止，Rust 惯例）；`起 到 止` 闭区间（含 止，中文自然读法）。
+// `起..止` 半开（不含 止，Rust 惯例）；`起 直到 止` 半开（不含 止，中文自然读法，
+// 典型 `0 直到 长度(数组)` 取代 `0 到 长度(数组) - 1`）；`起 到 止` 闭区间（含 止）。
 ForTarget: AstNode = {
     <e:Expr> => e,
     <start:Expr> ".." <end:Expr> => AstNode::区间表达式(RangeExpression {
+        start: Box::new(start),
+        end: Box::new(end),
+        inclusive: false,
+        span: Default::default(),
+    }),
+    <start:Expr> "直到" <end:Expr> => AstNode::区间表达式(RangeExpression {
         start: Box::new(start),
         end: Box::new(end),
         inclusive: false,

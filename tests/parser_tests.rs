@@ -157,6 +157,49 @@ fn test_parse_for_loop() {
 }
 
 #[test]
+fn test_parse_range_到_and_直到() {
+    use qi_compiler::parser::ast::{AstNode, ForStatement};
+
+    // 抽出 对于 循环里 range 节点的 inclusive 标志。
+    fn range_inclusive(src: &str) -> bool {
+        let program = Parser::new()
+            .parse_source(src)
+            .unwrap_or_else(|e| panic!("应能解析 {src:?}: {e:?}"));
+        // 找到第一个 对于语句（可能嵌在函数体里）。
+        fn find(node: &AstNode) -> Option<bool> {
+            match node {
+                AstNode::对于语句(ForStatement { range, .. }) => match &**range {
+                    AstNode::区间表达式(r) => Some(r.inclusive),
+                    _ => None,
+                },
+                AstNode::函数声明(f) => f.body.iter().find_map(find),
+                _ => None,
+            }
+        }
+        program
+            .statements
+            .iter()
+            .find_map(find)
+            .expect("应含区间对于循环")
+    }
+
+    // 到 = 闭区间（含端点）；直到 = 半开区间（不含端点）。
+    assert!(
+        range_inclusive("函数 入口() { 对于 (i 在 0 到 3) { } }"),
+        "`到` 应为闭区间 inclusive=true"
+    );
+    assert!(
+        !range_inclusive("函数 入口() { 对于 (i 在 0 直到 3) { } }"),
+        "`直到` 应为半开区间 inclusive=false"
+    );
+    // 表达式端点也要能解析。
+    assert!(
+        !range_inclusive("函数 入口() { 对于 (i 在 0 直到 长度(列)) { } }"),
+        "`直到 长度(列)` 应解析为半开区间"
+    );
+}
+
+#[test]
 fn test_parse_nested_control_flow() {
     let source = r#"
     如果 x > 5 {

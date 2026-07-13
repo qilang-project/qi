@@ -95,6 +95,7 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 - **Functions**: Regular functions with Chinese names
 - **Async/Future**: Asynchronous programming using `未来<T>` (Future) type
 - **Control Flow**: 如果/否则/否则如果 (else if 链，连写 `否则如果` 或空格分开 `否则 如果` 等价，脱糖为嵌套 else{if}), 当, 对于 loops
+  - 整数区间循环三种写法：`对于 i 在 起..止`（半开，不含止）、`对于 i 在 起 直到 止`（半开，不含止，中文自然读法，典型 `0 直到 长度(数组)` 取代 `0 到 长度(数组) - 1`）、`对于 i 在 起 到 止`（闭区间，含止）。半开区间在 `起 >= 止` 时零次迭代，不倒走。区分由 AST `RangeExpression.inclusive` 承载（到=true，直到/`..`=false）。
 - **Structs/Enums**: Chinese field names and variant names
 
 ### Async Programming with Future Types
