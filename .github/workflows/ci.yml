@@ -67,6 +67,7 @@ jobs:
         # 示例链接无 LLVM 的 qi-runtime 归档(独立仓);find_host_runtime_library
         # 会在 <checkout根>/qi-runtime/target/{debug,release}/ 找到它
         run: |
+          git clone --depth 1 https://github.com/qilang-project/qi-gui.git qi-gui
           git clone --depth 1 https://github.com/qilang-project/qi-runtime.git qi-runtime
           cd qi-runtime && cargo build --release
 

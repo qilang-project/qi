@@ -88,6 +88,9 @@ jobs:
       # 编译产物要链接的运行时归档(无 LLVM,独立仓)——没有它用户装了编译器也编不了程序
       - name: Build qi-runtime
         run: |
+          # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
+          # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
+          git clone --depth 1 https://github.com/qilang-project/qi-gui.git qi-gui
           git clone --depth 1 https://github.com/qilang-project/qi-runtime.git qi-runtime
           cd qi-runtime && cargo build --release
 
