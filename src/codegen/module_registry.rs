@@ -650,6 +650,16 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 缓存体：预构建完整 HTTP 响应（ka/close 两变体）注册为持久字节，
+        // handler 用 X-Qi-Cached-Body 标记头引用 → 每请求零分配零拷贝直发。
+        // (body, content_type) → 体id（>0；失败 -1）
+        web_module.add_function(ModuleFunction::new(
+            "缓存体注册",
+            "qi_web_cache_body_register",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
         // 路由 Rust 镜像表 —— 注册时同步推一份；匹配走 Rust
         web_module.add_function(ModuleFunction::new(
             "路由注册",
