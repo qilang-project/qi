@@ -118,6 +118,17 @@ impl QiCompiler {
         &self,
         source_file: &PathBuf,
     ) -> Result<Vec<crate::parser::ast::Program>, CompilerError> {
+        self.collect_programs_带检查(source_file, true)
+    }
+
+    /// 同 collect_programs，但可关掉内置的 QI_TYPECHECK 度量/strict 段——
+    /// `qi check` 走这里（它自己跑 分析编译单元 并管理 warning/strict 语义，
+    /// 避免 strict 下 collect 先 Err 被吞导致漏报）。
+    pub fn collect_programs_带检查(
+        &self,
+        source_file: &PathBuf,
+        跑类型检查: bool,
+    ) -> Result<Vec<crate::parser::ast::Program>, CompilerError> {
         let mut module_registry = crate::semantic::module::ModuleRegistry::new();
         let mut compiled_modules: std::collections::HashMap<PathBuf, crate::parser::ast::AstNode> =
             std::collections::HashMap::new();
@@ -146,6 +157,34 @@ impl QiCompiler {
                 programs.push(p.clone());
             }
         }
+
+        // 【语义类型检查·度量阶段】QI_TYPECHECK=1 时非致命地对**整个编译单元**
+        // 跑一遍宽容语义分析（semantic::单元检查：两遍——先跨文件收集声明，再逐
+        // Program 检查），逐条打印结构化错误，绝不中止 codegen。设计原则与沉默
+        // 面见 qi/src/semantic/单元检查.rs 模块文档；红码合同见
+        // qi/tests/类型检查红码/。无 QI_TYPECHECK 环境变量时零行为变化。
+        // 取值语义：未设/off=不跑；strict=报错致命（中止编译）；其他值（如 1）=只打印。
+        match std::env::var("QI_TYPECHECK") {
+            Ok(v) if v != "off" && 跑类型检查 => {
+                let 错误 = crate::semantic::分析编译单元(&programs);
+                for e in &错误 {
+                    // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
+                    let s: String = format!("{:?}", e).chars().take(2000).collect();
+                    eprintln!("[类型检查] 报错: {}", s);
+                }
+                if !错误.is_empty() {
+                    eprintln!("[类型检查] 共 {} 条报错", 错误.len());
+                    if v == "strict" {
+                        return Err(CompilerError::Codegen(format!(
+                            "类型检查失败（QI_TYPECHECK=strict）：{} 条报错",
+                            错误.len()
+                        )));
+                    }
+                }
+            }
+            _ => {}
+        }
+
         Ok(programs)
     }
 

@@ -6,6 +6,10 @@ pub mod module;
 pub mod scope;
 pub mod symbol_table;
 pub mod type_checker;
+#[path = "单元检查.rs"]
+pub mod 单元检查;
+
+pub use 单元检查::分析编译单元;
 
 use crate::lexer::Span;
 use crate::parser::AstNode;

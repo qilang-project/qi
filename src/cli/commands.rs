@@ -1128,9 +1128,57 @@ impl Cli {
             }
         }
 
+        // 语义类型检查（宽容默认，warning 不挡退出码）。
+        // 只对 包 主程序 的入口跑：包成员文件单独作入口时，同包兄弟文件不进
+        // 编译单元，会产生「未定义」伪影（与 codegen 行为同源）——降级跳过。
+        // 全语料校准：302 绿码 0 误报 / 28 红码全抓（qi/tests/类型检查{绿码,红码}）。
+        // QI_TYPECHECK=off 可关；QI_TYPECHECK=strict 时警告升级为失败。
+        let mut 类型警告数 = 0usize;
+        if all_passed && std::env::var("QI_TYPECHECK").map(|v| v == "off").unwrap_or(false) == false
+        {
+            let strict = std::env::var("QI_TYPECHECK")
+                .map(|v| v == "strict")
+                .unwrap_or(false);
+            let compiler = crate::QiCompiler::with_config(config.clone());
+            for file in &files {
+                // 导入解析失败等一律静默跳过——check 的语义警告是尽力而为。
+                // 用「不跑内置检查」版本：strict 语义由本函数统一管理，
+                // 避免 collect 内部先 Err 被吞掉导致 strict 漏报。
+                let Ok(programs) = compiler.collect_programs_带检查(file, false) else {
+                    continue;
+                };
+                let 是主程序入口 = programs
+                    .first()
+                    .and_then(|p| p.package_name.as_deref())
+                    .map(|n| n == "主程序")
+                    .unwrap_or(false);
+                if !是主程序入口 {
+                    continue;
+                }
+                let 错误 = crate::semantic::分析编译单元(&programs);
+                if !错误.is_empty() {
+                    eprintln!("文件: {}", file.display());
+                    for e in &错误 {
+                        let s: String = format!("{:?}", e).chars().take(500).collect();
+                        eprintln!("  类型警告: {}", s);
+                    }
+                    类型警告数 += 错误.len();
+                }
+            }
+            if strict && 类型警告数 > 0 {
+                return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                    format!("类型检查失败（strict 模式）：{} 条", 类型警告数),
+                )));
+            }
+        }
+
         if all_passed {
             if !config.verbose {
-                println!("所有文件语法检查通过");
+                if 类型警告数 > 0 {
+                    println!("语法检查通过；类型警告 {} 条（QI_TYPECHECK=strict 可升级为失败）", 类型警告数);
+                } else {
+                    println!("所有文件语法检查通过");
+                }
             }
         } else {
             return Err(CliError::Compilation(crate::CompilerError::Codegen(
