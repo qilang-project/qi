@@ -78,7 +78,11 @@ pub(crate) fn 取出TCP流(handle: i64) -> Option<std::net::TcpStream> {
     // 兜底：极端并发下别的线程还持着克隆（瞬态 IO 中），退回 dup fd
     // （try_clone_stream），残余 Arc 随其使用结束自然释放。
     match std::sync::Arc::try_unwrap(arc) {
-        Ok(mu) => Some(mu.into_inner().unwrap_or_else(|e| e.into_inner()).into_stream()),
+        Ok(mu) => Some(
+            mu.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                .into_stream(),
+        ),
         Err(arc) => {
             let conn = arc.lock().unwrap_or_else(|e| e.into_inner());
             conn.try_clone_stream().ok()
@@ -850,7 +854,10 @@ mod tests {
 
         // 给 A 发一个包解除阻塞，回收线程与句柄
         let 解 = CString::new("bye").unwrap();
-        assert_eq!(qi_network_udp_send_string(b, 解.as_ptr(), 主机.as_ptr(), 端口a), 3);
+        assert_eq!(
+            qi_network_udp_send_string(b, 解.as_ptr(), 主机.as_ptr(), 端口a),
+            3
+        );
         assert_eq!(收线程.join().unwrap(), 3);
         assert_eq!(qi_network_udp_close(a), 1);
         assert_eq!(qi_network_udp_close(b), 1);

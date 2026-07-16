@@ -185,7 +185,10 @@ fn cached_body_fast_path(headers: &[u8], keep_alive: bool) -> i64 {
     if rest.iter().any(|&b| b == b'\r' || b == b'\n') {
         return 0;
     }
-    let id = match std::str::from_utf8(rest).ok().and_then(|s| s.trim().parse::<i64>().ok()) {
+    let id = match std::str::from_utf8(rest)
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+    {
         Some(v) => v,
         None => return 0,
     };
