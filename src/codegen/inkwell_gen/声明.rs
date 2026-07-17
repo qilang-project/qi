@@ -288,6 +288,8 @@ impl<'ctx> 后端<'ctx> {
 
         // 每个函数独立的局部变量表 / 作用域 / 返回类型 / try 深度
         self.变量表.clear();
+        self.作用域遮蔽栈.clear();
+        self.弧隐藏RC槽.clear();
         self.符号.进入作用域();
         self.当前返回类型 = sig.返回;
         self.try深度 = 0; // E4：异常 frame 栈按函数平衡，跨函数不串

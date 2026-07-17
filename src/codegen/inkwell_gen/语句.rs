@@ -111,7 +111,7 @@ impl<'ctx> 后端<'ctx> {
                         .build_store(ptr, v)
                         .map_err(|e| e.to_string())?;
                 }
-                self.变量表.insert(vd.name.clone(), (ptr, 类型));
+                self.声明局部槽(&vd.name, ptr, 类型);
                 self.符号.声明变量(&vd.name, 类型);
                 Ok(())
             }
@@ -318,21 +318,63 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 生成一个语句块（带作用域），保留 self 的作用域栈平衡。
+    /// 变量表侧：进块压遮蔽帧，退块逆序恢复被遮蔽的外层槽 ——
+    /// 内层同名 `变量 x` 不再永久覆盖外层 x 的槽指针。
     pub(super) fn 生成块(
         &mut self,
         stmts: &[AstNode],
         func: FunctionValue<'ctx>,
     ) -> Result<(), String> {
         self.符号.进入作用域();
+        self.作用域遮蔽栈.push(Vec::new());
         for s in stmts {
-            self.生成语句(s, func)?;
+            let r = self.生成语句(s, func);
+            if r.is_err() {
+                // 出错也要弹帧，保持栈平衡（错误会向上传播终止编译）
+                self.弹作用域帧();
+                self.符号.退出作用域();
+                return r;
+            }
             // 已终结（return/break）后不再生成同块后续指令
             if self.当前块已终结() {
                 break;
             }
         }
+        self.弹作用域帧();
         self.符号.退出作用域();
         Ok(())
+    }
+
+    /// 把局部变量登记进 变量表；若当前在某个块作用域帧内，记下被覆盖的旧项
+    /// （退块时恢复）。函数顶层（无帧）行为与旧 flat 语义一致。
+    pub(super) fn 声明局部槽(
+        &mut self,
+        名: &str,
+        ptr: inkwell::values::PointerValue<'ctx>,
+        t: Qi类型,
+    ) {
+        let 旧 = self.变量表.insert(名.to_string(), (ptr, t));
+        if let Some(帧) = self.作用域遮蔽栈.last_mut() {
+            帧.push((名.to_string(), 旧));
+        }
+    }
+
+    /// 弹出当前块的遮蔽帧：逆序移除本块声明的变量、恢复被遮蔽的外层槽。
+    /// 被移出的内层 RC 槽（字符串/结构体/数组）记入 弧隐藏RC槽 ——
+    /// 它们是 entry 块 alloca + null 初始化，函数出口 / 协程 cleanup 仍需释放。
+    pub(super) fn 弹作用域帧(&mut self) {
+        if let Some(帧) = self.作用域遮蔽栈.pop() {
+            for (名, 旧) in 帧.into_iter().rev() {
+                if let Some((内槽, 内t)) = self.变量表.remove(&名) {
+                    if super::所有权::是RC类型(内t) {
+                        self.弧隐藏RC槽.push((名.clone(), 内槽, 内t));
+                    }
+                }
+                if let Some(项) = 旧 {
+                    self.变量表.insert(名, 项);
+                }
+            }
+        }
     }
 
     /// `对于 变量 在 起..止` 形式的整数区间循环。range 期望为二元「..」表达式；
@@ -364,7 +406,9 @@ impl<'ctx> 后端<'ctx> {
         self.builder
             .build_store(ivar, 起)
             .map_err(|e| e.to_string())?;
-        self.变量表.insert(f.variable.clone(), (ivar, Qi类型::整数));
+        // 循环变量自成一层作用域：遮蔽的外层同名变量在循环结束后恢复
+        self.作用域遮蔽栈.push(Vec::new());
+        self.声明局部槽(&f.variable, ivar, Qi类型::整数);
         self.符号.声明变量(&f.variable, Qi类型::整数);
 
         let cond_bb = self.ctx.append_basic_block(func, "for.cond");
@@ -401,7 +445,10 @@ impl<'ctx> 后端<'ctx> {
         self.循环栈.push((step_bb, end_bb));
         let r = self.生成块(&f.body, func);
         self.循环栈.pop();
-        r?;
+        if r.is_err() {
+            self.弹作用域帧(); // 循环变量帧（出错也保持栈平衡）
+            return r;
+        }
         self.跳转若未终结(step_bb)?;
 
         // step：自增 + 回测（体内全路径 return/跳出 时不可达，仍合法）
@@ -423,6 +470,7 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
+        self.弹作用域帧(); // 循环变量出作用域，恢复被遮蔽的外层同名变量
         Ok(())
     }
 
@@ -470,13 +518,13 @@ impl<'ctx> 后端<'ctx> {
         self.询问计数 += 1;
         self.变量表.insert(流名.clone(), (流ptr, Qi类型::整数));
 
-        // 片段循环变量（字符串）
+        // 片段循环变量（字符串）——自成一层作用域，循环结束后恢复被遮蔽的外层同名变量
         let strt = self
             .llvm基础类型(Qi类型::字符串)
             .ok_or_else(|| "字符串类型无效".to_string())?;
         let 片段ptr = self.入口块alloca(strt, &f.variable)?;
-        self.变量表
-            .insert(f.variable.clone(), (片段ptr, Qi类型::字符串));
+        self.作用域遮蔽栈.push(Vec::new());
+        self.声明局部槽(&f.variable, 片段ptr, Qi类型::字符串);
         self.符号.声明变量(&f.variable, Qi类型::字符串);
         // ARC：片段槽 null 初始化 —— 下面每轮读新块前要 release 旧块（首轮 release(null) 安全）。
         if self.弧开() {
@@ -530,13 +578,18 @@ impl<'ctx> 后端<'ctx> {
         self.循环栈.push((cond_bb, end_bb));
         let r = self.生成块(&f.body, func);
         self.循环栈.pop();
-        r?;
+        if r.is_err() {
+            self.弹作用域帧(); // 片段变量帧
+            return r;
+        }
         self.跳转若未终结(cond_bb)?;
 
         // end：关流
         self.builder.position_at_end(end_bb);
         let 关 = mkcall(mkid("大模型"), "关闭流", vec![mkid(&流名)]);
-        self.生成表达式(&关)?;
+        let r = self.生成表达式(&关);
+        self.弹作用域帧(); // 片段变量出作用域
+        r?;
         Ok(())
     }
 
@@ -578,7 +631,9 @@ impl<'ctx> 后端<'ctx> {
         self.builder
             .build_store(ivar, i64t.const_zero())
             .map_err(|e| e.to_string())?;
-        self.变量表.insert(f.variable.clone(), (evar, 元素qi));
+        // 元素循环变量自成一层作用域，循环结束后恢复被遮蔽的外层同名变量
+        self.作用域遮蔽栈.push(Vec::new());
+        self.声明局部槽(&f.variable, evar, 元素qi);
         self.符号.声明变量(&f.variable, 元素qi);
 
         let cond_bb = self.ctx.append_basic_block(func, "each.cond");
@@ -628,7 +683,10 @@ impl<'ctx> 后端<'ctx> {
         self.循环栈.push((step_bb, end_bb));
         let r = self.生成块(&f.body, func);
         self.循环栈.pop();
-        r?;
+        if r.is_err() {
+            self.弹作用域帧(); // 元素变量帧（出错也保持栈平衡）
+            return r;
+        }
         self.跳转若未终结(step_bb)?;
 
         self.builder.position_at_end(step_bb);
@@ -649,6 +707,7 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
+        self.弹作用域帧(); // 元素变量出作用域，恢复被遮蔽的外层同名变量
         Ok(())
     }
 

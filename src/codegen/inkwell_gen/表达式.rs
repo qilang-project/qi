@@ -146,6 +146,10 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::二元操作表达式(b) => self.生成二元(b).map(Some),
 
+            // `x 作为 T` 显式类型转换（此前无此臂 → 落到兜底 None，
+            // 报「变量 y 初值无值」——bug ④）
+            AstNode::类型转换表达式(tc) => self.生成类型转换(tc).map(Some),
+
             AstNode::一元操作表达式(u) => {
                 let (v, t) = self
                     .生成表达式(&u.operand)?
@@ -324,10 +328,15 @@ impl<'ctx> 后端<'ctx> {
                 }
                 // 3) 用户模块限定调用：别名.函数(...) —— 如 `导入 X.追踪 作为 追踪; 追踪.启用即时打印()`。
                 //    接收者是裸标识符且不是局部变量/结构体 → 把 method 当用户函数解析。
+                //    条件用 解析函数/内建返回类型（真实用户函数或编译器内建），
+                //    **不含**「无限定标准库注册表」——否则 JSON.解析 这类
+                //    「限定到错模块」的调用会被剥掉限定名落进按名跨模块查找，
+                //    分发目标随 HashMap 序漂移（bug ②）。
                 if let AstNode::标识符表达式(id) = mc.object.as_ref() {
                     if !self.变量表.contains_key(&id.name)
                         && !self.全局变量表.contains_key(&id.name)
-                        && self.符号.查函数返回(&mc.method_name).is_some()
+                        && (self.符号.解析函数(&mc.method_name).is_some()
+                            || super::类型检查::内建返回类型(&mc.method_name).is_some())
                     {
                         let call = crate::parser::ast::FunctionCallExpression {
                             module_qualifier: None,
@@ -2668,16 +2677,21 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
-        // 内建 `长度(数组)`：读数组长度头。必须在裸函数 stdlib 回退**之前**拦截——
-        // 否则会命中 向量.长度（模长，返回浮点），整数数组读成垃圾、浮点数组变 √Σx²。
-        // （a.长度 字段形式一直正确；此分支让调用形式与其一致。向量模长请显式写
-        //  向量.长度(x)。）
+        // 内建 `长度(数组)` / `长度(字符串)`：必须在裸函数 stdlib 回退**之前**拦截——
+        // 否则会命中 向量.长度（模长，返回浮点）：整数数组读成垃圾、浮点数组变 √Σx²、
+        // 字符串直接 LLVM 校验崩（bug ③：长度(自己.字段) / 长度(串变量)）。
+        // 数组读长度头；字符串走 字符串.字符数量（UTF-8 字符数 —— 中文语言的
+        // 自然语义；字节数请显式 字符串::字节长度）。向量模长请显式写 向量.长度(x)。
         if call.callee == "长度" && call.arguments.len() == 1 && call.type_arguments.is_empty() {
             let t = 推断表达式类型(&call.arguments[0], &self.符号);
             if t.数组元素().is_some() {
                 if let Some((av, _)) = self.生成表达式(&call.arguments[0])? {
                     return self.生成数组长度(av.into_pointer_value()).map(Some);
                 }
+            }
+            if t == Qi类型::字符串 {
+                let r = self.发射指定模块函数("字符串", "字符数量", &call.arguments)?;
+                return Ok(Some(r.ok_or_else(|| "字符数量 未返回值".to_string())?));
             }
         }
 
@@ -2939,6 +2953,89 @@ impl<'ctx> 后端<'ctx> {
                 }
             }
             None => Ok(None),
+        }
+    }
+
+    /// `x 作为 T` 显式类型转换。语法上目标只允许基础类型关键字（见 grammar 的
+    /// BasicTypeKeyword），此处支持的组合：
+    ///   整数↔浮点数、布尔→整数/浮点数/字符串、整数→布尔、
+    ///   整数/浮点数→字符串、字符串→整数/浮点数、同类恒等。
+    /// 字符串转换复用内建 转换函数（整数转字符串 等，含 ARC 纪律）。
+    /// 其余组合（如 结构体 作为 整数）报编译错误。
+    fn 生成类型转换(
+        &mut self,
+        tc: &crate::parser::ast::TypeCastExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        let 目标 = self.符号.解析类型(&tc.target_type);
+        // 字符串目标/来源走内建转换函数（复用其运行时调用 + OWNED 实参释放）
+        let 源 = 推断表达式类型(&tc.expression, &self.符号);
+        let 内建名 = match (源, 目标) {
+            (Qi类型::整数, Qi类型::字符串) => Some("整数转字符串"),
+            (Qi类型::浮点数, Qi类型::字符串) => Some("浮点数转字符串"),
+            (Qi类型::字符串, Qi类型::整数) => Some("字符串转整数"),
+            (Qi类型::字符串, Qi类型::浮点数) => Some("字符串转浮点数"),
+            _ => None,
+        };
+        if let Some(名) = 内建名 {
+            let args = [(*tc.expression).clone()];
+            return self
+                .生成内建调用(名, &args)?
+                .ok_or_else(|| format!("内建转换 {} 未返回值", 名));
+        }
+
+        let (v, 实际) = self
+            .生成表达式(&tc.expression)?
+            .ok_or_else(|| "作为 转换的源表达式无值".to_string())?;
+        // 同类恒等（含 长整数/短整数/字节/字符 → 整数 的同表示直通）
+        if 实际 == 目标 {
+            return Ok((v, 目标));
+        }
+        match (实际, 目标) {
+            // 整数/布尔 → 浮点数
+            (Qi类型::整数 | Qi类型::布尔, Qi类型::浮点数) => {
+                let f = self.转浮点(v, 实际)?;
+                Ok((f.into(), Qi类型::浮点数))
+            }
+            // 浮点数 → 整数（截断）
+            (Qi类型::浮点数, Qi类型::整数) => {
+                let iv = self
+                    .builder
+                    .build_float_to_signed_int(v.into_float_value(), self.ctx.i64_type(), "fptosi")
+                    .map_err(|e| e.to_string())?;
+                Ok((iv.into(), Qi类型::整数))
+            }
+            // 布尔 → 整数（真=1 假=0）
+            (Qi类型::布尔, Qi类型::整数) => {
+                let iv = self.整数加宽到i64(v.into_int_value())?;
+                Ok((iv.into(), Qi类型::整数))
+            }
+            // 整数 → 布尔（非零为真）
+            (Qi类型::整数, Qi类型::布尔) => {
+                let b = self
+                    .builder
+                    .build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        v.into_int_value(),
+                        self.ctx.i64_type().const_zero(),
+                        "i2b",
+                    )
+                    .map_err(|e| e.to_string())?;
+                Ok((b.into(), Qi类型::布尔))
+            }
+            // 布尔 → 字符串（"真"/"假" immortal 字面量，select 选择）
+            (Qi类型::布尔, Qi类型::字符串) => {
+                let 真 = self.emit_immortal_string("真", "qi.true")?;
+                let 假 = self.emit_immortal_string("假", "qi.false")?;
+                let s = self
+                    .builder
+                    .build_select(v.into_int_value(), 真, 假, "b2s")
+                    .map_err(|e| e.to_string())?;
+                Ok((s, Qi类型::字符串))
+            }
+            _ => Err(format!(
+                "不支持的类型转换：{:?} 作为 {:?}（支持 整数/浮点数/布尔/字符串 间的标量转换）",
+                实际, 目标
+            )),
         }
     }
 

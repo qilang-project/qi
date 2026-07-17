@@ -153,7 +153,41 @@ impl<'ctx> 后端<'ctx> {
                 let alt = format!("标准库.{}", module_name);
                 match self.注册表.get_function(&alt, method) {
                     Some(f) => f.clone(),
-                    None => return Ok(None),
+                    None => {
+                        // bug ② 修复：接收者确定是标准库模块（经 导入 标准库.X 登记的
+                        // 别名）而模块里没有这个方法 → 直接报错。旧行为返回 None 后
+                        // 落到「按名跨模块查找」，JSON.解析 会被随机分发到
+                        // qi_datetime_parse / qi_multipart_parse（HashMap 序）。
+                        if self.导入别名.contains_key(ident) {
+                            let mut 有此名的模块: Vec<String> = Vec::new();
+                            let mut paths = self.注册表.module_paths();
+                            paths.sort();
+                            for p in paths {
+                                if p.starts_with("标准库.") {
+                                    continue; // 双注册去重（只报短名）
+                                }
+                                if let Some(m) = self.注册表.get_module(p) {
+                                    if m.get_function(method).is_some() {
+                                        有此名的模块.push(p.clone());
+                                    }
+                                }
+                            }
+                            let 提示 = if 有此名的模块.is_empty() {
+                                String::new()
+                            } else {
+                                format!(
+                                    "（名为「{}」的函数定义在：{}）",
+                                    method,
+                                    有此名的模块.join("、")
+                                )
+                            };
+                            return Err(format!(
+                                "标准库模块「{}」没有函数「{}」{}",
+                                module_name, method, 提示
+                            ));
+                        }
+                        return Ok(None);
+                    }
                 }
             }
         };
@@ -163,22 +197,59 @@ impl<'ctx> 后端<'ctx> {
 
     /// 无模块限定的标准库调用：`MD5哈希(x)`、`创建等待组()` 等（导入了名字但不带模块前缀）。
     /// 在所有已注册模块里找同名函数，命中即按其签名发射。返回 None 表示不是 stdlib 函数。
+    ///
+    /// bug ② 修复：同名函数注册在多个模块（映射到**不同** runtime 符号，如 解析 →
+    /// qi_multipart_parse / qi_cli_parse / qi_datetime_parse）时，旧实现按 HashMap
+    /// 迭代序取首命中 —— 同一份源码每次编译分发目标都可能不同。现在：
+    /// 歧义 → 直接报编译错误，要求写模块限定（时间.解析(x) 等）；
+    /// 唯一 → 正常发射（多数无限定调用，如 MD5哈希）。
     pub(super) fn 尝试无限定标准库(
         &mut self,
         name: &str,
         arguments: &[AstNode],
     ) -> Result<Option<Option<(BasicValueEnum<'ctx>, Qi类型)>>, String> {
         let name = name.trim_start_matches(':');
-        let mf = match self.查任意模块函数(name) {
-            Some(f) => f,
-            None => return Ok(None),
-        };
-        self.发射标准库调用(&mf, arguments).map(Some)
+        // 收集全部候选（模块名排序保证确定性；"X" 与 "标准库.X" 是同一模块的
+        // 双注册，按 runtime 符号去重后不构成歧义）
+        let mut paths = self.注册表.module_paths();
+        paths.sort();
+        let mut 候选: Vec<(String, ModuleFunction)> = Vec::new();
+        for path in paths {
+            if let Some(m) = self.注册表.get_module(path) {
+                if let Some(f) = m.get_function(name) {
+                    if !候选.iter().any(|(_, g)| g.runtime_name == f.runtime_name) {
+                        候选.push((path.clone(), f.clone()));
+                    }
+                }
+            }
+        }
+        match 候选.len() {
+            0 => Ok(None),
+            1 => self.发射标准库调用(&候选[0].1, arguments).map(Some),
+            _ => {
+                let 模块们: Vec<String> = 候选
+                    .iter()
+                    .map(|(p, _)| p.trim_start_matches("标准库.").to_string())
+                    .collect();
+                Err(format!(
+                    "函数「{}」在多个标准库模块中都有定义（{}），无限定调用有歧义。\
+                     请写模块限定形式，如 {}.{}(...)",
+                    name,
+                    模块们.join("、"),
+                    模块们[0],
+                    name
+                ))
+            }
+        }
     }
 
     /// 在所有已注册模块里找一个同名函数（用于无限定 stdlib 调用），返回其 clone。
+    /// 模块路径**排序后**遍历 —— HashMap 迭代序随机，否则同名函数（如 解析）
+    /// 每次编译命中的模块都可能不同（bug ②：同源码随机行为）。
     pub(super) fn 查任意模块函数(&self, name: &str) -> Option<ModuleFunction> {
-        for path in self.注册表.module_paths() {
+        let mut paths = self.注册表.module_paths();
+        paths.sort();
+        for path in paths {
             if let Some(m) = self.注册表.get_module(path) {
                 if let Some(f) = m.get_function(name) {
                     return Some(f.clone());
@@ -186,6 +257,24 @@ impl<'ctx> 后端<'ctx> {
             }
         }
         None
+    }
+
+    /// 按（注册表模块名, 方法名）精确发射一次标准库调用 —— 供内建分发
+    /// （如 `长度(字符串)` → 字符串.字符数量）等编译器内部改写用，
+    /// 不经过任何按名跨模块查找。
+    pub(super) fn 发射指定模块函数(
+        &mut self,
+        模块: &str,
+        方法: &str,
+        arguments: &[AstNode],
+    ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        let mf = self
+            .注册表
+            .get_function(模块, 方法)
+            .or_else(|| self.注册表.get_function(&format!("标准库.{}", 模块), 方法))
+            .cloned()
+            .ok_or_else(|| format!("标准库注册表缺 {}.{}", 模块, 方法))?;
+        self.发射标准库调用(&mf, arguments)
     }
 
     /// 据 ModuleFunction 签名 declare（一次）+ call。
