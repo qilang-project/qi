@@ -1,4 +1,5 @@
 use crate::parser::ast::*;
+use crate::lexer::tokens::Span;
 
 grammar;
 
@@ -17,75 +18,75 @@ PackageDeclaration: String = {
 };
 
 ImportStatement: ImportStatement = {
-    "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: Some(items),
         alias: None,
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: Some(items),
         alias: None,
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "导入" <path:ModulePath> ";" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> ";" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: None,
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "导入" <path:ModulePath> "；" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> "；" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: None,
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "导入" <path:ModulePath> "作为" <alias:Identifier> ";" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> "作为" <alias:Identifier> ";" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: Some(alias),
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "导入" <path:ModulePath> "作为" <alias:Identifier> "；" => ImportStatement {
+    <sp_l:@L> "导入" <path:ModulePath> "作为" <alias:Identifier> "；" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: Some(alias),
         is_public: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "公开" "导入" <path:ModulePath> ";" => ImportStatement {
+    <sp_l:@L> "公开" "导入" <path:ModulePath> ";" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: None,
         is_public: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "公开" "导入" <path:ModulePath> "；" => ImportStatement {
+    <sp_l:@L> "公开" "导入" <path:ModulePath> "；" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: None,
         alias: None,
         is_public: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" => ImportStatement {
+    <sp_l:@L> "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" ";" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: Some(items),
         alias: None,
         is_public: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" => ImportStatement {
+    <sp_l:@L> "公开" "导入" <path:ModulePath> "::" "{" <items:ImportItemList> "}" "；" <sp_r:@R> => ImportStatement {
         module_path: path,
         items: Some(items),
         alias: None,
         is_public: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -165,13 +166,13 @@ Statement: AstNode = {
     ForStatement,
     TryStatement,
     ThrowStatement,
-    <e:Expr> ";" => AstNode::表达式语句(ExpressionStatement {
+    <sp_l:@L> <e:Expr> ";" <sp_r:@R> => AstNode::表达式语句(ExpressionStatement {
         expression: Box::new(e),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <e:Expr> "；" => AstNode::表达式语句(ExpressionStatement {
+    <sp_l:@L> <e:Expr> "；" <sp_r:@R> => AstNode::表达式语句(ExpressionStatement {
         expression: Box::new(e),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     // 匹配 statement (like 如果/当: bare block is a statement).
     // Trailing ; optional -- keeps the old `匹配 x {...};` form compatible.
@@ -182,8 +183,8 @@ Statement: AstNode = {
     <m:MatchExpression> => m,
     <m:MatchExpression> ";" => m,
     <m:MatchExpression> "；" => m,
-    // Select statement must be separate to avoid conflicts with expressions
-    "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" => {
+    <sp_l:@L> // Select statement must be separate to avoid conflicts with expressions
+    "选择" "{" <cases:SelectCaseList> <default_case:DefaultCase?> "}" <sp_r:@R> => {
         // 超时分支以 SelectCase 形式混在 cases 里（情况 超时(ms): …），
         // 在这里分离出来放进 timeout_case，其余仍是普通通道 case。
         let mut chan_cases = Vec::new();
@@ -199,156 +200,156 @@ Statement: AstNode = {
             cases: chan_cases,
             default_case,
             timeout_case,
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
 };
 
 ExportStatement: AstNode = {
-    "导出" <_module:Identifier> "::" <_name:Identifier> ";" => AstNode::块语句(BlockStatement {
+    <sp_l:@L> "导出" <_module:Identifier> "::" <_name:Identifier> ";" <sp_r:@R> => AstNode::块语句(BlockStatement {
         statements: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "导出" <_module:Identifier> "::" <_name:Identifier> "；" => AstNode::块语句(BlockStatement {
+    <sp_l:@L> "导出" <_module:Identifier> "::" <_name:Identifier> "；" <sp_r:@R> => AstNode::块语句(BlockStatement {
         statements: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "导出" <_name:Identifier> ";" => AstNode::块语句(BlockStatement {
+    <sp_l:@L> "导出" <_name:Identifier> ";" <sp_r:@R> => AstNode::块语句(BlockStatement {
         statements: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "导出" <_name:Identifier> "；" => AstNode::块语句(BlockStatement {
+    <sp_l:@L> "导出" <_name:Identifier> "；" <sp_r:@R> => AstNode::块语句(BlockStatement {
         statements: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 反向 FFI：以 C ABI 导出一个 Qi 函数（默认用函数原名当 C 符号）。
+    <sp_l:@L> // 反向 FFI：以 C ABI 导出一个 Qi 函数（默认用函数原名当 C 符号）。
     // 复用完整的 FunctionDeclaration 产生式（参数/返回/中英文括号全支持）。
-    "导出" <f:FunctionDeclaration> => AstNode::导出函数(ExportFunction {
+    "导出" <f:FunctionDeclaration> <sp_r:@R> => AstNode::导出函数(ExportFunction {
         c_name: None,
         decl: Box::new(f),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 显式 C 符号名：`导出 "qi_add" 函数 ...`（供 Rust/Go 等用干净 ASCII 名链接）。
-    "导出" <s:r#""([^"\\]|\\.)*""#> <f:FunctionDeclaration> => AstNode::导出函数(ExportFunction {
+    <sp_l:@L> // 显式 C 符号名：`导出 "qi_add" 函数 ...`（供 Rust/Go 等用干净 ASCII 名链接）。
+    "导出" <s:r#""([^"\\]|\\.)*""#> <f:FunctionDeclaration> <sp_r:@R> => AstNode::导出函数(ExportFunction {
         c_name: Some(unescape_string(&s[1..s.len()-1])),
         decl: Box::new(f),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 VariableDeclaration: AstNode = {
-    // Uninitialized variable declarations (no = value)
-    "变量" <name:Identifier> ":" <type_annotation:Type> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> // Uninitialized variable declarations (no = value)
+    "变量" <name:Identifier> ":" <type_annotation:Type> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: None,
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "：" <type_annotation:Type> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "：" <type_annotation:Type> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: None,
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> ":" <type_annotation:Type> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> ":" <type_annotation:Type> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: None,
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "：" <type_annotation:Type> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "：" <type_annotation:Type> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: None,
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "变量" <name:Identifier> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "变量" <name:Identifier> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
         is_mutable: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> ":" <type_annotation:Type> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> "：" <type_annotation:Type> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: Some(type_annotation),
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> "=" <value:Expr> ";" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> "=" <value:Expr> ";" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "常量" <name:Identifier> "=" <value:Expr> "；" => AstNode::变量声明(VariableDeclaration {
+    <sp_l:@L> "常量" <name:Identifier> "=" <value:Expr> "；" <sp_r:@R> => AstNode::变量声明(VariableDeclaration {
         name,
         type_annotation: None,
         initializer: Some(Box::new(value)),
         is_mutable: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -373,8 +374,8 @@ TypeParamDecl: String = {
 };
 
 FunctionDeclaration: AstNode = {
-    // 带接收器的函数(方法) - Go 风格
-    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> // 带接收器的函数(方法) - Go 风格
+    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -383,9 +384,9 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -394,9 +395,9 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -405,9 +406,9 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: false,
@@ -416,10 +417,10 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 可变接收器的函数
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> // 可变接收器的函数
+    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -428,9 +429,9 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -439,9 +440,9 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -450,9 +451,9 @@ FunctionDeclaration: AstNode = {
         return_type: Some(return_type),
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::方法声明(MethodDeclaration {
+    <sp_l:@L> <vis:Visibility> "函数" "(" "变量" <receiver_name:ReceiverIdentifier> <receiver_type:Identifier> ")" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::方法声明(MethodDeclaration {
         receiver_name,
         receiver_type,
         is_receiver_mutable: true,
@@ -461,10 +462,10 @@ FunctionDeclaration: AstNode = {
         return_type: None,
         body,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 普通函数(无接收器)
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> // 普通函数(无接收器)
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -473,9 +474,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -484,9 +485,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -495,9 +496,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -506,10 +507,10 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 中文标点符号版本
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> // 中文标点符号版本
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -518,9 +519,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -529,9 +530,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -540,9 +541,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -551,10 +552,10 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 混合标点符号版本：英文括号 + 中文大括号
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> // 混合标点符号版本：英文括号 + 中文大括号
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -563,9 +564,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -574,9 +575,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -585,9 +586,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "【" <body:Statement*> "】" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -596,10 +597,10 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 混合标点符号版本：中文括号 + 英文大括号
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> // 混合标点符号版本：中文括号 + 英文大括号
+    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -608,9 +609,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" "）" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -619,9 +620,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -630,9 +631,9 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> <is_async_kw:"异步"?> "函数" <name:Identifier> <tps:TypeParamsDecl?> "（" <params:ParameterList> "）" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -641,44 +642,44 @@ FunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: false,
         is_async: is_async_kw.is_some(),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 ReturnStatement: AstNode = {
-    "返回" <value:Expr> ";" => AstNode::返回语句(ReturnStatement {
+    <sp_l:@L> "返回" <value:Expr> ";" <sp_r:@R> => AstNode::返回语句(ReturnStatement {
         value: Some(Box::new(value)),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "返回" <value:Expr> "；" => AstNode::返回语句(ReturnStatement {
+    <sp_l:@L> "返回" <value:Expr> "；" <sp_r:@R> => AstNode::返回语句(ReturnStatement {
         value: Some(Box::new(value)),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "返回" ";" => AstNode::返回语句(ReturnStatement {
+    <sp_l:@L> "返回" ";" <sp_r:@R> => AstNode::返回语句(ReturnStatement {
         value: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "返回" "；" => AstNode::返回语句(ReturnStatement {
+    <sp_l:@L> "返回" "；" <sp_r:@R> => AstNode::返回语句(ReturnStatement {
         value: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 BreakStatement: AstNode = {
-    "跳出" ";" => AstNode::跳出语句(BreakStatement {
-        span: Default::default(),
+    <sp_l:@L> "跳出" ";" <sp_r:@R> => AstNode::跳出语句(BreakStatement {
+        span: Span::new(sp_l, sp_r),
     }),
-    "跳出" "；" => AstNode::跳出语句(BreakStatement {
-        span: Default::default(),
+    <sp_l:@L> "跳出" "；" <sp_r:@R> => AstNode::跳出语句(BreakStatement {
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 ContinueStatement: AstNode = {
-    "继续" ";" => AstNode::继续语句(ContinueStatement {
-        span: Default::default(),
+    <sp_l:@L> "继续" ";" <sp_r:@R> => AstNode::继续语句(ContinueStatement {
+        span: Span::new(sp_l, sp_r),
     }),
-    "继续" "；" => AstNode::继续语句(ContinueStatement {
-        span: Default::default(),
+    <sp_l:@L> "继续" "；" <sp_r:@R> => AstNode::继续语句(ContinueStatement {
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -699,73 +700,73 @@ IfStatement: AstNode = {
 // 都会被切成 `否则`+`如果` 两个 token（终结符表里没有 `否则如果` 组合词），
 // 因此两种写法天然都对。语义上脱糖为 else { if ... } 嵌套（codegen 零改动）。
 IfWithElse: AstNode = {
-    "如果" <condition:Expr> <then_branch:Block> "否则" <else_branch:Block> => {
+    <sp_l:@L> "如果" <condition:Expr> <then_branch:Block> "否则" <else_branch:Block> <sp_r:@R> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
             else_branch: Some(Box::new(AstNode::块语句(BlockStatement {
                 statements: else_branch,
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }))),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithElse> => {
+    <sp_l:@L> "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithElse> <sp_r:@R> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
             else_branch: Some(Box::new(else_if)),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
 };
 
 // If statements without else — 也支持 else-if 链但整条链末尾没有 `否则` 兜底分支。
 IfWithoutElse: AstNode = {
-    "如果" <condition:Expr> <then_branch:Block> => {
+    <sp_l:@L> "如果" <condition:Expr> <then_branch:Block> <sp_r:@R> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
             else_branch: None,
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithoutElse> => {
+    <sp_l:@L> "如果" <condition:Expr> <then_branch:Block> "否则" <else_if:IfWithoutElse> <sp_r:@R> => {
         AstNode::如果语句(IfStatement {
             condition: Box::new(condition),
             then_branch,
             else_branch: Some(Box::new(else_if)),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
 };
 
 WhileStatement: AstNode = {
-    "当" <condition:Expr> <body:Block> => AstNode::当语句(WhileStatement {
+    <sp_l:@L> "当" <condition:Expr> <body:Block> <sp_r:@R> => AstNode::当语句(WhileStatement {
         condition: Box::new(condition),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 ForStatement: AstNode = {
-    "对于" <variable:Identifier> "在" <range:ForTarget> <body:Block> => AstNode::对于语句(ForStatement {
+    <sp_l:@L> "对于" <variable:Identifier> "在" <range:ForTarget> <body:Block> <sp_r:@R> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "对于" "(" <variable:Identifier> "在" <range:ForTarget> ")" <body:Block> => AstNode::对于语句(ForStatement {
+    <sp_l:@L> "对于" "(" <variable:Identifier> "在" <range:ForTarget> ")" <body:Block> <sp_r:@R> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "对于" "（" <variable:Identifier> "在" <range:ForTarget> "）" <body:Block> => AstNode::对于语句(ForStatement {
+    <sp_l:@L> "对于" "（" <variable:Identifier> "在" <range:ForTarget> "）" <body:Block> <sp_r:@R> => AstNode::对于语句(ForStatement {
         variable,
         range: Box::new(range),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -774,23 +775,23 @@ ForStatement: AstNode = {
 // 典型 `0 直到 长度(数组)` 取代 `0 到 长度(数组) - 1`）；`起 到 止` 闭区间（含 止）。
 ForTarget: AstNode = {
     <e:Expr> => e,
-    <start:Expr> ".." <end:Expr> => AstNode::区间表达式(RangeExpression {
+    <sp_l:@L> <start:Expr> ".." <end:Expr> <sp_r:@R> => AstNode::区间表达式(RangeExpression {
         start: Box::new(start),
         end: Box::new(end),
         inclusive: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <start:Expr> "直到" <end:Expr> => AstNode::区间表达式(RangeExpression {
+    <sp_l:@L> <start:Expr> "直到" <end:Expr> <sp_r:@R> => AstNode::区间表达式(RangeExpression {
         start: Box::new(start),
         end: Box::new(end),
         inclusive: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <start:Expr> "到" <end:Expr> => AstNode::区间表达式(RangeExpression {
+    <sp_l:@L> <start:Expr> "到" <end:Expr> <sp_r:@R> => AstNode::区间表达式(RangeExpression {
         start: Box::new(start),
         end: Box::new(end),
         inclusive: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -798,7 +799,7 @@ ForTarget: AstNode = {
 
 // 内联函数声明
 InlineFunctionDeclaration: AstNode = {
-    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -807,9 +808,9 @@ InlineFunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: true,
         is_async: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: vec![],
@@ -818,9 +819,9 @@ InlineFunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: true,
         is_async: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -829,9 +830,9 @@ InlineFunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: true,
         is_async: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => AstNode::函数声明(FunctionDeclaration {
+    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
         name,
         type_params: tps.unwrap_or_default(),
         parameters: params,
@@ -840,23 +841,23 @@ InlineFunctionDeclaration: AstNode = {
         visibility: vis,
         is_inline: true,
         is_async: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 // 联合体声明
 UnionDeclaration: AstNode = {
-    <vis:Visibility> "联合体" <name:Identifier> "{" <variants:UnionVariantList> "}" => AstNode::联合体声明(UnionDeclaration {
+    <sp_l:@L> <vis:Visibility> "联合体" <name:Identifier> "{" <variants:UnionVariantList> "}" <sp_r:@R> => AstNode::联合体声明(UnionDeclaration {
         name,
         variants,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "联合体" <name:Identifier> "{" "}" => AstNode::联合体声明(UnionDeclaration {
+    <sp_l:@L> <vis:Visibility> "联合体" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::联合体声明(UnionDeclaration {
         name,
         variants: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -865,122 +866,122 @@ UnionVariantList: Vec<UnionVariant> = {
 };
 
 UnionVariant: UnionVariant = {
-    <type_annotation:Type> <name:Identifier> => UnionVariant {
+    <sp_l:@L> <type_annotation:Type> <name:Identifier> <sp_r:@R> => UnionVariant {
         name,
         type_annotation,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 // 尝试/捕获/最终 语句
 TryStatement: AstNode = {
-    "尝试" <try_body:Block> <catch_clauses:CatchClause+> => AstNode::尝试语句(TryStatement {
+    <sp_l:@L> "尝试" <try_body:Block> <catch_clauses:CatchClause+> <sp_r:@R> => AstNode::尝试语句(TryStatement {
         try_body,
         catch_clauses,
         finally_body: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "尝试" <try_body:Block> <catch_clauses:CatchClause+> "最终" <finally_body:Block> => AstNode::尝试语句(TryStatement {
+    <sp_l:@L> "尝试" <try_body:Block> <catch_clauses:CatchClause+> "最终" <finally_body:Block> <sp_r:@R> => AstNode::尝试语句(TryStatement {
         try_body,
         catch_clauses,
         finally_body: Some(finally_body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "尝试" <try_body:Block> "最终" <finally_body:Block> => AstNode::尝试语句(TryStatement {
+    <sp_l:@L> "尝试" <try_body:Block> "最终" <finally_body:Block> <sp_r:@R> => AstNode::尝试语句(TryStatement {
         try_body,
         catch_clauses: vec![],
         finally_body: Some(finally_body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 CatchClause: CatchClause = {
-    // 捕获 错误变量 : 错误类型 { ... }
-    "捕获" <error_var:Identifier> ":" <error_type:Type> <body:Block> => CatchClause {
+    <sp_l:@L> // 捕获 错误变量 : 错误类型 { ... }
+    "捕获" <error_var:Identifier> ":" <error_type:Type> <body:Block> <sp_r:@R> => CatchClause {
         error_var: Some(error_var),
         error_type: Some(error_type),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 捕获 错误变量 { ... }
-    "捕获" <error_var:Identifier> <body:Block> => CatchClause {
+    <sp_l:@L> // 捕获 错误变量 { ... }
+    "捕获" <error_var:Identifier> <body:Block> <sp_r:@R> => CatchClause {
         error_var: Some(error_var),
         error_type: None,
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 捕获 { ... }
-    "捕获" <body:Block> => CatchClause {
+    <sp_l:@L> // 捕获 { ... }
+    "捕获" <body:Block> <sp_r:@R> => CatchClause {
         error_var: None,
         error_type: None,
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 // 抛出语句
 ThrowStatement: AstNode = {
-    "抛出" <expression:Expr> ";" => AstNode::抛出语句(ThrowStatement {
+    <sp_l:@L> "抛出" <expression:Expr> ";" <sp_r:@R> => AstNode::抛出语句(ThrowStatement {
         expression: Box::new(expression),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "抛出" <expression:Expr> "；" => AstNode::抛出语句(ThrowStatement {
+    <sp_l:@L> "抛出" <expression:Expr> "；" <sp_r:@R> => AstNode::抛出语句(ThrowStatement {
         expression: Box::new(expression),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 
 
 TypeDeclaration: AstNode = {
-    <vis:Visibility> "类型" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> <vis:Visibility> "类型" <name:Identifier> "{" <fields:StructFieldList> "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: vec![],
         fields,
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 泛型结构体：类型 对<T> { T 左; T 右; } / 结构体 对<T> { 左: T, 右: T }
-    <vis:Visibility> "类型" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> // 泛型结构体：类型 对<T> { T 左; T 右; } / 结构体 对<T> { 左: T, 右: T }
+    <vis:Visibility> "类型" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: tps,
         fields,
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "结构体" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> <vis:Visibility> "结构体" <name:Identifier> <tps:TypeParamsDecl> "{" <fields:StructFieldList> "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: tps,
         fields,
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "类型" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> <vis:Visibility> "类型" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: vec![],
         fields: vec![],
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> <vis:Visibility> "结构体" <name:Identifier> "{" <fields:StructFieldList> "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: vec![],
         fields,
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "结构体" <name:Identifier> "{" "}" => AstNode::结构体声明(StructDeclaration {
+    <sp_l:@L> <vis:Visibility> "结构体" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::结构体声明(StructDeclaration {
         name,
         type_params: vec![],
         fields: vec![],
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -988,58 +989,58 @@ TypeDeclaration: AstNode = {
 // 变体形如 `红`（无载荷）或 `圆(浮点数)` / `矩形(浮点数, 浮点数)`（带载荷）。
 // 任一变体带载荷 ⇒ 整个枚举装箱（堆指针）；否则为纯 i64 tag。
 EnumDeclaration: AstNode = {
-    <vis:Visibility> "枚举" <name:Identifier> "{" <variants:Comma<EnumVariantDecl>> "}" => AstNode::枚举声明(EnumDeclaration {
+    <sp_l:@L> <vis:Visibility> "枚举" <name:Identifier> "{" <variants:Comma<EnumVariantDecl>> "}" <sp_r:@R> => AstNode::枚举声明(EnumDeclaration {
         name,
         type_params: vec![],
         variants,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 泛型枚举：枚举 盒装<T> { 满(T), 空盒 }
-    <vis:Visibility> "枚举" <name:Identifier> <tps:TypeParamsDecl> "{" <variants:Comma<EnumVariantDecl>> "}" => AstNode::枚举声明(EnumDeclaration {
+    <sp_l:@L> // 泛型枚举：枚举 盒装<T> { 满(T), 空盒 }
+    <vis:Visibility> "枚举" <name:Identifier> <tps:TypeParamsDecl> "{" <variants:Comma<EnumVariantDecl>> "}" <sp_r:@R> => AstNode::枚举声明(EnumDeclaration {
         name,
         type_params: tps,
         variants,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "枚举" <name:Identifier> "{" "}" => AstNode::枚举声明(EnumDeclaration {
+    <sp_l:@L> <vis:Visibility> "枚举" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::枚举声明(EnumDeclaration {
         name,
         type_params: vec![],
         variants: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 EnumVariantDecl: EnumVariant = {
-    <name:Identifier> => EnumVariant {
+    <sp_l:@L> <name:Identifier> <sp_r:@R> => EnumVariant {
         name,
         value: None,
         payload: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:Identifier> "(" <types:Comma<Type>> ")" => EnumVariant {
+    <sp_l:@L> <name:Identifier> "(" <types:Comma<Type>> ")" <sp_r:@R> => EnumVariant {
         name,
         value: None,
         payload: types,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 // 特性声明: 特性 名称 { 方法签名... }
 TraitDeclaration: AstNode = {
-    <vis:Visibility> "特性" <name:Identifier> "{" <methods:TraitMethodList> "}" => AstNode::特性声明(TraitDeclaration {
+    <sp_l:@L> <vis:Visibility> "特性" <name:Identifier> "{" <methods:TraitMethodList> "}" <sp_r:@R> => AstNode::特性声明(TraitDeclaration {
         name,
         methods,
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <vis:Visibility> "特性" <name:Identifier> "{" "}" => AstNode::特性声明(TraitDeclaration {
+    <sp_l:@L> <vis:Visibility> "特性" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::特性声明(TraitDeclaration {
         name,
         methods: vec![],
         visibility: vis,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -1049,85 +1050,85 @@ TraitMethodList: Vec<TraitMethod> = {
 
 // 特性方法签名: 函数 名称(参数) : 返回类型;
 TraitMethod: TraitMethod = {
-    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> ";" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> ";" <sp_r:@R> => TraitMethod {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         has_default_impl: false,
         default_body: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> ";" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> ";" <sp_r:@R> => TraitMethod {
         name,
         parameters: params,
         return_type: Some(return_type),
         has_default_impl: false,
         default_body: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" ")" ";" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" ";" <sp_r:@R> => TraitMethod {
         name,
         parameters: vec![],
         return_type: None,
         has_default_impl: false,
         default_body: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ";" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ";" <sp_r:@R> => TraitMethod {
         name,
         parameters: params,
         return_type: None,
         has_default_impl: false,
         default_body: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // ── 带默认实现的特性方法：签名后跟 `{ ... }` 体（实现块未覆盖时按具体类型合成）──
-    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => TraitMethod {
+    <sp_l:@L> // ── 带默认实现的特性方法：签名后跟 `{ ... }` 体（实现块未覆盖时按具体类型合成）──
+    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => TraitMethod {
         name,
         parameters: vec![],
         return_type: Some(return_type),
         has_default_impl: true,
         default_body: Some(body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => TraitMethod {
         name,
         parameters: params,
         return_type: Some(return_type),
         has_default_impl: true,
         default_body: Some(body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => TraitMethod {
         name,
         parameters: vec![],
         return_type: None,
         has_default_impl: true,
         default_body: Some(body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => TraitMethod {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => TraitMethod {
         name,
         parameters: params,
         return_type: None,
         has_default_impl: true,
         default_body: Some(body),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 // 外部 C 函数声明块: 外部 "库名" { 函数 名(参数): 类型; ... }
 // 库名为空串 "" 表示不额外链接（符号已在，如已链的 libc）。
 ExternBlock: AstNode = {
-    "外部" <lib:LibName> "{" <fns:ExternFn*> "}" => AstNode::外部声明(ExternBlock {
+    <sp_l:@L> "外部" <lib:LibName> "{" <fns:ExternFn*> "}" <sp_r:@R> => AstNode::外部声明(ExternBlock {
         library: lib,
         functions: fns,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "外部" <lib:LibName> "【" <fns:ExternFn*> "】" => AstNode::外部声明(ExternBlock {
+    <sp_l:@L> "外部" <lib:LibName> "【" <fns:ExternFn*> "】" <sp_r:@R> => AstNode::外部声明(ExternBlock {
         library: lib,
         functions: fns,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -1138,17 +1139,17 @@ LibName: String = {
 
 // 块内单个外部函数签名（无函数体，分号结尾）。
 ExternFn: ExternFn = {
-    "函数" <name:Identifier> "(" ")" ":" <rt:Type> ExternSemi => ExternFn {
-        name, parameters: vec![], return_type: Some(rt), span: Default::default(),
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" ":" <rt:Type> ExternSemi <sp_r:@R> => ExternFn {
+        name, parameters: vec![], return_type: Some(rt), span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <rt:Type> ExternSemi => ExternFn {
-        name, parameters: params, return_type: Some(rt), span: Default::default(),
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <rt:Type> ExternSemi <sp_r:@R> => ExternFn {
+        name, parameters: params, return_type: Some(rt), span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" ")" ExternSemi => ExternFn {
-        name, parameters: vec![], return_type: None, span: Default::default(),
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" ExternSemi <sp_r:@R> => ExternFn {
+        name, parameters: vec![], return_type: None, span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ExternSemi => ExternFn {
-        name, parameters: params, return_type: None, span: Default::default(),
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ExternSemi <sp_r:@R> => ExternFn {
+        name, parameters: params, return_type: None, span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -1159,31 +1160,31 @@ ExternSemi: () = {
 
 // 实现块: 实现 特性 对于 类型 { 方法... } 或 实现 类型 { 方法... }
 ImplementationBlock: AstNode = {
-    // 实现特性: 实现 特性名 对于 类型名 { ... }
-    "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" <methods:ImplMethodList> "}" => AstNode::实现块(ImplementationBlock {
+    <sp_l:@L> // 实现特性: 实现 特性名 对于 类型名 { ... }
+    "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" <methods:ImplMethodList> "}" <sp_r:@R> => AstNode::实现块(ImplementationBlock {
         trait_name: Some(trait_name),
         target_type,
         methods,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" "}" => AstNode::实现块(ImplementationBlock {
+    <sp_l:@L> "实现" <trait_name:Identifier> "对于" <target_type:Identifier> "{" "}" <sp_r:@R> => AstNode::实现块(ImplementationBlock {
         trait_name: Some(trait_name),
         target_type,
         methods: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 直接实现: 实现 类型名 { ... }
-    "实现" <target_type:Identifier> "{" <methods:ImplMethodList> "}" => AstNode::实现块(ImplementationBlock {
+    <sp_l:@L> // 直接实现: 实现 类型名 { ... }
+    "实现" <target_type:Identifier> "{" <methods:ImplMethodList> "}" <sp_r:@R> => AstNode::实现块(ImplementationBlock {
         trait_name: None,
         target_type,
         methods,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "实现" <target_type:Identifier> "{" "}" => AstNode::实现块(ImplementationBlock {
+    <sp_l:@L> "实现" <target_type:Identifier> "{" "}" <sp_r:@R> => AstNode::实现块(ImplementationBlock {
         trait_name: None,
         target_type,
         methods: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -1193,7 +1194,7 @@ ImplMethodList: Vec<MethodDeclaration> = {
 
 // 实现块中的方法
 ImplMethod: MethodDeclaration = {
-    "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" => MethodDeclaration {
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => MethodDeclaration {
         receiver_name: "自己".to_string(),
         receiver_type: String::new(),  // Will be filled from context
         is_receiver_mutable: false,
@@ -1202,9 +1203,9 @@ ImplMethod: MethodDeclaration = {
         return_type: Some(return_type),
         body,
         visibility: Visibility::公开,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" => MethodDeclaration {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => MethodDeclaration {
         receiver_name: "自己".to_string(),
         receiver_type: String::new(),
         is_receiver_mutable: false,
@@ -1213,9 +1214,9 @@ ImplMethod: MethodDeclaration = {
         return_type: Some(return_type),
         body,
         visibility: Visibility::公开,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" => MethodDeclaration {
+    <sp_l:@L> "函数" <name:Identifier> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => MethodDeclaration {
         receiver_name: "自己".to_string(),
         receiver_type: String::new(),
         is_receiver_mutable: false,
@@ -1224,9 +1225,9 @@ ImplMethod: MethodDeclaration = {
         return_type: None,
         body,
         visibility: Visibility::公开,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" => MethodDeclaration {
+    <sp_l:@L> "函数" <name:Identifier> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => MethodDeclaration {
         receiver_name: "自己".to_string(),
         receiver_type: String::new(),
         is_receiver_mutable: false,
@@ -1235,7 +1236,7 @@ ImplMethod: MethodDeclaration = {
         return_type: None,
         body,
         visibility: Visibility::公开,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -1246,13 +1247,13 @@ StructFieldList: Vec<StructField> = {
 };
 
 LegacyStructField: StructField = {
-    <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> ";" => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Default::default() },
-    <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> "；" => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Default::default() },
+    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> ";" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> "；" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
 };
 
 StructField: StructField = {
-    <vis:Visibility> <name:FieldIdentifier> ":" <type_annotation:Type> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Default::default() },
-    <vis:Visibility> <name:FieldIdentifier> "：" <type_annotation:Type> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Default::default() },
+    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> ":" <type_annotation:Type> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> "：" <type_annotation:Type> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
 };
 
 
@@ -1261,44 +1262,44 @@ SelectCaseList: Vec<SelectCase> = {
 };
 
 SelectCase: SelectCase = {
-    // Timeout case: 情况 超时(毫秒): <body>  —— 超时 是关键字 token，先于通道 case 匹配
-    "情况" "超时" "(" <ms:Expr> ")" ":" <body:StatementList> => SelectCase {
+    <sp_l:@L> // Timeout case: 情况 超时(毫秒): <body>  —— 超时 是关键字 token，先于通道 case 匹配
+    "情况" "超时" "(" <ms:Expr> ")" ":" <body:StatementList> <sp_r:@R> => SelectCase {
         kind: SelectCaseKind::超时 {
             毫秒: Box::new(ms),
         },
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 
-    // Send case must come first: 情况 channel <- value:
+    <sp_l:@L> // Send case must come first: 情况 channel <- value:
     // This has higher priority to avoid ambiguity
-    "情况" <channel:ChannelExpr> "<-" <value:Expr> ":" <body:StatementList> => SelectCase {
+    "情况" <channel:ChannelExpr> "<-" <value:Expr> ":" <body:StatementList> <sp_r:@R> => SelectCase {
         kind: SelectCaseKind::通道发送 {
             channel: Box::new(channel),
             value: Box::new(value),
         },
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
     
-    // Receive case with variable: 情况 variable := <-channel:
-    "情况" <var:Identifier> ":=" "<-" <channel:Expr> ":" <body:StatementList> => SelectCase {
+    <sp_l:@L> // Receive case with variable: 情况 variable := <-channel:
+    "情况" <var:Identifier> ":=" "<-" <channel:Expr> ":" <body:StatementList> <sp_r:@R> => SelectCase {
         kind: SelectCaseKind::通道接收 {
             channel: Box::new(channel),
             variable: Some(var),
         },
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
     
-    // Receive case without variable: 情况 <-channel:
-    "情况" "<-" <channel:Expr> ":" <body:StatementList> => SelectCase {
+    <sp_l:@L> // Receive case without variable: 情况 <-channel:
+    "情况" "<-" <channel:Expr> ":" <body:StatementList> <sp_r:@R> => SelectCase {
         kind: SelectCaseKind::通道接收 {
             channel: Box::new(channel),
             variable: None,
         },
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -1308,10 +1309,10 @@ ChannelExpr: AstNode = {
 };
 
 DefaultCase: SelectCase = {
-    "默认" ":" <body:StatementList> => SelectCase {
+    <sp_l:@L> "默认" ":" <body:StatementList> <sp_r:@R> => SelectCase {
         kind: SelectCaseKind::默认,
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -1328,8 +1329,8 @@ pub Expr: AstNode = {
 // Level 1: Assignment (lowest precedence, right-associative)
 // Only Precedence8 (postfix) expressions can be assigned to (identifiers, field access, array subscript)
 Precedence1: AstNode = {
-    // Compound assignment operators (desugar to binary operation + assignment)
-    <left:Precedence8> "+=" <right:Precedence1> => {
+    <sp_l:@L> // Compound assignment operators (desugar to binary operation + assignment)
+    <left:Precedence8> "+=" <right:Precedence1> <sp_r:@R> => {
         match &left {
             AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
                 AstNode::赋值表达式(AssignmentExpression {
@@ -1338,15 +1339,15 @@ Precedence1: AstNode = {
                         left: Box::new(left),
                         operator: BinaryOperator::加,
                         right: Box::new(right),
-                        span: Default::default(),
+                        span: Span::new(sp_l, sp_r),
                     })),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target")
         }
     },
-    <left:Precedence8> "-=" <right:Precedence1> => {
+    <sp_l:@L> <left:Precedence8> "-=" <right:Precedence1> <sp_r:@R> => {
         match &left {
             AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
                 AstNode::赋值表达式(AssignmentExpression {
@@ -1355,15 +1356,15 @@ Precedence1: AstNode = {
                         left: Box::new(left),
                         operator: BinaryOperator::减,
                         right: Box::new(right),
-                        span: Default::default(),
+                        span: Span::new(sp_l, sp_r),
                     })),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target")
         }
     },
-    <left:Precedence8> "*=" <right:Precedence1> => {
+    <sp_l:@L> <left:Precedence8> "*=" <right:Precedence1> <sp_r:@R> => {
         match &left {
             AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
                 AstNode::赋值表达式(AssignmentExpression {
@@ -1372,15 +1373,15 @@ Precedence1: AstNode = {
                         left: Box::new(left),
                         operator: BinaryOperator::乘,
                         right: Box::new(right),
-                        span: Default::default(),
+                        span: Span::new(sp_l, sp_r),
                     })),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target")
         }
     },
-    <left:Precedence8> "/=" <right:Precedence1> => {
+    <sp_l:@L> <left:Precedence8> "/=" <right:Precedence1> <sp_r:@R> => {
         match &left {
             AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
                 AstNode::赋值表达式(AssignmentExpression {
@@ -1389,15 +1390,15 @@ Precedence1: AstNode = {
                         left: Box::new(left),
                         operator: BinaryOperator::除,
                         right: Box::new(right),
-                        span: Default::default(),
+                        span: Span::new(sp_l, sp_r),
                     })),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target")
         }
     },
-    <left:Precedence8> "%=" <right:Precedence1> => {
+    <sp_l:@L> <left:Precedence8> "%=" <right:Precedence1> <sp_r:@R> => {
         match &left {
             AstNode::标识符表达式(_) | AstNode::字段访问表达式(_) | AstNode::数组访问表达式(_) => {
                 AstNode::赋值表达式(AssignmentExpression {
@@ -1406,17 +1407,17 @@ Precedence1: AstNode = {
                         left: Box::new(left),
                         operator: BinaryOperator::取余,
                         right: Box::new(right),
-                        span: Default::default(),
+                        span: Span::new(sp_l, sp_r),
                     })),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target")
         }
     },
 
-    // Regular assignment
-    <left:Precedence8> "=" <right:Precedence1> => {
+    <sp_l:@L> // Regular assignment
+    <left:Precedence8> "=" <right:Precedence1> <sp_r:@R> => {
         // Validate that left is a valid LValue
         match &left {
             AstNode::标识符表达式(_) |
@@ -1425,154 +1426,154 @@ Precedence1: AstNode = {
                 AstNode::赋值表达式(AssignmentExpression {
                     target: Box::new(left),
                     value: Box::new(right),
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => panic!("Invalid assignment target: only identifiers, field access, and array subscript are allowed")
         }
     },
-    <channel:Precedence8> "<-" <value:Precedence1> => AstNode::通道发送表达式(ChannelSendExpression {
+    <sp_l:@L> <channel:Precedence8> "<-" <value:Precedence1> <sp_r:@R> => AstNode::通道发送表达式(ChannelSendExpression {
         channel: Box::new(channel),
         value: Box::new(value),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence2,
 };
 
 // Level 2: Logical OR
 Precedence2: AstNode = {
-    <left:Precedence2> "或" <right:Precedence3> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence2> "或" <right:Precedence3> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::或,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence2> "||" <right:Precedence3> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence2> "||" <right:Precedence3> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::或,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence3,
 };
 
 // Level 3: Logical AND
 Precedence3: AstNode = {
-    <left:Precedence3> "与" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence3> "与" <right:Precedence4> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::与,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence3> "&&" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence3> "&&" <right:Precedence4> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::与,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // `且` 是 `与` / `&&` 的等价写法（逻辑与），优先级完全一致。
-    <left:Precedence3> "且" <right:Precedence4> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> // `且` 是 `与` / `&&` 的等价写法（逻辑与），优先级完全一致。
+    <left:Precedence3> "且" <right:Precedence4> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::与,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence4,
 };
 
 // Level 4: Comparison operators
 Precedence4: AstNode = {
-    <left:Precedence5> "==" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "==" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "!=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "!=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::不等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "不等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "不等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::不等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> ">" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> ">" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "大于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "大于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> ">=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> ">=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "大于等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "大于等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "<" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "<" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "小于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "小于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "<=" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "<=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5> "小于等于" <right:Precedence5> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5> "小于等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于等于,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence5,
 };
 
 // Level 5: Type conversion (作为)
 Precedence5: AstNode = {
-    // 转换目标只允许基础类型关键字：TypeKeyworded 里的 函数(...):Type 尾随
+    <sp_l:@L> // 转换目标只允许基础类型关键字：TypeKeyworded 里的 函数(...):Type 尾随
     // 完整 Type，`x 作为 函数():T < y` 会让 `<`（比较）与 `T<整数>`（泛型）
     // 真歧义（Local ambiguity）。语义上 作为 也只支持标量转换。
-    <expr:Precedence5_5> "作为" <target_type:BasicTypeKeyword> => AstNode::类型转换表达式(TypeCastExpression {
+    <expr:Precedence5_5> "作为" <target_type:BasicTypeKeyword> <sp_r:@R> => AstNode::类型转换表达式(TypeCastExpression {
         expression: Box::new(expr),
         target_type,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence5_5,
 };
 
 // Level 5.5: Addition and subtraction
 Precedence5_5: AstNode = {
-    <left:Precedence5_5> "+" <right:Precedence6> => {
+    <sp_l:@L> <left:Precedence5_5> "+" <right:Precedence6> <sp_r:@R> => {
         // Check if both operands are strings - if so, create StringConcatExpression
         let is_string_concat = match (&left, &right) {
             (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
@@ -1588,18 +1589,18 @@ Precedence5_5: AstNode = {
             AstNode::字符串连接表达式(StringConcatExpression {
                 left: Box::new(left),
                 right: Box::new(right),
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             })
         } else {
             AstNode::二元操作表达式(BinaryExpression {
                 left: Box::new(left),
                 operator: BinaryOperator::加,
                 right: Box::new(right),
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             })
         }
     },
-    <left:Precedence5_5> "加" <right:Precedence6> => {
+    <sp_l:@L> <left:Precedence5_5> "加" <right:Precedence6> <sp_r:@R> => {
         // Check if both operands are strings - if so, create StringConcatExpression
         let is_string_concat = match (&left, &right) {
             (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
@@ -1615,265 +1616,265 @@ Precedence5_5: AstNode = {
             AstNode::字符串连接表达式(StringConcatExpression {
                 left: Box::new(left),
                 right: Box::new(right),
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             })
         } else {
             AstNode::二元操作表达式(BinaryExpression {
                 left: Box::new(left),
                 operator: BinaryOperator::加,
                 right: Box::new(right),
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             })
         }
     },
-    <left:Precedence5_5> "-" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5_5> "-" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5_5> "减" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5_5> "减" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 位或 / 位异或：Go 风格，与 + - 同层（低于 * / << >> &）
-    <left:Precedence5_5> "|" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> // 位或 / 位异或：Go 风格，与 + - 同层（低于 * / << >> &）
+    <left:Precedence5_5> "|" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::位或,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence5_5> "^" <right:Precedence6> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence5_5> "^" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::位异或,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence6,
 };
 
 // Level 6: Multiplication, division, and modulo
 Precedence6: AstNode = {
-    <left:Precedence6> "*" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "*" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::乘,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "乘" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "乘" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::乘,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "/" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "/" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::除,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "除" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "除" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::除,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "%" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "%" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "取余" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "取余" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 位移 / 位与：Go 风格，与 * / % 同层（高于 + - | ^）
-    <left:Precedence6> "<<" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> // 位移 / 位与：Go 风格，与 * / % 同层（高于 + - | ^）
+    <left:Precedence6> "<<" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::左移,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> ">>" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> ">>" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::右移,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <left:Precedence6> "&" <right:Precedence7> => AstNode::二元操作表达式(BinaryExpression {
+    <sp_l:@L> <left:Precedence6> "&" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::位与,
         right: Box::new(right),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence7,
 };
 
 // Level 7: Unary operators
 Precedence7: AstNode = {
-    "等待" <expr:Precedence7> => AstNode::等待表达式(AwaitExpression {
+    <sp_l:@L> "等待" <expr:Precedence7> <sp_r:@R> => AstNode::等待表达式(AwaitExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "启动" <expr:Precedence7> => AstNode::协程启动表达式(GoroutineSpawnExpression {
+    <sp_l:@L> "启动" <expr:Precedence7> <sp_r:@R> => AstNode::协程启动表达式(GoroutineSpawnExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "创建通道" "(" <element_type:Type> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> "创建通道" "(" <element_type:Type> ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type,
         capacity: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "创建通道" "(" <element_type:Type> "," <capacity:Precedence7> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> "创建通道" "(" <element_type:Type> "," <capacity:Precedence7> ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type,
         capacity: Some(Box::new(capacity)),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "<-" <channel:Precedence7> => AstNode::通道接收表达式(ChannelReceiveExpression {
+    <sp_l:@L> "<-" <channel:Precedence7> <sp_r:@R> => AstNode::通道接收表达式(ChannelReceiveExpression {
         channel: Box::new(channel),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "-" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+    <sp_l:@L> "-" <expr:Precedence7> <sp_r:@R> => AstNode::一元操作表达式(UnaryExpression {
         operator: UnaryOperator::负,
         operand: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "+" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+    <sp_l:@L> "+" <expr:Precedence7> <sp_r:@R> => AstNode::一元操作表达式(UnaryExpression {
         operator: UnaryOperator::正,
         operand: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "!" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+    <sp_l:@L> "!" <expr:Precedence7> <sp_r:@R> => AstNode::一元操作表达式(UnaryExpression {
         operator: UnaryOperator::非,
         operand: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "非" <expr:Precedence7> => AstNode::一元操作表达式(UnaryExpression {
+    <sp_l:@L> "非" <expr:Precedence7> <sp_r:@R> => AstNode::一元操作表达式(UnaryExpression {
         operator: UnaryOperator::非,
         operand: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Precedence8,
 };
 
 // Level 8: Postfix operators (field access, array subscript, function call)
 Precedence8: AstNode = {
-    // Special handling for String module static methods since "字符串" is a reserved keyword
-    "字符串" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" => {
+    <sp_l:@L> // Special handling for String module static methods since "字符串" is a reserved keyword
+    "字符串" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" <sp_r:@R> => {
         let module_ident = AstNode::标识符表达式(IdentifierExpression {
             name: "字符串".to_string(),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         });
         AstNode::方法调用表达式(MethodCallExpression {
             object: Box::new(module_ident),
             method_name: format!("::{}", method),
             arguments: args,
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    "字符串" "::" <method:MethodIdentifier> "(" ")" => {
+    <sp_l:@L> "字符串" "::" <method:MethodIdentifier> "(" ")" <sp_r:@R> => {
         let module_ident = AstNode::标识符表达式(IdentifierExpression {
             name: "字符串".to_string(),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         });
         AstNode::方法调用表达式(MethodCallExpression {
             object: Box::new(module_ident),
             method_name: format!("::{}", method),
             arguments: vec![],
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    // Special handling for Future static methods since "未来" is a reserved keyword
-    "未来" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" => {
+    <sp_l:@L> // Special handling for Future static methods since "未来" is a reserved keyword
+    "未来" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" <sp_r:@R> => {
         // Future static method call: 未来::就绪(42)
         // Create a fake identifier for "未来" and treat as method call
         let type_ident = AstNode::标识符表达式(IdentifierExpression {
             name: "未来".to_string(),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         });
         AstNode::方法调用表达式(MethodCallExpression {
             object: Box::new(type_ident),
             method_name: format!("::{}", method),
             arguments: args,
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    "未来" "::" <method:MethodIdentifier> "(" ")" => {
+    <sp_l:@L> "未来" "::" <method:MethodIdentifier> "(" ")" <sp_r:@R> => {
         // Future static method call with no args
         let type_ident = AstNode::标识符表达式(IdentifierExpression {
             name: "未来".to_string(),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         });
         AstNode::方法调用表达式(MethodCallExpression {
             object: Box::new(type_ident),
             method_name: format!("::{}", method),
             arguments: vec![],
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
     // 显式泛型调用（turbofish）：最大::<整数>(3, 5) / 嵌套 最大::<盒装<整数> >(...)
     // 纯 LR(1) 下 `最大<整数>(3,5)` 与比较 `a<b` 单 token 前瞻不可判定（Rust 同因取舍）。
-    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" <args:ExprList> ")" =>? 泛型调用动作3(callee, targs, args),
-    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" ")" =>? 泛型调用动作3(callee, targs, vec![]),
-    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" <args:ExprList> "）" =>? 泛型调用动作3(callee, targs, args),
-    <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" "）" =>? 泛型调用动作3(callee, targs, vec![]),
-    <base:Precedence8> "::" <method:MethodIdentifier> => {
+    <sp_l:@L> <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" <args:ExprList> ")" <sp_r:@R> =>? 泛型调用动作3(callee, targs, args, sp_l, sp_r),
+    <sp_l:@L> <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" ")" <sp_r:@R> =>? 泛型调用动作3(callee, targs, vec![], sp_l, sp_r),
+    <sp_l:@L> <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" <args:ExprList> "）" <sp_r:@R> =>? 泛型调用动作3(callee, targs, args, sp_l, sp_r),
+    <sp_l:@L> <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "（" "）" <sp_r:@R> =>? 泛型调用动作3(callee, targs, vec![], sp_l, sp_r),
+    <sp_l:@L> <base:Precedence8> "::" <method:MethodIdentifier> <sp_r:@R> => {
         // Static method call: Type::method parsed as a field access for now
         // The codegen layer will convert this to the appropriate static method call
         AstNode::字段访问表达式(FieldAccessExpression {
             object: Box::new(base),
             field: format!("::{}",  method),  // Mark as static method with :: prefix
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    <base:Precedence8> "." <field:MemberFieldIdentifier> => {
+    <sp_l:@L> <base:Precedence8> "." <field:MemberFieldIdentifier> <sp_r:@R> => {
         AstNode::字段访问表达式(FieldAccessExpression {
             object: Box::new(base),
             field,
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    <array:Precedence8> "[" <index:Expr> "]" => {
+    <sp_l:@L> <array:Precedence8> "[" <index:Expr> "]" <sp_r:@R> => {
         AstNode::数组访问表达式(ArrayAccessExpression {
             array: Box::new(array),
             index: Box::new(index),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })
     },
-    // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
-    <channel_type:ChannelTypeConstructor> "(" ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
+    <channel_type:ChannelTypeConstructor> "(" ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
         capacity: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <channel_type:ChannelTypeConstructor> "(" <capacity:Expr> ")" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> <channel_type:ChannelTypeConstructor> "(" <capacity:Expr> ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
         capacity: Some(Box::new(capacity)),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <channel_type:ChannelTypeConstructor> "（" "）" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> <channel_type:ChannelTypeConstructor> "（" "）" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
         capacity: None,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <channel_type:ChannelTypeConstructor> "（" <capacity:Expr> "）" => AstNode::通道创建表达式(ChannelCreateExpression {
+    <sp_l:@L> <channel_type:ChannelTypeConstructor> "（" <capacity:Expr> "）" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
         capacity: Some(Box::new(capacity)),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    <callee:Precedence8> "(" <args:ExprList> ")" => {
+    <sp_l:@L> <callee:Precedence8> "(" <args:ExprList> ")" <sp_r:@R> => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
                 type_arguments: vec![],
                 arguments: args,
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }),
             AstNode::字段访问表达式(field_access) => {
                 // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
@@ -1881,20 +1882,20 @@ Precedence8: AstNode = {
                     object: field_access.object,
                     method_name: field_access.field,
                     arguments: args,
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => callee,
         }
     },
-    <callee:Precedence8> "(" ")" => {
+    <sp_l:@L> <callee:Precedence8> "(" ")" <sp_r:@R> => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
                 type_arguments: vec![],
                 arguments: vec![],
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }),
             AstNode::字段访问表达式(field_access) => {
                 // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
@@ -1902,21 +1903,21 @@ Precedence8: AstNode = {
                     object: field_access.object,
                     method_name: field_access.field,
                     arguments: vec![],
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => callee,
         }
     },
-    // 中文括号版本
-    <callee:Precedence8> "（" <args:ExprList> "）" => {
+    <sp_l:@L> // 中文括号版本
+    <callee:Precedence8> "（" <args:ExprList> "）" <sp_r:@R> => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
                 type_arguments: vec![],
                 arguments: args,
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }),
             AstNode::字段访问表达式(field_access) => {
                 // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
@@ -1924,20 +1925,20 @@ Precedence8: AstNode = {
                     object: field_access.object,
                     method_name: field_access.field,
                     arguments: args,
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => callee,
         }
     },
-    <callee:Precedence8> "（" "）" => {
+    <sp_l:@L> <callee:Precedence8> "（" "）" <sp_r:@R> => {
         match callee {
             AstNode::标识符表达式(ident) => AstNode::函数调用表达式(FunctionCallExpression {
                 module_qualifier: None,
                 callee: ident.name,
                 type_arguments: vec![],
                 arguments: vec![],
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }),
             AstNode::字段访问表达式(field_access) => {
                 // 统一解析为方法调用，让 codegen 层根据上下文区分是模块调用还是方法调用
@@ -1945,7 +1946,7 @@ Precedence8: AstNode = {
                     object: field_access.object,
                     method_name: field_access.field,
                     arguments: vec![],
-                    span: Default::default(),
+                    span: Span::new(sp_l, sp_r),
                 })
             },
             _ => callee,
@@ -1956,21 +1957,21 @@ Precedence8: AstNode = {
 
 // Unary prefix operators: 取地址 (address-of) and 解引用 (dereference)
 UnaryPrefix: AstNode = {
-    "取地址" <expr:UnaryPrefix> => AstNode::取地址表达式(AddressOfExpression {
+    <sp_l:@L> "取地址" <expr:UnaryPrefix> <sp_r:@R> => AstNode::取地址表达式(AddressOfExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "&" <expr:UnaryPrefix> => AstNode::取地址表达式(AddressOfExpression {
+    <sp_l:@L> "&" <expr:UnaryPrefix> <sp_r:@R> => AstNode::取地址表达式(AddressOfExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "解引用" <expr:UnaryPrefix> => AstNode::解引用表达式(DereferenceExpression {
+    <sp_l:@L> "解引用" <expr:UnaryPrefix> <sp_r:@R> => AstNode::解引用表达式(DereferenceExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "*" <expr:UnaryPrefix> => AstNode::解引用表达式(DereferenceExpression {
+    <sp_l:@L> "*" <expr:UnaryPrefix> <sp_r:@R> => AstNode::解引用表达式(DereferenceExpression {
         expression: Box::new(expr),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Primary,
 };
@@ -1981,9 +1982,9 @@ UnaryPrefix: AstNode = {
 // Struct literals require parentheses to avoid ambiguity with blocks
 // Syntax: (结构体名 { 字段: 值 }) or （结构体名 { 字段: 值 }）
 Primary: AstNode = {
-    <name:Identifier> => AstNode::标识符表达式(IdentifierExpression {
+    <sp_l:@L> <name:Identifier> <sp_r:@R> => AstNode::标识符表达式(IdentifierExpression {
         name,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     Atom,
 };
@@ -2003,31 +2004,31 @@ Atom: AstNode = {
     // Parenthesized expressions
     "(" <Expr> ")",
     "（" <Expr> "）",
-    // Struct literals with 新建 keyword (preferred syntax)
-    "新建" <name:Identifier> "{" <fields:StructFieldValueList> "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+    <sp_l:@L> // Struct literals with 新建 keyword (preferred syntax)
+    "新建" <name:Identifier> "{" <fields:StructFieldValueList> "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: vec![],
         fields,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 泛型结构体字面量（新建 形态）：新建 对<整数> { 左: 1, 右: 2 }
-    "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" <fields:StructFieldValueList> "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+    <sp_l:@L> // 泛型结构体字面量（新建 形态）：新建 对<整数> { 左: 1, 右: 2 }
+    "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" <fields:StructFieldValueList> "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: targs,
         fields,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+    <sp_l:@L> "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: targs,
         fields: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "新建" <name:Identifier> "{" "}" => AstNode::结构体实例化表达式(StructLiteralExpression {
+    <sp_l:@L> "新建" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: vec![],
         fields: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
     // 括号结构体字面量 (名 { ... }) 已删除 —— 统一用 新建 名 { ... }。
     // 删除原因：括号形式语义不直观（看着像普通括号表达式）；新建 一词自带语义。
@@ -2036,99 +2037,99 @@ Atom: AstNode = {
 // 闭包表达式: 闭包 [捕获列表]? (参数列表) : 返回类型 { 函数体 }
 // 捕获列表用于弱捕获标注：`闭包 [弱 自身] {...}` —— 打破 self.回调=闭包{self} 引用环。
 ClosureExpression: AstNode = {
-    "闭包" "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: Some(return_type),
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" "(" <params:ParameterList> ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" "(" <params:ParameterList> ")" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: None,
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" "(" ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" "(" ")" ":" <return_type:Type> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: Some(return_type),
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" "(" ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" "(" ")" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: None,
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // ── 带捕获列表的形式（[弱 x, ...]）──
-    "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> // ── 带捕获列表的形式（[弱 x, ...]）──
+    "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: Some(return_type),
         body,
         captures: vec![],
         weak_captures: caps,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: None,
         body,
         captures: vec![],
         weak_captures: caps,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" <caps:CaptureList> "(" ")" ":" <return_type:Type> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" <caps:CaptureList> "(" ")" ":" <return_type:Type> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: Some(return_type),
         body,
         captures: vec![],
         weak_captures: caps,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "闭包" <caps:CaptureList> "(" ")" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "闭包" <caps:CaptureList> "(" ")" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: None,
         body,
         captures: vec![],
         weak_captures: caps,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 无参、仅捕获列表：闭包 [弱 按钮] { 按钮.响应(); }
-    "闭包" <caps:CaptureList> <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> // 无参、仅捕获列表：闭包 [弱 按钮] { 按钮.响应(); }
+    "闭包" <caps:CaptureList> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: None,
         body,
         captures: vec![],
         weak_captures: caps,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 简化语法: |参数| 表达式
+    <sp_l:@L> // 简化语法: |参数| 表达式
     // 注意：竖线闭包参数不允许默认值表达式 —— 引入二元 `|`（位或）后，
     // `|x: T = a | b|` 里的 `|` 无法判定是位或还是闭包收尾（真歧义）。
     // 需要默认值请用 闭包(x: 类型 = 默认值) {...} 完整语法。
-    "|" <params:BarClosureParamList> "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    "|" <params:BarClosureParamList> "|" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: None,
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "|" "|" <body:Block> => AstNode::闭包表达式(ClosureExpression {
+    <sp_l:@L> "|" "|" <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: vec![],
         return_type: None,
         body,
         captures: vec![],
         weak_captures: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -2149,35 +2150,35 @@ BarClosureParamList: Vec<Parameter> = {
 };
 
 BarClosureParameter: Parameter = {
-    <name:FieldIdentifier> ":" <type_annotation:Type> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> ":" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "：" <type_annotation:Type> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> "：" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:Identifier> => Parameter {
+    <sp_l:@L> <name:Identifier> <sp_r:@R> => Parameter {
         name,
         type_annotation: None,
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 // 匹配表达式: 匹配 值 { 分支... }
 MatchExpression: AstNode = {
-    "匹配" <value:Expr> "{" <arms:MatchArmList> "}" => AstNode::匹配表达式(MatchExpression {
+    <sp_l:@L> "匹配" <value:Expr> "{" <arms:MatchArmList> "}" <sp_r:@R> => AstNode::匹配表达式(MatchExpression {
         value: Box::new(value),
         arms,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -2186,49 +2187,49 @@ MatchArmList: Vec<MatchArm> = {
 };
 
 MatchArm: MatchArm = {
-    // 模式 => { 语句块 }
-    <pattern:MatchPattern> "=>" <body:Block> => MatchArm {
+    <sp_l:@L> // 模式 => { 语句块 }
+    <pattern:MatchPattern> "=>" <body:Block> <sp_r:@R> => MatchArm {
         pattern,
         guard: None,
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 模式 如果 守卫条件 => { 语句块 }
-    <pattern:MatchPattern> "如果" <guard:Expr> "=>" <body:Block> => MatchArm {
+    <sp_l:@L> // 模式 如果 守卫条件 => { 语句块 }
+    <pattern:MatchPattern> "如果" <guard:Expr> "=>" <body:Block> <sp_r:@R> => MatchArm {
         pattern,
         guard: Some(Box::new(guard)),
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 模式 => 表达式;
-    <pattern:MatchPattern> "=>" <expr:Expr> ";" => MatchArm {
+    <sp_l:@L> // 模式 => 表达式;
+    <pattern:MatchPattern> "=>" <expr:Expr> ";" <sp_r:@R> => MatchArm {
         pattern,
         guard: None,
         body: vec![AstNode::表达式语句(ExpressionStatement {
             expression: Box::new(expr),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 模式 => 表达式；
-    <pattern:MatchPattern> "=>" <expr:Expr> "；" => MatchArm {
+    <sp_l:@L> // 模式 => 表达式；
+    <pattern:MatchPattern> "=>" <expr:Expr> "；" <sp_r:@R> => MatchArm {
         pattern,
         guard: None,
         body: vec![AstNode::表达式语句(ExpressionStatement {
             expression: Box::new(expr),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    // 模式 => 表达式,
-    <pattern:MatchPattern> "=>" <expr:Expr> "," => MatchArm {
+    <sp_l:@L> // 模式 => 表达式,
+    <pattern:MatchPattern> "=>" <expr:Expr> "," <sp_r:@R> => MatchArm {
         pattern,
         guard: None,
         body: vec![AstNode::表达式语句(ExpressionStatement {
             expression: Box::new(expr),
-            span: Default::default(),
+            span: Span::new(sp_l, sp_r),
         })],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -2272,74 +2273,78 @@ MatchPatternOrList: Vec<MatchPattern> = {
 // 异步块表达式: 异步块 { ... }
 // 注：以前是 异步 { ... }，但跟 异步 函数 X(...) 函数前缀冲突。改 异步块 完全消歧。
 AsyncBlockExpression: AstNode = {
-    "异步块" <body:Block> => AstNode::异步块表达式(AsyncBlockExpression {
+    <sp_l:@L> "异步块" <body:Block> <sp_r:@R> => AstNode::异步块表达式(AsyncBlockExpression {
         body,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 BooleanLiteral: AstNode = {
-    "真" => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> "真" <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::布尔(true),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "假" => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> "假" <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::布尔(false),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 IntegerLiteral: AstNode = {
-    <n:r"[0-9]+"> => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> <n:r"[0-9]+"> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::整数(n.parse().unwrap()),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 FloatLiteral: AstNode = {
-    <n:r"[0-9]+\.[0-9]+"> => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> <n:r"[0-9]+\.[0-9]+"> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::浮点数(n.parse().unwrap()),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 StringLiteral: AstNode = {
-    <s:r#""([^"\\]|\\.)*""#> => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> <s:r#""([^"\\]|\\.)*""#> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::字符串(unescape_string(&s[1..s.len()-1])),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    // 原始字符串字面量：反引号包裹，内部**不做转义**，" 直接写、可跨行。
+    <sp_l:@L> // 原始字符串字面量：反引号包裹，内部**不做转义**，" 直接写、可跨行。
     // 用于内嵌 JSON / 正则 / Windows 路径 / 模板，免去满屏 \"。
-    <s:r#"`[^`]*`"#> => AstNode::字面量表达式(LiteralExpression {
+    <s:r#"`[^`]*`"#> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::字符串(s[1..s.len()-1].to_string()),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 // Format string literal: f"text {expression} more text"
 // The regex matches f"..." with escape sequences and interpolation expressions
 FormatStringLiteral: AstNode = {
-    <s:r#"f"([^"\\]|\\.|\{[^}]*\})*""#> => {
-        parse_format_string(&s[2..s.len()-1])
+    <sp_l:@L> <s:r#"f"([^"\\]|\\.|\{[^}]*\})*""#> <sp_r:@R> => {
+        let mut node = parse_format_string(&s[2..s.len()-1]);
+        if let AstNode::格式字符串表达式(ref mut f) = node {
+            f.span = Span::new(sp_l, sp_r);
+        }
+        node
     }
 };
 
 CharLiteral: AstNode = {
-    // 支持普通字符 'A' 与转义字符 '\n' '\t' '\r' '\\' '\'' '\"' '\0'
-    <c:r"'([^\\']|\\.)'"> => AstNode::字面量表达式(LiteralExpression {
+    <sp_l:@L> // 支持普通字符 'A' 与转义字符 '\n' '\t' '\r' '\\' '\'' '\"' '\0'
+    <c:r"'([^\\']|\\.)'"> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
         value: LiteralValue::字符(unescape_string(&c[1..c.len()-1]).chars().next().unwrap_or('\0')),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
 ArrayLiteral: AstNode = {
-    "[" <elements:ExprList> "]" => AstNode::数组字面量表达式(ArrayLiteralExpression {
+    <sp_l:@L> "[" <elements:ExprList> "]" <sp_r:@R> => AstNode::数组字面量表达式(ArrayLiteralExpression {
         elements,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
-    "[" "]" => AstNode::数组字面量表达式(ArrayLiteralExpression {
+    <sp_l:@L> "[" "]" <sp_r:@R> => AstNode::数组字面量表达式(ArrayLiteralExpression {
         elements: vec![],
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 
@@ -2349,20 +2354,20 @@ StructFieldValueList: Vec<StructFieldValue> = {
 };
 
 StructFieldValue: StructFieldValue = {
-    <name:FieldIdentifier> ":" <value:Expr> => StructFieldValue {
+    <sp_l:@L> <name:FieldIdentifier> ":" <value:Expr> <sp_r:@R> => StructFieldValue {
         name,
         value: Box::new(value),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "：" <value:Expr> => StructFieldValue {
+    <sp_l:@L> <name:FieldIdentifier> "：" <value:Expr> <sp_r:@R> => StructFieldValue {
         name,
         value: Box::new(value),
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
 ParameterWithVariadic: Vec<ParameterWithVariadic> = {
-    <params:Comma<Parameter>> => {
+    <sp_l:@L> <params:Comma<Parameter>> <sp_r:@R> => {
         // Convert all parameters to ParameterWithVariadic
         let len = params.len();
         params.into_iter().enumerate().map(|(i, p)| {
@@ -2373,7 +2378,7 @@ ParameterWithVariadic: Vec<ParameterWithVariadic> = {
                 type_annotation: p.type_annotation,
                 default_value: p.default_value,
                 is_variadic,
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }
         }).collect()
     }
@@ -2385,55 +2390,55 @@ ParameterList: Vec<Parameter> = {
 };
 
 Parameter: Parameter = {
-    // Fix syntax - use proper colon token
-    <name:FieldIdentifier> ":" <type_annotation:Type> => Parameter {
+    <sp_l:@L> // Fix syntax - use proper colon token
+    <name:FieldIdentifier> ":" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> ":" <type_annotation:Type> "=" <default_value:Expr> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> ":" <type_annotation:Type> "=" <default_value:Expr> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: Some(Box::new(default_value)),
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "：" <type_annotation:Type> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> "：" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "：" <type_annotation:Type> "=" <default_value:Expr> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> "：" <type_annotation:Type> "=" <default_value:Expr> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: Some(Box::new(default_value)),
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "..." ":" <type_annotation:Type> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> "..." ":" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:FieldIdentifier> "..." "：" <type_annotation:Type> => Parameter {
+    <sp_l:@L> <name:FieldIdentifier> "..." "：" <type_annotation:Type> <sp_r:@R> => Parameter {
         name,
         type_annotation: Some(type_annotation),
         default_value: None,
         is_variadic: true,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
-    <name:Identifier> => Parameter {
+    <sp_l:@L> <name:Identifier> <sp_r:@R> => Parameter {
         name,
         type_annotation: None,
         default_value: None,
         is_variadic: false,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     },
 };
 
@@ -2671,9 +2676,9 @@ ReceiverIdentifier: String = {
 
 
 IdentifierExpression: AstNode = {
-    <name:Identifier> => AstNode::标识符表达式(IdentifierExpression {
+    <sp_l:@L> <name:Identifier> <sp_r:@R> => AstNode::标识符表达式(IdentifierExpression {
         name,
-        span: Default::default(),
+        span: Span::new(sp_l, sp_r),
     }),
 };
 

@@ -2,6 +2,8 @@
 
 pub mod ast;
 pub mod error;
+#[path = "位置.rs"]
+pub mod 位置;
 
 // Include the generated LALRPOP parser
 include!(concat!(env!("OUT_DIR"), "/parser/grammar.rs"));
@@ -316,17 +318,23 @@ impl Parser {
 
     /// Parse source code directly into an AST
     pub fn parse_source(&self, source: &str) -> Result<Program, ParseError> {
-        // Preprocess: strip BOM and comments to support fixtures that include them
+        // Preprocess: strip BOM and comments to support fixtures that include them.
+        //
+        // 【保字节偏移】所有预处理都按「等字节数替换」实现：注释内容/BOM 用等量
+        // 空格顶位、换行原样保留 —— 这样 LALRPOP @L/@R 产出的 AST span 就是
+        // **原始源码**的 UTF-8 字节偏移，语义检查可直接换算行列。
+        // （唯一例外：normalize_else_if 对连写 `否则如果` 插 1 个空格，见彼处注释。）
         fn strip_comments(input: &str) -> String {
-            // Strip UTF-8 BOM if present
-            let s = if input.starts_with('\u{feff}') {
-                &input["\u{feff}".len()..]
+            // UTF-8 BOM（3 字节）用 3 个空格顶位，不改变后续字节偏移
+            let (bom_pad, s) = if input.starts_with('\u{feff}') {
+                ("   ", &input["\u{feff}".len()..])
             } else {
-                input
+                ("", input)
             };
 
             let bytes = s.as_bytes();
-            let mut out = String::with_capacity(s.len());
+            let mut out = String::with_capacity(input.len());
+            out.push_str(bom_pad);
             let mut i = 0;
             let n = bytes.len();
 
@@ -343,6 +351,8 @@ impl Parser {
                     if bytes[i] == b'\n' {
                         in_line_comment = false;
                         out.push('\n');
+                    } else {
+                        out.push(' '); // 注释字节以空格顶位，保偏移
                     }
                     i += 1;
                     continue;
@@ -351,14 +361,18 @@ impl Parser {
                 if block_comment_depth > 0 {
                     if i + 1 < n && bytes[i] == b'/' && bytes[i + 1] == b'*' {
                         block_comment_depth += 1;
+                        out.push_str("  ");
                         i += 2;
                     } else if i + 1 < n && bytes[i] == b'*' && bytes[i + 1] == b'/' {
                         block_comment_depth -= 1;
+                        out.push_str("  ");
                         i += 2;
                     } else {
-                        // 保留换行，让后续诊断的行号不漂移
+                        // 保留换行，让后续诊断的行号不漂移；其余字节空格顶位
                         if bytes[i] == b'\n' {
                             out.push('\n');
+                        } else {
+                            out.push(' ');
                         }
                         i += 1;
                     }
@@ -405,11 +419,13 @@ impl Parser {
                 // Not inside any literal or comment
                 if i + 1 < n && bytes[i] == b'/' && bytes[i + 1] == b'/' {
                     in_line_comment = true;
+                    out.push_str("  "); // `//` 两字节空格顶位
                     i += 2;
                     continue;
                 }
                 if i + 1 < n && bytes[i] == b'/' && bytes[i + 1] == b'*' {
                     block_comment_depth = 1;
+                    out.push_str("  "); // `/*` 两字节空格顶位
                     i += 2;
                     continue;
                 }
@@ -443,11 +459,14 @@ impl Parser {
 
         // Normalize Chinese fullwidth colon （：U+FF1A) to ASCII colon outside string literals,
         // so users can write `：` anywhere `:` is accepted in the grammar.
+        // 【保字节偏移】`：` 是 3 字节，替换为 `:` + 2 空格（同 3 字节）；
+        // 连写 `：：`（6 字节）替换为 `::` + 4 空格，保住 `::` 的相邻性。
         fn normalize_colons(s: &str) -> String {
             let mut out = String::with_capacity(s.len());
             let mut in_string = false;
             let mut escape = false;
-            for ch in s.chars() {
+            let mut it = s.chars().peekable();
+            while let Some(ch) = it.next() {
                 if in_string {
                     if escape {
                         escape = false;
@@ -461,7 +480,12 @@ impl Parser {
                     in_string = true;
                     out.push(ch);
                 } else if ch == '：' {
-                    out.push(':');
+                    if it.peek() == Some(&'：') {
+                        it.next();
+                        out.push_str("::    ");
+                    } else {
+                        out.push_str(":  ");
+                    }
                 } else {
                     out.push(ch);
                 }
@@ -516,7 +540,9 @@ impl Parser {
                             && (chars[i + 1] == '板' || chars[i + 1] == '版')
                             && chars[i + 2] == '"' =>
                         {
-                            out.push('f');
+                            // 【保字节偏移】`模板`（6 字节）→ 5 空格 + `f`（6 字节），
+                            // `f` 紧贴引号满足 f"..." 词法；串内内容偏移与原文一致。
+                            out.push_str("     f");
                             out.push('"');
                             in_str = true;
                             i += 2; // 吃掉 板/版 和引号
@@ -600,23 +626,25 @@ impl Parser {
 
     /// Parse tokens into an AST (legacy method - tokenizes first)
     pub fn parse(&self, tokens: Vec<crate::lexer::Token>) -> Result<Program, ParseError> {
-        // Reconstruct source from tokens preserving original structure
-        // Use the original span information to maintain proper spacing
+        // Reconstruct source from tokens preserving original structure.
+        // 【保字节偏移】token.span 是原始源码的 UTF-8 字节偏移（lexer 按 len_utf8
+        // 递增），重组时把每个 token 文本垫回它原来的字节偏移处（间隙 —— 原本的
+        // 空白/注释 —— 用空格顶位），这样 @L/@R 产出的 span 与原文件字节偏移一致。
+        // 注意不再 trim 开头空白，否则整体偏移左移。
         let mut source = String::new();
-        let mut last_end = 0;
 
         for token in &tokens {
-            // Preserve spacing between tokens based on original positions
-            if token.span.start > last_end {
-                // Add the original whitespace/newlines that were between tokens
-                // For now, add a space if there was a gap
-                source.push(' ');
+            let cur = source.len();
+            if token.span.start > cur {
+                // 垫空格到 token 的原始字节偏移
+                source.push_str(&" ".repeat(token.span.start - cur));
             }
+            // 若 cur > start（个别 token 文本经词法归一化变长），直接顺排，
+            // 后续 token 仍会按各自偏移重新对齐。
             source.push_str(&token.text);
-            last_end = token.span.end;
         }
 
-        self.parse_source(&source.trim())
+        self.parse_source(&source)
     }
 }
 

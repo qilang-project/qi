@@ -892,6 +892,8 @@ pub fn 泛型调用动作3(
     callee: AstNode,
     targs: Vec<TypeNode>,
     args: Vec<AstNode>,
+    sp_l: usize,
+    sp_r: usize,
 ) -> Result<
     AstNode,
     lalrpop_util::ParseError<usize, lalrpop_util::lexer::Token<'static>, &'static str>,
@@ -903,7 +905,7 @@ pub fn 泛型调用动作3(
                 callee: id.name,
                 type_arguments: targs,
                 arguments: args,
-                span: Default::default(),
+                span: Span::new(sp_l, sp_r),
             }))
         }
         _ => Err(lalrpop_util::ParseError::User {
