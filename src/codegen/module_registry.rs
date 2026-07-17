@@ -428,7 +428,14 @@ impl ModuleRegistry {
             "整数",
         ));
         bytes_module.add_function(ModuleFunction::new(
+            "写入文件",
+            "qi_bytes_write_file",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        bytes_module.add_function(ModuleFunction::new(
             "转十六进制",
+
             "qi_bytes_to_hex",
             vec!["整数".to_string()],
             "字符串",
