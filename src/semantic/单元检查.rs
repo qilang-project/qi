@@ -40,7 +40,7 @@
 //! 见 `设字面量`/`是字面量变量`）。函数返回值/句柄等非字面量来源一律沉默
 //! ——绿码句柄惯用法（字符串描述符存 整数 变量）的生命线。
 //!
-//! # 沉默清单（已知取舍，对抗校验 2026-07 修订）
+//! # 沉默清单（已知取舍，2026-07 波2 召回提升后修订）
 //!
 //! 1. 模块限定调用 miss 不报（注册表可能不全），且不查元数；
 //! 2. 值接收者方法：**本单元声明的方法查元数**（2026-07 起）；特性默认方法/
@@ -48,23 +48,32 @@
 //! 3. 注册表返回 整数/ptr/数组 → 未知（句柄语义）；
 //! 4. 非字面量来源（含非字面量变量）的家族错配放行（句柄惯用法）；
 //! 5. 闭包/匹配/异步块的值类型未知；间接调用（函数值）不查元数与类型；
-//! 6. 模板串洞静默（parse_format_string 不递归解析，洞内报错全弃）；
+//! 6. 模板串洞**部分开火**（波2）：洞原文经 ExprParser 真解析后查
+//!    未定义变量/未定义函数；家族比对不开，解析失败沉默，其余报错全弃；
 //!    特性默认实现体报错全弃（接收者环境不完整）；
-//! 7. 元数重载命中 >1 候选时不比实参类型；泛型实参/泛型结构体字段比对关；
+//! 7. 元数重载命中 >1 候选：**全部候选同位同族**时比对字面量实参（波2）；
+//!    任何一个候选该位是变参/泛型/未知/异族 → 沉默；泛型实参比对关；
 //! 8. 接收者为不可解析裸标识符 → 沉默（可能是未登记包别名）；
 //! 9. 用户函数与内置同名 → 沉默；内置/注册表函数不查元数；
-//! 10. 条件不要求布尔；二元操作数不比对；数组混元素不报；结构体字面量
-//!     缺字段不查；常量重赋值不查；void 带值返回不查；重复声明不查。
-//!     枚举变体载荷**元数**查（2026-07 起，跨枚举重名变体沉默），载荷类型不查。
+//! 10. 条件不要求布尔（qi 惯用整数条件，语言语义未定，不动）；二元操作数
+//!     不比对；结构体字面量缺字段不查（codegen 默认零值=特性）；
+//!     同作用域重复声明不查（重入声明=特性）；void 带值返回不查
+//!     （codegen 求值丢弃后 ret void=合法特性，见 inkwell_gen/语句.rs）。
+//!     波2 已收窄：枚举变体载荷元数+**类型**查（字面量来源、跨枚举重名/泛型
+//!     载荷沉默）；常量重赋值查（重入声明不误伤）；纯字面量数组混族查
+//!     （任一元素非直接字面量 → 沉默）。
 
 use crate::codegen::module_registry::ModuleRegistry;
 use crate::parser::ast::*;
 use crate::semantic::type_checker::TypeError;
+use crate::semantic::诊断渲染::类型显示;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 // 表达式层（推断/调用/成员访问）拆在子模块（同一检查器的另一半 impl，
 // 子模块可直接访问本模块私有状态）——单文件 <1000 行约束。
+#[path = "单元检查_检查项.rs"]
+mod 检查项;
 #[path = "单元检查_表达式.rs"]
 mod 表达式;
 
@@ -250,6 +259,10 @@ pub struct 单元检查器 {
     变体归属: HashMap<String, String>,
     /// (枚举名, 变体名) → 载荷元数（`圆(浮点数)` → 1；无载荷 → 0）
     变体元数: HashMap<(String, String), usize>,
+    /// (枚举名, 变体名) → 载荷类型列表（元数匹配后按位做字面量家族比对）
+    变体载荷: HashMap<(String, String), Vec<TypeNode>>,
+    /// 枚举名 → 泛型类型参数名（载荷类型涉及类型参数 → 该位比对沉默）
+    枚举类型参数: HashMap<String, Vec<String>>,
     /// 跨枚举重名的变体名——裸构造归属歧义，元数检查沉默
     歧义变体: HashSet<String>,
     特性集: HashSet<String>,
@@ -275,6 +288,9 @@ pub struct 单元检查器 {
     /// 变量由字面量初始化/赋值 → 标记；被非字面量赋值 → 清除。
     /// 家族比对对「解析到字面量变量的标识符」也开火（红码 b01/b12 类）。
     字面量变量: Vec<HashSet<String>>,
+    /// 与 作用域 平行：本层以 `常量` 声明的名字。赋值目标解析到常量 → 报错。
+    /// 同作用域「重入声明」是新声明（绑定 时清旧标记），不误伤。
+    常量集: Vec<HashSet<String>>,
     /// 当前函数的泛型类型参数名（体内视为类型变量，涉及即未知）
     当前类型参数: HashSet<String>,
     /// 当前函数声明的返回类型（未声明/含类型参数 → None → 返回检查沉默）
@@ -301,14 +317,23 @@ fn 字面量直推(node: &AstNode) -> 推断 {
 
 /// 对外入口：一次分析整个编译单元（entry + 所有被导入模块），返回结构化错误列表。
 pub fn 分析编译单元(programs: &[Program]) -> Vec<TypeError> {
+    分析编译单元_分组(programs).into_iter().flatten().collect()
+}
+
+/// 同 分析编译单元，但错误按 Program 分组返回（返回值[i] 是 programs[i] 的错误）。
+/// `qi check` 渲染「文件:行:列」时需要知道错误属于哪份源码——span 是相对
+/// 各自文件的字节偏移，拿 entry 源码换算被导入模块的错误会得到错行列。
+pub fn 分析编译单元_分组(programs: &[Program]) -> Vec<Vec<TypeError>> {
     let mut c = 单元检查器::新建();
     for p in programs {
         c.收集声明(p);
     }
+    let mut 组 = Vec::with_capacity(programs.len());
     for p in programs {
         c.检查程序(p);
+        组.push(std::mem::take(&mut c.错误));
     }
-    c.错误
+    组
 }
 
 impl 单元检查器 {
@@ -319,6 +344,8 @@ impl 单元检查器 {
             枚举表: HashMap::new(),
             变体归属: HashMap::new(),
             变体元数: HashMap::new(),
+            变体载荷: HashMap::new(),
+            枚举类型参数: HashMap::new(),
             歧义变体: HashSet::new(),
             特性集: HashSet::new(),
             联合体集: HashSet::new(),
@@ -330,6 +357,7 @@ impl 单元检查器 {
             导入符号: HashSet::new(),
             作用域: Vec::new(),
             字面量变量: Vec::new(),
+            常量集: Vec::new(),
             当前类型参数: HashSet::new(),
             当前返回: None,
             错误: Vec::new(),
@@ -417,7 +445,11 @@ impl 单元检查器 {
                     }
                     self.变体元数
                         .insert((e.name.clone(), v.name.clone()), v.payload.len());
+                    self.变体载荷
+                        .insert((e.name.clone(), v.name.clone()), v.payload.clone());
                 }
+                self.枚举类型参数
+                    .insert(e.name.clone(), e.type_params.clone());
                 self.枚举表.insert(e.name.clone(), 变体集);
             }
             AstNode::特性声明(t) => {
@@ -495,19 +527,38 @@ impl 单元检查器 {
     fn 进作用域(&mut self) {
         self.作用域.push(HashMap::new());
         self.字面量变量.push(HashSet::new());
+        self.常量集.push(HashSet::new());
     }
     fn 出作用域(&mut self) {
         self.作用域.pop();
         self.字面量变量.pop();
+        self.常量集.pop();
     }
     fn 绑定(&mut self, name: &str, t: 推断) {
         if let Some(top) = self.作用域.last_mut() {
             top.insert(name.to_string(), t);
         }
-        // 新绑定默认非字面量（同层重声明时清掉旧标记；标记由调用方随后补）
+        // 新绑定默认非字面量/非常量（同层重入声明清旧标记；标记由调用方随后补）
         if let Some(top) = self.字面量变量.last_mut() {
             top.remove(name);
         }
+        if let Some(top) = self.常量集.last_mut() {
+            top.remove(name);
+        }
+    }
+
+    /// 名字是否解析到「常量绑定」（按最近绑定层判定；遮蔽正确性同 是字面量变量）。
+    fn 是常量(&self, name: &str) -> bool {
+        for (i, s) in self.作用域.iter().enumerate().rev() {
+            if s.contains_key(name) {
+                return self
+                    .常量集
+                    .get(i)
+                    .map(|m| m.contains(name))
+                    .unwrap_or(false);
+            }
+        }
+        false
     }
 
     /// 在名字的**绑定层**上打/清「字面量来源」标记（遮蔽正确性）。
@@ -804,8 +855,8 @@ impl 单元检查器 {
         if let (Some(dt), Some(it), true) = (&声明型, &初值型, 可报) {
             if !家族相容(dt, it) {
                 self.报(TypeError::TypeMismatch {
-                    expected: format!("{:?}", dt),
-                    actual: format!("{:?}", it),
+                    expected: format!("变量 `{}` 声明为 {}", d.name, 类型显示(dt)),
+                    actual: format!("初值却是 {}", 类型显示(it)),
                     span: d.span,
                 });
             }
@@ -813,6 +864,11 @@ impl 单元检查器 {
         self.绑定(&d.name, 声明型.or(初值型));
         if 可报 {
             self.设字面量(&d.name, true); // 字面量初始化 → 变量成为字面量来源载体
+        }
+        if !d.is_mutable {
+            if let Some(top) = self.常量集.last_mut() {
+                top.insert(d.name.clone());
+            }
         }
     }
 
@@ -862,8 +918,8 @@ impl 单元检查器 {
             }
             if !家族相容(目标, &实际) {
                 self.报(TypeError::TypeMismatch {
-                    expected: format!("{:?}", 目标),
-                    actual: format!("{:?}", 实际),
+                    expected: format!("函数返回类型声明为 {}", 类型显示(目标)),
+                    actual: format!("返回值却是 {}", 类型显示(&实际)),
                     span: s.span,
                 });
             }

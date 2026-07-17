@@ -1131,10 +1131,14 @@ impl Cli {
         // 语义类型检查（宽容默认，warning 不挡退出码）。
         // 只对 包 主程序 的入口跑：包成员文件单独作入口时，同包兄弟文件不进
         // 编译单元，会产生「未定义」伪影（与 codegen 行为同源）——降级跳过。
-        // 全语料校准：302 绿码 0 误报 / 28 红码全抓（qi/tests/类型检查{绿码,红码}）。
+        // 全语料校准：302 绿码 0 误报 / 36 红码全抓（qi/tests/类型检查{绿码,红码}）。
         // QI_TYPECHECK=off 可关；QI_TYPECHECK=strict 时警告升级为失败。
         let mut 类型警告数 = 0usize;
-        if all_passed && std::env::var("QI_TYPECHECK").map(|v| v == "off").unwrap_or(false) == false
+        if all_passed
+            && std::env::var("QI_TYPECHECK")
+                .map(|v| v == "off")
+                .unwrap_or(false)
+                == false
         {
             let strict = std::env::var("QI_TYPECHECK")
                 .map(|v| v == "strict")
@@ -1155,14 +1159,28 @@ impl Cli {
                 if !是主程序入口 {
                     continue;
                 }
-                let 错误 = crate::semantic::分析编译单元(&programs);
-                if !错误.is_empty() {
-                    eprintln!("文件: {}", file.display());
-                    for e in &错误 {
-                        let s: String = format!("{:?}", e).chars().take(500).collect();
-                        eprintln!("  类型警告: {}", s);
+                // 按 Program 分组：span 是相对各自文件的字节偏移，只有 entry
+                // （programs[0]，即 file 本身）的错误能用 file 的源码换算行列；
+                // 被导入模块的错误（组 1+）不带行列（源码路径在此层不可得）。
+                let 错误组 = crate::semantic::分析编译单元_分组(&programs);
+                let 总数: usize = 错误组.iter().map(|g| g.len()).sum();
+                if 总数 > 0 {
+                    let 源码 = std::fs::read_to_string(file).unwrap_or_default();
+                    for (组号, 组) in 错误组.iter().enumerate() {
+                        for e in 组 {
+                            let span = e.span();
+                            let 文案: String = e.渲染人话().chars().take(500).collect();
+                            // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
+                            if 组号 == 0 && !(span.start == 0 && span.end == 0) {
+                                let (行, 列) =
+                                    crate::parser::位置::偏移转行列(&源码, span.start);
+                                eprintln!("{}:{}:{} 类型警告: {}", file.display(), 行, 列, 文案);
+                            } else {
+                                eprintln!("{} 类型警告: {}", file.display(), 文案);
+                            }
+                        }
                     }
-                    类型警告数 += 错误.len();
+                    类型警告数 += 总数;
                 }
             }
             if strict && 类型警告数 > 0 {
@@ -1175,7 +1193,10 @@ impl Cli {
         if all_passed {
             if !config.verbose {
                 if 类型警告数 > 0 {
-                    println!("语法检查通过；类型警告 {} 条（QI_TYPECHECK=strict 可升级为失败）", 类型警告数);
+                    println!(
+                        "语法检查通过；类型警告 {} 条（QI_TYPECHECK=strict 可升级为失败）",
+                        类型警告数
+                    );
                 } else {
                     println!("所有文件语法检查通过");
                 }

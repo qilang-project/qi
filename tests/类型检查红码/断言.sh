@@ -69,6 +69,15 @@ check_one 25_枚举载荷元数错.qi   '载荷元数不匹配'
 check_one 26_方法元数错.qi       '参数数量不匹配'
 check_one 27_跨文件错配.qi       'TypeMismatch'
 check_one 28_turbofish元数错.qi  '参数数量不匹配'
+# ── 波2 召回提升（2026-07：载荷类型/常量重赋值/混族数组/模板洞/重载实参）──
+check_one 29_枚举载荷类型错_裸构造.qi 'TypeMismatch'
+check_one 30_枚举载荷类型错_限定构造.qi 'TypeMismatch'
+check_one 31_常量重赋值.qi       '不能给常量'
+check_one 32_结构体字段值类型错.qi 'TypeMismatch'
+check_one 33_数组字面量混族.qi   'TypeMismatch'
+check_one 34_模板串洞未定义变量.qi 'UndefinedVariable'
+check_one 35_模板串洞未定义函数.qi "未定义的函数 '不存在的函数'"
+check_one 36_重载多候选实参错.qi 'TypeMismatch'
 
 rm -f /tmp/红码断言.ll
 echo ""

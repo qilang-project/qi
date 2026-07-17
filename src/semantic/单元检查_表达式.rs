@@ -50,14 +50,19 @@ impl 单元检查器 {
             AstNode::数组字面量表达式(al) => {
                 let mut 元素型: 推断 = None;
                 let mut 一致 = true;
+                let mut 各元素型: Vec<推断> = Vec::with_capacity(al.elements.len());
                 for (i, e) in al.elements.iter().enumerate() {
                     let t = self.推断表达式(e);
+                    各元素型.push(t.clone());
                     if i == 0 {
                         元素型 = t;
                     } else if t != 元素型 {
                         一致 = false;
                     }
                 }
+                // 纯字面量数组的混族元素（[1, "a"]）有把握报；
+                // 任一元素非字面量 → 整体沉默（宽容）
+                self.检查纯字面量数组(al, &各元素型);
                 // 混合元素/未知元素 → 整体未知（不报错：宽容）
                 match (一致, 元素型) {
                     (true, Some(t)) => Some(TypeNode::数组类型(ArrayType {
@@ -191,15 +196,9 @@ impl 单元检查器 {
                 None // 匹配的值类型（各臂合一）→ 未知
             }
             AstNode::格式字符串表达式(f) => {
-                // 模板洞可能是「整段原文」伪标识符（parse_format_string 不递归解析）
-                // → 洞内一律静默检查，报错全部丢弃
-                let 起 = self.错误.len();
-                for part in &f.parts {
-                    if let FormatStringPart::表达式 { expr, .. } = part {
-                        self.推断表达式(expr);
-                    }
-                }
-                self.错误.truncate(起);
+                // 洞内表达式走正常检查，但只保留「未定义变量/未定义函数」
+                // （家族比对暂不开——逐步开火纪律，见 检查模板串）
+                self.检查模板串(f);
                 Some(TypeNode::基础类型(BasicType::字符串))
             }
             // 声明类节点出现在表达式位置（理论不发生）→ 交语句处理器，返回未知
@@ -245,6 +244,13 @@ impl 单元检查器 {
         let 目标型: 推断 = match a.target.as_ref() {
             AstNode::标识符表达式(id) => {
                 let t = self.解析标识符(id, true);
+                // 常量重赋值：目标解析到 `常量` 绑定 → 报错（重入声明不走这里）
+                if self.是常量(&id.name) {
+                    self.报(TypeError::General {
+                        message: format!("不能给常量 `{}` 重新赋值", id.name),
+                        span: a.span,
+                    });
+                }
                 // 维护字面量标记：字面量赋值 → 标记；句柄/调用结果覆写 → 清除
                 self.设字面量(&id.name, 值是字面量);
                 t
@@ -254,8 +260,8 @@ impl 单元检查器 {
         if let (Some(t), Some(v), true) = (&目标型, &值型, 值是字面量) {
             if !家族相容(t, v) {
                 self.报(TypeError::TypeMismatch {
-                    expected: format!("{:?}", t),
-                    actual: format!("{:?}", v),
+                    expected: format!("赋值目标类型是 {}", 类型显示(t)),
+                    actual: format!("赋的值却是 {}", 类型显示(v)),
                     span: a.span,
                 });
             }
@@ -346,7 +352,7 @@ impl 单元检查器 {
             (None, None) => {}
         }
 
-        // 4) 裸枚举变体构造：`有些(5)` → 枚举类型（载荷元数可查：跨枚举重名沉默）
+        // 4) 裸枚举变体构造：`有些(5)` → 枚举类型（载荷元数+类型可查：跨枚举重名沉默）
         if let Some(枚举名) = self.变体归属.get(callee).cloned() {
             if !self.歧义变体.contains(callee) {
                 if let Some(&元数) = self.变体元数.get(&(枚举名.clone(), callee.to_string()))
@@ -359,6 +365,14 @@ impl 单元检查器 {
                             ),
                             span: call.span,
                         });
+                    } else {
+                        self.检查变体载荷类型(
+                            &枚举名,
+                            callee,
+                            &实参型,
+                            &call.arguments,
+                            call.span,
+                        );
                     }
                 }
             }
@@ -436,14 +450,22 @@ impl 单元检查器 {
                 if let (Some(pt), Some(a)) = (形参型, at) {
                     if !家族相容(&pt, a) {
                         self.报(TypeError::TypeMismatch {
-                            expected: format!("参数 {} 期望 {:?}", i + 1, pt),
-                            actual: format!("{:?}", a),
+                            expected: format!(
+                                "函数 '{}' 第 {} 个参数期望 {}",
+                                名,
+                                i + 1,
+                                类型显示(&pt)
+                            ),
+                            actual: format!("实参却是 {}", 类型显示(a)),
                             span,
                         });
                     }
                 }
             }
             self.当前类型参数 = 旧类型参数;
+        } else {
+            // 多候选：仅当**全部**候选在某实参位都期望同一家族时才比对（谨慎开火）
+            self.检查多候选实参(名, &匹配, 实参型, 实参节点, span);
         }
         // 返回类型：所有元数匹配的候选一致才采信
         let mut 返回: Option<推断> = None;
@@ -470,10 +492,8 @@ impl 单元检查器 {
         if let AstNode::标识符表达式(id) = mc.object.as_ref() {
             let 是变量 = self.查局部(&id.name).is_some() || self.全局变量.contains_key(&id.name);
             if !是变量 {
-                for a in &mc.arguments {
-                    self.推断表达式(a);
-                }
-                return self.限定调用(&id.name, method, mc.arguments.len(), mc.span);
+                let 实参型: Vec<推断> = mc.arguments.iter().map(|a| self.推断表达式(a)).collect();
+                return self.限定调用(&id.name, method, &mc.arguments, &实参型, mc.span);
             }
         }
 
@@ -522,14 +542,16 @@ impl 单元检查器 {
         }
     }
 
-    /// 「模块名/包别名/类型名 . 方法」限定调用的解析（实参已走过，n=实参个数）。
+    /// 「模块名/包别名/类型名 . 方法」限定调用的解析（实参已由调用方推断）。
     pub(super) fn 限定调用(
         &mut self,
         接收者: &str,
         method: &str,
-        n: usize,
+        实参节点: &[AstNode],
+        实参型: &[推断],
         span: crate::lexer::Span,
     ) -> 推断 {
+        let n = 实参节点.len();
         let reg = 注册表();
         // ① 标准库：别名 → 模块名；或裸模块名直用（无需导入，镜像 codegen）
         let 模块 = self
@@ -579,6 +601,8 @@ impl 单元检查器 {
                             ),
                             span,
                         });
+                    } else {
+                        self.检查变体载荷类型(接收者, method, 实参型, 实参节点, span);
                     }
                 }
             }
@@ -690,8 +714,13 @@ impl 单元检查器 {
                     if let (Some(ft), Some(vt)) = (已知字段型, vt) {
                         if !家族相容(&ft, vt) {
                             self.报(TypeError::TypeMismatch {
-                                expected: format!("字段 '{}' 期望 {:?}", fv.name, ft),
-                                actual: format!("{:?}", vt),
+                                expected: format!(
+                                    "结构体 '{}' 字段 '{}' 声明为 {}",
+                                    sl.struct_name,
+                                    fv.name,
+                                    类型显示(&ft)
+                                ),
+                                actual: format!("字面量值却是 {}", 类型显示(vt)),
                                 span: fv.span,
                             });
                         }

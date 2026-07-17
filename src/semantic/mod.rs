@@ -8,8 +8,10 @@ pub mod symbol_table;
 pub mod type_checker;
 #[path = "单元检查.rs"]
 pub mod 单元检查;
+#[path = "诊断渲染.rs"]
+pub mod 诊断渲染;
 
-pub use 单元检查::分析编译单元;
+pub use 单元检查::{分析编译单元, 分析编译单元_分组};
 
 use crate::lexer::Span;
 use crate::parser::AstNode;
