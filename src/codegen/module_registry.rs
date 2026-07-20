@@ -2206,149 +2206,9 @@ impl ModuleRegistry {
     fn register_gui_module(&mut self) {
         let mut gui_module = Module::new("图形化");
 
-        // 创建窗口
-        gui_module.add_function(ModuleFunction::new(
-            "创建窗口",
-            "qi_gui_create_window",
-            vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()],
-            "整数",
-        ));
-
-        // 销毁窗口
-        gui_module.add_function(ModuleFunction::new(
-            "销毁窗口",
-            "qi_gui_destroy_window",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 设置标题
-        gui_module.add_function(ModuleFunction::new(
-            "设置标题",
-            "qi_gui_set_title",
-            vec!["整数".to_string(), "字符串".to_string()],
-            "void",
-        ));
-
-        // 获取标题
-        gui_module.add_function(ModuleFunction::new(
-            "获取标题",
-            "qi_gui_get_title",
-            vec!["整数".to_string()],
-            "字符串",
-        ));
-
-        // 显示窗口
-        gui_module.add_function(ModuleFunction::new(
-            "显示窗口",
-            "qi_gui_show_window",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 隐藏窗口
-        gui_module.add_function(ModuleFunction::new(
-            "隐藏窗口",
-            "qi_gui_hide_window",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 是否可见
-        gui_module.add_function(ModuleFunction::new(
-            "是否可见",
-            "qi_gui_is_visible",
-            vec!["整数".to_string()],
-            "整数",
-        ));
-
-        // 启用事件打印
-        gui_module.add_function(ModuleFunction::new(
-            "启用事件打印",
-            "qi_gui_enable_event_printing",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 获取窗口位置X
-        gui_module.add_function(ModuleFunction::new(
-            "获取位置X",
-            "qi_gui_get_position_x",
-            vec!["整数".to_string()],
-            "整数",
-        ));
-
-        // 获取窗口位置Y
-        gui_module.add_function(ModuleFunction::new(
-            "获取位置Y",
-            "qi_gui_get_position_y",
-            vec!["整数".to_string()],
-            "整数",
-        ));
-
-        // 设置窗口位置
-        gui_module.add_function(ModuleFunction::new(
-            "设置位置",
-            "qi_gui_set_position",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
-            "void",
-        ));
-
-        // 获取窗口宽度
-        gui_module.add_function(ModuleFunction::new(
-            "获取宽度",
-            "qi_gui_get_width",
-            vec!["整数".to_string()],
-            "整数",
-        ));
-
-        // 获取窗口高度
-        gui_module.add_function(ModuleFunction::new(
-            "获取高度",
-            "qi_gui_get_height",
-            vec!["整数".to_string()],
-            "整数",
-        ));
-
-        // 设置窗口大小
-        gui_module.add_function(ModuleFunction::new(
-            "设置大小",
-            "qi_gui_set_size",
-            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
-            "void",
-        ));
-
-        // 设置事件处理器：handler 为 Qi 函数 函数(窗口,事件类型,参数1,参数2)
-        //   事件类型 0=关闭 1=尺寸(w,h) 2=按键(键码,修饰) 3=鼠标键(键,按下1/抬起0)
-        //            4=光标移动(x,y) 5=滚轮(dx,dy)
-        gui_module.add_function(ModuleFunction::new(
-            "设置事件处理",
-            "qi_gui_on_event",
-            vec!["整数".to_string(), "指针".to_string()],
-            "void",
-        ));
-
-        // 设置自动刷新定时器（毫秒）；0=关闭。需在 运行 前调用。
-        //   开启后事件循环每隔该间隔向事件回调投递 事件类型=6 的定时器事件。
-        gui_module.add_function(ModuleFunction::new(
-            "设置定时器",
-            "qi_gui_set_timer",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 设置渲染帧率（FPS，如 60/120）；0=关闭。需在 运行 前调用。
-        //   开启后事件循环按该帧率向事件回调投递 事件类型=7 的渲染帧事件
-        //   （参数1=自启动毫秒，参数2=帧间隔毫秒），用于逐帧动画。
-        gui_module.add_function(ModuleFunction::new(
-            "设置帧率",
-            "qi_gui_set_fps",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 运行事件循环
-        gui_module.add_function(ModuleFunction::new("运行", "qi_gui_run", vec![], "void"));
+        // 注：老 tao 自绘轨（创建窗口/窗口控制/事件回调/定时器/帧率/运行 事件循环）
+        // 已随 tao 依赖一并移除。GUI 现为单轨 egui：用 应用创建 + 帧开始/帧结束 主循环，
+        // 逐帧驱动控件与画布（见下方 egui 控件层与画布层）。
 
         // 获取版本
         gui_module.add_function(ModuleFunction::new(
@@ -2431,165 +2291,7 @@ impl ModuleRegistry {
             "void",
         ));
 
-        // 渲染功能
-        // 创建渲染器
-        gui_module.add_function(ModuleFunction::new(
-            "创建渲染器",
-            "qi_gui_renderer_create",
-            vec!["整数".to_string()],
-            "整数", // 返回渲染器ID
-        ));
-
-        // 开始绘制：进入双缓冲批处理，后续绘制只写离屏缓冲，不立即上屏
-        gui_module.add_function(ModuleFunction::new(
-            "开始绘制",
-            "qi_gui_renderer_begin_frame",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 结束绘制：把整帧一次性上屏并退出批处理（双缓冲消闪）
-        gui_module.add_function(ModuleFunction::new(
-            "结束绘制",
-            "qi_gui_renderer_end_frame",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // 清除画面 (RGB)
-        gui_module.add_function(ModuleFunction::new(
-            "清除画面",
-            "qi_gui_renderer_clear",
-            vec![
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制像素
-        gui_module.add_function(ModuleFunction::new(
-            "绘制像素",
-            "qi_gui_renderer_draw_pixel",
-            vec![
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制矩形
-        gui_module.add_function(ModuleFunction::new(
-            "绘制矩形",
-            "qi_gui_renderer_draw_rect",
-            vec![
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制直线
-        gui_module.add_function(ModuleFunction::new(
-            "绘制直线",
-            "qi_gui_renderer_draw_line",
-            vec![
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制圆形
-        gui_module.add_function(ModuleFunction::new(
-            "绘制圆形",
-            "qi_gui_renderer_draw_circle",
-            vec![
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制图像
-        gui_module.add_function(ModuleFunction::new(
-            "绘制图像",
-            "qi_gui_renderer_draw_image",
-            vec![
-                "整数".to_string(),
-                "字符串".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "整数", // 返回状态
-        ));
-
-        // 绘制文本
-        gui_module.add_function(ModuleFunction::new(
-            "绘制文本",
-            "qi_gui_renderer_draw_text",
-            vec![
-                "整数".to_string(),
-                "字符串".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 绘制缩放文本
-        gui_module.add_function(ModuleFunction::new(
-            "绘制缩放文本",
-            "qi_gui_renderer_draw_text_scaled",
-            vec![
-                "整数".to_string(),
-                "字符串".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-                "整数".to_string(),
-            ],
-            "void",
-        ));
-
-        // 释放渲染器
-        gui_module.add_function(ModuleFunction::new(
-            "释放渲染器",
-            "qi_gui_renderer_free",
-            vec!["整数".to_string()],
-            "void",
-        ));
-
-        // ===== egui 控件层（immediate mode GUI）=====
-        // 新 API 家族，与上面老 40 个渲染 FFI 并存。
+        // ===== egui 控件层（immediate mode GUI · 单轨架构）=====
         let s = || "字符串".to_string();
         let i = || "整数".to_string();
 
@@ -2746,6 +2448,183 @@ impl ModuleRegistry {
             "qi_gui_egui_message",
             vec![s()],
             "void",
+        ));
+
+        // ── egui 第二批：容器 / 数据展示 / 外观（2026-07-17）──
+        let f = || "浮点数".to_string();
+        // 滚动开始(id, 高度pt) / 滚动结束()：固定高度垂直滚动视口
+        gui_module.add_function(ModuleFunction::new(
+            "滚动开始",
+            "qi_gui_egui_scroll_begin",
+            vec![s(), i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "滚动结束",
+            "qi_gui_egui_scroll_end",
+            vec![],
+            "void",
+        ));
+        // 折叠开始(标题) → 1 展开 / 0 收起；与 折叠结束() 配对
+        gui_module.add_function(ModuleFunction::new(
+            "折叠开始",
+            "qi_gui_egui_collapse_begin",
+            vec![s()],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "折叠结束",
+            "qi_gui_egui_collapse_end",
+            vec![],
+            "void",
+        ));
+        // 单选(文本, 是否选中) → 1 被点击
+        gui_module.add_function(ModuleFunction::new(
+            "单选",
+            "qi_gui_egui_radio",
+            vec![s(), i()],
+            "整数",
+        ));
+        // 选择项(文本, 是否选中) → 1 被点击（整行高亮的列表项）
+        gui_module.add_function(ModuleFunction::new(
+            "选择项",
+            "qi_gui_egui_selectable",
+            vec![s(), i()],
+            "整数",
+        ));
+        // 数字输入(id, 当前值) → 新值（可拖拽/双击编辑）
+        gui_module.add_function(ModuleFunction::new(
+            "数字输入",
+            "qi_gui_egui_drag_value",
+            vec![s(), i()],
+            "整数",
+        ));
+        // 浮点滑条(id, 当前, 最小, 最大) → 新值
+        gui_module.add_function(ModuleFunction::new(
+            "浮点滑条",
+            "qi_gui_egui_slider_f64",
+            vec![s(), f(), f(), f()],
+            "浮点数",
+        ));
+        // 超链接(文本, 网址)：点击用系统浏览器打开
+        gui_module.add_function(ModuleFunction::new(
+            "超链接",
+            "qi_gui_egui_hyperlink",
+            vec![s(), s()],
+            "void",
+        ));
+        // 悬浮标签(文本, 提示)：悬停出气泡
+        gui_module.add_function(ModuleFunction::new(
+            "悬浮标签",
+            "qi_gui_egui_label_tip",
+            vec![s(), s()],
+            "void",
+        ));
+        // 表格(id, 表头CSV, 行数据)：行以换行分隔、列以逗号分隔，斑马纹
+        gui_module.add_function(ModuleFunction::new(
+            "表格",
+            "qi_gui_egui_table",
+            vec![s(), s(), s()],
+            "void",
+        ));
+        // 柱状图(id, 值CSV, 宽, 高)
+        gui_module.add_function(ModuleFunction::new(
+            "柱状图",
+            "qi_gui_egui_bar_chart",
+            vec![s(), s(), i(), i()],
+            "void",
+        ));
+        // 图片显示(路径, 宽, 高)：0=原尺寸/按比例；png/jpg，首载缓存
+        gui_module.add_function(ModuleFunction::new(
+            "图片显示",
+            "qi_gui_egui_image",
+            vec![s(), i(), i()],
+            "void",
+        ));
+        // 设置主题(深色)：1 深 / 0 浅
+        gui_module.add_function(ModuleFunction::new(
+            "设置主题",
+            "qi_gui_egui_set_theme",
+            vec![i()],
+            "void",
+        ));
+        // 界面缩放(百分比)：50..300
+        gui_module.add_function(ModuleFunction::new(
+            "界面缩放",
+            "qi_gui_egui_set_zoom",
+            vec![i()],
+            "void",
+        ));
+        // 设置窗口标题(应用, 标题)
+        gui_module.add_function(ModuleFunction::new(
+            "设置窗口标题",
+            "qi_gui_egui_set_window_title",
+            vec![i(), s()],
+            "void",
+        ));
+
+        // ── egui 画布层（承接老 tao 图元能力，帧循环内自绘）（2026-07-18）──
+        // 画布开始(id, 宽, 高) / 画布结束()：在当前 Ui 占一块定尺寸自绘区
+        gui_module.add_function(ModuleFunction::new(
+            "画布开始",
+            "qi_gui_egui_canvas_begin",
+            vec![s(), i(), i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "画布结束",
+            "qi_gui_egui_canvas_end",
+            vec![],
+            "void",
+        ));
+        // 画布矩形(x, y, 宽, 高, r, g, b)：局部坐标填充矩形
+        gui_module.add_function(ModuleFunction::new(
+            "画布矩形",
+            "qi_gui_egui_canvas_rect",
+            vec![i(), i(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布圆(x, y, 半径, r, g, b)：(x,y) 为圆心局部坐标
+        gui_module.add_function(ModuleFunction::new(
+            "画布圆",
+            "qi_gui_egui_canvas_circle",
+            vec![i(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布线(x1, y1, x2, y2, 粗, r, g, b)
+        gui_module.add_function(ModuleFunction::new(
+            "画布线",
+            "qi_gui_egui_canvas_line",
+            vec![i(), i(), i(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布文本(x, y, 文本, 字号, r, g, b)：左上对齐
+        gui_module.add_function(ModuleFunction::new(
+            "画布文本",
+            "qi_gui_egui_canvas_text",
+            vec![i(), i(), s(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布点击() → 整数（本帧画布被点击 1/0）
+        gui_module.add_function(ModuleFunction::new(
+            "画布点击",
+            "qi_gui_egui_canvas_clicked",
+            vec![],
+            "整数",
+        ));
+        // 画布鼠标X() → 整数（局部 X，无悬停 -1）
+        gui_module.add_function(ModuleFunction::new(
+            "画布鼠标X",
+            "qi_gui_egui_canvas_mouse_x",
+            vec![],
+            "整数",
+        ));
+        // 画布鼠标Y() → 整数（局部 Y，无悬停 -1）
+        gui_module.add_function(ModuleFunction::new(
+            "画布鼠标Y",
+            "qi_gui_egui_canvas_mouse_y",
+            vec![],
+            "整数",
         ));
 
         // Register module with various names
@@ -3505,6 +3384,18 @@ impl ModuleRegistry {
             "设置工具回调指针",
             "qi_mcp_set_tool_callback_ptr",
             vec!["整数".to_string(), "字符串".to_string(), "指针".to_string()], // 服务器ID, 工具名, Qi闭包对象指针
+            "i32", // 返回状态 (FFI返回i32)
+        ));
+
+        // 设置工具原始 inputSchema (完整 JSON Schema 字符串)
+        mcp_module.add_function(ModuleFunction::new(
+            "设置工具schema",
+            "qi_mcp_set_tool_schema",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ], // 服务器ID, 工具名, inputSchema JSON
             "i32", // 返回状态 (FFI返回i32)
         ));
 
