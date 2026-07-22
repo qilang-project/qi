@@ -285,6 +285,27 @@ impl<'ctx> 后端<'ctx> {
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
         let 返回 = 注册表类型转qi(&mf.return_type);
 
+        // 雷 B：实参个数必须与注册签名严格相等。少传 → 被调原生 FFI 读到未初始化
+        // 寄存器（常是野指针）→ `CStr::from_ptr(garbage)` → **内容相关的偶发段错误**
+        // （崩不崩取决于那个寄存器上次的残留值，极难定位）。多传 → 多余实参虽被忽略，
+        // 但基本是调用点写错了，一并拦下。
+        // 注册表里所有条目都是**定长签名**（ModuleFunction.param_types 是固定 Vec，
+        // 无变参/可选参标记 —— 已核对全表 590 条，无同 runtime_name 多 arity 项），
+        // 故此处要求 arguments.len() == param_types.len()。
+        // 早于 LLVM 原型构建拦截：给出带函数名的清晰中文错误，而不是让 LLVM 校验器
+        // 吐一句无源码定位的英文「Incorrect number of arguments」，也堵死「原型被
+        // 别处以更低 arity 预声明 → 校验器放行 → 运行时踩野指针」的静默漏洞。
+        if arguments.len() != mf.param_types.len() {
+            return Err(format!(
+                "标准库函数「{}」需要 {} 个实参，实际传了 {} 个。\n\
+                 实参个数不符 —— 少传会让原生函数读到未初始化寄存器（野指针），\n\
+                 引发内容相关的偶发段错误；请核对调用点的参数个数。",
+                mf.name,
+                mf.param_types.len(),
+                arguments.len()
+            ));
+        }
+
         // 声明原型（幂等：已存在则复用）
         let func = match self.module.get_function(&mf.runtime_name) {
             Some(f) => f,

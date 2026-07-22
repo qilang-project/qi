@@ -853,6 +853,45 @@ fn router() -> &'static std::sync::RwLock<RouteNode> {
     ROUTER.get_or_init(|| std::sync::RwLock::new(RouteNode::new()))
 }
 
+/// 单个十六进制字符 → 数值（0..15），非法字符返回 None。
+#[inline]
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// 百分号解码**单个路径段**：把 `%XX`（两位十六进制）还原成原字节，其余字节原样保留。
+///
+/// - 浏览器 / curl 对非 ASCII 路径一律百分号编码：`/登出` 实际发的是
+///   `/%E7%99%BB%E5%87%BA`。中文路由注册时是原样 UTF-8 字节，故匹配前必须先解码，
+///   否则中文路由永远 404。
+/// - 路径里的 `+` 是**字面加号**（只有查询串里 `+` 才代表空格），因此这里不动 `+`。
+/// - 非法 `%XX`（后面不足两位或不是十六进制）把 `%` 原样保留，绝不 panic。
+/// - 无 `%` 时走快路径，行为与旧版逐字节匹配完全一致 → ASCII 路由零回归。
+fn percent_decode_segment(seg: &[u8]) -> Vec<u8> {
+    if !seg.contains(&b'%') {
+        return seg.to_vec();
+    }
+    let mut out = Vec::with_capacity(seg.len());
+    let mut i = 0usize;
+    while i < seg.len() {
+        if seg[i] == b'%' && i + 2 < seg.len() {
+            if let (Some(h), Some(l)) = (hex_val(seg[i + 1]), hex_val(seg[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(seg[i]);
+        i += 1;
+    }
+    out
+}
+
 #[inline]
 fn method_idx(method: &[u8]) -> i32 {
     match method {
@@ -888,7 +927,10 @@ pub extern "C" fn qi_web_router_register(
     }
     let mut router = router().write().unwrap();
     let mut cur: &mut RouteNode = &mut *router;
-    for seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {
+    for raw_seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {
+        // 注册端也解码：与匹配端保持同一「已解码」规范空间（中文路由本就无 % → 恒等）。
+        let seg_decoded = percent_decode_segment(raw_seg);
+        let seg = seg_decoded.as_slice();
         if seg.len() >= 2 && seg.first() == Some(&b'{') && seg.last() == Some(&b'}') {
             let name = &seg[1..seg.len() - 1];
             if cur.param_child.is_none() {
@@ -937,7 +979,11 @@ pub extern "C" fn qi_web_router_match(
     let router = router().read().unwrap();
     let mut cur: &RouteNode = &*router;
     let mut params: Vec<u8> = Vec::new();
-    for seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {
+    for raw_seg in path.split(|&b| b == b'/').filter(|s| !s.is_empty()) {
+        // 请求路径段先百分号解码，再和注册的原样 UTF-8 段字节比较；
+        // 参数值也存解码后的字节，路径参数() 直接拿到真实中文。
+        let seg_decoded = percent_decode_segment(raw_seg);
+        let seg = seg_decoded.as_slice();
         if let Some(child) = cur.static_children.get(seg) {
             cur = child;
         } else if let Some((name, pchild)) = cur.param_child.as_ref() {
@@ -965,10 +1011,16 @@ pub extern "C" fn qi_web_router_match(
             method_mask |= 1u8 << i;
         }
     }
+    // 解码后的参数字节通常是合法 UTF-8。半截 / 非法 UTF-8 走 lossy 替换成 U+FFFD，
+    // 保证交给 Qi 侧的 字符串 满足 UTF-8 公约，绝不 panic。
+    let params_str: String = match std::str::from_utf8(&params) {
+        Ok(s) => s.to_string(),
+        Err(_) => String::from_utf8_lossy(&params).into_owned(),
+    };
     Box::into_raw(Box::new(MatchResult {
         handler_index,
         path_hit: 1,
-        params: CString::new(params).unwrap_or_else(|_| CString::new("").unwrap()),
+        params: CString::new(params_str).unwrap_or_else(|_| CString::new("").unwrap()),
         method_mask,
     }))
 }

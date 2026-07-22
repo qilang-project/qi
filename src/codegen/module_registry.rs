@@ -4111,6 +4111,38 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 按字符（Unicode 标量）提取子串 (起字符, 字符数)，越界钳制
+        string_module.add_function(ModuleFunction::new(
+            "字符子串",
+            "qi_string_char_substring",
+            vec!["字符串".to_string(), "整数".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+
+        // 按字符查找子串，返回字符索引，未找到返回 -1
+        string_module.add_function(ModuleFunction::new(
+            "字符查找",
+            "qi_string_char_find",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
+        // 按字符索引取单个字符（返回单字符串），越界返回空串
+        string_module.add_function(ModuleFunction::new(
+            "字符取",
+            "qi_string_char_at",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+
+        // 按字符从指定位置取到末尾
+        string_module.add_function(ModuleFunction::new(
+            "字符从位置",
+            "qi_string_char_from",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "字符串",
+        ));
+
         // 字符串分割
         string_module.add_function(ModuleFunction::new(
             "分割",

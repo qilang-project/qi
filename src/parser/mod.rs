@@ -617,6 +617,240 @@ impl Parser {
         }
         let cleaned = normalize_else_if(&cleaned);
 
+        // 把单个双引号串的内容（不含两端引号、转义仍是原始形态）改写成 f-string 体。
+        // 返回 Ok(Some(体)) 表示含插值、已改写；Ok(None) 表示无插值、保持原样；
+        // Err(消息) 表示空洞/未闭合/嵌套等错误。line 仅用于错误消息定位。
+        fn 改写插值体(content: &[char], line: usize) -> Result<Option<String>, String> {
+            let n = content.len();
+            let mut out = String::with_capacity(n + 8);
+            let mut found = false;
+            let mut i = 0;
+            while i < n {
+                let c = content[i];
+                if c == '\\' {
+                    // 转义序列。`\$` → 字面 `$`（其后的 `{` 走下方字面括号分支变 `\{`，
+                    // 合起来 `\${` → `$\{` → 解析回字面 `${`）；其余 `\x` 原样保留交给
+                    // f-string 词法/parse_format_string（`\n`/`\t`/`\"`/`\\`/`\{`…）。
+                    if i + 1 < n {
+                        let nx = content[i + 1];
+                        if nx == '$' {
+                            out.push('$');
+                        } else {
+                            out.push('\\');
+                            out.push(nx);
+                        }
+                        i += 2;
+                        continue;
+                    }
+                    out.push('\\');
+                    i += 1;
+                    continue;
+                }
+                if c == '$' && i + 1 < n && content[i + 1] == '{' {
+                    found = true;
+                    // 扫描配对花括号，定位洞尾。洞内字符串字面量整段跳过（其中的
+                    // {}/引号不参与平衡）；洞内再出现 `${` → 嵌套，v1 明确报错。
+                    let hole_start = i + 2;
+                    let mut j = hole_start;
+                    let mut depth = 1i32;
+                    while j < n {
+                        let hc = content[j];
+                        if hc == '\\' {
+                            j += 2;
+                            continue;
+                        }
+                        if hc == '"' {
+                            j += 1;
+                            while j < n && content[j] != '"' {
+                                if content[j] == '\\' {
+                                    j += 1;
+                                }
+                                j += 1;
+                            }
+                            if j < n {
+                                j += 1; // 跳过内层闭引号
+                            }
+                            continue;
+                        }
+                        if hc == '$' && j + 1 < n && content[j + 1] == '{' {
+                            return Err(format!(
+                                "字符串插值暂不支持嵌套：第 {line} 行的 ${{…}} 里又出现了 ${{…}}，请把内层表达式先存到变量再插值"
+                            ));
+                        }
+                        if hc == '{' {
+                            depth += 1;
+                        } else if hc == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        j += 1;
+                    }
+                    if depth != 0 {
+                        return Err(format!(
+                            "字符串插值未闭合：第 {line} 行的 ${{ 缺少配对的 }}"
+                        ));
+                    }
+                    let hole: String = content[hole_start..j].iter().collect();
+                    if hole.trim().is_empty() {
+                        return Err(format!(
+                            "字符串插值不能为空：第 {line} 行的 ${{}} 里必须写一个表达式"
+                        ));
+                    }
+                    // 输出成 f-string 的洞：{原文}（洞原文原样交给 parse_format_string，
+                    // 它对非平凡洞会用 ExprParser 真解析）。
+                    out.push('{');
+                    out.push_str(&hole);
+                    out.push('}');
+                    i = j + 1;
+                    continue;
+                }
+                // 串里的字面花括号（如内嵌 JSON）：补反斜杠让 f-string 当字面文本，
+                // 不被误判成洞。全/半角一并处理。
+                match c {
+                    '{' => out.push_str("\\{"),
+                    '}' => out.push_str("\\}"),
+                    '｛' => out.push_str("\\｛"),
+                    '｝' => out.push_str("\\｝"),
+                    _ => out.push(c),
+                }
+                i += 1;
+            }
+            if found {
+                Ok(Some(out))
+            } else {
+                Ok(None)
+            }
+        }
+
+        // 归一化字符串插值：扫描源码，普通双引号串含 `${` 时改写成 `f"..."`。
+        // 带字符串/字符/反引号状态机，绝不动原始串与字符字面量内部。
+        fn normalize_string_interpolation(s: &str) -> Result<String, String> {
+            let chars: Vec<char> = s.chars().collect();
+            let n = chars.len();
+            let mut out = String::with_capacity(s.len() + 16);
+            let mut i = 0;
+            let mut line = 1usize;
+            while i < n {
+                let c = chars[i];
+                match c {
+                    '\n' => {
+                        line += 1;
+                        out.push(c);
+                        i += 1;
+                    }
+                    '`' => {
+                        // 原始字符串：整段原样复制，绝不插值
+                        out.push(c);
+                        i += 1;
+                        while i < n && chars[i] != '`' {
+                            if chars[i] == '\n' {
+                                line += 1;
+                            }
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                        if i < n {
+                            out.push(chars[i]); // 闭合反引号
+                            i += 1;
+                        }
+                    }
+                    '\'' => {
+                        // 字符字面量：'x' / '\n' / '"'。内部含 `"` 不能误当字符串开始。
+                        out.push(c);
+                        i += 1;
+                        if i < n && chars[i] == '\\' {
+                            out.push(chars[i]);
+                            i += 1;
+                            if i < n {
+                                out.push(chars[i]);
+                                i += 1;
+                            }
+                        } else if i < n {
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                        if i < n && chars[i] == '\'' {
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                    }
+                    '"' => {
+                        // 已带 f 前缀（含 模板→f 归一化后的）= 格式串，跳过插值改写，
+                        // 整串原样复制交给已有 f-string 机制。
+                        let 是格式串 = out.chars().last() == Some('f');
+                        i += 1; // 跳过开引号
+                        let content_start = i;
+                        while i < n && chars[i] != '"' {
+                            if chars[i] == '\\' && i + 1 < n {
+                                i += 2;
+                            } else {
+                                if chars[i] == '\n' {
+                                    line += 1;
+                                }
+                                i += 1;
+                            }
+                        }
+                        let content = &chars[content_start..i.min(n)];
+                        let 有闭引号 = i < n;
+                        if 有闭引号 {
+                            i += 1; // 跳过闭引号
+                        }
+                        if 是格式串 {
+                            out.push('"');
+                            out.extend(content.iter());
+                            if 有闭引号 {
+                                out.push('"');
+                            }
+                            continue;
+                        }
+                        match 改写插值体(content, line)? {
+                            Some(体) => {
+                                out.push('f');
+                                out.push('"');
+                                out.push_str(&体);
+                                if 有闭引号 {
+                                    out.push('"');
+                                }
+                            }
+                            None => {
+                                out.push('"');
+                                out.extend(content.iter());
+                                if 有闭引号 {
+                                    out.push('"');
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        out.push(c);
+                        i += 1;
+                    }
+                }
+            }
+            Ok(out)
+        }
+
+        // 普通双引号字符串插值：`"你好 ${名}，n+1=${n + 1}"` → 归一化为已有的
+        // 格式串形态 `f"你好 {名}，n+1={n + 1}"`，完全复用 f"..." 的脱糖链
+        // （parse_format_string 造洞 + codegen 生成格式字符串 拿 ExprParser 真解析洞
+        // + 类型检查/所有权/ARC 全部按 格式字符串表达式 走）——最终脱糖成字符串拼接。
+        //
+        // 设计要点：
+        // - 仅**普通双引号**串参与；反引号原始串（内嵌 JS/qiMarkdown 的 `${}` 是 JS 语义）
+        //   与字符字面量整段原样复制，绝不插值。
+        // - 已带 `f`/`模板` 前缀的格式串（前缀归一化后都是 `f"`）跳过，避免二次改写。
+        // - 只有真正含未转义 `${` 的串才改写；不含的原样字节复制 —— 存量零改动。
+        // - `\${` 输出字面 `${`（escape）；串里其它字面 `{}`（如 JSON）在改写时补 `\{`
+        //   `\}` 交给 f-string 当字面文本，语义不变。
+        // - 空洞 `${}`、未闭合 `${`、嵌套 `${…${…}…}` → 清晰中文编译错误。
+        // 放在归一化链末尾：前面的冒号/模板/else-if 各 pass 都按原始 `"..."` 串工作
+        // （它们久经测试），改写成 `f"..."` 后只剩 LALRPOP 接手（其洞内含引号由
+        // f-string 词法 `\{[^}]*\}` 一段吞掉，安全）。
+        let cleaned = normalize_string_interpolation(&cleaned)
+            .map_err(ParseError::General)?;
+
         // Use LALRPOP-generated parser with cleaned string input
         use crate::parser::__parse__Program::ProgramParser;
         ProgramParser::new()

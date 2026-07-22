@@ -2086,6 +2086,10 @@ ClosureExpression: AstNode = {
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> // ── 带捕获列表的形式（[弱 x, ...]）──
+    // 任务 B（函数字面量 函数(...){...} 作 闭包 同义词）已尝试但放弃：
+    // 在语句位 `函数` 既可开始函数/方法声明（需先把空 Visibility 归约），又会开始
+    // 闭包表达式（直接移进 `函数`），构成 LR(1) 无法消解的 shift/reduce 冲突
+    // （lalrpop 报 “reduce to a `Visibility` but we can also shift”）。故只交付任务 A。
     "闭包" <caps:CaptureList> "(" <params:ParameterList> ")" ":" <return_type:Type> <body:Block> <sp_r:@R> => AstNode::闭包表达式(ClosureExpression {
         parameters: params,
         return_type: Some(return_type),
@@ -2531,6 +2535,16 @@ TypeKeyworded: TypeNode = {
     "函数" "(" <params:FunctionTypeParameterList> ")" "：" <return_type:Type> => TypeNode::函数类型(FunctionType {
         parameters: params,
         return_type: Box::new(return_type),
+    }),
+    // 任务 A：函数类型返回类型可省略，缺省为 空。函数(字符串) ≡ 函数(字符串): 空。
+    // 与上面带 `:`/`：` 的规则靠一格前瞻区分（下一 token 是 `:`/`：` 走带返回类型，否则走此缺省）。
+    "函数" "(" ")" => TypeNode::函数类型(FunctionType {
+        parameters: vec![],
+        return_type: Box::new(TypeNode::基础类型(BasicType::空)),
+    }),
+    "函数" "(" <params:FunctionTypeParameterList> ")" => TypeNode::函数类型(FunctionType {
+        parameters: params,
+        return_type: Box::new(TypeNode::基础类型(BasicType::空)),
     }),
     // 容器类型 - 使用特殊语法避免冲突
     "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
