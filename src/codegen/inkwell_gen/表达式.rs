@@ -1346,6 +1346,7 @@ impl<'ctx> 后端<'ctx> {
             struct_name: 信息.名字.clone(),
             type_arguments: vec![],
             fields: 字段值,
+            spread_base: None,
             span: Default::default(),
         })
     }

@@ -466,13 +466,29 @@ pub struct StructDeclaration {
 }
 
 /// Struct field definition
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
     pub type_annotation: TypeNode,
     pub is_embedded: bool, // 支持嵌入字段（类似Go的匿名字段）
     pub visibility: Visibility,
+    /// 字段默认值（`图宽: 整数 = 1200`）—— v1 仅限常量字面量（登记结构体时校验）；
+    /// 无默认为 None。字面量字面量不参与相等比较（见下方手写 PartialEq）。
+    pub default: Option<Box<AstNode>>,
     pub span: Span,
+}
+
+// 手写 PartialEq：沿用原派生语义（名字/类型/嵌入/可见性/span 全等），唯独略过
+// default —— 默认值是常量字面量，不构成类型身份的一部分，且 AstNode 未实现 PartialEq
+// （StructType/TypeNode 依赖 StructField: PartialEq，故不能直接丢掉该实现）。
+impl PartialEq for StructField {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.type_annotation == other.type_annotation
+            && self.is_embedded == other.is_embedded
+            && self.visibility == other.visibility
+            && self.span == other.span
+    }
 }
 
 /// Method declaration (associated with a struct)
@@ -562,6 +578,10 @@ pub struct StructLiteralExpression {
     /// 泛型类型实参（如 `对<整数> { … }` → [整数]；普通字面量为空）。
     pub type_arguments: Vec<TypeNode>,
     pub fields: Vec<StructFieldValue>,
+    /// spread 更新基值（`新建 元信息 { ..旧值, 标题: "改" }`）—— None 表示无 spread。
+    /// 基值须与本结构体同类型；未被 fields 显式覆盖的字段从基值逐字段拷贝
+    /// （RC 字段拷贝时 retain，见 生成结构体字面量）。
+    pub spread_base: Option<Box<AstNode>>,
     pub span: Span,
 }
 

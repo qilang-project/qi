@@ -665,6 +665,10 @@ impl 单元检查器 {
     }
 
     pub(super) fn 检查结构体字面量(&mut self, sl: &StructLiteralExpression) -> 推断 {
+        // spread 基值先推断一遍（捕获未定义变量等；类型是否一致交由 codegen 报错）。
+        if let Some(base) = &sl.spread_base {
+            let _ = self.推断表达式(base);
+        }
         // 字段值先各自推断
         let 值型: Vec<推断> = sl
             .fields

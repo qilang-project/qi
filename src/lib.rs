@@ -869,6 +869,31 @@ impl QiCompiler {
                 compiled_modules,
                 visited,
             )?;
+
+            // 包子模块导入（`导入 Web.元信息::{...}`，module_path.len() >= 2 且首段是包名）：
+            // 额外加载该包的入口模块（Web.qi），让它的 `公开 导入` 把整个包的模块拉齐。
+            // 否则只有 discover_and_parse_same_package_files_fixed 能带出同包文件，而它只
+            // 收「无 import」的零散文件 —— 引用了其它模块结构体的文件（如 配置.qi 用 应用）
+            // 会被带进来、但定义 应用 的 请求.qi（有 import）不会，导致 应用 未注册、
+            // codegen 报「不是结构体」。包按整体编译单元加载才一致（与 `导入 Web::{...}` 同）。
+            let first = import_stmt.module_path.first().map(|s| s.as_str());
+            let is_relative = matches!(first, Some(".") | Some(".."));
+            if !is_relative && import_stmt.module_path.len() >= 2 {
+                if let Some(pkg) = first {
+                    if let Ok(pkg_entry) =
+                        self.resolve_import_path(file_path, &[pkg.to_string()])
+                    {
+                        if pkg_entry != import_path {
+                            self.parse_and_collect_modules_internal(
+                                &pkg_entry,
+                                module_registry,
+                                compiled_modules,
+                                visited,
+                            )?;
+                        }
+                    }
+                }
+            }
         }
 
         // Store the compiled AST

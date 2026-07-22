@@ -1246,14 +1246,17 @@ StructFieldList: Vec<StructField> = {
     <fields:Comma<StructField>> => fields,
 };
 
+// 传统 C 风格字段声明（`整数 计数;`）不支持默认值 —— 默认值一律 None。
 LegacyStructField: StructField = {
-    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> ";" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
-    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> "；" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> ";" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, default: None, span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <type_annotation:Type> <name:FieldIdentifier> "；" <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, default: None, span: Span::new(sp_l, sp_r) },
 };
 
+// 字段声明可选带默认值：`图宽: 整数 = 1200`。默认值语法上收全表达式，
+// 语义上仅允许常量字面量（整数/浮点/字符串/布尔），非字面量在 登记结构体名字 报错。
 StructField: StructField = {
-    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> ":" <type_annotation:Type> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
-    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> "：" <type_annotation:Type> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> ":" <type_annotation:Type> <default:("=" <Expr>)?> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, default: default.map(Box::new), span: Span::new(sp_l, sp_r) },
+    <sp_l:@L> <vis:Visibility> <name:FieldIdentifier> "：" <type_annotation:Type> <default:("=" <Expr>)?> <sp_r:@R> => StructField { name, type_annotation, is_embedded: false, visibility: vis, default: default.map(Box::new), span: Span::new(sp_l, sp_r) },
 };
 
 
@@ -2009,6 +2012,16 @@ Atom: AstNode = {
         struct_name: name,
         type_arguments: vec![],
         fields,
+        spread_base: None,
+        span: Span::new(sp_l, sp_r),
+    }),
+    <sp_l:@L> // spread 更新：新建 名 { ..基, 字段: 值, … } —— 基后可选跟若干覆写字段。
+    // `..` 仅在 ForTarget 位构成区间，普通 Expr 不含 `..`，故此处 `{ ..` 无 LR 冲突。
+    "新建" <name:Identifier> "{" ".." <base:Expr> <fields:("," <StructFieldValue>)*> "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
+        struct_name: name,
+        type_arguments: vec![],
+        fields,
+        spread_base: Some(Box::new(base)),
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> // 泛型结构体字面量（新建 形态）：新建 对<整数> { 左: 1, 右: 2 }
@@ -2016,18 +2029,21 @@ Atom: AstNode = {
         struct_name: name,
         type_arguments: targs,
         fields,
+        spread_base: None,
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> "新建" <name:Identifier> "<" <targs:Comma<Type>> ">" "{" "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: targs,
         fields: vec![],
+        spread_base: None,
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> "新建" <name:Identifier> "{" "}" <sp_r:@R> => AstNode::结构体实例化表达式(StructLiteralExpression {
         struct_name: name,
         type_arguments: vec![],
         fields: vec![],
+        spread_base: None,
         span: Span::new(sp_l, sp_r),
     }),
     // 括号结构体字面量 (名 { ... }) 已删除 —— 统一用 新建 名 { ... }。
@@ -2622,7 +2638,7 @@ Identifier: String = {
            id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
-           id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "并行" || id == "并发" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
@@ -2654,7 +2670,7 @@ ReceiverIdentifier: String = {
            id == "等待" || id == "循环" || id == "中断" || id == "继续" || id == "匹配" || id == "跳转" ||
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "拥有" || id == "借用" || id == "移动" || id == "克隆" || id == "释放" || id == "新建" ||
-           id == "并行" || id == "并发" || id == "任务" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
+           id == "并行" || id == "并发" || id == "启动" || id == "线程" || id == "锁" || id == "原子" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
@@ -2692,6 +2708,12 @@ FieldIdentifier: String = {
     "选项" => "选项".to_string(),
     "继续" => "继续".to_string(),
     "匹配" => "匹配".to_string(),
+    // 常用名词类保留字松绑：在字段名 / 形参名等安全位置放行为普通名字，
+    // 关键字在类型 / 语句位置的本职用法不受影响（列表<T>、数组<T>、默认分支、最终块）。
+    "列表" => "列表".to_string(),
+    "数组" => "数组".to_string(),
+    "默认" => "默认".to_string(),
+    "最终" => "最终".to_string(),
 };
 
 // MethodIdentifier allows keyword tokens to be used as method names after ::

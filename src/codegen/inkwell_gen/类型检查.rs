@@ -29,6 +29,9 @@ pub struct 结构体信息 {
     pub 包: Option<String>,
     pub 字段名: Vec<String>,
     pub 字段类型: Vec<Qi类型>,
+    /// 字段默认值（与 字段名/字段类型 逐位对齐）：常量字面量 AstNode，无默认为 None。
+    /// 生成结构体字面量 时用于填充「未显式提供且无 spread 覆盖」的字段。
+    pub 字段默认: Vec<Option<crate::parser::ast::AstNode>>,
 }
 
 impl 结构体信息 {
@@ -757,11 +760,14 @@ impl 符号表 {
         // 先占位登记（自引用可解析），再绑定解析字段类型回填
         let 字段名: Vec<String> = t.字段.iter().map(|(n, _)| n.clone()).collect();
         let 占位: Vec<Qi类型> = t.字段.iter().map(|_| Qi类型::整数).collect();
+        // 泛型结构体模板不支持默认值（登记时已拒绝），实例字段默认一律 None。
+        let 默认占位: Vec<Option<crate::parser::ast::AstNode>> = t.字段.iter().map(|_| None).collect();
         let idx = self.登记结构体(结构体信息 {
             名字: 实例名,
             包: None,
             字段名,
             字段类型: 占位,
+            字段默认: 默认占位,
         });
         let 绑定: HashMap<String, Qi类型> = t
             .类型参数

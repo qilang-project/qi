@@ -31,6 +31,14 @@ impl<'ctx> 后端<'ctx> {
                             sd.type_params.len()
                         ));
                     }
+                    // 泛型结构体模板 v1 不支持字段默认值（单态实例化时无固定字面量语义）——
+                    // 带默认值明确报错，绝不 panic。
+                    if let Some(f) = sd.fields.iter().find(|f| f.default.is_some()) {
+                        return Err(format!(
+                            "泛型结构体 {} 的字段 {} 带默认值 —— 泛型结构体暂不支持字段默认值",
+                            sd.name, f.name
+                        ));
+                    }
                     // 特性约束（`<T: 特性>`）v1 只支持泛型函数，结构体模板明确报错
                     if let Some(tp) = sd.type_params.iter().find(|t| t.contains(':')) {
                         return Err(format!(
@@ -55,12 +63,29 @@ impl<'ctx> 后端<'ctx> {
                 let 字段名: Vec<String> = sd.fields.iter().map(|f| f.name.clone()).collect();
                 // 字段类型先占位（整数），第二趟再解析
                 let 占位: Vec<Qi类型> = sd.fields.iter().map(|_| Qi类型::整数).collect();
+                // 字段默认值：v1 只允许常量字面量（整数/浮点/字符串/布尔），其余表达式明确报错。
+                let mut 字段默认: Vec<Option<AstNode>> = Vec::with_capacity(sd.fields.len());
+                for f in &sd.fields {
+                    match &f.default {
+                        None => 字段默认.push(None),
+                        Some(表达式) if 是常量字面量默认(表达式) => {
+                            字段默认.push(Some((**表达式).clone()))
+                        }
+                        Some(_) => {
+                            return Err(format!(
+                                "结构体 {} 的字段 {} 默认值必须是常量字面量（整数/浮点/字符串/布尔），暂不支持复杂表达式",
+                                sd.name, f.name
+                            ));
+                        }
+                    }
+                }
                 // 登记结构体 按 (包, 名字) 幂等
                 self.符号.登记结构体(结构体信息 {
                     名字: sd.name.clone(),
                     包: self.当前包.clone(),
                     字段名,
                     字段类型: 占位,
+                    字段默认,
                 });
             }
         }
@@ -251,6 +276,92 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
         }
 
+        // ── spread 更新 / 字段默认值：填充「未被显式提供」的字段 ──
+        // 显式字段优先：拷贝/默认都跳过已提供字段（两个集合天然不相交，顺序无关）。
+        let 已提供: std::collections::HashSet<String> =
+            lit.fields.iter().map(|f| f.name.clone()).collect();
+
+        if let Some(base_node) = &lit.spread_base {
+            // 基值求值 + 类型校验：..基 必须与本结构体同类型。
+            let (base_val, base_type) = self
+                .生成表达式(base_node)?
+                .ok_or_else(|| "展开语法 .. 的基值无值".to_string())?;
+            if base_type != Qi类型::结构体(idx) {
+                return Err(format!(
+                    "展开语法 ..基 的类型必须与 {} 一致，实际是 {}",
+                    lit.struct_name,
+                    self.符号.类型名(base_type)
+                ));
+            }
+            let base_ptr = base_val.into_pointer_value();
+            let (字段名, 字段类型) = self
+                .符号
+                .结构体信息(idx)
+                .map(|s| (s.字段名.clone(), s.字段类型.clone()))
+                .ok_or_else(|| format!("结构体 {} 信息缺失", lit.struct_name))?;
+            for (fi, (名, ft)) in 字段名.iter().zip(字段类型.iter()).enumerate() {
+                if 已提供.contains(名) {
+                    continue;
+                }
+                // load base.名 → （RC 则 retain）→ store 到新对象同名槽
+                let src = self.字段指针(base_ptr, st, fi as u32, 名)?;
+                let llvmt = self
+                    .llvm基础类型(*ft)
+                    .ok_or_else(|| format!("字段 {} 类型无效", 名))?;
+                let v = self
+                    .builder
+                    .build_load(llvmt, src, 名)
+                    .map_err(|e| e.to_string())?;
+                // ARC 关键：从基值 load 出的 RC 字段是 BORROWED，新对象多持一份引用
+                // → 必须 retain，否则基值与新对象任一释放会提前 free、另一方读悬垂指针。
+                if self.弧开() {
+                    self.弧retain任意(v, *ft);
+                }
+                let dst = self.字段指针(base, st, fi as u32, 名)?;
+                self.builder
+                    .build_store(dst, v)
+                    .map_err(|e| e.to_string())?;
+            }
+            // 基值若 OWNED（如内联 新建）拷完即释放：已 retain 的拷贝字段净额 +1 存活，
+            // 被覆写/未拷贝字段随基值释放回收，收支平衡。BORROWED（变量）则 no-op。
+            if self.弧开() {
+                self.弧消费后释放2(base_val, base_type, base_node);
+            }
+        } else {
+            // 无 spread：用字段默认值填「未显式提供且声明了默认值」的字段；
+            // 未提供且无默认 → 保持零/空初值（沿用既有语义，不报错）。
+            let (字段名, 字段类型, 字段默认) = self
+                .符号
+                .结构体信息(idx)
+                .map(|s| (s.字段名.clone(), s.字段类型.clone(), s.字段默认.clone()))
+                .ok_or_else(|| format!("结构体 {} 信息缺失", lit.struct_name))?;
+            for (fi, 名) in 字段名.iter().enumerate() {
+                if 已提供.contains(名) {
+                    continue;
+                }
+                let def_node = match 字段默认.get(fi).and_then(|d| d.as_ref()) {
+                    Some(n) => n.clone(),
+                    None => continue,
+                };
+                let ft = 字段类型[fi];
+                let (mut v, vt) = self
+                    .生成表达式(&def_node)?
+                    .ok_or_else(|| format!("字段 {} 默认值无值", 名))?;
+                if ft.是浮点() && !vt.是浮点() {
+                    v = self.整数转浮点值(v)?;
+                }
+                // 默认值是常量字面量：字符串字面量 immortal，retain/release no-op，
+                // 与显式字符串字面量字段走同一 弧存入槽2 判定，语义一致。
+                if self.弧开() && v.is_pointer_value() {
+                    self.弧存入槽2(v, &def_node, ft);
+                }
+                let dst = self.字段指针(base, st, fi as u32, 名)?;
+                self.builder
+                    .build_store(dst, v)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
         Ok((base.into(), Qi类型::结构体(idx)))
     }
 
@@ -352,4 +463,23 @@ impl<'ctx> 后端<'ctx> {
     fn ptr类型(&self) -> inkwell::types::PointerType<'ctx> {
         self.ctx.ptr_type(AddressSpace::default())
     }
+}
+
+/// 字段默认值是否为受支持的常量字面量（整数/浮点/字符串/布尔/字符）。
+/// v1 只放行字面量节点；`-5`（一元表达式）、函数调用、标识符等一律不算 —— 交由
+/// 登记结构体名字 报清晰编译错误。
+fn 是常量字面量默认(node: &AstNode) -> bool {
+    use crate::parser::ast::LiteralValue;
+    matches!(
+        node,
+        AstNode::字面量表达式(lit)
+            if matches!(
+                lit.value,
+                LiteralValue::整数(_)
+                    | LiteralValue::浮点数(_)
+                    | LiteralValue::字符串(_)
+                    | LiteralValue::布尔(_)
+                    | LiteralValue::字符(_)
+            )
+    )
 }
