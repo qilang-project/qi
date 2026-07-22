@@ -204,11 +204,14 @@ fn cached_body_fast_path(headers: &[u8], keep_alive: bool) -> i64 {
     }
 }
 
-/// 从 headers 里剥掉 X-Qi-Sendfile 行，返回 (剥掉标记后的 headers, 文件路径)。
-fn strip_sendfile_header(headers: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+/// 从 headers 里剥掉 X-Qi-Sendfile / X-Qi-Range 两个内部标记行，
+/// 返回 (剥掉标记后的 headers, 文件路径, Range 规格如 "bytes=0-1023")。
+fn strip_sendfile_header(headers: &[u8]) -> (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) {
     const KEY: &[u8] = b"x-qi-sendfile:";
+    const RKEY: &[u8] = b"x-qi-range:";
     let mut kept: Vec<u8> = Vec::with_capacity(headers.len());
     let mut path: Option<Vec<u8>> = None;
+    let mut range: Option<Vec<u8>> = None;
     let mut first = true;
     for raw in headers.split(|&b| b == b'\n') {
         let line = if raw.last() == Some(&b'\r') {
@@ -216,15 +219,19 @@ fn strip_sendfile_header(headers: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
         } else {
             raw
         };
-        if line.len() >= KEY.len() && line[..KEY.len()].eq_ignore_ascii_case(KEY) {
-            let mut v = &line[KEY.len()..];
+        let trim = |mut v: &[u8]| -> Vec<u8> {
             while matches!(v.first(), Some(b' ') | Some(b'\t')) {
                 v = &v[1..];
             }
             while matches!(v.last(), Some(b' ') | Some(b'\t')) {
                 v = &v[..v.len() - 1];
             }
-            path = Some(v.to_vec());
+            v.to_vec()
+        };
+        if line.len() >= KEY.len() && line[..KEY.len()].eq_ignore_ascii_case(KEY) {
+            path = Some(trim(&line[KEY.len()..]));
+        } else if line.len() >= RKEY.len() && line[..RKEY.len()].eq_ignore_ascii_case(RKEY) {
+            range = Some(trim(&line[RKEY.len()..]));
         } else if !line.is_empty() {
             if !first {
                 kept.extend_from_slice(b"\r\n");
@@ -233,7 +240,63 @@ fn strip_sendfile_header(headers: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
             first = false;
         }
     }
-    (kept, path)
+    (kept, path, range)
+}
+
+/// 往 headers 尾追加一行（内部已用 \r\n 连接，故先补分隔）。
+#[inline]
+fn append_header_line(hdrs: &mut Vec<u8>, line: &[u8]) {
+    if !hdrs.is_empty() {
+        hdrs.extend_from_slice(b"\r\n");
+    }
+    hdrs.extend_from_slice(line);
+}
+
+/// 解析单段 byte range：`bytes=START-END` / `bytes=START-` / `bytes=-SUFFIX`。
+fn parse_byte_range(spec: &[u8], total: u64) -> Option<(u64, u64)> {
+    if total == 0 {
+        return None;
+    }
+    let s = std::str::from_utf8(spec).ok()?.trim();
+    let rest = s.strip_prefix("bytes=")?;
+    if rest.contains(',') {
+        return None;
+    }
+    let dash = rest.find('-')?;
+    let a = rest[..dash].trim();
+    let b = rest[dash + 1..].trim();
+    if a.is_empty() {
+        let n: u64 = b.parse().ok()?;
+        if n == 0 {
+            return None;
+        }
+        let n = n.min(total);
+        return Some((total - n, total - 1));
+    }
+    let start: u64 = a.parse().ok()?;
+    if start >= total {
+        return None;
+    }
+    let end: u64 = if b.is_empty() {
+        total - 1
+    } else {
+        let e: u64 = b.parse().ok()?;
+        e.min(total - 1)
+    };
+    if end < start {
+        return None;
+    }
+    Some((start, end))
+}
+
+/// 二进制安全地读文件的 [start, start+len) 字节。
+fn read_file_range(path: &str, start: u64, len: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    f.seek(SeekFrom::Start(start))?;
+    let mut buf = vec![0u8; len as usize];
+    f.read_exact(&mut buf)?;
+    Ok(buf)
 }
 
 /// sendfile 路径安全：必须绝对路径（Unix `/…` 或 Windows `X:\` / `X:/`）且不含 `..`。
@@ -289,7 +352,7 @@ fn serialize_sendfile_response(
     headers: &[u8],
     conn_header: Option<&[u8]>,
 ) -> Vec<u8> {
-    let (clean_headers, path) = strip_sendfile_header(headers);
+    let (clean_headers, path, range) = strip_sendfile_header(headers);
     let path = match path {
         Some(p) => p,
         None => {
@@ -308,14 +371,69 @@ fn serialize_sendfile_response(
             return build_http_response(500, b"Internal Server Error", CT_TEXT, conn_header, msg);
         }
     };
+
+    // sendfile 响应总是宣告支持字节范围（浏览器 / Safari 据此发 Range 请求）。
+    let mut hdrs = clean_headers;
+    append_header_line(&mut hdrs, b"Accept-Ranges: bytes");
+
+    // 带 Range → 206 部分响应（二进制安全的 seek + 部分读）。
+    if let Some(spec) = range.as_deref() {
+        match std::fs::metadata(path_str) {
+            Ok(meta) => {
+                let total = meta.len();
+                match parse_byte_range(spec, total) {
+                    Some((start, end)) => match read_file_range(path_str, start, end - start + 1) {
+                        Ok(bytes) => {
+                            append_header_line(
+                                &mut hdrs,
+                                format!("Content-Range: bytes {}-{}/{}", start, end, total)
+                                    .as_bytes(),
+                            );
+                            return build_http_response(
+                                206,
+                                b"Partial Content",
+                                &hdrs,
+                                conn_header,
+                                &bytes,
+                            );
+                        }
+                        Err(_) => {
+                            let body = format!("404 Not Found: {}", path_str);
+                            return build_http_response(
+                                404,
+                                b"Not Found",
+                                CT_TEXT,
+                                conn_header,
+                                body.as_bytes(),
+                            );
+                        }
+                    },
+                    None => {
+                        append_header_line(
+                            &mut hdrs,
+                            format!("Content-Range: bytes */{}", total).as_bytes(),
+                        );
+                        let msg = b"416 Range Not Satisfiable";
+                        return build_http_response(
+                            416,
+                            b"Range Not Satisfiable",
+                            &hdrs,
+                            conn_header,
+                            msg,
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                let body = format!("404 Not Found: {}", path_str);
+                return build_http_response(404, b"Not Found", CT_TEXT, conn_header, body.as_bytes());
+            }
+        }
+    }
+
+    // 无 Range → 全量 200。
     match std::fs::read(path_str) {
-        Ok(bytes) => build_http_response(
-            status_code,
-            status_text,
-            &clean_headers,
-            conn_header,
-            &bytes,
-        ),
+        Ok(bytes) => build_http_response(status_code, status_text, &hdrs, conn_header, &bytes),
         Err(_) => {
             let body = format!("404 Not Found: {}", path_str);
             build_http_response(404, b"Not Found", CT_TEXT, conn_header, body.as_bytes())
