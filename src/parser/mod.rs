@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod error;
+mod html;
 #[path = "位置.rs"]
 pub mod 位置;
 
@@ -318,6 +319,9 @@ impl Parser {
 
     /// Parse source code directly into an AST
     pub fn parse_source(&self, source: &str) -> Result<Program, ParseError> {
+        let (source, has_html) =
+            html::rewrite_html_templates(source).map_err(ParseError::General)?;
+        let source = source.as_str();
         // Preprocess: strip BOM and comments to support fixtures that include them.
         //
         // 【保字节偏移】所有预处理都按「等字节数替换」实现：注释内容/BOM 用等量
@@ -848,14 +852,31 @@ impl Parser {
         // 放在归一化链末尾：前面的冒号/模板/else-if 各 pass 都按原始 `"..."` 串工作
         // （它们久经测试），改写成 `f"..."` 后只剩 LALRPOP 接手（其洞内含引号由
         // f-string 词法 `\{[^}]*\}` 一段吞掉，安全）。
-        let cleaned = normalize_string_interpolation(&cleaned)
-            .map_err(ParseError::General)?;
+        let cleaned = normalize_string_interpolation(&cleaned).map_err(ParseError::General)?;
 
         // Use LALRPOP-generated parser with cleaned string input
         use crate::parser::__parse__Program::ProgramParser;
-        ProgramParser::new()
+        let mut program = ProgramParser::new()
             .parse(&cleaned)
-            .map_err(|e| ParseError::General(format_lalrpop_error(&cleaned, &e)))
+            .map_err(|e| ParseError::General(format_lalrpop_error(&cleaned, &e)))?;
+        if has_html {
+            program.imports.push(ImportStatement {
+                module_path: vec!["Web".to_string(), "HTML块".to_string()],
+                items: Some(vec![
+                    "HTML块".to_string(),
+                    "__qi_html模板".to_string(),
+                    "__qi_html循环块".to_string(),
+                    "__qi_html渲染块组".to_string(),
+                    "创建片段".to_string(),
+                    "块加子块".to_string(),
+                    "渲染块".to_string(),
+                ]),
+                alias: None,
+                is_public: false,
+                span: Default::default(),
+            });
+        }
+        Ok(program)
     }
 
     /// Parse tokens into an AST (legacy method - tokenizes first)

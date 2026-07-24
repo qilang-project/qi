@@ -454,6 +454,13 @@ impl<'ctx> 后端<'ctx> {
         if callee == "工具模式" {
             return true;
         }
+        // HTML 模板值包装器会拼出带内部类型标签的新字符串，返回 +1 OWNED。
+        if matches!(
+            callee,
+            "__qi_html正文值" | "__qi_html属性值" | "__qi_html条件值" | "__qi_html键值"
+        ) {
+            return true;
+        }
         // 2.5) 泛型函数模板：实例是普通用户函数，遵守返回约定 +1（插桩点先验
         //      实际类型是 字符串 才动作，非字符串实例不受影响）
         if self.符号.泛型函数模板.contains_key(callee) {

@@ -1,6 +1,6 @@
 [package]
 name = "qi-compiler"
-version = "2026.7.22-1"
+version = "2026.7.24-1"
 edition = "2021"
 authors = ["Qi Language Team <team@qi-lang.org>"]
 description = "A compiler for the Qi programming language with 100% Chinese keywords"
@@ -134,6 +134,7 @@ cc = "1.1"
 [features]
 # inkwell 是唯一后端（强制依赖），无需 feature 开关。llvm 保留为空 alias 兼容旧命令行。
 default = []
+runtime-rc-string = []
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
 llvm = []

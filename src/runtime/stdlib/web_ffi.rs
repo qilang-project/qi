@@ -426,7 +426,13 @@ fn serialize_sendfile_response(
             }
             Err(_) => {
                 let body = format!("404 Not Found: {}", path_str);
-                return build_http_response(404, b"Not Found", CT_TEXT, conn_header, body.as_bytes());
+                return build_http_response(
+                    404,
+                    b"Not Found",
+                    CT_TEXT,
+                    conn_header,
+                    body.as_bytes(),
+                );
             }
         }
     }

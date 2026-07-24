@@ -880,9 +880,7 @@ impl QiCompiler {
             let is_relative = matches!(first, Some(".") | Some(".."));
             if !is_relative && import_stmt.module_path.len() >= 2 {
                 if let Some(pkg) = first {
-                    if let Ok(pkg_entry) =
-                        self.resolve_import_path(file_path, &[pkg.to_string()])
-                    {
+                    if let Ok(pkg_entry) = self.resolve_import_path(file_path, &[pkg.to_string()]) {
                         if pkg_entry != import_path {
                             self.parse_and_collect_modules_internal(
                                 &pkg_entry,

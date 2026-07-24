@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use super::stdlib_abi::{TOOL_CONTROL_ABI, WEB_RUNTIME_ABI};
+
 /// Represents a single function in a module
 #[derive(Debug, Clone)]
 pub struct ModuleFunction {
@@ -147,6 +149,25 @@ impl ModuleRegistry {
         self.register_sync_module();
         self.register_reflect_module();
         self.register_plugin_module();
+        self.register_tool_control_module();
+    }
+
+    fn register_tool_control_module(&mut self) {
+        let mut module = Module::new("工具控制");
+        for declaration in TOOL_CONTROL_ABI {
+            module.add_function(ModuleFunction::new(
+                declaration.qi_name,
+                declaration.runtime_name,
+                declaration
+                    .param_types
+                    .iter()
+                    .map(|ty| (*ty).to_string())
+                    .collect(),
+                declaration.return_type,
+            ));
+        }
+        self.modules.insert("工具控制".to_string(), module.clone());
+        self.modules.insert("标准库.工具控制".to_string(), module);
     }
 
     /// 运行时反射注册表（反射）：Qi 程序自省当前系统的中文函数 / 结构体 / 枚举。
@@ -435,7 +456,6 @@ impl ModuleRegistry {
         ));
         bytes_module.add_function(ModuleFunction::new(
             "转十六进制",
-
             "qi_bytes_to_hex",
             vec!["整数".to_string()],
             "字符串",
@@ -549,6 +569,19 @@ impl ModuleRegistry {
 
     fn register_web_runtime_module(&mut self) {
         let mut web_module = Module::new("Web运行时");
+
+        for declaration in WEB_RUNTIME_ABI {
+            web_module.add_function(ModuleFunction::new(
+                declaration.qi_name,
+                declaration.runtime_name,
+                declaration
+                    .param_types
+                    .iter()
+                    .map(|ty| (*ty).to_string())
+                    .collect(),
+                declaration.return_type,
+            ));
+        }
 
         // 调用一个 ptr→ptr 的 handler 时用 catch_unwind 包裹；panic 时返回 0/null
         web_module.add_function(ModuleFunction::new(
@@ -1635,6 +1668,68 @@ impl ModuleRegistry {
             "qi_llm_stream_chat",
             vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 提示
             "整数",                                         // 返回流句柄
+        ));
+
+        // v2 可靠流：事件协议、显式取消/提交，以及基于历史版本的 CAS。
+        llm_module.add_function(ModuleFunction::new(
+            "打开流V2",
+            "qi_llm_stream_v2_open",
+            vec!["整数".to_string(), "字符串".to_string()], // 会话句柄, 请求 JSON
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "读取流事件V2",
+            "qi_llm_stream_v2_next_event",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "限时读取流事件V2",
+            "qi_llm_stream_v2_next_event_timeout",
+            vec!["整数".to_string(), "整数".to_string()], // 流句柄, 最长等待毫秒
+            "字符串",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "取消流V2",
+            "qi_llm_stream_v2_cancel",
+            vec!["整数".to_string(), "字符串".to_string()], // 流句柄, 原因
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "流快照V2",
+            "qi_llm_stream_v2_snapshot",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "提交流V2",
+            "qi_llm_stream_v2_commit",
+            vec!["整数".to_string(), "整数".to_string()], // 流句柄, 预期历史版本
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "放弃流V2",
+            "qi_llm_stream_v2_abort",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "关闭流V2",
+            "qi_llm_stream_v2_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "历史版本",
+            "qi_llm_history_revision",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "能力版本",
+            "qi_llm_runtime_capability",
+            vec!["字符串".to_string()],
+            "整数",
         ));
 
         // 读取流片段
@@ -4749,6 +4844,28 @@ impl ModuleRegistry {
         ));
 
         db_module.add_function(ModuleFunction::new(
+            "执行参数",
+            "qi_db_execute_params",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "查询参数",
+            "qi_db_query_params",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
             "关闭",
             "qi_db_close",
             vec!["整数".to_string()],
@@ -4772,6 +4889,49 @@ impl ModuleRegistry {
         db_module.add_function(ModuleFunction::new(
             "回滚",
             "qi_db_rollback",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "开启事务",
+            "qi_db_transaction_open",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "事务执行参数",
+            "qi_db_transaction_execute_params",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "事务查询参数",
+            "qi_db_transaction_query_params",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "提交事务",
+            "qi_db_transaction_commit",
+            vec!["整数".to_string()],
+            "i32",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "回滚事务",
+            "qi_db_transaction_rollback",
             vec!["整数".to_string()],
             "i32",
         ));

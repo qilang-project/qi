@@ -5,6 +5,7 @@
 /// inkwell 后端（类型化 IR）—— 唯一后端。
 pub mod inkwell_gen;
 pub mod module_registry;
+pub mod stdlib_abi;
 
 use crate::config::CompilationTarget;
 

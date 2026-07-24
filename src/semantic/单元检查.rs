@@ -133,6 +133,9 @@ fn 内置函数(name: &str) -> Option<推断> {
         "浮点数转整数" | "float_to_int" => {
             Some(Some(TypeNode::基础类型(BasicType::整数)))
         }
+        "__qi_html正文值" | "__qi_html属性值" | "__qi_html条件值" | "__qi_html键值" => {
+            Some(Some(TypeNode::基础类型(BasicType::字符串)))
+        }
         // 内建 长度(x)：数组读头/串字节长（注册表里也有多个同名——统一按整数）
         "长度" => Some(Some(TypeNode::基础类型(BasicType::整数))),
         // 同步/定时器原语（inkwell_gen/并发.rs 生成同步内建）——句柄语义，返回未知

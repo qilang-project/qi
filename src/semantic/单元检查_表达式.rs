@@ -169,6 +169,8 @@ impl 单元检查器 {
                 _ => None,
             },
             AstNode::闭包表达式(c) => {
+                let 旧返回 = self.当前返回.take();
+                self.当前返回 = c.return_type.as_ref().and_then(|t| self.解析类型(t));
                 self.进作用域();
                 for p in &c.parameters {
                     let t = p.type_annotation.as_ref().and_then(|a| self.解析类型(a));
@@ -178,6 +180,7 @@ impl 单元检查器 {
                     self.走语句(st);
                 }
                 self.出作用域();
+                self.当前返回 = 旧返回;
                 None // 闭包值类型（函数值）→ 未知（间接调用一律沉默）
             }
             AstNode::匹配表达式(m) => {

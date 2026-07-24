@@ -2739,6 +2739,15 @@ impl<'ctx> 后端<'ctx> {
             return self.生成填充模板(call).map(Some);
         }
 
+        // HTML 模板洞由前端自动包装。这里按静态类型生成不可伪造的内部标签值，
+        // 运行时只负责据标签选择文本转义、子块组合或布尔属性。
+        if matches!(
+            call.callee.as_str(),
+            "__qi_html正文值" | "__qi_html属性值" | "__qi_html条件值" | "__qi_html键值"
+        ) {
+            return self.生成html模板值(&call.callee, &call.arguments).map(Some);
+        }
+
         // 流在表达式位置：`变量 s = 流式(会话, 提示)` → 流句柄（整数），配合
         // 大模型.读取流/关闭流 手动迭代。`对于 … 在 流式(…)` 的 for-in 快路径在
         // 语句层已拦截（自动关流）；这里覆盖手动模式。脱糖为 大模型.流式对话。
@@ -2955,6 +2964,144 @@ impl<'ctx> 后端<'ctx> {
             }
             None => Ok(None),
         }
+    }
+
+    fn 生成html模板值(
+        &mut self,
+        callee: &str,
+        arguments: &[AstNode],
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        if arguments.len() != 1 {
+            return Err(format!("{} 需要 1 个参数", callee));
+        }
+        let arg = &arguments[0];
+        let t = 推断表达式类型(arg, &self.符号);
+
+        if callee == "__qi_html条件值" && t != Qi类型::布尔 {
+            return Err(format!(
+                "HTML 条件属性 `如果` 只接受 布尔表达式，实际类型为 {}",
+                self.符号.类型显示名(t)
+            ));
+        }
+
+        if callee == "__qi_html键值" {
+            let (value, value_owned) = match t {
+                Qi类型::字符串 => self.生成拼接操作数(arg)?,
+                Qi类型::整数 => {
+                    let converted = AstNode::函数调用表达式(
+                        crate::parser::ast::FunctionCallExpression {
+                            module_qualifier: None,
+                            callee: "整数转字符串".to_string(),
+                            type_arguments: vec![],
+                            arguments: vec![arg.clone()],
+                            span: Default::default(),
+                        },
+                    );
+                    let (value, value_type) = self
+                        .生成表达式(&converted)?
+                        .ok_or_else(|| "HTML 键转换没有返回值".to_string())?;
+                    if value_type != Qi类型::字符串 {
+                        return Err("HTML 键转换结果不是字符串".to_string());
+                    }
+                    (
+                        value.into_pointer_value(),
+                        self.表达式拥有字符串(&converted),
+                    )
+                }
+                _ => return Err("HTML 键只接受 字符串 或 整数".to_string()),
+            };
+            let marker = self.emit_immortal_string("__QI_HTML_S__", "html.key")?;
+            let joined = self.拼接字符串带释放(marker, false, value, value_owned)?;
+            return Ok((joined, Qi类型::字符串));
+        }
+
+        if matches!(callee, "__qi_html属性值" | "__qi_html条件值") && t == Qi类型::布尔 {
+            let (v, _) = self
+                .生成表达式(arg)?
+                .ok_or_else(|| "HTML 布尔属性无值".to_string())?;
+            let 真 = self.emit_immortal_string("__QI_HTML_B1__", "html.bool.true")?;
+            let 假 = self.emit_immortal_string("__QI_HTML_B0__", "html.bool.false")?;
+            let selected = self
+                .builder
+                .build_select(v.into_int_value(), 真, 假, "html.bool")
+                .map_err(|e| e.to_string())?
+                .into_pointer_value();
+            return Ok((selected.into(), Qi类型::字符串));
+        }
+
+        let (prefix, value, value_owned) = if callee == "__qi_html正文值" {
+            if t == Qi类型::字符串 {
+                let (p, owned) = self.生成拼接操作数(arg)?;
+                ("__QI_HTML_T__", p, owned)
+            } else if let Some(idx) = t.结构体索引() {
+                let is_html = self
+                    .符号
+                    .结构体信息(idx)
+                    .map(|s| s.名字 == "HTML块" && s.包.as_deref() == Some("Web.HTML块"))
+                    .unwrap_or(false);
+                if !is_html {
+                    return Err("HTML 正文洞只接受 字符串 或 HTML块".to_string());
+                }
+                let render =
+                    AstNode::函数调用表达式(crate::parser::ast::FunctionCallExpression {
+                        module_qualifier: None,
+                        callee: "渲染块".to_string(),
+                        type_arguments: vec![],
+                        arguments: vec![arg.clone()],
+                        span: Default::default(),
+                    });
+                let (v, vt) = self
+                    .生成表达式(&render)?
+                    .ok_or_else(|| "渲染 HTML块 未返回值".to_string())?;
+                if vt != Qi类型::字符串 {
+                    return Err("渲染块 返回类型不是字符串".to_string());
+                }
+                (
+                    "__QI_HTML_H__",
+                    v.into_pointer_value(),
+                    self.表达式拥有字符串(&render),
+                )
+            } else if let Qi类型::数组(super::类型::元素类型::结构体(idx)) = t {
+                let is_html = self
+                    .符号
+                    .结构体信息(idx)
+                    .map(|s| s.名字 == "HTML块" && s.包.as_deref() == Some("Web.HTML块"))
+                    .unwrap_or(false);
+                if !is_html {
+                    return Err("HTML 正文洞只接受 字符串、HTML块 或 数组<HTML块>".to_string());
+                }
+                let render =
+                    AstNode::函数调用表达式(crate::parser::ast::FunctionCallExpression {
+                        module_qualifier: None,
+                        callee: "__qi_html渲染块组".to_string(),
+                        type_arguments: vec![],
+                        arguments: vec![arg.clone()],
+                        span: Default::default(),
+                    });
+                let (v, vt) = self
+                    .生成表达式(&render)?
+                    .ok_or_else(|| "渲染 HTML块数组未返回值".to_string())?;
+                if vt != Qi类型::字符串 {
+                    return Err("HTML块数组渲染结果不是字符串".to_string());
+                }
+                (
+                    "__QI_HTML_H__",
+                    v.into_pointer_value(),
+                    self.表达式拥有字符串(&render),
+                )
+            } else {
+                return Err("HTML 正文洞只接受 字符串、HTML块 或 数组<HTML块>".to_string());
+            }
+        } else if t == Qi类型::字符串 {
+            let (p, owned) = self.生成拼接操作数(arg)?;
+            ("__QI_HTML_S__", p, owned)
+        } else {
+            return Err("HTML 动态属性只接受 字符串 或 布尔".to_string());
+        };
+
+        let marker = self.emit_immortal_string(prefix, "html.kind")?;
+        let joined = self.拼接字符串带释放(marker, false, value, value_owned)?;
+        Ok((joined, Qi类型::字符串))
     }
 
     /// `x 作为 T` 显式类型转换。语法上目标只允许基础类型关键字（见 grammar 的

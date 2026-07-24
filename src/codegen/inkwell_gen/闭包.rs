@@ -884,6 +884,12 @@ impl<'ctx> 后端<'ctx> {
                     self.收集自由标识符(s, 参数, 本地, out, 已见);
                 }
             }
+            AstNode::对于语句(f) => {
+                self.收集自由标识符(&f.range, 参数, 本地, out, 已见);
+                for s in &f.body {
+                    self.收集自由标识符(s, 参数, 本地, out, 已见);
+                }
+            }
             AstNode::块语句(b) => {
                 for s in &b.statements {
                     self.收集自由标识符(s, 参数, 本地, out, 已见);

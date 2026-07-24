@@ -90,9 +90,9 @@ jobs:
         run: |
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
-          git clone --depth 1 https://github.com/qilang-project/qi-gui.git qi-gui
-          git clone --depth 1 https://github.com/qilang-project/qi-runtime.git qi-runtime
-          cd qi-runtime && cargo build --release
+          git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
+          git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          cargo build --release --manifest-path ../qi-runtime/Cargo.toml
 
       # 布局 bin/ + lib/qi/ —— 与 installer 安装布局同构,解压即用
       # (find_host_runtime_library 按 <prefix>/lib/qi/<归档> 查找)
@@ -101,7 +101,7 @@ jobs:
         run: |
           mkdir -p pkg/bin pkg/lib/qi
           cp target/${{ matrix.target }}/release/${{ matrix.artifact }} pkg/bin/qi
-          cp qi-runtime/target/release/libqi_runtime.a pkg/lib/qi/
+          cp ../qi-runtime/target/release/libqi_runtime.a pkg/lib/qi/
           if [ "$RUNNER_OS" = "macOS" ]; then
             # 捆绑 homebrew 动态库(z3/zstd 等 LLVM 连带依赖)+ rpath 化,
             # 无 homebrew 的 mac 也能跑(与 qi-installer 同法)
@@ -125,7 +125,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path pkg\bin, pkg\lib\qi | Out-Null
           Copy-Item target\${{ matrix.target }}\release\${{ matrix.artifact }} pkg\bin\qi.exe
-          Copy-Item qi-runtime\target\release\qi_runtime.lib pkg\lib\qi\
+          Copy-Item ..\qi-runtime\target\release\qi_runtime.lib pkg\lib\qi\
           Compress-Archive -Path pkg\bin, pkg\lib -DestinationPath ${{ matrix.archive }}
           Remove-Item -Recurse -Force pkg
 

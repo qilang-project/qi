@@ -431,6 +431,14 @@ impl Lexer {
                     .map(Some)
             }
 
+            // HTML { ... } 是上下文化字面量。词法器只负责整段跨过，真正的 HTML
+            // 结构解析和安全脱糖由 parser::html 完成。
+            'H' if self.is_html_literal_start() => Ok(Some(self.scan_html_literal(
+                start_pos,
+                start_line,
+                start_column,
+            )?)),
+
             // String literals
             '"' => self
                 .scan_string_literal(start_pos, start_line, start_column)
@@ -900,6 +908,95 @@ impl Lexer {
             line: start_line,
             column: start_column,
         }
+    }
+
+    fn is_html_literal_start(&self) -> bool {
+        if !self.source[self.position..].starts_with("HTML") {
+            return false;
+        }
+        let mut p = self.position + 4;
+        if p < self.source.len() {
+            if let Some(ch) = self.source[p..].chars().next() {
+                if ch.is_alphanumeric() || ch == '_' {
+                    return false;
+                }
+            }
+        }
+        while p < self.source.len() {
+            let ch = self.source[p..].chars().next().unwrap();
+            if !ch.is_whitespace() {
+                break;
+            }
+            p += ch.len_utf8();
+        }
+        self.source.as_bytes().get(p) == Some(&b'{')
+    }
+
+    fn scan_html_literal(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> Result<Token, LexicalError> {
+        // HTML
+        self.advance();
+        self.advance();
+        self.advance();
+        self.advance();
+        while !self.is_at_end() && self.current_char().is_some_and(|c| c.is_whitespace()) {
+            self.advance();
+        }
+        if self.current_char() != Some('{') {
+            return Err(LexicalError::InvalidCharacter(
+                'H',
+                start_line,
+                start_column,
+            ));
+        }
+        self.advance();
+        let mut depth = 1usize;
+        let mut quote: Option<char> = None;
+        let mut escape = false;
+        while !self.is_at_end() && depth > 0 {
+            let ch = self.current_char().unwrap();
+            if let Some(q) = quote {
+                if q != '`' && !escape && ch == '\\' {
+                    escape = true;
+                } else {
+                    if !escape && ch == q {
+                        quote = None;
+                    }
+                    escape = false;
+                }
+                self.advance();
+                continue;
+            }
+            match ch {
+                '"' | '\'' | '`' => {
+                    quote = Some(ch);
+                    self.advance();
+                }
+                '{' => {
+                    depth += 1;
+                    self.advance();
+                }
+                '}' => {
+                    depth -= 1;
+                    self.advance();
+                }
+                _ => self.advance(),
+            }
+        }
+        if depth != 0 {
+            return Err(LexicalError::UnterminatedString(start_line, start_column));
+        }
+        Ok(Token {
+            kind: TokenKind::标识符,
+            text: self.source[start_pos..self.position].to_string(),
+            span: tokens::Span::new(start_pos, self.position),
+            line: start_line,
+            column: start_column,
+        })
     }
 
     /// Scan a Chinese identifier or keyword

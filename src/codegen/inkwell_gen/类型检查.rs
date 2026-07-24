@@ -761,7 +761,8 @@ impl 符号表 {
         let 字段名: Vec<String> = t.字段.iter().map(|(n, _)| n.clone()).collect();
         let 占位: Vec<Qi类型> = t.字段.iter().map(|_| Qi类型::整数).collect();
         // 泛型结构体模板不支持默认值（登记时已拒绝），实例字段默认一律 None。
-        let 默认占位: Vec<Option<crate::parser::ast::AstNode>> = t.字段.iter().map(|_| None).collect();
+        let 默认占位: Vec<Option<crate::parser::ast::AstNode>> =
+            t.字段.iter().map(|_| None).collect();
         let idx = self.登记结构体(结构体信息 {
             名字: 实例名,
             包: None,
@@ -955,6 +956,9 @@ pub fn 内建返回类型(callee: &str) -> Option<Qi类型> {
         "字符串转浮点数" | "string_to_float" => Qi类型::浮点数,
         "整数转浮点数" | "int_to_float" => Qi类型::浮点数,
         "浮点数转整数" | "float_to_int" => Qi类型::整数,
+        "__qi_html正文值" | "__qi_html属性值" | "__qi_html条件值" | "__qi_html键值" => {
+            Qi类型::字符串
+        }
         _ => return None,
     })
 }
