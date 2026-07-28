@@ -20,6 +20,14 @@ impl<'ctx> 后端<'ctx> {
         for imp in &program.imports {
             let is_stdlib = imp.module_path.first().map(|s| s.as_str()) == Some("标准库");
             if !is_stdlib {
+                // 用户包别名：`导入 Web.持久会话 作为 会话存储` → 会话存储 → "Web.持久会话"。
+                // 记下来才能让 `别名.函数()` 按**那个包**解析；否则只能退回裸名查找，
+                // 一旦别名与另一个包的模块同名（如 Harness 也有 会话存储），
+                // 就会解析到错的包或直接歧义失败。
+                if let Some(alias) = &imp.alias {
+                    let 包名 = imp.module_path.join(".");
+                    self.包别名.insert(alias.clone(), 包名);
+                }
                 continue;
             }
             // 末段是中文模块名，如 标准库.输入输出 → 输入输出

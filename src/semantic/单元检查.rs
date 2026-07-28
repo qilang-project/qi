@@ -112,6 +112,40 @@ fn 注册表任意模块(name: &str) -> Option<推断> {
     None
 }
 
+/// 注册表**形参**类型 → 推断（保守）。
+/// 与 注册表返回保守 不同：这里 `整数` 是可信的——句柄本身就是整数，
+/// 传整数进去永远合法；能抓到的是「把 数组/字符串/浮点 传给整数形参」这类。
+/// ptr/数组/未知类型串一律返回 None（不校验），避免误报。
+fn 注册表形参保守(t: &str) -> 推断 {
+    match t {
+        "字符串" => Some(TypeNode::基础类型(BasicType::字符串)),
+        "整数" | "i64" | "i32" => Some(TypeNode::基础类型(BasicType::整数)),
+        "浮点数" | "double" => Some(TypeNode::基础类型(BasicType::浮点数)),
+        "布尔" => Some(TypeNode::基础类型(BasicType::布尔)),
+        _ => None,
+    }
+}
+
+/// 查注册表函数签名：限定模块则只查该模块（含 `标准库.` 前缀形式），
+/// 否则镜像 codegen 在所有模块里按名找第一个。返回 (形参类型串, 返回类型串)。
+pub(super) fn 注册表签名(模块: Option<&str>, 名: &str) -> Option<(Vec<String>, String)> {
+    let reg = 注册表();
+    if let Some(m) = 模块 {
+        let f = reg
+            .get_function(m, 名)
+            .or_else(|| reg.get_function(&format!("标准库.{}", m), 名))?;
+        return Some((f.param_types.clone(), f.return_type.clone()));
+    }
+    for path in reg.module_paths() {
+        if let Some(md) = reg.get_module(path) {
+            if let Some(f) = md.get_function(名) {
+                return Some((f.param_types.clone(), f.return_type.clone()));
+            }
+        }
+    }
+    None
+}
+
 /// 内置函数表（镜像 codegen 特殊分发）。返回 Some(返回类型推断) 表示是内置。
 /// 覆盖：打印族、类型转换、同步/定时器原语、协程原语、AI 语法糖、内建长度。
 fn 内置函数(name: &str) -> Option<推断> {

@@ -332,6 +332,35 @@ impl<'ctx> 后端<'ctx> {
                 //    **不含**「无限定标准库注册表」——否则 JSON.解析 这类
                 //    「限定到错模块」的调用会被剥掉限定名落进按名跨模块查找，
                 //    分发目标随 HashMap 序漂移（bug ②）。
+                // 3.0) 用户包别名限定：`导入 Web.持久会话 作为 别名; 别名.函数()`。
+                //      按**那个包**解析，而不是退回裸名 —— 裸名一旦跨包重名
+                //      （Harness 也有 会话存储.创建持久会话）就会歧义失败。
+                //      重载集 是「当前包优先」的，所以临时把解析包切过去即可。
+                if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                    // 只排除**局部**变量：同名全局往往是另一个包的模块级变量，
+                    // 显式写出来的包别名应当胜过它（结构体方法调用已在分支 1 处理）。
+                    if !self.变量表.contains_key(&id.name) {
+                        if let Some(包) = self.包别名.get(&id.name).cloned() {
+                            let 命中 = self
+                                .符号
+                                .函数按包
+                                .contains_key(&(包.clone(), mc.method_name.clone()));
+                            if 命中 {
+                                let call = crate::parser::ast::FunctionCallExpression {
+                                    module_qualifier: None,
+                                    callee: mc.method_name.clone(),
+                                    type_arguments: vec![],
+                                    arguments: mc.arguments.clone(),
+                                    span: mc.span.clone(),
+                                };
+                                let 旧包 = self.符号.当前包.replace(包);
+                                let r = self.生成函数调用(&call);
+                                self.符号.当前包 = 旧包;
+                                return r;
+                            }
+                        }
+                    }
+                }
                 if let AstNode::标识符表达式(id) = mc.object.as_ref() {
                     if !self.变量表.contains_key(&id.name)
                         && !self.全局变量表.contains_key(&id.name)

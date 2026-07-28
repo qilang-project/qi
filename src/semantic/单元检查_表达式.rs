@@ -315,12 +315,9 @@ impl 单元检查器 {
         // 模块限定调用（语法动作合成，如 数学.最大值）：查注册表，miss 沉默
         if let Some(q) = &call.module_qualifier {
             let 模块 = self.模块别名.get(q).cloned().unwrap_or_else(|| q.clone());
-            let reg = 注册表();
-            if let Some(f) = reg
-                .get_function(&模块, callee)
-                .or_else(|| reg.get_function(&format!("标准库.{}", 模块), callee))
-            {
-                return 注册表返回保守(&f.return_type);
+            if let Some((形参, 返回)) = 注册表签名(Some(&模块), callee) {
+                self.检查注册表实参(callee, &形参, &实参型, &call.arguments, call.span);
+                return 注册表返回保守(&返回);
             }
             return None; // 模块限定：未播种来源，一律沉默
         }
@@ -393,8 +390,9 @@ impl 单元检查器 {
         }
 
         // 6) 无限定标准库回退（镜像 codegen 尝试无限定标准库）
-        if let Some(ret) = 注册表任意模块(callee) {
-            return ret;
+        if let Some((形参, 返回)) = 注册表签名(None, callee) {
+            self.检查注册表实参(callee, &形参, &实参型, &call.arguments, call.span);
+            return 注册表返回保守(&返回);
         }
 
         // 7) 哪个来源都不认识 → 有把握报未定义
@@ -403,6 +401,59 @@ impl 单元检查器 {
             span: call.span,
         });
         None
+    }
+
+    /// 标准库（注册表）调用的实参检查。
+    ///
+    /// 之前这条路只取返回类型、完全不看实参，于是
+    /// `数组长度(某个 数组<字符串>)` 这种把类型化数组喂给 JSON 句柄形参的写法
+    /// 既不报错也不工作，静默返回 0 —— 属于最难查的一类 bug。
+    /// 注册表函数都是定长的，顺带把元数也校上：少传实参在 codegen 那边会拿到
+    /// 垃圾寄存器，运行时随机段错误。
+    pub(super) fn 检查注册表实参(
+        &mut self,
+        名: &str,
+        形参: &[String],
+        实参型: &[推断],
+        实参节点: &[AstNode],
+        span: crate::lexer::Span,
+    ) {
+        if 实参型.len() != 形参.len() {
+            self.报(TypeError::FunctionCallError {
+                message: format!(
+                    "标准库函数 '{}' 参数数量不匹配: 期望 {}, 实际 {}",
+                    名,
+                    形参.len(),
+                    实参型.len()
+                ),
+                span,
+            });
+            return;
+        }
+        // 与用户函数同一把尺子：只对「有把握来源」的实参比对家族，句柄惯用法沉默
+        for (i, at) in 实参型.iter().enumerate() {
+            if !实参节点
+                .get(i)
+                .map(|n| self.是字面量来源(n))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if let (Some(pt), Some(a)) = (注册表形参保守(&形参[i]), at) {
+                if !家族相容(&pt, a) {
+                    self.报(TypeError::TypeMismatch {
+                        expected: format!(
+                            "标准库函数 '{}' 第 {} 个参数期望 {}",
+                            名,
+                            i + 1,
+                            类型显示(&pt)
+                        ),
+                        actual: format!("实参却是 {}", 类型显示(a)),
+                        span,
+                    });
+                }
+            }
+        }
     }
 
     /// 按用户函数重载集检查元数与（有把握的）实参类型，返回推断的返回类型。
@@ -566,7 +617,9 @@ impl 单元检查器 {
             .get_function(&模块, method)
             .or_else(|| reg.get_function(&format!("标准库.{}", 模块), method))
         {
-            return 注册表返回保守(&f.return_type);
+            let (形参, 返回) = (f.param_types.clone(), f.return_type.clone());
+            self.检查注册表实参(method, &形参, 实参型, 实参节点, span);
+            return 注册表返回保守(&返回);
         }
         // 模块在注册表里存在但函数没查到 → 注册表可能不全，沉默
         if reg.has_module(&模块) || reg.has_module(&format!("标准库.{}", 模块)) {

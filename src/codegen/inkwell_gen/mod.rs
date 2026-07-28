@@ -139,6 +139,9 @@ struct 后端<'ctx> {
     注册表: ModuleRegistry,
     /// 导入别名 → 标准库模块名。如 `导入 标准库.输入输出 作为 IO` → IO→输入输出。
     导入别名: HashMap<String, String>,
+    /// 用户包别名 → 包名。如 `导入 Web.持久会话 作为 会话存储` → 会话存储→"Web.持久会话"。
+    /// `别名.函数()` 靠它定位到正确的包，不受同名模块干扰。
+    包别名: HashMap<String, String>,
     /// 模块顶层全局变量 / 常量：名字 → (LLVM global, Qi 类型)。跨文件合并编译，同名幂等。
     全局变量表: HashMap<String, (GlobalValue<'ctx>, Qi类型)>,
     /// 已在 main 序言初始化过的全局名（防重复 store）。
@@ -224,6 +227,7 @@ impl<'ctx> 后端<'ctx> {
             结构体llvm: Vec::new(),
             注册表: ModuleRegistry::new(),
             导入别名: HashMap::new(),
+            包别名: HashMap::new(),
             全局变量表: HashMap::new(),
             已初始化全局: std::collections::HashSet::new(),
             待合成闭包: Vec::new(),
