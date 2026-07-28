@@ -1777,6 +1777,71 @@ impl<'ctx> 后端<'ctx> {
         Ok(改写)
     }
 
+    /// `解码为::<T>(JSON对象句柄)` → T —— 通用的「JSON 对象 → 结构体」。
+    ///
+    /// 复用 询问建结构体：整数/浮点/字符串/布尔/嵌套结构体/枚举/选项<T> 都按字段名
+    /// 递归取。合成 `__解码为$T(句柄: 整数) : T`，调用点改写成普通调用。
+    pub(super) fn 登记解码为(
+        &mut self,
+        call: &crate::parser::ast::FunctionCallExpression,
+    ) -> Result<crate::parser::ast::FunctionCallExpression, String> {
+        use crate::parser::ast::{
+            BasicType, FunctionCallExpression, FunctionDeclaration, Parameter, ReturnStatement,
+            TypeNode, Visibility,
+        };
+        if call.arguments.len() != 1 {
+            return Err("解码为<T>(JSON对象句柄) 需要正好 1 个实参".to_string());
+        }
+        let idx = match self.符号.解析类型(&call.type_arguments[0]) {
+            Qi类型::结构体(i) => i,
+            _ => return Err("解码为<T> 的 T 必须是结构体类型".to_string()),
+        };
+        let t名 = self
+            .符号
+            .结构体
+            .get(idx as usize)
+            .map(|s| s.名字.clone())
+            .ok_or_else(|| "解码为：结构体未登记".to_string())?;
+        let 函数名 = format!("__解码为${}", t名);
+        let 改写 = FunctionCallExpression {
+            module_qualifier: None,
+            callee: 函数名.clone(),
+            type_arguments: vec![],
+            arguments: call.arguments.clone(),
+            span: call.span.clone(),
+        };
+        if self.已合成询问.contains(&函数名) {
+            return Ok(改写);
+        }
+        let body = vec![AstNode::返回语句(ReturnStatement {
+            value: Some(Box::new(AstNode::结构体实例化表达式(
+                self.询问建结构体(idx, 询_id("__j"))?,
+            ))),
+            span: Default::default(),
+        })];
+        let f = FunctionDeclaration {
+            name: 函数名.clone(),
+            type_params: vec![],
+            parameters: vec![Parameter {
+                name: "__j".to_string(),
+                type_annotation: Some(TypeNode::基础类型(BasicType::整数)),
+                default_value: None,
+                is_variadic: false,
+                span: Default::default(),
+            }],
+            return_type: Some(TypeNode::自定义类型(t名)),
+            body,
+            visibility: Visibility::私有,
+            is_inline: false,
+            is_async: false,
+            span: Default::default(),
+        };
+        self.声明函数原型(&f)?;
+        self.待合成询问.push((f, self.当前包.clone()));
+        self.已合成询问.insert(函数名);
+        Ok(改写)
+    }
+
     /// `异步询问::<T>(会话, 提示)` → `未来<T>` —— 语言级并行结构化输出（延迟解码 future）。
     ///
     /// 实现路径（真并行，不是 eager）：调用点内联
@@ -2729,6 +2794,18 @@ impl<'ctx> 后端<'ctx> {
         // JSON schema、发 response_format、把回复反序列化回强类型结构体。
         if call.callee == "询问" && !call.type_arguments.is_empty() {
             let 改写 = self.登记询问(call)?;
+            return self.生成函数调用(&改写);
+        }
+
+        // 类型定向 JSON 反序列化：`解码为::<T>(JSON对象句柄)` —— 把一个 JSON 对象
+        // 句柄按 T 的字段逐个取出来建 T。与 询问::<T> 共用同一套建结构体逻辑，
+        // 只是不经过 LLM。
+        //
+        // 为什么需要它：qilang 没有动态水合（反射只能读结构不能写字段），SQL 查询
+        // 结果只能是 JSON，业务代码里到处是「J.获取整数(行,"id") / J.获取字符串(行,"名")」
+        // 一个字段一个字段抠。有了这个原语，查出来的行可以直接变成结构体。
+        if call.callee == "解码为" && !call.type_arguments.is_empty() {
+            let 改写 = self.登记解码为(call)?;
             return self.生成函数调用(&改写);
         }
 
