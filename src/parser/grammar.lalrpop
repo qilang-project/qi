@@ -2507,6 +2507,12 @@ ExprList: Vec<AstNode> = {
 Type: TypeNode = {
     TypeKeyworded,
     <name:TypeName> => TypeNode::自定义类型(name),
+    // 模块限定类型名：`别名.类型` / `包.类型`。
+    // 函数调用早就支持 `别名.函数()`，类型注解却不认，写 `会话存储.持久会话配置`
+    // 只报「期望：< / { / 【」，完全看不出是限定名不支持。
+    // 限定段只用于书写可读性：类型仍按裸名解析（与显式 `导入 包::{类型}` 等价），
+    // 跨包同名的消歧仍靠 导入来源 / 当前包。
+    <_m:TypeName> "." <name:TypeName> => TypeNode::自定义类型(name),
     GenericUserType,
 };
 
