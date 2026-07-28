@@ -253,6 +253,39 @@ impl 符号表 {
         self.符号导入.get(&key).map(|s| s.as_str())
     }
 
+    /// 这个名字在整个编译单元里是否作为函数/结构体/枚举/枚举变体存在。
+    /// 供导入校验用：宁可放行也不误报，只拦「根本不存在」。
+    pub fn 名字存在于任意包(&self, name: &str) -> bool {
+        if self.函数.contains_key(name) {
+            return true;
+        }
+        if self.函数按包.keys().any(|(_, n)| n == name) {
+            return true;
+        }
+        if self.结构体.iter().any(|s| s.名字 == name) {
+            return true;
+        }
+        if self
+            .枚举
+            .iter()
+            .any(|e| e.名字 == name || e.变体.iter().any(|v| v.名字 == name))
+        {
+            return true;
+        }
+        // 泛型模板另存一张表（`类型 仓储<实体>` / `枚举 盒装<T>` / 泛型函数）
+        if self.泛型结构体模板.contains_key(name)
+            || self.泛型枚举模板.contains_key(name)
+            || self.泛型函数模板.contains_key(name)
+        {
+            return true;
+        }
+        // 特性名也可被导入
+        if self.特性.contains_key(name) {
+            return true;
+        }
+        false
+    }
+
     /// 定义了同名函数的所有包（排序保证确定性；歧义诊断用）。
     pub fn 函数候选包(&self, name: &str) -> Vec<String> {
         let mut v: Vec<String> = self
@@ -277,6 +310,14 @@ impl 符号表 {
         if let Some(src) = self.导入来源(name) {
             if let Some(v) = self.函数按包.get(&(src.to_string(), name.to_string())) {
                 return Some(v);
+            }
+            // 回退到首段：导入写的是 `Web.实时页面` 而该文件声明的是 `包 Web;`
+            if let Some(头) = src.split('.').next() {
+                if 头 != src {
+                    if let Some(v) = self.函数按包.get(&(头.to_string(), name.to_string())) {
+                        return Some(v);
+                    }
+                }
             }
         }
         match self.函数候选包(name).as_slice() {

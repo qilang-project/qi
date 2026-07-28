@@ -62,10 +62,54 @@ impl<'ctx> 后端<'ctx> {
                 Some(v) if !v.is_empty() => v,
                 _ => continue,
             };
+            // 记**全路径**而不是首段：`导入 Web.持久会话::{创建持久会话}` 的函数
+            // 注册在包 "Web.持久会话" 下，只记 "Web" 会查不到，显式导入就白写了
+            // （报错还偏偏建议你去写显式导入）。首段作为回退在解析处再试，
+            // 因为有的文件路径是 Web/实时页面.qi 但声明的是 `包 Web;`。
+            let 来源 = imp.module_path.join(".");
             for item in items {
-                self.符号.登记符号导入(使用方.clone(), item, 首段);
+                self.符号.登记符号导入(使用方.clone(), item, &来源);
             }
         }
+    }
+
+    /// 校验：destructure 导入的名字必须真实存在。
+    ///
+    /// 之前 `导入 Web::{压根没有这个函数}` 编译通过、运行静默不工作 —— 写 AI 笔记
+    /// 时用了 qi-harness 新版才有的 API，而 qi_packages 里是旧副本，编译一路绿灯，
+    /// 跑起来检索永远空，排查了很久才发现函数根本不存在。
+    ///
+    /// 判定刻意保守：只要这个名字在**整个编译单元**里作为函数/结构体/枚举/枚举变体
+    /// 存在，就放行 —— 包再导出（`公开 导入 X;`）会让符号的实际归属包与导入路径
+    /// 不一致，按来源包严格比对必然误报。真正拦的是「整个程序里根本没有这个名字」。
+    pub(super) fn 检查导入存在(&self, program: &Program) -> Result<(), String> {
+        for imp in &program.imports {
+            let 首段 = match imp.module_path.first() {
+                Some(s) => s.as_str(),
+                None => continue,
+            };
+            // 标准库走注册表，相对导入不做包级校验
+            if 首段 == "标准库" || 首段 == "." || 首段 == ".." {
+                continue;
+            }
+            let items = match &imp.items {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+            for item in items {
+                if self.符号.名字存在于任意包(item) {
+                    continue;
+                }
+                return Err(format!(
+                    "导入的符号「{name}」不存在：`导入 {src}::{{{name}}}` 里没有这个名字。\n\
+                     整个编译单元里都找不到叫「{name}」的函数/结构体/枚举/变体。\n\
+                     常见原因：拼错了，或者 qi_packages 里的那份依赖是旧版本、还没有这个 API。",
+                    name = item,
+                    src = imp.module_path.join("."),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// 校验：本模块本地定义的函数名，不得与它 destructure 导入进来的同名**函数**冲突。
