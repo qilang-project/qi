@@ -1236,11 +1236,26 @@ impl ModuleRegistry {
             "整数",                                         // 返回成功/失败
         ));
 
+        // 名字不带单位太容易写错：`设置超时(请求, 180)` 看着像 180 秒，
+        // 实际是 180 毫秒 —— 请求秒挂，报的还是笼统的 "error sending request"，
+        // 完全看不出是超时。所以补一个把单位写进名字的别名，老名字保留兼容。
         http_module.add_function(ModuleFunction::new(
             "设置超时",
             "qi_http_request_set_timeout",
             vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时(毫秒)
             "整数",                                       // 返回成功/失败
+        ));
+        http_module.add_function(ModuleFunction::new(
+            "设置超时毫秒",
+            "qi_http_request_set_timeout",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        http_module.add_function(ModuleFunction::new(
+            "设置超时秒",
+            "qi_http_request_set_timeout_secs",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
         ));
 
         http_module.add_function(ModuleFunction::new(

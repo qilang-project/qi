@@ -450,7 +450,7 @@ impl<'ctx> 后端<'ctx> {
                 continue;
             }
             let 期望 = 注册表参数类型转qi(原始);
-            let cv = self.适配实参(v, vt, 期望)?;
+            let cv = self.适配实参(v, vt, 期望, &mf.name, i)?;
             args.push(cv);
         }
 
@@ -476,6 +476,8 @@ impl<'ctx> 后端<'ctx> {
         v: BasicValueEnum<'ctx>,
         实际: Qi类型,
         期望: Qi类型,
+        函数名: &str,
+        第几个: usize,
     ) -> Result<BasicMetadataValueEnum<'ctx>, String> {
         // 布尔实参进 i64 整数参数：扩展
         if 实际 == Qi类型::布尔 && (期望 == Qi类型::整数 || 期望 == Qi类型::未知)
@@ -501,17 +503,24 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
             return Ok(iv.into());
         }
-        // 期望字符串(ptr) 但实参是整数：int→ptr
+        // 期望字符串(ptr)、实参却是整数 —— **这里以前是静默 int→ptr**。
+        //
+        // 那个转换几乎不可能是对的：形参声明成 字符串，被调的 Rust 侧就会
+        // `CStr::from_ptr(它)`。把一个句柄/长度/下标当指针解引用 = 段错误，
+        // 而且报出来只有一句「退出码 None」，源码里一个线索都没有。
+        // 真正需要「整数当指针传」的形参在注册表里写的是 指针 / ptr / 数组，
+        // 那几种在上面已经单独处理掉了。
+        //
+        // 实际踩到的：HTTP.获取状态码 收的是 URL 字符串，我按「句柄」传了个整数
+        // 进去，编译一声不吭，运行直接崩。
         if 期望 == Qi类型::字符串 && v.is_int_value() {
-            let pv = self
-                .builder
-                .build_int_to_ptr(
-                    v.into_int_value(),
-                    self.ctx.ptr_type(AddressSpace::default()),
-                    "i2p",
-                )
-                .map_err(|e| e.to_string())?;
-            return Ok(pv.into());
+            return Err(format!(
+                "标准库函数「{}」第 {} 个参数要 字符串，实际传的是 整数。\n\
+                 整数当字符串指针传进原生函数会被 CStr::from_ptr 解引用 —— 段错误，\n\
+                 而且没有任何源码线索。请核对参数顺序和类型。",
+                函数名,
+                第几个 + 1
+            ));
         }
         Ok(v.into())
     }
