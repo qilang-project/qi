@@ -4191,6 +4191,24 @@ impl ModuleRegistry {
         ));
 
         // 获取字符串字节长度
+        // 实时页面增量下发用：公共前缀/后缀（字节数，已对齐字符边界）
+        string_module.add_function(ModuleFunction::new(
+            "公共前缀",
+            "qi_string_common_prefix",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        string_module.add_function(ModuleFunction::new(
+            "公共后缀",
+            "qi_string_common_suffix",
+            vec![
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
+            "整数",
+        ));
+
         string_module.add_function(ModuleFunction::new(
             "字节长度",
             "qi_string_byte_length",
