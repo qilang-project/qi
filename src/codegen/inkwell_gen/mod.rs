@@ -689,7 +689,7 @@ pub fn compile_to_object_multi(
 
     // 收集所有模块的导入别名（标准库导入）+ destructure 导入映射（跨包同名结构体消歧）
     for p in programs {
-        后端值.收集导入别名(p);
+        后端值.收集导入别名(p)?;
         后端值.收集符号导入(p);
     }
 

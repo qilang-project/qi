@@ -16,7 +16,14 @@ use inkwell::AddressSpace;
 
 impl<'ctx> 后端<'ctx> {
     /// 从一个模块的导入语句收集标准库别名（alias/末段名 → 中文模块名）。
-    pub(super) fn 收集导入别名(&mut self, program: &Program) {
+    ///
+    /// 顺带校验「标准库.X」里的 X 真的存在。以前不校验，后果比想象的隐蔽：
+    /// `导入 标准库.日期时间 作为 时间;` 根本没有「日期时间」这个模块，但因为别名
+    /// 恰好叫「时间」，`时间.睡眠毫秒()` 会经「别名当模块名」的回退路径解析到真正的
+    /// 「时间」模块 —— **编译通过、运行正常**。换个别名（`作为 钟`）才会在 codegen
+    /// 阶段报「模块没有这个函数」，而错误信息指着一个压根不存在的模块名，
+    /// 让人以为是函数少了。在导入这一行就拦住，错在哪一目了然。
+    pub(super) fn 收集导入别名(&mut self, program: &Program) -> Result<(), String> {
         for imp in &program.imports {
             let is_stdlib = imp.module_path.first().map(|s| s.as_str()) == Some("标准库");
             if !is_stdlib {
@@ -35,12 +42,20 @@ impl<'ctx> 后端<'ctx> {
                 Some(m) => m.clone(),
                 None => continue,
             };
+            if !self.注册表.has_module(&module_name) {
+                return Err(format!(
+                    "标准库里没有模块「{}」{}",
+                    module_name,
+                    相近模块提示(&self.注册表, &module_name)
+                ));
+            }
             // 别名（作为 X）优先；否则用模块名自身
             let alias = imp.alias.clone().unwrap_or_else(|| module_name.clone());
             self.导入别名.insert(alias, module_name.clone());
             // 模块名本身也可直接用（无别名时的 IO.xxx / 时间.xxx）
             self.导入别名.insert(module_name.clone(), module_name);
         }
+        Ok(())
     }
 
     /// 从一个模块的 destructure 导入收集「裸名 → 来源包」映射（结构体+函数共用）：
@@ -559,4 +574,31 @@ pub(super) fn 注册表参数类型转qi(t: &str) -> Qi类型 {
         "空" | "void" => Qi类型::空,
         _ => Qi类型::整数,
     }
+}
+
+/// 「你是不是想写 X」：先按子串/被包含挑近似的，一个都没有就把全部模块列出来。
+///
+/// 模块名都不长且是中文，编辑距离在这儿不如「包含关系」好使 ——
+/// 实际的错法基本都是 日期时间/时间、IO/输入输出、集合/列表 这种多字少字。
+fn 相近模块提示(
+    注册表: &crate::codegen::module_registry::ModuleRegistry,
+    写的: &str,
+) -> String {
+    let mut 全部: Vec<String> = 注册表
+        .module_paths()
+        .into_iter()
+        .filter(|p| !p.starts_with("标准库.")) // 双注册去重，只留短名
+        .cloned()
+        .collect();
+    全部.sort();
+
+    let 相近: Vec<String> = 全部
+        .iter()
+        .filter(|m| m.contains(写的) || 写的.contains(m.as_str()))
+        .cloned()
+        .collect();
+    if !相近.is_empty() {
+        return format!("，是不是想写：{}", 相近.join(" / "));
+    }
+    format!("。可用的标准库模块：{}", 全部.join("、"))
 }

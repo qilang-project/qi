@@ -40,7 +40,7 @@ pub fn 静态分析(programs: &[Program]) -> Result<静态诊断, String> {
     后端值.声明运行时();
 
     for p in programs {
-        后端值.收集导入别名(p);
+        后端值.收集导入别名(p)?;
         后端值.收集符号导入(p);
     }
     for p in programs {

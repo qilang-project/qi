@@ -5,6 +5,7 @@
 #   ③ 内建 长度 对 字符串/自己.字段 的分发（05）
 #   ④ `x 作为 T` 类型转换表达式（06）
 #   ⑤ 跨包同名函数：写了限定名就不该报歧义（08），不写仍要报（09）
+#   ⑥ 导入不存在的标准库模块必须当场报错（10）——以前靠别名撞名能蒙混过关
 #
 # 用法：qi/tests/codegen回归/断言.sh [qi二进制路径]
 #   默认用 workspace 的 target/debug/qi。
@@ -86,6 +87,21 @@ if [ $err_rc -ne 0 ] && echo "$err_out" | grep -q '没有函数'; then
     passed=$((passed+1))
 else
     echo "FAIL 07_限定错模块_必须报错.qi (rc=$err_rc 输出: $(echo "$err_out" | head -1))"
+    failed=$((failed+1))
+fi
+
+echo ""
+
+# ── 红码：导入一个不存在的标准库模块 ──
+total=$((total+1))
+mod_out=$(timeout 120 "$QI" compile "$HERE/10_导入不存在的标准库模块_必须报错.qi" -o /tmp/codegen回归_mod.bin 2>&1)
+mod_rc=$?
+rm -f /tmp/codegen回归_mod.bin
+if [ $mod_rc -ne 0 ] && echo "$mod_out" | grep -q '标准库里没有模块'; then
+    echo "PASS 10_导入不存在的标准库模块_必须报错.qi"
+    passed=$((passed+1))
+else
+    echo "FAIL 10_导入不存在的标准库模块_必须报错.qi (rc=$mod_rc 输出: $(echo "$mod_out" | head -1))"
     failed=$((failed+1))
 fi
 
