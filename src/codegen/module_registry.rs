@@ -3255,6 +3255,13 @@ impl ModuleRegistry {
             "整数",                   // 返回长度
         ));
 
+        // 对象的键列表 —— 没有它就没法遍历一个对象（合并载荷、导出字段都要）
+        json_module.add_function(ModuleFunction::new(
+            "键列表",
+            "qi_json_object_keys",
+            vec!["整数".to_string()],
+            "字符串数组",
+        ));
         json_module.add_function(ModuleFunction::new(
             "是否包含键",
             "qi_json_has_key",

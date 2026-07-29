@@ -197,11 +197,20 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
 
 /// Build the trailing hint line for an unexpected-token error. Returns `""` if
 /// no specific hint applies. Hints are ordered most-specific first:
-///   1. parser expected `;` → likely missing semicolon
-///   2. parser expected `}` / `)` → likely unbalanced bracket
-///   3. token is a known reserved word being used in identifier position
+///   1. token is a known reserved word being used in identifier position
+///   2. parser expected `;` → likely missing semicolon
+///   3. parser expected `}` / `)` → likely unbalanced bracket
 ///   4. otherwise no hint
+///
+/// 保留字判定必须在括号判定**之前**。用保留字当参数名（`函数 f(类型: 字符串)`）
+/// 时，parser 的 expected 集里往往同时有 `)`，于是先命中「缺少 `)`」那条 ——
+/// 报出来的提示指着一个根本没缺的括号，真正的原因一个字不提。踩过一次，
+/// 排查花了好几分钟，而正确提示一眼就能看出来。
 fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) -> String {
+    if let Some(hint) = 保留字提示(tok) {
+        return hint;
+    }
+
     let expected_strs: Vec<String> = expected.iter().map(|e| e.to_string()).collect();
     let expects = |needle: &str| expected_strs.iter().any(|s| s == needle);
 
@@ -215,6 +224,10 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
         return "\n  提示：缺少 `)` — 检查函数调用 / 参数列表是否漏写右括号".to_string();
     }
 
+    String::new()
+}
+
+fn 保留字提示(tok: &str) -> Option<String> {
     const RESERVED_LANDMINES: &[&str] = &[
         "结果",
         "类型",
@@ -240,12 +253,11 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
         "弱",
     ];
     if RESERVED_LANDMINES.contains(&tok) {
-        return format!(
+        return Some(format!(
             "\n  提示：`{tok}` 是 qi 的保留字，不能作为标识符名。常被误用的保留字：结果 / 类型 / 尝试 / 继续 / 返回。换个别名（如 `{tok}值`）"
-        );
+        ));
     }
-
-    String::new()
+    None
 }
 
 #[cfg(test)]
@@ -260,6 +272,18 @@ mod error_format_tests {
         let msg = format!("{}", err);
         assert!(msg.contains("第 3 行"), "msg lacks line: {msg}");
         assert!(msg.contains("保留字"), "msg lacks 保留字 hint: {msg}");
+    }
+
+    /// 保留字当形参名时，expected 集里同时有 `)` —— 提示必须报保留字，
+    /// 不能报「缺少 `)`」。指着一个根本没缺的括号，真正的原因一个字不提。
+    #[test]
+    fn reserved_word_hint_beats_missing_paren_hint() {
+        let src = "包 主程序;\n函数 甲(类型: 字符串) : 字符串 { 返回 类型; }\n";
+        let p = Parser::new();
+        let err = p.parse_source(src).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("`类型` 是 qi 的保留字"), "{msg}");
+        assert!(!msg.contains("缺少 `)`"), "括号提示会盖住真正的原因：{msg}");
     }
 
     #[test]
