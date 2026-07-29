@@ -340,24 +340,34 @@ impl<'ctx> 后端<'ctx> {
                     // 只排除**局部**变量：同名全局往往是另一个包的模块级变量，
                     // 显式写出来的包别名应当胜过它（结构体方法调用已在分支 1 处理）。
                     if !self.变量表.contains_key(&id.name) {
-                        // 限定名先按别名查；查不到就把它本身当包名 ——
-                        // `导入 界面;` 这种同项目模块不进 包别名 表，以前会掉到
-                        // 下面的分支 3 被剥掉限定名，变成裸调用后跟别的包重名就
-                        // 误报「函数名 X 歧义：定义于多个包」，可调用点明明写全了。
-                        let 包名 = self
-                            .包别名
-                            .get(&id.name)
-                            .cloned()
-                            .filter(|包| {
-                                self.符号
-                                    .函数按包
-                                    .contains_key(&(包.clone(), mc.method_name.clone()))
+                        // 限定名解析成「定义了这个函数的那个包」，依次试三种写法。
+                        //
+                        // 别名表存的是**导入路径全名**（`导入 Web.查询 作为 查`
+                        // → 查 => "Web.查询"），而 函数按包 的键是包声明名（"查询"）
+                        // —— 只按全名查会落空，退回裸名后又跟当前包的同名函数撞上：
+                        // 在 包 Web 里 `查.查询参数(库,SQL,参数)` 会解析到 Web 自己
+                        // 那个两参的 查询参数(上下文,名)，实参个数对不上，直接 LLVM
+                        // 模块校验失败。所以全名之外还要试末段。
+                        let 有此函数 = |包: &str| {
+                            self.符号
+                                .函数按包
+                                .contains_key(&(包.to_string(), mc.method_name.clone()))
+                        };
+                        let 别名指向 = self.包别名.get(&id.name).cloned();
+                        let 包名 = 别名指向
+                            .clone()
+                            .filter(|包| 有此函数(包))
+                            .or_else(|| {
+                                // 全名不匹配 → 试末段（Web.查询 → 查询）
+                                别名指向
+                                    .as_deref()
+                                    .and_then(|全名| 全名.rsplit('.').next())
+                                    .filter(|末段| 有此函数(末段))
+                                    .map(|末段| 末段.to_string())
                             })
                             .or_else(|| {
-                                self.符号
-                                    .函数按包
-                                    .contains_key(&(id.name.clone(), mc.method_name.clone()))
-                                    .then(|| id.name.clone())
+                                // `导入 界面;` 这种同项目模块不进别名表，限定名就是包名
+                                有此函数(&id.name).then(|| id.name.clone())
                             });
                         if let Some(包) = 包名 {
                             let call = crate::parser::ast::FunctionCallExpression {
