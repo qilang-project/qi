@@ -163,6 +163,13 @@ struct 后端<'ctx> {
     在入口中: bool,
     /// 当前正在处理的模块包名（跨包同名函数消歧用；与 符号.当前包 同步）。
     当前包: Option<String>,
+    /// 调用点写了限定名（界面.家庭布局 / 别名.函数）时，指明去哪个包解析。
+    ///
+    /// 一次性：生成函数调用 一进来就 take() 掉。**不能**改 当前包 来代替 ——
+    /// 实参也是在那次调用里生成的，包上下文会顺着漏进去，把实参里的裸调用
+    /// 解析到错的包（踩过：查.选取(…, 查询参数(上下文,"q")) 里的 查询参数
+    /// 被解析成 查询 包的三参版本）。
+    限定包: Option<String>,
     /// 字符串字面量 → 带 immortal header 的全局常量 data 指针（按内容去重，模块级缓存）。
     字符串字面量缓存: HashMap<String, PointerValue<'ctx>>,
     /// QI_ARC=1 时为 true：插入保守字符串 ARC（retain/release）。默认关，
@@ -238,6 +245,7 @@ impl<'ctx> 后端<'ctx> {
             已实例化泛型函数: std::collections::HashSet::new(),
             在入口中: false,
             当前包: None,
+            限定包: None,
             字符串字面量缓存: HashMap::new(),
             // ARC 默认开(字符串+结构体+数组+闭包 RC 回收);QI_ARC=0 退回纯泄漏模式(调试用)
             弧: std::env::var("QI_ARC")
@@ -273,7 +281,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 设置当前包（同步到符号表，供签名解析）。
-    fn 设当前包(&mut self, pkg: Option<String>) {
+    pub(super) fn 设当前包(&mut self, pkg: Option<String>) {
         self.符号.当前包 = pkg.clone();
         self.当前包 = pkg;
     }

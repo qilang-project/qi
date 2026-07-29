@@ -4,6 +4,7 @@
 #   ② 模块限定重名函数分发确定性（04 编译 5 次输出一致 + 07 错模块必须报错）
 #   ③ 内建 长度 对 字符串/自己.字段 的分发（05）
 #   ④ `x 作为 T` 类型转换表达式（06）
+#   ⑤ 跨包同名函数：写了限定名就不该报歧义（08），不写仍要报（09）
 #
 # 用法：qi/tests/codegen回归/断言.sh [qi二进制路径]
 #   默认用 workspace 的 target/debug/qi。
@@ -20,7 +21,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-6]_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -89,5 +90,19 @@ else
 fi
 
 echo ""
+
+# ── 红码：跨包同名 + 不写限定名 → 歧义检查必须照旧生效 ──
+total=$((total+1))
+amb_out=$(timeout 120 "$QI" compile "$HERE/09_跨包同名_裸调用_必须报错.qi" -o /tmp/codegen回归_amb.bin 2>&1)
+amb_rc=$?
+rm -f /tmp/codegen回归_amb.bin
+if [ $amb_rc -ne 0 ] && echo "$amb_out" | grep -q '歧义'; then
+    echo "PASS 09_跨包同名_裸调用_必须报错.qi"
+    passed=$((passed+1))
+else
+    echo "FAIL 09_跨包同名_裸调用_必须报错.qi (rc=$amb_rc 输出: $(echo "$amb_out" | head -1))"
+    failed=$((failed+1))
+fi
+
 echo "codegen回归: $passed/$total 通过"
 [ $failed -eq 0 ] || exit 1

@@ -287,6 +287,25 @@ impl 符号表 {
     }
 
     /// 定义了同名函数的所有包（排序保证确定性；歧义诊断用）。
+    /// 候选包中「有接收 实参数 个实参的重载」的那些。
+    ///
+    /// 跨包同名但元数不同是常态（Web.查询参数(上下文,名) vs 查询.查询参数(库,SQL,参数)），
+    /// 只按名字算候选会得出「多包同名 → 歧义」，可实参个数已经能唯一定位了。
+    /// 按元数筛完还剩一个就不该报歧义 —— 也让「当前包」串到别处时仍能解析对。
+    pub fn 函数候选包按元数(&self, name: &str, 实参数: usize) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .函数按包
+            .iter()
+            .filter(|((_, f), 签名集)| {
+                f == name && 签名集.iter().any(|s| s.参数.len() == 实参数)
+            })
+            .map(|((p, _), _)| p.clone())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
     pub fn 函数候选包(&self, name: &str) -> Vec<String> {
         let mut v: Vec<String> = self
             .函数按包
@@ -296,6 +315,11 @@ impl 符号表 {
             .collect();
         v.sort();
         v
+    }
+
+    /// 在**指定包**里解析重载集（调用点写了限定名时用，不看当前包）。
+    pub fn 重载集于包(&self, pkg: &str, name: &str) -> Option<&Vec<函数签名>> {
+        self.函数按包.get(&(pkg.to_string(), name.to_string()))
     }
 
     /// 解析一个函数名对应的**重载集**（同一 (包,名) 下按元数区分的多个签名）：

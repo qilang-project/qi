@@ -709,11 +709,77 @@ impl QiCompiler {
         )))
     }
 
+    /// 要链接的运行时归档比 qi-runtime 源码还旧时提醒一句。
+    ///
+    /// qi-runtime **不是 workspace 成员**（有自己的 target/），在仓库根跑
+    /// `cargo build` 根本编不到它。于是「改了 runtime → 重新构建 → 测试」这条路很容易
+    /// 断在中间：链进去的还是上一次的归档，不报错、只是行为对不上，极难查
+    /// （踩过一次：WS 客户端的 bug 修完测了半天没反应）。
+    ///
+    /// 只在看得见源码树时提醒，发布包/普通用户不受影响。QI_NO_STALE_WARN=1 可关。
+    fn 提醒归档过期(归档: &std::path::Path) {
+        if std::env::var("QI_NO_STALE_WARN").is_ok() {
+            return;
+        }
+        // 从当前目录往上找 qi-runtime/src
+        let Ok(mut dir) = std::env::current_dir() else {
+            return;
+        };
+        let 源码目录 = loop {
+            let p = dir.join("qi-runtime/src");
+            if p.is_dir() {
+                break Some(p);
+            }
+            if !dir.pop() {
+                break None;
+            }
+        };
+        let Some(源码目录) = 源码目录 else {
+            return;
+        };
+        let 取时间 = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let Some(t归档) = 取时间(归档) else {
+            return;
+        };
+        // 递归看有没有 .rs 比归档新
+        fn 有更新的源文件(目录: &std::path::Path, 基准: std::time::SystemTime) -> bool {
+            let Ok(项) = std::fs::read_dir(目录) else {
+                return false;
+            };
+            for 条目 in 项.flatten() {
+                let p = 条目.path();
+                if p.is_dir() {
+                    if 有更新的源文件(&p, 基准) {
+                        return true;
+                    }
+                } else if p.extension().is_some_and(|e| e == "rs") {
+                    if let Ok(t) = std::fs::metadata(&p).and_then(|m| m.modified()) {
+                        if t > 基准 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        if 有更新的源文件(&源码目录, t归档) {
+            eprintln!(
+                "警告: qi-runtime 源码比要链接的归档新，链进去的是旧运行时。\n\
+             \x20 归档: {}\n\
+             \x20 qi-runtime 不在 workspace 里，仓库根的 cargo build 编不到它。\n\
+             \x20 跑 qi/scripts/同步本地构建.sh（或 cd qi-runtime && cargo build --release）。",
+                归档.display()
+            );
+        }
+    }
+
     /// 找宿主平台的 qi-runtime 归档（无 LLVM）。inkwell 后端链接它，避免 libqi_compiler.a 拖 LLVM。
     fn find_host_runtime_library(&self) -> Result<PathBuf, CompilerError> {
         if let Ok(p) = std::env::var("QI_RUNTIME_LIB") {
             let path = PathBuf::from(p);
             if path.exists() {
+                Self::提醒归档过期(&path);
                 return Ok(path);
             }
         }
@@ -729,6 +795,7 @@ impl QiCompiler {
         if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
             let p = prefix.join("lib/qi").join(归档名);
             if p.exists() {
+                Self::提醒归档过期(&p);
                 return Ok(p);
             }
         }
@@ -741,6 +808,7 @@ impl QiCompiler {
             for profile in ["debug", "release"] {
                 let p = ws.join("qi-runtime/target").join(profile).join(归档名);
                 if p.exists() {
+                    Self::提醒归档过期(&p);
                     return Ok(p);
                 }
             }

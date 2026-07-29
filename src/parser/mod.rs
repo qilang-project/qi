@@ -294,6 +294,57 @@ mod error_format_tests {
         );
     }
 
+    /// 反引号原始字符串里的 `//` 不是注释。
+    ///
+    /// 回归自一次真实事故：qi-web 把打包好的客户端 JS 塞进原始字符串常量，
+    /// 里面有 `"wss://"`，被 strip_comments 当成行注释，从 `//` 一直吃到行尾，
+    /// 连收尾的反引号一起吃掉 —— 该常量后面的整个文件都被卷进字符串里，
+    /// 报错却是几千字符之外的「未定义的函数: 样式源」，极难定位。
+    #[test]
+    fn raw_string_keeps_double_slash() {
+        let src = "包 主程序;\n函数 入口() {\n    变量 s: 字符串 = `a//b`;\n}\n";
+        let p = Parser::new();
+        assert!(p.parse_source(src).is_ok(), "原始字符串里的 // 不该当注释");
+    }
+
+    /// 原始字符串后面还有别的定义时，早闭合的破坏最明显
+    #[test]
+    fn raw_string_with_url_does_not_swallow_rest_of_file() {
+        let src = concat!(
+            "包 主程序;\n",
+            "函数 脚本() : 字符串 {\n",
+            "    返回 `var ws = new WebSocket(\"wss://\" + host);`;\n",
+            "}\n",
+            "函数 样式() : 字符串 {\n",
+            "    返回 `:root{--a:1}`;\n",
+            "}\n",
+            "函数 入口() {}\n"
+        );
+        let p = Parser::new();
+        assert!(p.parse_source(src).is_ok(), "后面的函数不该被卷进字符串");
+    }
+
+    /// 块注释起始 `/*` 同理
+    #[test]
+    fn raw_string_keeps_block_comment_marker() {
+        let src = "包 主程序;\n函数 入口() {\n    变量 s: 字符串 = `/* not a comment */`;\n}\n";
+        let p = Parser::new();
+        assert!(p.parse_source(src).is_ok(), "原始字符串里的 /* 不该开注释");
+    }
+
+    /// 全角冒号归一化也不能动原始字符串 —— 里面是 JS/CSS/文案，改了就坏
+    #[test]
+    fn raw_string_keeps_fullwidth_colon() {
+        let src = "包 主程序;\n函数 入口() {\n    变量 s: 字符串 = `提示：请稍候`;\n}\n";
+        let p = Parser::new();
+        let ast = p.parse_source(src).expect("应当解析通过");
+        let dumped = format!("{ast:?}");
+        assert!(
+            dumped.contains('：'),
+            "原始字符串里的全角冒号被改写了: {dumped}"
+        );
+    }
+
     #[test]
     fn byte_offset_chinese_correct_column() {
         // "包 主程序" — chars: 包(0), space(1), 主(2), 程(3), 序(4)
@@ -347,6 +398,10 @@ impl Parser {
             let mut block_comment_depth = 0usize;
             let mut in_string = false;
             let mut in_char = false;
+            // 反引号原始字符串：内部不做转义，也**不认注释**。内嵌 JS/CSS 里
+            // 全是 "wss://" 和 "//" 这种，不单独跟踪的话会被当成行注释吃掉，
+            // 连带把收尾的反引号一起吃了，报错点却落在几千字符之外。
+            let mut in_raw = false;
             let mut escape = false;
 
             while i < n {
@@ -380,6 +435,17 @@ impl Parser {
                         }
                         i += 1;
                     }
+                    continue;
+                }
+
+                if in_raw {
+                    let ch = s[i..].chars().next().unwrap();
+                    let len = ch.len_utf8();
+                    out.push(ch);
+                    if ch == '`' {
+                        in_raw = false;
+                    }
+                    i += len;
                     continue;
                 }
 
@@ -451,6 +517,12 @@ impl Parser {
                     i += len;
                     continue;
                 }
+                if ch == '`' {
+                    in_raw = true;
+                    out.push(ch);
+                    i += len;
+                    continue;
+                }
 
                 out.push(ch);
                 i += len;
@@ -468,10 +540,17 @@ impl Parser {
         fn normalize_colons(s: &str) -> String {
             let mut out = String::with_capacity(s.len());
             let mut in_string = false;
+            // 反引号原始字符串同样原样放行：内嵌的中文文案里出现「：」不该被改写
+            let mut in_raw = false;
             let mut escape = false;
             let mut it = s.chars().peekable();
             while let Some(ch) = it.next() {
-                if in_string {
+                if in_raw {
+                    if ch == '`' {
+                        in_raw = false;
+                    }
+                    out.push(ch);
+                } else if in_string {
                     if escape {
                         escape = false;
                     } else if ch == '\\' {
@@ -482,6 +561,9 @@ impl Parser {
                     out.push(ch);
                 } else if ch == '"' {
                     in_string = true;
+                    out.push(ch);
+                } else if ch == '`' {
+                    in_raw = true;
                     out.push(ch);
                 } else if ch == '：' {
                     if it.peek() == Some(&'：') {

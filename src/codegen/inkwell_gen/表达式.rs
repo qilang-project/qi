@@ -340,24 +340,35 @@ impl<'ctx> 后端<'ctx> {
                     // 只排除**局部**变量：同名全局往往是另一个包的模块级变量，
                     // 显式写出来的包别名应当胜过它（结构体方法调用已在分支 1 处理）。
                     if !self.变量表.contains_key(&id.name) {
-                        if let Some(包) = self.包别名.get(&id.name).cloned() {
-                            let 命中 = self
-                                .符号
-                                .函数按包
-                                .contains_key(&(包.clone(), mc.method_name.clone()));
-                            if 命中 {
-                                let call = crate::parser::ast::FunctionCallExpression {
-                                    module_qualifier: None,
-                                    callee: mc.method_name.clone(),
-                                    type_arguments: vec![],
-                                    arguments: mc.arguments.clone(),
-                                    span: mc.span.clone(),
-                                };
-                                let 旧包 = self.符号.当前包.replace(包);
-                                let r = self.生成函数调用(&call);
-                                self.符号.当前包 = 旧包;
-                                return r;
-                            }
+                        // 限定名先按别名查；查不到就把它本身当包名 ——
+                        // `导入 界面;` 这种同项目模块不进 包别名 表，以前会掉到
+                        // 下面的分支 3 被剥掉限定名，变成裸调用后跟别的包重名就
+                        // 误报「函数名 X 歧义：定义于多个包」，可调用点明明写全了。
+                        let 包名 = self
+                            .包别名
+                            .get(&id.name)
+                            .cloned()
+                            .filter(|包| {
+                                self.符号
+                                    .函数按包
+                                    .contains_key(&(包.clone(), mc.method_name.clone()))
+                            })
+                            .or_else(|| {
+                                self.符号
+                                    .函数按包
+                                    .contains_key(&(id.name.clone(), mc.method_name.clone()))
+                                    .then(|| id.name.clone())
+                            });
+                        if let Some(包) = 包名 {
+                            let call = crate::parser::ast::FunctionCallExpression {
+                                module_qualifier: None,
+                                callee: mc.method_name.clone(),
+                                type_arguments: vec![],
+                                arguments: mc.arguments.clone(),
+                                span: mc.span.clone(),
+                            };
+                            self.限定包 = Some(包);
+                            return self.生成函数调用(&call);
                         }
                     }
                 }
@@ -2744,7 +2755,14 @@ impl<'ctx> 后端<'ctx> {
                 return Some((f, sig));
             }
         }
-        // 全局唯一定义包（多包同名 → 不猜，返回 None 交调用点报歧义）
+        // 全局唯一定义包（多包同名 → 不猜，返回 None 交调用点报歧义）。
+        // 先按元数筛：跨包同名但形参个数不同时，实参个数已经能唯一定位。
+        if let [唯一] = self.符号.函数候选包按元数(name, 实参数).as_slice() {
+            let sym = super::包内符号名(Some(唯一), name, 元数);
+            if let Some(f) = self.module.get_function(&sym) {
+                return Some((f, sig.or_else(|| self.符号.解析重载(name, 实参数).cloned())));
+            }
+        }
         if let [唯一] = self.符号.函数候选包(name).as_slice() {
             let sym = super::包内符号名(Some(唯一), name, 元数);
             if let Some(f) = self.module.get_function(&sym) {
@@ -2764,6 +2782,33 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<Option<(BasicValueEnum<'ctx>, Qi类型)>, String> {
+        // 限定包一进来就取走：它只作用于**本次**调用的被调函数解析，绝不能
+        // 顺着漏进实参的代码生成（实参里的裸调用要按调用点自己的包解析）。
+        let 限定包 = self.限定包.take();
+
+        // 写了模块限定名且那个包确实有这个函数 → 就在**那个包**里解析。
+        //
+        // 以前 module_qualifier 只是被记下来、解析时完全不看，于是
+        // `界面.转义HTML(x)` 和裸的 `转义HTML(x)` 走同一条按名查找；一旦有第二个
+        // 包也叫 转义HTML，就报「函数名 转义HTML 歧义：定义于多个包」——
+        // 可调用点明明已经写全了限定名，让人无从下手（只能改名绕开）。
+        // 重载集是「当前包优先」的，把解析包临时切过去即可。
+        if let Some(限定) = call.module_qualifier.clone() {
+            if self
+                .符号
+                .函数按包
+                .contains_key(&(限定.clone(), call.callee.clone()))
+                && self.符号.当前包.as_deref() != Some(限定.as_str())
+            {
+                let 无限定 = crate::parser::ast::FunctionCallExpression {
+                    module_qualifier: None,
+                    ..call.clone()
+                };
+                self.限定包 = Some(限定);
+                return self.生成函数调用(&无限定);
+            }
+        }
+
         // QI_CORO 协程内建（如 执行器运行全部()）—— 无模块限定、无类型实参时拦截。
         // QI_CORO 关时 生成协程内建 恒返回 None，逐字节不变。
         if call.module_qualifier.is_none() && call.type_arguments.is_empty() {
@@ -2944,7 +2989,18 @@ impl<'ctx> 后端<'ctx> {
 
         // 用户函数（跨包同名消歧：当前包符号优先，否则回退裸/任意包符号）；
         // 找不到用户函数时，回退无模块限定的标准库函数（如 MD5哈希(x)、创建等待组()）。
-        let (f, sig) = match self.尝试解析用户函数(&call.callee, call.arguments.len()) {
+        // 只在**解析被调函数**这一步临时切包；实参在下面才生成，那时已经还原，
+        // 所以包上下文不会漏进实参里的裸调用。
+        let 解析结果 = if let Some(pkg) = 限定包.clone() {
+            let 旧包 = self.当前包.clone();
+            self.设当前包(Some(pkg));
+            let r = self.尝试解析用户函数(&call.callee, call.arguments.len());
+            self.设当前包(旧包);
+            r
+        } else {
+            self.尝试解析用户函数(&call.callee, call.arguments.len())
+        };
+        let (f, sig) = match 解析结果 {
             Some(x) => x,
             None => {
                 // 重载存在但没有匹配实参个数的那个 → 清晰报「无匹配重载」
@@ -2962,7 +3018,12 @@ impl<'ctx> 后端<'ctx> {
                     }
                 }
                 // 多包同名的用户函数：先报歧义 —— 绝不静默落到同名 stdlib 函数
-                let 候选 = self.符号.函数候选包(&call.callee);
+                let mut 候选 = self
+                    .符号
+                    .函数候选包按元数(&call.callee, call.arguments.len());
+                if 候选.is_empty() {
+                    候选 = self.符号.函数候选包(&call.callee);
+                }
                 if 候选.len() > 1 {
                     return Err(format!(
                         "函数名 {} 歧义：定义于多个包（{}）。请用 `导入 包::{{{}}}` 指明来源",
