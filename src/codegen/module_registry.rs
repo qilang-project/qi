@@ -455,6 +455,13 @@ impl ModuleRegistry {
             vec!["整数".to_string(), "字符串".to_string()],
             "整数",
         ));
+        // 追加到文件尾：边收边落盘，不用把整个文件端在内存里
+        bytes_module.add_function(ModuleFunction::new(
+            "追加到文件",
+            "qi_bytes_append_file",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数",
+        ));
         bytes_module.add_function(ModuleFunction::new(
             "转十六进制",
             "qi_bytes_to_hex",
@@ -870,6 +877,13 @@ impl ModuleRegistry {
             "整数", // Returns 0 or 1 as i64
         ));
 
+        // 重命名 / 移动：上传要「先落临时文件、收完再挪到正式位置」
+        io_module.add_function(ModuleFunction::new(
+            "重命名",
+            "qi_io_rename",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
         io_module.add_function(ModuleFunction::new(
             "创建文件",
             "qi_io_create_file",
