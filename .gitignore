@@ -61,7 +61,9 @@ benchmarks/results/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+# 只忽略 CMake **生成**的 Makefile（在 CMakeFiles/ 同级的构建目录里），
+# 仓库根手写的 Makefile 是构建入口，必须提交
+build/Makefile
 
 # Documentation build
 docs/target/
