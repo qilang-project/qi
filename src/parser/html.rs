@@ -138,13 +138,16 @@ fn is_reserved_html_declaration(source: &str, i: usize) -> bool {
 }
 
 fn reserved_html_identifier_at(source: &str, i: usize) -> Option<&'static str> {
-    const RESERVED: [&str; 7] = [
+    const RESERVED: [&str; 10] = [
         "__qi_html模板",
         "__qi_html正文值",
         "__qi_html属性值",
         "__qi_html条件值",
         "__qi_html键值",
         "__qi_html循环块",
+        "__qi_html循环开始",
+        "__qi_html循环加项",
+        "__qi_html子块值",
         "__qi_html渲染块组",
     ];
     RESERVED.into_iter().find(|name| {
@@ -472,8 +475,11 @@ impl<'a> Parser<'a> {
             .join(", ");
         let result = format!("__qi_html片段_{}", self.loop_count);
         self.loop_count += 1;
+        // 容器用 __qi_html循环开始 而不是 创建片段：所有项共用这一份编译期常量计划，
+        // 容器一路攒住每项的槽位数组，列表改一项就只发那一项的那个槽位。
+        // 用 创建片段 + 块加子块 的老写法会在第一次追加时清掉出身，整段列表塌成一个槽位。
         let source = format!(
-            "__qi_html循环块(闭包(): HTML块 {{ 变量 {result}: HTML块 = 创建片段(); 对于 {variable} 在 {iterable} {{ {result} = 块加子块({result}, __qi_html模板({plan_json}, [{wrapped}])); }} 返回 {result}; }})"
+            "__qi_html循环块(闭包(): HTML块 {{ 变量 {result}: HTML块 = __qi_html循环开始({plan_json}); 对于 {variable} 在 {iterable} {{ {result} = __qi_html循环加项({result}, __qi_html模板({plan_json}, [{wrapped}])); }} 返回 {result}; }})"
         );
         let index = self.expressions.len();
         self.expressions.push(DynamicExpression {

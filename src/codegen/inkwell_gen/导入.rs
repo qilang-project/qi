@@ -51,7 +51,9 @@ impl<'ctx> 后端<'ctx> {
             }
             // 别名（作为 X）优先；否则用模块名自身
             let alias = imp.alias.clone().unwrap_or_else(|| module_name.clone());
-            self.导入别名.insert(alias, module_name.clone());
+            self.导入别名.insert(alias.clone(), module_name.clone());
+            // 类型推断那边也得知道别名，否则 `J.获取字符串(…)` 推不出返回类型
+            self.符号.标准库别名.insert(alias, module_name.clone());
             // 模块名本身也可直接用（无别名时的 IO.xxx / 时间.xxx）
             self.导入别名.insert(module_name.clone(), module_name);
         }

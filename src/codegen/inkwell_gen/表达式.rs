@@ -3219,10 +3219,14 @@ impl<'ctx> 后端<'ctx> {
                 if !is_html {
                     return Err("HTML 正文洞只接受 字符串 或 HTML块".to_string());
                 }
+                // 走 __qi_html子块值 而不是 渲染块：子块自己带模板出身（计划+槽位）时，
+                // 它返回一个「信封」把出身一并带进父模板的槽位，父帧才能只发子块里
+                // 变了的那几个槽位。没有出身的块由它退回 __QI_HTML_H__ + 整段 HTML，
+                // 所以这里的类型标记由被调方决定，前缀留空。
                 let render =
                     AstNode::函数调用表达式(crate::parser::ast::FunctionCallExpression {
                         module_qualifier: None,
-                        callee: "渲染块".to_string(),
+                        callee: "__qi_html子块值".to_string(),
                         type_arguments: vec![],
                         arguments: vec![arg.clone()],
                         span: Default::default(),
@@ -3231,13 +3235,9 @@ impl<'ctx> 后端<'ctx> {
                     .生成表达式(&render)?
                     .ok_or_else(|| "渲染 HTML块 未返回值".to_string())?;
                 if vt != Qi类型::字符串 {
-                    return Err("渲染块 返回类型不是字符串".to_string());
+                    return Err("__qi_html子块值 返回类型不是字符串".to_string());
                 }
-                (
-                    "__QI_HTML_H__",
-                    v.into_pointer_value(),
-                    self.表达式拥有字符串(&render),
-                )
+                ("", v.into_pointer_value(), self.表达式拥有字符串(&render))
             } else if let Qi类型::数组(super::类型::元素类型::结构体(idx)) = t {
                 let is_html = self
                     .符号
@@ -3276,6 +3276,13 @@ impl<'ctx> 后端<'ctx> {
             return Err("HTML 动态属性只接受 字符串 或 布尔".to_string());
         };
 
+        // 前缀为空 = 被调方（__qi_html子块值）自己已经带好类型标记，直接用它的返回值。
+        // 它是用户函数、按 +1 约定返回自有串，正好满足本包装器的 OWNED 契约；
+        // 再拼一个空串只会白白多一次分配+拷贝。value_owned 为假时仍走拼接，
+        // 那条路会产出一份自有拷贝。
+        if prefix.is_empty() && value_owned {
+            return Ok((value.into(), Qi类型::字符串));
+        }
         let marker = self.emit_immortal_string(prefix, "html.kind")?;
         let joined = self.拼接字符串带释放(marker, false, value, value_owned)?;
         Ok((joined, Qi类型::字符串))

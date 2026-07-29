@@ -2864,6 +2864,14 @@ impl ModuleRegistry {
             vec!["整数".to_string()],
             "整数",
         ));
+        // 列表句柄 → 数组<字符串>。`对于 x 在 y` 和 HTML 的 `对于={项 在 表}`
+        // 要的是数组，而 分割 / 数据库查询 给的都是列表句柄 —— 中间就差这一步。
+        list_module.add_function(ModuleFunction::new(
+            "转字符串数组",
+            "qi_list_string_to_array",
+            vec!["整数".to_string()],
+            "字符串数组",
+        ));
 
         // 指针列表
         list_module.add_function(ModuleFunction::new(
@@ -3230,6 +3238,13 @@ impl ModuleRegistry {
             "qi_json_array_get_object",
             vec!["整数".to_string(), "整数".to_string()], // 数组句柄, 索引
             "整数",                                       // 返回对象句柄
+        ));
+        // 数组元素本身是数组时用这个（数组获取对象 只认对象，取不出嵌套数组）
+        json_module.add_function(ModuleFunction::new(
+            "数组获取数组",
+            "qi_json_array_get_array",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数",
         ));
 
         // 工具函数

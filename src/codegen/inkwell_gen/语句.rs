@@ -600,11 +600,29 @@ impl<'ctx> 后端<'ctx> {
         f: &crate::parser::ast::ForStatement,
         func: FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // 不是区间、也不是数组 → 报错，**不能**静默不执行。
+        //
+        // 以前这里两处都是 `return Ok(())`：`对于 名 在 <列表句柄>` 编译通过、
+        // 循环体一次都不进、没有任何提示。而 分割 / 数据库查询 / 列表库 给的
+        // 全是列表句柄（一个整数），这是最容易踩的写法 —— 页面就是空的，
+        // 从模板一路查到 SQL 都找不出毛病。
         let Some((av, at)) = self.生成表达式(&f.range)? else {
-            return Ok(());
+            return Err(format!(
+                "`对于 {} 在 …` 的被遍历对象没有值（是个无返回值的表达式）",
+                f.variable
+            ));
         };
         let Some(元素) = at.数组元素() else {
-            return Ok(());
+            let 提示 = if at == Qi类型::整数 {
+                "\n  整数多半是**列表句柄**（分割 / 数据库查询 / 列表库 返回的都是）。\
+                 \n  用 列表::转字符串数组(句柄) 先变成 数组<字符串> 再遍历。"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "`对于 {} 在 …` 只能遍历整数区间或数组，这里是 {:?}{}",
+                f.variable, at, 提示
+            ));
         };
         let base = av.into_pointer_value();
         let i64t = self.ctx.i64_type();

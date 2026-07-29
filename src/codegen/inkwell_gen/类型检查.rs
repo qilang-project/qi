@@ -169,6 +169,12 @@ pub struct 符号表 {
     /// 特性实现注册表：(特性名, 结构体索引) —— `实现 特性X 对于 类型Y` 收集。
     /// 泛型约束 `<T: 特性X>` 单态化时据此校验实参类型。
     pub 特性实现: HashSet<(String, u32)>,
+    /// 标准库导入别名 → 真实模块名（`导入 标准库.JSON 作为 J` → J→JSON）。
+    ///
+    /// 类型推断要用：`{J.获取字符串(状态,"标题")}` 这种别名限定调用，光看注册表
+    /// 查不到「J」这个模块，返回类型就成了 未知 —— 表现是 HTML 洞报
+    /// 「只接受 字符串、HTML块…」，而你写的明明就是字符串。别名表得跟着进符号表。
+    pub 标准库别名: HashMap<String, String>,
 }
 
 impl 符号表 {
@@ -199,6 +205,7 @@ impl 符号表 {
             类型参数栈: Vec::new(),
             特性: HashMap::new(),
             特性实现: HashSet::new(),
+            标准库别名: HashMap::new(),
         }
     }
 
@@ -1139,7 +1146,14 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             // `变量 h = 加密.MD5哈希(x)` 不带注解时也要推出 字符串。
             if let AstNode::标识符表达式(id) = mc.object.as_ref() {
                 if 表.查变量(&id.name).is_none() {
-                    if let Some(t) = 标准库模块方法返回(&id.name, &mc.method_name) {
+                    // 别名先翻成真模块名：`导入 标准库.JSON 作为 J` 之后
+                    // `J.获取字符串(…)` 得能推出 字符串（HTML 洞就靠这个判类型）
+                    let 模块 = 表
+                        .标准库别名
+                        .get(&id.name)
+                        .map(|s| s.as_str())
+                        .unwrap_or(id.name.as_str());
+                    if let Some(t) = 标准库模块方法返回(模块, &mc.method_name) {
                         return t;
                     }
                 }
