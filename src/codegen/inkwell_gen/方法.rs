@@ -123,7 +123,7 @@ impl<'ctx> 后端<'ctx> {
 
         self.变量表.clear();
         self.作用域遮蔽栈.clear();
-        self.弧隐藏RC槽.clear();
+        self.弧隐藏引用计数槽.clear();
         self.符号.进入作用域();
         self.当前返回类型 = sig.返回;
         self.try深度 = 0; // E4

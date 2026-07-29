@@ -250,7 +250,7 @@ impl<'ctx> 后端<'ctx> {
 
         self.变量表.clear();
         self.作用域遮蔽栈.clear();
-        self.弧隐藏RC槽.clear();
+        self.弧隐藏引用计数槽.clear();
         self.符号.进入作用域();
         self.当前返回类型 = sig.返回;
         self.try深度 = 0;
@@ -377,7 +377,7 @@ impl<'ctx> 后端<'ctx> {
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
 
         // RC 槽收集（同 弧释放局部 的过滤：RC 类型且非弱局部）。QI_ARC=0 时不收集
-        // （与普通函数「关 ARC 不释放」一致）。弧隐藏RC槽：内层块遮蔽变量
+        // （与普通函数「关 ARC 不释放」一致）。弧隐藏引用计数槽：内层块遮蔽变量
         // 出块后移出 变量表 的槽，cleanup 一并释放（不再「宁泄漏」）。
         let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = if self.弧开() {
             self.变量表
@@ -385,7 +385,7 @@ impl<'ctx> 后端<'ctx> {
                 .filter(|(名, (_, t))| super::所有权::是RC类型(*t) && !self.弱局部.contains(*名))
                 .map(|(_, (p, t))| (*p, *t))
                 .chain(
-                    self.弧隐藏RC槽
+                    self.弧隐藏引用计数槽
                         .iter()
                         .filter(|(名, _, t)| {
                             super::所有权::是RC类型(*t) && !self.弱局部.contains(名)

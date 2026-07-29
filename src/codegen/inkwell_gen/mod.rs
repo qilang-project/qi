@@ -207,7 +207,7 @@ struct 后端<'ctx> {
     /// 被作用域恢复移出 变量表 的内层 RC 槽（名字, 槽, 类型）。这些槽仍是
     /// entry 块 alloca + null 初始化，函数出口（弧释放局部）/ 协程 cleanup
     /// 必须继续释放它们 —— 否则内层遮蔽的字符串/结构体/数组泄漏。
-    弧隐藏RC槽: Vec<(String, PointerValue<'ctx>, Qi类型)>,
+    弧隐藏引用计数槽: Vec<(String, PointerValue<'ctx>, Qi类型)>,
     /// 默认 true：把「返回 未来<T> 且含 等待」的用户函数编译成 LLVM
     /// coroutine（llvm.coro.* stackless 状态机）。QI_CORO=0 退回 eager future（逐字节不变）。
     /// 见 协程.rs。
@@ -263,7 +263,7 @@ impl<'ctx> 后端<'ctx> {
             导出表: Vec::new(),
             弱局部: std::collections::HashSet::new(),
             作用域遮蔽栈: Vec::new(),
-            弧隐藏RC槽: Vec::new(),
+            弧隐藏引用计数槽: Vec::new(),
             // 协程默认开(R1-R6 绿:llvm.coro 状态机/多核 M:N/直接交接/park-wake/ARC 跨挂起/
             // 死锁检测)。门控是函数级:仅「返回 未来<T> 且含 等待」的函数变协程状态机,普通程序
             // 零影响。QI_CORO=0 退回 eager future(调试用)。
@@ -572,7 +572,7 @@ impl<'ctx> 后端<'ctx> {
         self.设当前包(programs[0].package_name.clone());
         self.变量表.clear();
         self.作用域遮蔽栈.clear();
-        self.弧隐藏RC槽.clear();
+        self.弧隐藏引用计数槽.clear();
         self.符号.进入作用域();
         self.当前返回类型 = Qi类型::空;
         self.try深度 = 0; // E4

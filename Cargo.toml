@@ -16,7 +16,11 @@ path = "src/main.rs"
 [lib]
 name = "qi_compiler"
 path = "src/lib.rs"
-crate-type = ["rlib", "staticlib", "cdylib"]
+# 只出 rlib。以前还出 staticlib + cdylib，但 libqi_compiler.a / .dylib 从来没人链
+# （qi 二进制、qi-lsp、qi-tools 都是当普通 Rust 依赖用的），白白多编两份产物，
+# 还让 `cargo test --workspace` 每次刷四条 "output filename collision" 警告
+# （cargo#6313：同名 lib target 出多种 crate-type 会撞文件名）。
+crate-type = ["rlib"]
 
 [dependencies]
 # LALRPOP parser generator

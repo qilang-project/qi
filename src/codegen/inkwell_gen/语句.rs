@@ -360,14 +360,14 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 弹出当前块的遮蔽帧：逆序移除本块声明的变量、恢复被遮蔽的外层槽。
-    /// 被移出的内层 RC 槽（字符串/结构体/数组）记入 弧隐藏RC槽 ——
+    /// 被移出的内层 RC 槽（字符串/结构体/数组）记入 弧隐藏引用计数槽 ——
     /// 它们是 entry 块 alloca + null 初始化，函数出口 / 协程 cleanup 仍需释放。
     pub(super) fn 弹作用域帧(&mut self) {
         if let Some(帧) = self.作用域遮蔽栈.pop() {
             for (名, 旧) in 帧.into_iter().rev() {
                 if let Some((内槽, 内t)) = self.变量表.remove(&名) {
                     if super::所有权::是RC类型(内t) {
-                        self.弧隐藏RC槽.push((名.clone(), 内槽, 内t));
+                        self.弧隐藏引用计数槽.push((名.clone(), 内槽, 内t));
                     }
                 }
                 if let Some(项) = 旧 {

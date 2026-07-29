@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_memory_allocation_and_deallocation() {
-        let mut manager = MemoryManager::new(1024, 0.8).unwrap();
+        let manager = MemoryManager::new(1024, 0.8).unwrap();
         manager.initialize().unwrap();
 
         let ptr = manager.allocate(1024, None).unwrap();
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_memory_limits() {
-        let mut manager = MemoryManager::new(1, 0.8).unwrap();
+        let manager = MemoryManager::new(1, 0.8).unwrap();
         manager.initialize().unwrap();
 
         let result = manager.allocate(2 * 1024 * 1024, None);
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_gc_collects_unreachable_allocations() {
-        let mut manager = MemoryManager::new(1024, 0.1).unwrap();
+        let manager = MemoryManager::new(1024, 0.1).unwrap();
         manager.initialize().unwrap();
 
         let root = manager.allocate(64, None).unwrap();
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_gc_collects_root_graph_when_root_removed() {
-        let mut manager = MemoryManager::new(1024, 0.1).unwrap();
+        let manager = MemoryManager::new(1024, 0.1).unwrap();
         manager.initialize().unwrap();
 
         let root = manager.allocate(64, None).unwrap();

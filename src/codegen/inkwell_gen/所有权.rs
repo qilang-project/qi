@@ -290,7 +290,7 @@ impl<'ctx> 后端<'ctx> {
             return Ok(());
         }
         // 弱捕获局部（unowned）不 release —— 填槽/落地时都未 retain。
-        // 弧隐藏RC槽：内层块遮蔽变量出块后被移出 变量表，但槽仍是 entry 块
+        // 弧隐藏引用计数槽：内层块遮蔽变量出块后被移出 变量表，但槽仍是 entry 块
         // alloca + null 初始化 —— 出口一并释放（未执行到声明时读 null，安全）。
         let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = self
             .变量表
@@ -298,7 +298,7 @@ impl<'ctx> 后端<'ctx> {
             .filter(|(名, (_, t))| 是RC类型(*t) && !self.弱局部.contains(*名))
             .map(|(_, (p, t))| (*p, *t))
             .chain(
-                self.弧隐藏RC槽
+                self.弧隐藏引用计数槽
                     .iter()
                     .filter(|(名, _, t)| 是RC类型(*t) && !self.弱局部.contains(名))
                     .map(|(_, p, t)| (*p, *t)),

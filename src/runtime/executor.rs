@@ -26,7 +26,7 @@ static GC_STOP: AtomicBool = AtomicBool::new(false);
 static mut GC_THREAD: Option<std::thread::JoinHandle<()>> = None;
 
 /// 启动后台 GC 收集线程（幂等）。
-fn 启动后台GC() {
+fn 启动后台回收() {
     unsafe {
         if GC_THREAD.is_some() {
             return;
@@ -83,7 +83,7 @@ fn 启动后台GC() {
 
 /// 停止后台 GC 线程并 join。必须在 RUNTIME.take() 之前调：
 /// 否则收集线程可能正持 RwLock 的读锁，take 掉 RwLock 是 UB。
-fn 停止后台GC() {
+fn 停止后台回收() {
     GC_STOP.store(true, Ordering::SeqCst);
     unsafe {
         if let Some(h) = GC_THREAD.take() {
@@ -112,7 +112,7 @@ pub extern "C" fn qi_runtime_initialize() -> c_int {
                 unsafe {
                     RUNTIME = Some(RwLock::new(runtime));
                 }
-                启动后台GC();
+                启动后台回收();
             }
             Err(e) => {
                 eprintln!("Runtime 创建失败: {}", e);
@@ -127,7 +127,7 @@ pub extern "C" fn qi_runtime_initialize() -> c_int {
 /// Shutdown the Qi runtime
 #[no_mangle]
 pub extern "C" fn qi_runtime_shutdown() -> c_int {
-    停止后台GC(); // 先停收集线程并 join，确保它不再持读锁，再安全 take 掉 RUNTIME
+    停止后台回收(); // 先停收集线程并 join，确保它不再持读锁，再安全 take 掉 RUNTIME
     unsafe {
         if let Some(runtime_mutex) = RUNTIME.take() {
             if let Ok(mut runtime) = runtime_mutex.write() {

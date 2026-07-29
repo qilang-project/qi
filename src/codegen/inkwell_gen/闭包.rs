@@ -593,7 +593,7 @@ impl<'ctx> 后端<'ctx> {
         let 保存变量 = std::mem::take(&mut self.变量表);
         let 保存弱局部 = std::mem::take(&mut self.弱局部);
         let 保存遮蔽栈 = std::mem::take(&mut self.作用域遮蔽栈);
-        let 保存隐藏槽 = std::mem::take(&mut self.弧隐藏RC槽);
+        let 保存隐藏槽 = std::mem::take(&mut self.弧隐藏引用计数槽);
         let 保存返回 = self.当前返回类型;
         let 保存try深度 = self.try深度;
         let 保存包 = self.当前包.clone();
@@ -682,7 +682,7 @@ impl<'ctx> 后端<'ctx> {
         self.变量表 = 保存变量;
         self.弱局部 = 保存弱局部;
         self.作用域遮蔽栈 = 保存遮蔽栈;
-        self.弧隐藏RC槽 = 保存隐藏槽;
+        self.弧隐藏引用计数槽 = 保存隐藏槽;
         self.当前返回类型 = 保存返回;
         self.try深度 = 保存try深度;
         self.设当前包(保存包);
