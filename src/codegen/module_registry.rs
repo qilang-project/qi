@@ -147,6 +147,7 @@ impl ModuleRegistry {
         self.register_web_runtime_module();
         self.register_tls_module();
         self.register_sync_module();
+        self.register_mailbox_module();
         self.register_reflect_module();
         self.register_plugin_module();
         self.register_tool_control_module();
@@ -1310,6 +1311,16 @@ impl ModuleRegistry {
             "qi_websocket_recv_text",
             vec!["整数".to_string()], // 句柄
             "字符串",                 // 返回接收到的消息
+        ));
+
+        // 带超时的接收：最多等 N 毫秒。返回空串时用 已连接() 区分「超时」和「断开」。
+        // 有了它，连接循环才能在等客户端的间隙腾出手来干服务端自己的活
+        // （查邮箱、跑定时器），也就是 Phoenix 的 handle_info 那条路。
+        ws_module.add_function(ModuleFunction::new(
+            "接收文本超时",
+            "qi_websocket_recv_text_timeout",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时毫秒
+            "字符串",
         ));
 
         // 发送二进制数据
@@ -5075,6 +5086,69 @@ impl ModuleRegistry {
 
         self.modules.insert("同步".to_string(), m.clone());
         self.modules.insert("标准库.同步".to_string(), m);
+    }
+
+    /// 标准库.邮箱 —— 单消费者消息队列 + 定时投递。
+    ///
+    /// 给「长期跑的循环」一个信箱：别的线程往里投，循环自己挑时候取。
+    /// WebSocket 连接循环用它接住定时器和后台任务的结果（对标 Erlang 进程邮箱）。
+    /// 句柄单调递增、永不复用 —— 定时器醒来时循环可能早退出了，
+    /// 那时投递查不到句柄直接返回 0，不会打进后来新建的邮箱。
+    fn register_mailbox_module(&mut self) {
+        let mut m = Module::new("邮箱");
+
+        m.add_function(ModuleFunction::new(
+            "创建",
+            "qi_mailbox_create",
+            vec![],
+            "整数",
+        ));
+        // 投递：1 成功；邮箱已关闭或积压满返回 0
+        m.add_function(ModuleFunction::new(
+            "投递",
+            "qi_mailbox_post",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "整数",
+        ));
+        // 延迟投递（对标 Process.send_after）：排期成功返回 1，
+        // 到期时邮箱若已关闭则安静丢弃
+        m.add_function(ModuleFunction::new(
+            "定时投递",
+            "qi_mailbox_post_after",
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "整数",
+        ));
+        // 取一条：{"m":消息名,"p":载荷}；空邮箱返回空串
+        m.add_function(ModuleFunction::new(
+            "取出",
+            "qi_mailbox_take",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+        m.add_function(ModuleFunction::new(
+            "积压数",
+            "qi_mailbox_count",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        m.add_function(ModuleFunction::new(
+            "关闭",
+            "qi_mailbox_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        self.modules.insert("邮箱".to_string(), m.clone());
+        self.modules.insert("标准库.邮箱".to_string(), m);
     }
 }
 
