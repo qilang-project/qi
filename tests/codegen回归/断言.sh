@@ -6,6 +6,9 @@
 #   ④ `x 作为 T` 类型转换表达式（06）
 #   ⑤ 跨包同名函数：写了限定名就不该报歧义（08），不写仍要报（09）
 #   ⑥ 导入不存在的标准库模块必须当场报错（10）——以前靠别名撞名能蒙混过关
+#   ⑦ 选择性导入消歧要认「导入路径 ≠ 声明包名」（11，甲/乙.qi 声明 `包 乙;`），
+#     不写选择性导入时歧义防线照旧（12）——以前只按全路径/首段对包名，末段缺失，
+#     `导入 甲.乙::{X}` 写了也白写还照样报歧义，而报错建议的正是这个写法
 #
 # 用法：qi/tests/codegen回归/断言.sh [qi二进制路径]
 #   默认用 workspace 的 target/debug/qi。
@@ -22,7 +25,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -117,6 +120,19 @@ if [ $amb_rc -ne 0 ] && echo "$amb_out" | grep -q '歧义'; then
     passed=$((passed+1))
 else
     echo "FAIL 09_跨包同名_裸调用_必须报错.qi (rc=$amb_rc 输出: $(echo "$amb_out" | head -1))"
+    failed=$((failed+1))
+fi
+
+# ── 红码：跨包同名（且导入路径 ≠ 声明包名）+ 不写选择性导入 → 歧义防线照旧 ──
+total=$((total+1))
+amb2_out=$(timeout 120 "$QI" compile "$HERE/12_跨包同名_无选择性导入_必须报错.qi" -o /tmp/codegen回归_amb2.bin 2>&1)
+amb2_rc=$?
+rm -f /tmp/codegen回归_amb2.bin
+if [ $amb2_rc -ne 0 ] && echo "$amb2_out" | grep -q '歧义'; then
+    echo "PASS 12_跨包同名_无选择性导入_必须报错.qi"
+    passed=$((passed+1))
+else
+    echo "FAIL 12_跨包同名_无选择性导入_必须报错.qi (rc=$amb2_rc 输出: $(echo "$amb2_out" | head -1))"
     failed=$((failed+1))
 fi
 

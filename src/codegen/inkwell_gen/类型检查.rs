@@ -260,6 +260,28 @@ impl 符号表 {
         self.符号导入.get(&key).map(|s| s.as_str())
     }
 
+    /// destructure 导入来源的**候选包名**（按优先级：全路径 → 首段 → … → 末段）。
+    ///
+    /// 登记的是导入语句的模块路径（如 "Web.账户"），但文件里 `包` 声明与路径
+    /// 没有固定关系：qi-web 下同时存在 `包 账户;`（账户.qi）、`包 Web;`
+    /// （账户界面.qi）、`包 Web.持久会话;`（持久会话.qi）三种写法，符号真正
+    /// 注册在**声明的包**下。曾经只试全路径（重载集 另试首段），漏了末段 ——
+    /// `导入 Web.账户::{注册}` 写了也白写，还照样报歧义、且报错建议的正是这个
+    /// 写法。这里把路径本身和它的每一段都列为候选，由各解析处逐个试
+    /// 「哪个候选真的注册了这个符号」：试不中不误命中，命中即消歧。
+    pub fn 导入来源候选(&self, name: &str) -> Vec<String> {
+        let Some(src) = self.导入来源(name) else {
+            return Vec::new();
+        };
+        let mut v = vec![src.to_string()];
+        for 段 in src.split('.') {
+            if !v.iter().any(|s| s == 段) {
+                v.push(段.to_string());
+            }
+        }
+        v
+    }
+
     /// 这个名字在整个编译单元里是否作为函数/结构体/枚举/枚举变体存在。
     /// 供导入校验用：宁可放行也不误报，只拦「根本不存在」。
     pub fn 名字存在于任意包(&self, name: &str) -> bool {
@@ -338,17 +360,10 @@ impl 符号表 {
                 return Some(v);
             }
         }
-        if let Some(src) = self.导入来源(name) {
-            if let Some(v) = self.函数按包.get(&(src.to_string(), name.to_string())) {
+        // 模块路径 ≠ 真实包名（见 导入来源候选），全路径/各段逐个试
+        for src in self.导入来源候选(name) {
+            if let Some(v) = self.函数按包.get(&(src, name.to_string())) {
                 return Some(v);
-            }
-            // 回退到首段：导入写的是 `Web.实时页面` 而该文件声明的是 `包 Web;`
-            if let Some(头) = src.split('.').next() {
-                if 头 != src {
-                    if let Some(v) = self.函数按包.get(&(头.to_string(), name.to_string())) {
-                        return Some(v);
-                    }
-                }
             }
         }
         match self.函数候选包(name).as_slice() {
@@ -487,11 +502,9 @@ impl 符号表 {
         if let Some(idx) = self.结构体键索引.get(&key) {
             return Some(*idx);
         }
-        if let Some(src) = self.导入来源(name) {
-            if let Some(idx) = self
-                .结构体键索引
-                .get(&(Some(src.to_string()), name.to_string()))
-            {
+        // 模块路径 ≠ 真实包名（见 导入来源候选），全路径/各段逐个试
+        for src in self.导入来源候选(name) {
+            if let Some(idx) = self.结构体键索引.get(&(Some(src), name.to_string())) {
                 return Some(*idx);
             }
         }
@@ -517,10 +530,16 @@ impl 符号表 {
                     .filter_map(|i| self.结构体.get(*i as usize))
                     .map(|s| s.包.clone().unwrap_or_else(|| "(无包)".to_string()))
                     .collect();
+                // 建议里写「模块路径」而不是包名：包声明名（如 账户）不一定能当
+                // 导入路径解析（会报「无法找到导入模块」），照包名抄必然踩坑
                 format!(
-                    "结构体名 {} 歧义：同名结构体定义于多个包（{}）。请用 `导入 包::{{{}}}` 指明来源",
+                    "结构体名 {} 歧义：同名结构体定义于多个包（{}）。\
+                     请把 `导入 <模块路径>;` 改成 `导入 <模块路径>::{{{}}}` 指明来源\
+                     （模块路径 = 导入该依赖时写的路径，如 `导入 Web.账户::{{{}}}`；\
+                     直接拿包名当路径可能解析不到）",
                     name,
                     包们.join("、"),
+                    name,
                     name
                 )
             }
@@ -557,11 +576,9 @@ impl 符号表 {
         if let Some(idx) = self.枚举键索引.get(&key) {
             return Some(*idx);
         }
-        if let Some(src) = self.导入来源(name) {
-            if let Some(idx) = self
-                .枚举键索引
-                .get(&(Some(src.to_string()), name.to_string()))
-            {
+        // 模块路径 ≠ 真实包名（见 导入来源候选），全路径/各段逐个试
+        for src in self.导入来源候选(name) {
+            if let Some(idx) = self.枚举键索引.get(&(Some(src), name.to_string())) {
                 return Some(*idx);
             }
         }

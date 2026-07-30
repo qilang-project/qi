@@ -85,8 +85,9 @@ impl<'ctx> 后端<'ctx> {
         if self.module.get_function(&当前).is_some() {
             return 当前;
         }
-        if let Some(src) = self.符号.导入来源(name) {
-            let sym = super::包内符号名(Some(src), name, 元数);
+        // 模块路径 ≠ 真实包名（见 符号表::导入来源候选），全路径/各段逐个试
+        for src in self.符号.导入来源候选(name) {
+            let sym = super::包内符号名(Some(&src), name, 元数);
             if self.module.get_function(&sym).is_some() {
                 return sym;
             }

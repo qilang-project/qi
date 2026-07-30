@@ -2758,9 +2758,12 @@ impl<'ctx> 后端<'ctx> {
         if let Some(f) = self.module.get_function(&当前) {
             return Some((f, sig));
         }
-        // destructure 导入指明的来源包
-        if let Some(src) = self.符号.导入来源(name) {
-            let sym = super::包内符号名(Some(src), name, 元数);
+        // destructure 导入指明的来源包。候选序列 = 导入模块路径的全路径/各段
+        // （见 符号表::导入来源候选）—— 模块路径与文件 `包` 声明没有固定关系
+        // （包 账户; / 包 Web; / 包 Web.持久会话; 三种写法并存），只有真的注册了
+        // 符号的那个候选会命中，试不中不会误命中。
+        for src in self.符号.导入来源候选(name) {
+            let sym = super::包内符号名(Some(&src), name, 元数);
             if let Some(f) = self.module.get_function(&sym) {
                 return Some((f, sig));
             }
@@ -3035,10 +3038,16 @@ impl<'ctx> 后端<'ctx> {
                     候选 = self.符号.函数候选包(&call.callee);
                 }
                 if 候选.len() > 1 {
+                    // 建议里写「模块路径」而不是包名：包声明名（如 账户）不一定能当
+                    // 导入路径解析（会报「无法找到导入模块」），照包名抄必然踩坑
                     return Err(format!(
-                        "函数名 {} 歧义：定义于多个包（{}）。请用 `导入 包::{{{}}}` 指明来源",
+                        "函数名 {} 歧义：定义于多个包（{}）。\
+                         请把 `导入 <模块路径>;` 改成 `导入 <模块路径>::{{{}}}` 指明来源\
+                         （模块路径 = 导入该依赖时写的路径，如 `导入 Web.账户::{{{}}}`；\
+                         直接拿包名当路径可能解析不到）",
                         call.callee,
                         候选.join("、"),
+                        call.callee,
                         call.callee
                     ));
                 }
