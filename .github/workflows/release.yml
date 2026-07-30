@@ -168,3 +168,38 @@ jobs:
           repository: qilang-project/qi-installer
           event-type: qi-released
           client-payload: '{"version": "${{ github.ref_name }}"}'
+
+  # 往 microsoft/winget-pkgs 提这一版的更新 PR。
+  #
+  # 首次上架(New-Package)是手工提的 PR，要 moderator 审，卡了 17 天；
+  # 之后的**更新** PR 走自动验证流水线，一般几十分钟自动合，所以值得自动化 ——
+  # 手工提意味着总会忘(winget 上一度停在 2026.07.10-2，而 release 已到 07.29-2)。
+  #
+  # 前提:仓库 secret `WINGET_TOKEN` = classic PAT，只需勾 `public_repo`。
+  # **fine-grained token 不行** —— 这个 action 要往 fork 推分支再开 PR，
+  # 需要 classic 的 repo 级权限。fork(liliang-cn/winget-pkgs)要先存在。
+  winget:
+    name: Submit winget update
+    needs: release
+    runs-on: ubuntu-latest
+    # 提到 job 级:`secrets` 不能出现在 job/step 的 if 里，而**步骤自己的** env
+    # 也读不到自己那层的 env —— 只有 workflow/job 级的 env 在 if 里可见。
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      # 没配 token 就静静跳过:winget 上架失败不该让一次发布看起来是红的
+      - name: Publish to winget-pkgs
+        if: ${{ env.WINGET_TOKEN != '' }}
+        continue-on-error: true
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: qilang.qi
+          # 默认只认 exe/msi/msix —— 我们发的是 zip 便携包(内嵌 bin\qi.exe)，
+          # 必须显式给 regex，否则 action 找不到安装包直接失败。
+          # NestedInstallerType/PortableCommandAlias 由上一版清单继承，不用重写。
+          installers-regex: 'windows-x64\.zip$'
+          # 默认是 github.repository_owner，也就是 qilang-project —— 但
+          # winget-pkgs 的 fork 在个人账号 liliang-cn 名下(首次上架就是从那儿提的)，
+          # 不写死会去找不存在的 qilang-project/winget-pkgs。
+          fork-user: liliang-cn
+          token: ${{ secrets.WINGET_TOKEN }}

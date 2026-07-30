@@ -1,0 +1,35 @@
+# 手动往 winget 补提某一版 —— 正常发版不用管这个。
+#
+# 发版时 release.yml 的 `winget` job 已经自动提了。这个文件是逃生口，用于：
+#   · 补提历史版本(自动化上线前发的版本 —— winget 一度停在 2026.07.10-2
+#     而 release 已到 2026.07.29-2)
+#   · 自动提失败了想重来一次，不必为此重跑一遍三平台编译
+#
+# 为什么不能靠 `on: release: published` 来做这件事：release.yml 里的 release 是
+# 用 GITHUB_TOKEN 建的，**GITHUB_TOKEN 建的 release 不会再触发 workflow**，
+# 所以只能在 release.yml 里用 needs 串起来 + 这里留个手动入口。
+name: Submit winget update (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要提到 winget 的 release tag（如 2026.07.29-2）'
+        required: true
+        type: string
+
+jobs:
+  winget:
+    name: Submit ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      # 配置同 release.yml 的 winget job，改一处记得改两处
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: qilang.qi
+          release-tag: ${{ inputs.tag }}
+          # 我们发的是 zip 便携包，不是 exe/msi，默认 regex 匹配不到
+          installers-regex: 'windows-x64\.zip$'
+          # fork 在个人账号下，不是 qilang-project
+          fork-user: liliang-cn
+          token: ${{ secrets.WINGET_TOKEN }}
