@@ -203,3 +203,66 @@ jobs:
           # 不写死会去找不存在的 qilang-project/winget-pkgs。
           fork-user: liliang-cn
           token: ${{ secrets.WINGET_TOKEN }}
+
+  # 刷 Homebrew tap 的 formula(qilang-project/homebrew-qi)。
+  #
+  # 跟 winget 同一个毛病:手工刷就是会忘 —— tap 一度停在 2026.07.17-2。
+  # 逻辑照抄 qi-installer/scripts/更新安装清单.sh 的 formula 部分(那个脚本
+  # 还管着 qi-installer 仓里的本地副本，两处都留着，改正则记得同步)。
+  #
+  # 前提:secret `TAP_TOKEN` 需要对 qilang-project/homebrew-qi 有写权限。
+  brew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+    steps:
+      - name: Bump formula
+        if: ${{ env.TAP_TOKEN != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo qilang-project/qi -D dl \
+            --pattern "*macos-arm64.tar.gz" --pattern "*linux-x64.tar.gz"
+          MAC=$(sha256sum "dl/qi-$TAG-macos-arm64.tar.gz" | cut -d' ' -f1)
+          LINUX=$(sha256sum "dl/qi-$TAG-linux-x64.tar.gz" | cut -d' ' -f1)
+
+          git clone --depth 1 \
+            "https://x-access-token:$GH_TOKEN@github.com/qilang-project/homebrew-qi" tap
+
+          python3 - tap/Formula/qi.rb "$TAG" "$MAC" "$LINUX" <<'PY'
+          import re, sys
+          p, tag, mac, linux = sys.argv[1:5]
+          s = open(p, encoding="utf-8").read()
+          s = re.sub(r'version "[^"]+"', f'version "{tag}"', s, count=1)
+          # 版本号自己含连字符(2026.07.29-2)，所以不能用 [^-]+；
+          # 用非贪婪 [^"]+? 匹配到平台后缀之前
+          s = re.sub(r'download/[^/]+/qi-[^"]+?-macos-arm64\.tar\.gz',
+                     f'download/{tag}/qi-{tag}-macos-arm64.tar.gz', s)
+          s = re.sub(r'download/[^/]+/qi-[^"]+?-linux-x64\.tar\.gz',
+                     f'download/{tag}/qi-{tag}-linux-x64.tar.gz', s)
+          # 按平台就位替换 sha256:macOS 那行紧跟 macos-arm64 的 url，linux 同理
+          s = re.sub(r'(macos-arm64\.tar\.gz"\n\s*sha256 ")[0-9a-f]+', r'\g<1>'+mac, s)
+          s = re.sub(r'(linux-x64\.tar\.gz"\n\s*sha256 ")[0-9a-f]+', r'\g<1>'+linux, s)
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+
+          # 校验:三处都换到位了才推。正则悄悄没匹配上(比如以后 formula 换了写法)
+          # 会推出一个「版本号是新的、sha256 还是旧的」的 formula —— 用户 brew
+          # install 时才在校验和上炸，而且看不出原因。
+          grep -qF "$MAC" tap/Formula/qi.rb
+          grep -qF "$LINUX" tap/Formula/qi.rb
+          grep -qF "version \"$TAG\"" tap/Formula/qi.rb
+          grep -qF "download/$TAG/qi-$TAG-macos-arm64.tar.gz" tap/Formula/qi.rb
+          grep -qF "download/$TAG/qi-$TAG-linux-x64.tar.gz" tap/Formula/qi.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then echo "formula 已是 $TAG，无需改动"; exit 0; fi
+          git commit -qam "qi $TAG"
+          git push
