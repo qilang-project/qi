@@ -20,6 +20,20 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 QI="${1:-$ROOT/target/debug/qi}"
 export QI_PACKAGES_PATH="${QI_PACKAGES_PATH:-$ROOT/qi_packages}"
 
+# 限时执行。**macOS 没有 GNU timeout** —— 那是 coreutils 带的，
+# brew install coreutils 之后才有（还可能只叫 gtimeout）。CI 的 macos runner
+# 上没有，于是每条用例都 rc=127「command not found」，整套 0/11 全红，
+# 而报错长得像编译器坏了。我本地装了 coreutils 所以一直看不出来。
+# 没有就退化成不限时跑：宁可挂住等 job 超时，也别假装是用例失败。
+# 注意 macOS bash 3.2：函数名一律 ASCII。
+if command -v timeout >/dev/null 2>&1; then
+    run_limited() { timeout 120 "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_limited() { gtimeout 120 "$@"; }
+else
+    run_limited() { "$@"; }
+fi
+
 total=0
 passed=0
 failed=0
@@ -29,7 +43,7 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
-    actual=$(timeout 120 "$QI" run "$f" 2>/dev/null)
+    actual=$(run_limited "$QI" run "$f" 2>/dev/null)
     rc=$?
     if [ $rc -ne 0 ]; then
         echo "FAIL $name (运行失败 rc=$rc)"
@@ -45,7 +59,7 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi; do
     fi
     # 02：ARC 遮蔽变体 —— QI_RC_REPORT=1 下活跃对象/字符串/闭包必须全 0
     if [ "$name" = "02_遮蔽_字符串ARC.qi" ]; then
-        rc_line=$(QI_RC_REPORT=1 timeout 120 "$QI" run "$f" 2>&1 | grep '\[qi-rc\]')
+        rc_line=$(QI_RC_REPORT=1 run_limited "$QI" run "$f" 2>&1 | grep '\[qi-rc\]')
         if ! echo "$rc_line" | grep -q '活跃对象=0 活跃字符串=0 活跃闭包=0'; then
             echo "FAIL $name (RC 泄漏: $rc_line)"
             failed=$((failed+1))
@@ -63,7 +77,7 @@ det_ok=1
 first_md5=""
 for i in 1 2 3 4 5; do
     out="/tmp/codegen回归_det_$i.bin"
-    if ! timeout 120 "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
+    if ! run_limited "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
         det_ok=0; break
     fi
     m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
@@ -82,7 +96,7 @@ fi
 
 # ── 红码：限定到错模块必须报确定错误 ──
 total=$((total+1))
-err_out=$(timeout 120 "$QI" compile "$HERE/07_限定错模块_必须报错.qi" -o /tmp/codegen回归_err.bin 2>&1)
+err_out=$(run_limited "$QI" compile "$HERE/07_限定错模块_必须报错.qi" -o /tmp/codegen回归_err.bin 2>&1)
 err_rc=$?
 rm -f /tmp/codegen回归_err.bin
 if [ $err_rc -ne 0 ] && echo "$err_out" | grep -q '没有函数'; then
@@ -97,7 +111,7 @@ echo ""
 
 # ── 红码：导入一个不存在的标准库模块 ──
 total=$((total+1))
-mod_out=$(timeout 120 "$QI" compile "$HERE/10_导入不存在的标准库模块_必须报错.qi" -o /tmp/codegen回归_mod.bin 2>&1)
+mod_out=$(run_limited "$QI" compile "$HERE/10_导入不存在的标准库模块_必须报错.qi" -o /tmp/codegen回归_mod.bin 2>&1)
 mod_rc=$?
 rm -f /tmp/codegen回归_mod.bin
 if [ $mod_rc -ne 0 ] && echo "$mod_out" | grep -q '标准库里没有模块'; then
@@ -112,7 +126,7 @@ echo ""
 
 # ── 红码：跨包同名 + 不写限定名 → 歧义检查必须照旧生效 ──
 total=$((total+1))
-amb_out=$(timeout 120 "$QI" compile "$HERE/09_跨包同名_裸调用_必须报错.qi" -o /tmp/codegen回归_amb.bin 2>&1)
+amb_out=$(run_limited "$QI" compile "$HERE/09_跨包同名_裸调用_必须报错.qi" -o /tmp/codegen回归_amb.bin 2>&1)
 amb_rc=$?
 rm -f /tmp/codegen回归_amb.bin
 if [ $amb_rc -ne 0 ] && echo "$amb_out" | grep -q '歧义'; then
@@ -125,7 +139,7 @@ fi
 
 # ── 红码：跨包同名（且导入路径 ≠ 声明包名）+ 不写选择性导入 → 歧义防线照旧 ──
 total=$((total+1))
-amb2_out=$(timeout 120 "$QI" compile "$HERE/12_跨包同名_无选择性导入_必须报错.qi" -o /tmp/codegen回归_amb2.bin 2>&1)
+amb2_out=$(run_limited "$QI" compile "$HERE/12_跨包同名_无选择性导入_必须报错.qi" -o /tmp/codegen回归_amb2.bin 2>&1)
 amb2_rc=$?
 rm -f /tmp/codegen回归_amb2.bin
 if [ $amb2_rc -ne 0 ] && echo "$amb2_out" | grep -q '歧义'; then

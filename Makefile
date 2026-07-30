@@ -50,8 +50,14 @@ runtime:
 $(RUNTIME_LIB):
 	$(MAKE) runtime
 
+# --test-threads=1 不是图省事:标准库 FFI 有几个测试会改进程环境变量
+# (os_ffi/env_ffi/system 的 set_var)，而**任何**并发读 env 的测试都可能撞上 ——
+# macOS 上 setenv/getenv 并发就是直接 SIGSEGV，Rust 把 set_var 标成 unsafe
+# 正是这个原因。只给写方上锁没用:读的地方遍布各处，找不全。
+# 408 个测试串行 0.3 秒，代价可以忽略，换掉的是一整类偶发段错误
+# (本地 make ci 撞到过一次，重跑三次又都过 —— 这种 flake 最费时间)。
 test:
-	cargo test --release --lib
+	cargo test --release --lib -- --test-threads=1
 
 regress: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/codegen回归/断言.sh $(QI)
