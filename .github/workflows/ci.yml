@@ -127,13 +127,17 @@ jobs:
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
       - run: cargo clippy --lib  # 报告不阻塞：既有 ~600 lint 债务(多为 FFI 裸指针等故意模式)，待逐步清理后再收紧回 -D warnings
 
+  # 格式检查**只在这一处**跑。Build + Test 那边用浮动 @stable，
+  # 曾经也跑一遍(make check 里)，结果 stable 一升级就跟这儿的钉死版本
+  # 打对台:新 rustfmt 要 `{元素类型, Qi类型}`，1.92.0 要 `{Qi类型, 元素类型}`
+  # —— 中文标识符在 import 里的排序两版不同。现在 make check 只管 clippy，
+  # 格式归这个 job（make fmt-check 是本地对应入口）。
   fmt:
     name: Format Check
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      # 固定到与本地一致的工具链版本，避免不同 stable rustfmt 版本格式化差异导致 --check 失败
+      # 钉死版本，且要与开发机一致。升这个版本号时先本地 cargo fmt 一遍再推。
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt

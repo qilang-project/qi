@@ -60,16 +60,34 @@ regress: build $(RUNTIME_LIB)
 examples: build $(RUNTIME_LIB)
 	QI_BIN=$(QI) QI_RUNTIME_LIB=$(RUNTIME_LIB) bash scripts/run_examples.sh
 
-# 门禁用的 lint：格式必须齐，clippy 只挡真 error。
+# 门禁用的 lint。clippy 只挡真 error ——
 # 仓库里还有一批历史 warning，现在就上 -D warnings 会让 CI 当场全红；
 # 想清理时跑 make lint-strict 看完整清单。
+#
+# **格式检查故意不在这儿**，见下面 fmt-check。
 check:
-	cargo fmt --all -- --check
 	cargo clippy --release
+
+# 格式检查。**必须用钉死的 rustfmt 版本跑**（CI 里是
+# .github/workflows/ci.yml 的 Format Check job，钉在 1.92.0）。
+#
+# 为什么单独拎出来：rustfmt 换版本会改主意，尤其是**中文标识符在 import
+# 里的排序** —— 新版 stable 要 `{元素类型, Qi类型}`，1.92.0 要
+# `{Qi类型, 元素类型}`。谁也不算错，但两边一起跑就必有一边红。
+#
+# 这个坑踩过一次：Format Check job 早就钉到 1.92.0 了，可 make check 里
+# 还留着一份 fmt --check，而 CI 的 Build + Test 用的是浮动 @stable ——
+# 于是那个钉子被绕开，stable 一升级，2026.07.29-2 那次发版的 CI 当场变红
+# (Format Check 绿、Build + Test 红，看着莫名其妙)。
+fmt-check:
+	cargo fmt --all -- --check
 
 lint-strict:
 	cargo clippy --release -- -D warnings
 
+# CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
+# **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
+# 本地提交前想全查一遍：make fmt-check ci
 ci: check test regress examples
 
 install: build $(RUNTIME_LIB)
