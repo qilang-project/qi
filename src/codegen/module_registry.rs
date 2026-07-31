@@ -1272,6 +1272,20 @@ impl ModuleRegistry {
             "整数",                     // 返回状态码
         ));
 
+        // 下载二进制到文件。
+        //
+        // 上面那些（获取/执行请求…）返回的都是 `字符串`，二进制过一遍 UTF-8
+        // 必坏 —— wav/mp3/图片/模型权重一个都下不了。这个函数把响应体按
+        // **字节**落盘，中间不做编码转换。
+        //
+        // 返回写入的字节数；失败返回负数（见 runtime 侧 qi_http_download_file）。
+        http_module.add_function(ModuleFunction::new(
+            "下载文件",
+            "qi_http_download_file",
+            vec!["字符串".to_string(), "字符串".to_string()], // 网址, 落盘路径
+            "整数",                                           // 返回写入字节数；负数为错误
+        ));
+
         // HTTP 服务器功能
         http_module.add_function(ModuleFunction::new(
             "创建服务器",
