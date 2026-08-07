@@ -142,9 +142,10 @@ impl QiCompiler {
             programs.push(p.clone());
         } else {
             let content = std::fs::read_to_string(source_file).map_err(CompilerError::Io)?;
-            let p = crate::parser::Parser::new()
+            let mut p = crate::parser::Parser::new()
                 .parse_source(&content)
                 .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
+            p.source_path = Some(source_file.display().to_string());
             programs.push(p);
         }
         let mut 其余: Vec<&PathBuf> = compiled_modules
@@ -164,6 +165,28 @@ impl QiCompiler {
         // 面见 qi/src/semantic/单元检查.rs 模块文档；红码合同见
         // qi/tests/类型检查红码/。无 QI_TYPECHECK 环境变量时零行为变化。
         // 取值语义：未设/off=不跑；strict=报错致命（中止编译）；其他值（如 1）=只打印。
+        // 【硬错·永远拦】跟 QI_TYPECHECK 档位无关的那一类：**证明是错**的写法。
+        //
+        // 目前只有「已知结构体喂给标量形参」——`取查询(上下文值, "k")` 这种。
+        // 它零误报（只认本单元声明过的结构体名），而放过去的代价是编译通过、
+        // 运行时静默返回空值：真事是「保存后『已保存』永远不出现，cookie 却存对了」，
+        // 没有任何报错，查了很久。这种错不该只给个警告让人带到线上。
+        //
+        // 别的检查仍是度量性质（默认不跑）—— 仓库里有一批历史写法过不了。
+        if 跑类型检查 && std::env::var("QI_TYPECHECK").as_deref() != Ok("off") {
+            let 硬 = crate::semantic::单元检查::硬错检查(&programs);
+            if !硬.is_empty() {
+                for e in &硬 {
+                    let s: String = format!("{:?}", e).chars().take(2000).collect();
+                    eprintln!("[类型检查] {}", s);
+                }
+                return Err(CompilerError::Codegen(format!(
+                    "类型检查失败：{} 处把结构体传给了标量形参（这一类一定是错的，\n                       不受 QI_TYPECHECK 控制；确实要绕过请先改签名）",
+                    硬.len()
+                )));
+            }
+        }
+
         match std::env::var("QI_TYPECHECK") {
             Ok(v) if v != "off" && 跑类型检查 => {
                 let 错误 = crate::semantic::分析编译单元(&programs);
@@ -856,6 +879,7 @@ impl QiCompiler {
                     imports: vec![],
                     statements: vec![],
                     source_span: Default::default(),
+                    source_path: None,
                 })
             }));
         }
@@ -877,9 +901,11 @@ impl QiCompiler {
             .map_err(|e| CompilerError::Lexical(format!("{}", e)))?;
 
         let parser = crate::parser::Parser::new();
-        let program = parser.parse(tokens).map_err(|e| {
+        let mut program = parser.parse(tokens).map_err(|e| {
             CompilerError::Parse(format!("{}\n  （文件：{}）", e, file_path.display()))
         })?;
+        // 解析器只见到字符串，文件名在这儿补 —— 私有函数按文件消歧要用它
+        program.source_path = Some(file_path.display().to_string());
 
         // Convert program to AST node and extract imports
         let ast = crate::parser::ast::AstNode::程序(program.clone());

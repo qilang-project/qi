@@ -195,13 +195,36 @@ impl<'ctx> 后端<'ctx> {
         // 本定义是否带默认参数 / 变参 —— 这两者会让「按元数解析」产生歧义，故重载集内禁用。
         let 本def有默认 = f.parameters.iter().any(|p| p.default_value.is_some());
         let 本def变参 = f.parameters.last().map(|p| p.is_variadic).unwrap_or(false);
+        // 私有函数按文件消歧：同名同元数但**在不同文件**、且都不是 公开 的，
+        // 那是两个各自的局部助手，谁也没打算给别人用 —— 不该逼人改名。
+        //
+        // 这里先判一下要不要走文件作用域符号，下面 mangle 时用。
+        let 本def私有 = !matches!(f.visibility, crate::parser::ast::Visibility::公开);
+        let mut 用文件符号 = false;
+        if let (Some(pkg), true) = (self.当前包.clone(), 本def私有) {
+            let 键 = (pkg.clone(), f.name.clone(), 元数);
+            match self.私有占位.get(&键) {
+                // 这个 (包,名,元数) 已经被**别的文件**的私有函数占了 → 我用文件符号
+                Some(占者) if Some(占者.as_str()) != self.当前文件.as_deref() => {
+                    用文件符号 = true;
+                }
+                Some(_) => {}
+                None => {
+                    // 头一个占位的保持原样符号 —— 同包别的文件对它的调用
+                    // （Qi 允许私有跨文件调用）一个字都不用改，纯增量。
+                    self.私有占位
+                        .insert(键, self.当前文件.clone().unwrap_or_default());
+                }
+            }
+        }
+
         if let Some(pkg) = self.当前包.clone() {
             if let Some(现有) = self.符号.函数按包.get(&(pkg.clone(), f.name.clone())) {
-                if !现有.is_empty() {
+                if !现有.is_empty() && !用文件符号 {
                     // 1) 同元数 —— 无法区分
                     if 现有.iter().any(|s| s.参数.len() == 元数) {
                         return Err(format!(
-                            "函数「{name}」在包「{pkg}」里有两个形参个数都是 {n} 的定义，无法按元数区分。请改名或调整参数个数。",
+                            "函数「{name}」在包「{pkg}」里有两个形参个数都是 {n} 的定义，无法按元数区分。\n                               （都是 公开 时必须改名；都是私有且在不同文件时本可自动按文件区分，\n                               说明这两个定义在同一个文件里，或者其中至少一个是 公开）",
                             name = f.name, pkg = pkg, n = 元数
                         ));
                     }
@@ -229,7 +252,11 @@ impl<'ctx> 后端<'ctx> {
 
         // 包内唯一符号：把元数纳入 mangle —— 不同元数的重载得到互异 LLVM 符号，
         // 同元数已在上面报错。跨包同名（主程序.注册 vs Harness.注册）也天然分开。
-        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name, 元数);
+        let mangled = if 用文件符号 {
+            self.私有符号名(&f.name, 元数)
+        } else {
+            super::包内符号名(self.当前包.as_deref(), &f.name, 元数)
+        };
         let func = self.module.add_function(&mangled, fn_type, None);
 
         let sig = 函数签名 {
@@ -237,7 +264,22 @@ impl<'ctx> 后端<'ctx> {
             返回: 返回类型,
         };
         // 包内签名（重载集）+ 扁平签名（fallback / 未标包时）
-        if let Some(pkg) = self.当前包.clone() {
+        //
+        // 走文件符号的那个**不进包级重载集** —— 它是文件私有的，进去就又跟
+        // 头一个占位者撞元数了。它的签名单独记在 私有签名 里，调用点先查那儿。
+        if 用文件符号 {
+            if let Some(pkg) = self.当前包.clone() {
+                self.符号.私有签名.insert(
+                    (
+                        pkg,
+                        self.当前文件.clone().unwrap_or_default(),
+                        f.name.clone(),
+                        元数,
+                    ),
+                    sig.clone(),
+                );
+            }
+        } else if let Some(pkg) = self.当前包.clone() {
             self.符号
                 .函数按包
                 .entry((pkg, f.name.clone()))
@@ -266,11 +308,28 @@ impl<'ctx> 后端<'ctx> {
         Ok(func)
     }
 
+    /// 这个 (当前包, 当前文件, 名, 元数) 是不是走文件作用域符号。
+    /// 登记那一趟往 私有签名 里塞过就是。
+    pub(super) fn 走文件符号(&self, 名: &str, 元数: usize) -> bool {
+        let (Some(pkg), Some(文件)) = (self.当前包.clone(), self.当前文件.clone()) else {
+            return false;
+        };
+        self.符号
+            .私有签名
+            .contains_key(&(pkg, 文件, 名.to_string(), 元数))
+    }
+
     /// 第二趟：生成一个用户函数的函数体。
     pub(super) fn 生成函数体(&mut self, f: &FunctionDeclaration) -> Result<(), String> {
         // mangle / 签名都按本定义的形参个数取 —— 精确对应本 f（重载各元数独立符号）。
         let 元数 = f.parameters.len();
-        let mangled = super::包内符号名(self.当前包.as_deref(), &f.name, 元数);
+        // 登记那一趟给这个 (包,文件,名,元数) 记了私有签名 → 说明它走的是文件符号，
+        // 函数体也必须挂到同一个符号上，否则生成的是一个没人调用的孤儿函数。
+        let mangled = if self.走文件符号(&f.name, 元数) {
+            self.私有符号名(&f.name, 元数)
+        } else {
+            super::包内符号名(self.当前包.as_deref(), &f.name, 元数)
+        };
         // QI_CORO：协程函数（返回 未来<T> 且含 等待）走 coro 变换（llvm.coro.*）。
         if self.协程函数集.contains(&mangled) {
             return self.生成协程函数体(f);

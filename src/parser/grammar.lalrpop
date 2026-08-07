@@ -5,6 +5,7 @@ grammar;
 
 pub Program: Program = {
     <package:PackageDeclaration?> <imports:ImportStatement*> <statements:Statement*> => Program {
+        source_path: None,
         package_name: package,
         imports,
         statements,

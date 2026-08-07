@@ -430,8 +430,27 @@ impl 单元检查器 {
             });
             return;
         }
-        // 与用户函数同一把尺子：只对「有把握来源」的实参比对家族，句柄惯用法沉默
+        // 与用户函数同一把尺子：只对「有把握来源」的实参比对家族，句柄惯用法沉默。
+        //
+        // **例外：已知结构体喂给标量形参**（取查询(上下文值, "k") 这种）——
+        // 那一类跟来源有没有把握无关，一个结构体值不可能是字符串/数字/数组。
+        // 家族矩阵把结构体归入「沉默」放过了它，而它编译得过、运行时静默返回空。
         for (i, at) in 实参型.iter().enumerate() {
+            if let (Some(pt), Some(a)) = (注册表形参保守(&形参[i]), at) {
+                if self.结构体喂给标量(&pt, a) {
+                    self.报(TypeError::TypeMismatch {
+                        expected: format!(
+                            "标准库函数 '{}' 第 {} 个参数期望 {}",
+                            名,
+                            i + 1,
+                            类型显示(&pt)
+                        ),
+                        actual: format!("实参却是结构体 {}", 类型显示(a)),
+                        span,
+                    });
+                    continue;
+                }
+            }
             if !实参节点
                 .get(i)
                 .map(|n| self.是字面量来源(n))
@@ -489,7 +508,33 @@ impl 单元检查器 {
                 sig.类型参数.iter().cloned().collect(),
             );
             for (i, at) in 实参型.iter().enumerate().take(sig.参数.len()) {
-                // 只对字面量来源的实参做家族比对（句柄惯用法沉默）
+                let 形参型 = sig.参数[i]
+                    .type_annotation
+                    .as_ref()
+                    .and_then(|t| self.解析类型(t));
+
+                // **已知结构体喂给标量形参** —— 跟来源有没有把握无关，
+                // 一个结构体值不可能是字符串/数字/数组。真事：
+                //   取查询(上下文值, "saved")   // 形参 字符串，实参 上下文
+                // 编译得过，运行时恒返回空串，页面表现是「已保存」永远不出现，
+                // 而 cookie 其实存对了 —— 没有任何报错。
+                if let (Some(pt), Some(a)) = (形参型.clone(), at.clone()) {
+                    if self.结构体喂给标量(&pt, &a) {
+                        self.报(TypeError::TypeMismatch {
+                            expected: format!(
+                                "函数 '{}' 第 {} 个参数期望 {}",
+                                名,
+                                i + 1,
+                                类型显示(&pt)
+                            ),
+                            actual: format!("实参却是结构体 {}", 类型显示(&a)),
+                            span,
+                        });
+                        continue;
+                    }
+                }
+
+                // 其余：只对字面量来源的实参做家族比对（句柄惯用法沉默）
                 if !实参节点
                     .get(i)
                     .map(|n| self.是字面量来源(n))
@@ -497,10 +542,6 @@ impl 单元检查器 {
                 {
                     continue;
                 }
-                let 形参型 = sig.参数[i]
-                    .type_annotation
-                    .as_ref()
-                    .and_then(|t| self.解析类型(t));
                 if let (Some(pt), Some(a)) = (形参型, at) {
                     if !家族相容(&pt, a) {
                         self.报(TypeError::TypeMismatch {

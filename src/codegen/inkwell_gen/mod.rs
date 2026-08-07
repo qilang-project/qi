@@ -116,6 +116,16 @@ pub(crate) fn mangle_function_name(name: &str) -> String {
 /// - 包名：避免跨包同名冲突（主程序.注册 vs Harness.注册）；
 /// - 元数（形参个数）：支持同名不同元数的**重载**得到互异符号（同元数在登记处已报错）。
 /// `入口` 不修饰（→ main，单独处理）。无包名时退回 `名字#元数`。
+/// 路径取文件名（不含扩展名）。符号里带全路径会让同一份代码在不同机器上
+/// 产出不同的 LLVM 符号 —— 04_模块限定分发确定性 那条回归就是防这个的。
+fn 文件短名(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn 包内符号名(pkg: Option<&str>, name: &str, 元数: usize) -> String {
     match pkg {
         Some(p) => mangle_function_name(&format!("{}${}#{}", p, name, 元数)),
@@ -163,6 +173,12 @@ struct 后端<'ctx> {
     在入口中: bool,
     /// 当前正在处理的模块包名（跨包同名函数消歧用；与 符号.当前包 同步）。
     当前包: Option<String>,
+    /// 正在处理哪个文件（登记签名 / 生成函数体 / 生成调用点 三趟都要）。
+    /// 私有函数按文件消歧要它 —— 见 包内符号名 和 声明.rs 的登记逻辑。
+    当前文件: Option<String>,
+    /// (包, 名, 元数) → 已经被某个文件占了的私有函数。第二个文件再定义同名
+    /// 同元数的私有函数时，据此判定「该按文件分符号」而不是报错。
+    私有占位: std::collections::HashMap<(String, String, usize), String>,
     /// 调用点写了限定名（界面.家庭布局 / 别名.函数）时，指明去哪个包解析。
     ///
     /// 一次性：生成函数调用 一进来就 take() 掉。**不能**改 当前包 来代替 ——
@@ -245,6 +261,8 @@ impl<'ctx> 后端<'ctx> {
             已实例化泛型函数: std::collections::HashSet::new(),
             在入口中: false,
             当前包: None,
+            当前文件: None,
+            私有占位: std::collections::HashMap::new(),
             限定包: None,
             字符串字面量缓存: HashMap::new(),
             // ARC 默认开(字符串+结构体+数组+闭包 RC 回收);QI_ARC=0 退回纯泄漏模式(调试用)
@@ -284,6 +302,40 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 设当前包(&mut self, pkg: Option<String>) {
         self.符号.当前包 = pkg.clone();
         self.当前包 = pkg;
+    }
+
+    /// 设置当前文件。私有函数按文件消歧要它。
+    fn 设当前文件(&mut self, 文件: Option<String>) {
+        self.当前文件 = 文件;
+    }
+
+    /// **每一趟 per-program 遍历都用这个**，不要单独调 设当前包。
+    ///
+    /// 包和文件必须一起设：有十几趟遍历，逐个记得设两样必然漏一趟，
+    /// 而漏了不报错 —— 只是那一趟里私有符号名算错，症状是「函数找不到」
+    /// 或者更糟：链到了另一个文件的同名函数。
+    pub(super) fn 设当前程序(&mut self, p: &crate::parser::ast::Program) {
+        self.设当前包(p.package_name.clone());
+        self.设当前文件(p.source_path.clone());
+    }
+
+    /// 文件作用域的私有符号名。
+    ///
+    /// 一个包铺在十几个文件里时，两个文件各写一个 `函数 一参(x)` 是完全正常的 ——
+    /// 它们是各自的局部助手，谁也没打算给别人用。但 包内符号名 只含
+    /// 包+名+元数，两个文件就撞在同一个 LLVM 符号上，编译报
+    /// 「无法按元数区分」，而错误信息还不说另一个在哪个文件。
+    ///
+    /// 这里给**第二个及以后**占用同一 (包,名,元数) 的私有函数加文件前缀。
+    /// 第一个保持原样 —— 这样同包别的文件对它的调用（Qi 允许私有跨文件调用）
+    /// 一个字都不用改，纯增量。
+    pub(super) fn 私有符号名(&self, 名: &str, 元数: usize) -> String {
+        let 文件 = self.当前文件.as_deref().unwrap_or("");
+        包内符号名(
+            self.当前包.as_deref(),
+            &format!("{}@{}", 文件短名(文件), 名),
+            元数,
+        )
     }
 
     /// 在**当前函数的 entry 块**建局部 alloca（LLVM 标准做法）。
@@ -569,7 +621,7 @@ impl<'ctx> 后端<'ctx> {
         let bb = self.ctx.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(bb);
 
-        self.设当前包(programs[0].package_name.clone());
+        self.设当前程序(&programs[0]);
         self.变量表.clear();
         self.作用域遮蔽栈.clear();
         self.弧隐藏引用计数槽.clear();
@@ -697,30 +749,30 @@ pub fn compile_to_object_multi(
     // 跨模块 / 前向引用的字段类型（如 代理.工具表: 注册表）才能解析成 结构体(idx)。
     // 两步都必须带包上下文 —— 结构体按 (包, 名字) 登记，跨包同名各占独立索引。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记结构体名字(p)?;
     }
     // 枚举名字紧随结构体名字登记：结构体字段 / 枚举载荷 里跨引用彼此都能解析成型。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记枚举名字(p)?;
     }
     // 特性两趟：先收全部声明（特性可跨模块引用），再登记实现关系 + 完整性校验。
     // 在函数登记之前 —— 泛型约束 `<T: 特性>` / 特性作参数类型 都要查特性注册表。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记特性(p)?;
     }
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记特性实现(p)?;
     }
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.解析结构体字段(p)?;
     }
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.解析枚举变体(p)?;
     }
     // 装箱标志回填后归一化：结构体字段/枚举载荷里残留的裸 枚举(i)（i 装箱）
@@ -766,13 +818,13 @@ pub fn compile_to_object_multi(
     // 第一趟半：登记所有模块顶层全局变量 / 常量（函数体会引用，须在函数体前）。
     // 带包上下文：全局的结构体类型注解按声明包解析。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记全局变量(p)?;
     }
 
     // 第二趟：登记所有模块的函数 / 方法签名 + LLVM 原型（按包消歧）
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记函数(p)?;
         后端值.登记方法(p)?;
     }
@@ -793,21 +845,21 @@ pub fn compile_to_object_multi(
     // 外部 C 函数声明（`外部 "库" { ... }`）：建 C 名原型 + 存签名。
     // 在用户函数登记之后 —— 撞名（外部与用户函数同名）在此报错。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记外部(p)?;
     }
 
     // 反向 FFI：登记所有 `导出 函数`（建内部 Qi 原型 + 记录导出元数据）。
     // 在用户函数登记之后 —— 内部原型与普通用户函数共用同一命名空间。
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.登记导出(p)?;
     }
 
     // 第三趟：生成所有模块的用户函数体（跳过重复的 入口，只 entry 的算数；
     // 泛型函数模板不直接生成 —— 按调用点单态实例化，体在末尾统一合成）
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         for stmt in &p.statements {
             match stmt {
                 AstNode::函数声明(f) => {
@@ -833,7 +885,7 @@ pub fn compile_to_object_multi(
 
     // 第四趟：生成所有模块的方法体
     for p in programs {
-        后端值.设当前包(p.package_name.clone());
+        后端值.设当前程序(p);
         后端值.生成所有方法体(p)?;
     }
 

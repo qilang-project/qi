@@ -33,7 +33,10 @@ impl<'ctx> 后端<'ctx> {
                 // 就会解析到错的包或直接歧义失败。
                 if let Some(alias) = &imp.alias {
                     let 包名 = imp.module_path.join(".");
-                    self.包别名.insert(alias.clone(), 包名);
+                    self.包别名.insert(alias.clone(), 包名.clone());
+                    // 类型推断那边也得知道 —— 否则 `变量 x = 查.取一条(q)`
+                    // 推不出返回类型，变量槽会退化成整数（见 符号表.包别名）
+                    self.符号.包别名.insert(alias.clone(), 包名);
                 }
                 continue;
             }

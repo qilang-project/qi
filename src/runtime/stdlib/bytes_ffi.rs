@@ -384,6 +384,27 @@ pub extern "C" fn qi_bytes_write_file(handle: i64, path_ptr: *const c_char) -> i
     }
 }
 
+/// 按字节读整个文件，返回切片句柄；失败返回 -1。
+///
+/// 写文件早就有了，读一直缺 —— 于是二进制文件（图片、音频）只出不进：
+/// 想把落盘的 jpg 转成 base64 发给视觉模型，绕遍标准库都没有路
+/// （IO.读取文件 走字符串，二进制过一遍 UTF-8 必坏）。
+#[no_mangle]
+pub extern "C" fn qi_bytes_read_file(path_ptr: *const c_char) -> i64 {
+    if path_ptr.is_null() {
+        return -1;
+    }
+    let path = unsafe { CStr::from_ptr(path_ptr).to_string_lossy().to_string() };
+    match std::fs::read(&path) {
+        Ok(data) => {
+            let h = next_handle();
+            pool().insert(h, data);
+            h
+        }
+        Err(_) => -1,
+    }
+}
+
 /// 释放由 to_string / to_hex / to_base64 返回的 C 字符串
 #[no_mangle]
 pub extern "C" fn qi_bytes_free_string(s: *mut c_char) {

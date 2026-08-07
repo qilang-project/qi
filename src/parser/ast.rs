@@ -80,6 +80,14 @@ pub struct Program {
     pub imports: Vec<ImportStatement>,
     pub statements: Vec<AstNode>,
     pub source_span: Span,
+    /// 这个 Program 来自哪个文件。解析器不填（它只见到字符串），
+    /// 由 collect_programs 在读文件时补上。
+    ///
+    /// 用途：**私有函数按文件消歧**。同一个包铺在十几个文件里时，
+    /// 两个文件各写一个 `函数 一参(x)` 是完全正常的事，但它们的
+    /// LLVM 符号会撞（包内符号名 只含 包+名+元数）。有了文件名就能给
+    /// 撞车的那些私有函数各自加个文件前缀。
+    pub source_path: Option<String>,
 }
 
 /// Import statement

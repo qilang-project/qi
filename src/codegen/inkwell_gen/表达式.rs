@@ -2753,6 +2753,22 @@ impl<'ctx> 后端<'ctx> {
         let sig = self.符号.解析重载(name, 实参数).cloned();
         let 元数 = sig.as_ref().map(|s| s.参数.len()).unwrap_or(实参数);
 
+        // **本文件的私有函数最优先。**
+        //
+        // 一个包铺在十几个文件里时，两个文件各写一个 `函数 一参(x)` 是正常的，
+        // 它们是各自的局部助手。声明侧给第二个及以后的加了文件前缀（见
+        // 声明.rs 的 用文件符号），这里对应地先查本文件那份 —— 查不到再按
+        // 老路走包级符号，所以跨文件调用别人的私有函数照旧能用。
+        if let (Some(pkg), Some(文件)) = (self.当前包.clone(), self.当前文件.clone()) {
+            let 键 = (pkg, 文件, name.to_string(), 实参数);
+            if let Some(私签) = self.符号.私有签名.get(&键).cloned() {
+                let sym = self.私有符号名(name, 实参数);
+                if let Some(f) = self.module.get_function(&sym) {
+                    return Some((f, Some(私签)));
+                }
+            }
+        }
+
         // 当前包符号
         let 当前 = super::包内符号名(self.当前包.as_deref(), name, 元数);
         if let Some(f) = self.module.get_function(&当前) {
@@ -2835,6 +2851,30 @@ impl<'ctx> 后端<'ctx> {
         // 字符串直接 LLVM 校验崩（bug ③：长度(自己.字段) / 长度(串变量)）。
         // 数组读长度头；字符串走 字符串.字符数量（UTF-8 字符数 —— 中文语言的
         // 自然语义；字节数请显式 字符串::字节长度）。向量模长请显式写 向量.长度(x)。
+        // 同上一条的孪生坑：`数组长度(x)`。
+        //
+        // 这个名字注册在 **JSON 模块**（qi_json_array_length，收的是句柄整数）。
+        // 拿它去量一个原生 `数组<T>`，指针被当成句柄去查 JSON 表，查不到就
+        // **返回 0** —— 不报错、不崩溃，给一个看着完全合理的数字。
+        //
+        // 线上真出过事：`如果 (第几 >= 数组长度(块)) 返回 ""` 恒真，于是课号后缀
+        // 一律解析不出来，「成人德语 B1」出来的是英语幼儿内容，页面渲染正常、
+        // 日志还打 ✓ 完成。只有真去读那一课的句子才发现。
+        //
+        // 原生数组走长度头，跟 `x.长度` 同一条路；整数句柄照旧交给 JSON。
+        if call.callee == "数组长度"
+            && call.module_qualifier.is_none()
+            && call.arguments.len() == 1
+            && call.type_arguments.is_empty()
+        {
+            let t = 推断表达式类型(&call.arguments[0], &self.符号);
+            if t.数组元素().is_some() {
+                if let Some((av, _)) = self.生成表达式(&call.arguments[0])? {
+                    return self.生成数组长度(av.into_pointer_value()).map(Some);
+                }
+            }
+        }
+
         if call.callee == "长度" && call.arguments.len() == 1 && call.type_arguments.is_empty() {
             let t = 推断表达式类型(&call.arguments[0], &self.符号);
             if t.数组元素().is_some() {

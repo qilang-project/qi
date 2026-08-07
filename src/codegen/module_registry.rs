@@ -1286,6 +1286,18 @@ impl ModuleRegistry {
             "整数",                                           // 返回写入字节数；负数为错误
         ));
 
+        // 执行已构建的请求，响应体按字节写文件。
+        //
+        // 跟 下载文件 的区别：那个只做 GET，这个复用 创建请求/设置请求头/
+        // 设置请求体 攒出来的完整请求 —— 本地 TTS 那类「POST 一段 JSON 换回
+        // 一段音频」的接口只能走这条。
+        http_module.add_function(ModuleFunction::new(
+            "执行请求到文件",
+            "qi_http_request_execute_to_file",
+            vec!["整数".to_string(), "字符串".to_string()], // 请求句柄, 落盘路径
+            "整数",                                         // 返回写入字节数；负数为错误
+        ));
+
         // HTTP 服务器功能
         http_module.add_function(ModuleFunction::new(
             "创建服务器",

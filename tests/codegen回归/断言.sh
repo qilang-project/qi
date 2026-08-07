@@ -94,61 +94,51 @@ else
     failed=$((failed+1))
 fi
 
-# ── 红码：限定到错模块必须报确定错误 ──
-total=$((total+1))
-err_out=$(run_limited "$QI" compile "$HERE/07_限定错模块_必须报错.qi" -o /tmp/codegen回归_err.bin 2>&1)
-err_rc=$?
-rm -f /tmp/codegen回归_err.bin
-if [ $err_rc -ne 0 ] && echo "$err_out" | grep -q '没有函数'; then
-    echo "PASS 07_限定错模块_必须报错.qi"
-    passed=$((passed+1))
-else
-    echo "FAIL 07_限定错模块_必须报错.qi (rc=$err_rc 输出: $(echo "$err_out" | head -1))"
-    failed=$((failed+1))
-fi
+# ── 红码：必须报错的用例 ──
+#
+# 每个用例一行「文件名|错误里必须出现的关键词」。原来每一条都手抄一段十几行的
+# if/else，加一条就复制粘贴一次 —— 而抄错了（比如忘改变量名）**不会报错，
+# 只是那一条永远 PASS**。
+# shell 标识符一律 ASCII。bash 的变量名**根本不接受非 ASCII** ——
+# `红码用例=(` 报的是「未预期的记号 newline 附近有语法错误」，
+# 一眼看不出是名字的问题。（部署脚本里踩过同一个坑。）
+#
+# 用位置参数而不是数组 + read：`set -u` 下 read 少读一个字段就报
+# 「case_kw: 未绑定的变量」，跟用例本身毫无关系。
+#
+# ⚠ 变量后面紧跟全角标点要写 ${case_kw} —— `"…「$case_kw」…"` 里那个 」
+# 会被 bash **吃进变量名**，报 "case_kw?: 未绑定的变量"（? 就是那半个字符），
+# 一眼看不出是花括号的问题。部署脚本里的 `$one.qi` 是同一个坑。
+set -- \
+  "07_限定错模块_必须报错.qi::没有函数" \
+  "10_导入不存在的标准库模块_必须报错.qi::标准库里没有模块" \
+  "09_跨包同名_裸调用_必须报错.qi::歧义" \
+  "12_跨包同名_无选择性导入_必须报错.qi::歧义" \
+  "同文件重名/19_同文件重名_必须报错.qi::无法按元数区分" \
+  "公开同名/20_公开同名_必须报错.qi::无法按元数区分" \
+  "结构体喂标量/21_结构体喂给标量_必须报错.qi::把结构体传给了标量形参"
 
-echo ""
+for one in "$@"; do
+    case_file=${one%%::*}
+    case_kw=${one##*::}
+    total=$((total+1))
+    if [ ! -f "$HERE/$case_file" ]; then
+        echo "FAIL $case_file (用例文件不存在)"
+        failed=$((failed+1))
+        continue
+    fi
+    out=$(run_limited "$QI" compile "$HERE/$case_file" -o /tmp/codegen回归_红码.bin 2>&1)
+    rc=$?
+    rm -f /tmp/codegen回归_红码.bin
+    if [ $rc -ne 0 ] && echo "$out" | grep -q "$case_kw"; then
+        echo "PASS $case_file"
+        passed=$((passed+1))
+    else
+        echo "FAIL $case_file (rc=$rc 期望含「${case_kw}」，实际: $(echo "$out" | head -1))"
+        failed=$((failed+1))
+    fi
+done
 
-# ── 红码：导入一个不存在的标准库模块 ──
-total=$((total+1))
-mod_out=$(run_limited "$QI" compile "$HERE/10_导入不存在的标准库模块_必须报错.qi" -o /tmp/codegen回归_mod.bin 2>&1)
-mod_rc=$?
-rm -f /tmp/codegen回归_mod.bin
-if [ $mod_rc -ne 0 ] && echo "$mod_out" | grep -q '标准库里没有模块'; then
-    echo "PASS 10_导入不存在的标准库模块_必须报错.qi"
-    passed=$((passed+1))
-else
-    echo "FAIL 10_导入不存在的标准库模块_必须报错.qi (rc=$mod_rc 输出: $(echo "$mod_out" | head -1))"
-    failed=$((failed+1))
-fi
-
-echo ""
-
-# ── 红码：跨包同名 + 不写限定名 → 歧义检查必须照旧生效 ──
-total=$((total+1))
-amb_out=$(run_limited "$QI" compile "$HERE/09_跨包同名_裸调用_必须报错.qi" -o /tmp/codegen回归_amb.bin 2>&1)
-amb_rc=$?
-rm -f /tmp/codegen回归_amb.bin
-if [ $amb_rc -ne 0 ] && echo "$amb_out" | grep -q '歧义'; then
-    echo "PASS 09_跨包同名_裸调用_必须报错.qi"
-    passed=$((passed+1))
-else
-    echo "FAIL 09_跨包同名_裸调用_必须报错.qi (rc=$amb_rc 输出: $(echo "$amb_out" | head -1))"
-    failed=$((failed+1))
-fi
-
-# ── 红码：跨包同名（且导入路径 ≠ 声明包名）+ 不写选择性导入 → 歧义防线照旧 ──
-total=$((total+1))
-amb2_out=$(run_limited "$QI" compile "$HERE/12_跨包同名_无选择性导入_必须报错.qi" -o /tmp/codegen回归_amb2.bin 2>&1)
-amb2_rc=$?
-rm -f /tmp/codegen回归_amb2.bin
-if [ $amb2_rc -ne 0 ] && echo "$amb2_out" | grep -q '歧义'; then
-    echo "PASS 12_跨包同名_无选择性导入_必须报错.qi"
-    passed=$((passed+1))
-else
-    echo "FAIL 12_跨包同名_无选择性导入_必须报错.qi (rc=$amb2_rc 输出: $(echo "$amb2_out" | head -1))"
-    failed=$((failed+1))
-fi
 
 echo "codegen回归: $passed/$total 通过"
 [ $failed -eq 0 ] || exit 1
