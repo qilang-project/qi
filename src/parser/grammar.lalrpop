@@ -145,7 +145,6 @@ ModuleIdentifier: String = {
 Statement: AstNode = {
     VariableDeclaration,
     FunctionDeclaration,
-    InlineFunctionDeclaration,
     TypeDeclaration,
     EnumDeclaration,
     ExportStatement,
@@ -791,53 +790,6 @@ ForTarget: AstNode = {
 
 // ===== 新增语言特性语法规则 | New Language Features Grammar Rules =====
 
-// 内联函数声明
-InlineFunctionDeclaration: AstNode = {
-    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
-        name,
-        type_params: tps.unwrap_or_default(),
-        parameters: vec![],
-        return_type: Some(return_type),
-        body,
-        visibility: vis,
-        is_inline: true,
-        is_async: false,
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
-        name,
-        type_params: tps.unwrap_or_default(),
-        parameters: vec![],
-        return_type: None,
-        body,
-        visibility: vis,
-        is_inline: true,
-        is_async: false,
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" ":" <return_type:Type> "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
-        name,
-        type_params: tps.unwrap_or_default(),
-        parameters: params,
-        return_type: Some(return_type),
-        body,
-        visibility: vis,
-        is_inline: true,
-        is_async: false,
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <vis:Visibility> "内联" "函数" <name:Identifier> <tps:TypeParamsDecl?> "(" <params:ParameterList> ")" "{" <body:Statement*> "}" <sp_r:@R> => AstNode::函数声明(FunctionDeclaration {
-        name,
-        type_params: tps.unwrap_or_default(),
-        parameters: params,
-        return_type: None,
-        body,
-        visibility: vis,
-        is_inline: true,
-        is_async: false,
-        span: Span::new(sp_l, sp_r),
-    }),
-};
 
 // 尝试/捕获/最终 语句
 TryStatement: AstNode = {
@@ -2456,7 +2408,7 @@ TypeName: String = {
         // Simplified check - use individual checks to avoid long match patterns
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
-           id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
+           id == "等待" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
            id == "公开" || id == "模块" || id == "自己" ||
            id == "结构体" || id == "枚举" || id == "实现" || id == "特性" || id == "弱" {
             return Err(lalrpop_util::ParseError::User {
@@ -2486,13 +2438,13 @@ Identifier: String = {
         // Note: 自身, 自己, 自我 are allowed as they are used for method receivers
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
-           id == "等待" || id == "循环" || id == "继续" || id == "匹配" ||
+           id == "等待" || id == "继续" || id == "匹配" ||
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "新建" || id == "启动" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "模块" ||
-           id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
+           id == "结构体" || id == "枚举" || id == "最终" || id == "默认" ||
            id == "实现" || id == "特性" || id == "弱" ||
            id == "列表" || id == "数组" ||
            id == "整数" || id == "字节" || id == "浮点数" ||
@@ -2515,13 +2467,13 @@ ReceiverIdentifier: String = {
         // Still forbid other keywords
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
-           id == "等待" || id == "循环" || id == "继续" || id == "匹配" ||
+           id == "等待" || id == "继续" || id == "匹配" ||
            id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
            id == "新建" || id == "启动" ||
            id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "模块" ||
-           id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
+           id == "结构体" || id == "枚举" || id == "最终" || id == "默认" ||
            id == "实现" || id == "特性" || id == "弱" ||
            id == "列表" || id == "数组" ||
            id == "整数" || id == "字节" || id == "浮点数" ||
