@@ -74,6 +74,14 @@ clang -c test.ll -o test.o  # Verify LLVM IR syntax
 - Uses LALRPOP for parsing Chinese grammar
 - Supports all Chinese keywords: `如果/否则`, `当`, `函数`, `变量`, etc.
 - 中文逻辑运算符：`且`/`与`==`&&`，`或`==`||`，`非`==`!`（优先级与 `&& || !` 一致）
+- **保留字 2026-08 精简（102 → 64）**：每个保留字都从用户手里偷走一个标识符，加词前先想清楚。
+  - 词形比较/四则运算符已删（加/减/乘/除/取余/等于/不等于/大于/小于/大于等于/小于等于）——
+    中文习惯写数学就用 `+ - * / % == != > < >= <=`；`字符串::等于`、`向量.加` 这类函数名不受影响
+  - 已删的舶来语法：借用/克隆/拥有/移动/释放/锁/线程/原子/并行/并发/中断/跳转/私有/
+    联合体/循环/内联/异步块/解引用/取地址（& * 符号形保留）/创建通道（用 `通道<T>(n)`）/
+    引用/可变引用/字典/集合/长整数/短整数（字典集合功能在 标准库 模块里，类型关键字是空壳）
+  - 真事实源是 `src/parser/grammar.lalrpop` 的字面量终结符；`src/lexer/keywords.rs` 只服务
+    诊断/工具链，`tests/关键字表一致性.rs` 强制它是语法字面量的子集，别再手抄第三份词表
 - Handles operator precedence with 8-level expression hierarchy
 - Generates AST with Chinese node variants
 
