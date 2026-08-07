@@ -249,7 +249,11 @@ fn 类型家族(t: &TypeNode) -> 家族 {
 ///
 /// 一个结构体值不可能是字符串/数字/数组，所以只要**确认它是本单元声明过的
 /// 结构体**（不是泛型参数 T、不是没见过的名字）就可以放心报。
-fn 是已知结构体名(名: &str, 结构体表: &HashMap<String, 结构体信息>, 类型参数: &HashSet<String>) -> bool {
+fn 是已知结构体名(
+    名: &str,
+    结构体表: &HashMap<String, 结构体信息>,
+    类型参数: &HashSet<String>,
+) -> bool {
     !类型参数.contains(名) && 结构体表.contains_key(名)
 }
 
