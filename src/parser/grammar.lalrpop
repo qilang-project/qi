@@ -1493,19 +1493,7 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Span::new(sp_l, sp_r),
     }),
-    <sp_l:@L> <left:Precedence5> "等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::等于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
     <sp_l:@L> <left:Precedence5> "!=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::不等于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <left:Precedence5> "不等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::不等于,
         right: Box::new(right),
@@ -1517,19 +1505,7 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Span::new(sp_l, sp_r),
     }),
-    <sp_l:@L> <left:Precedence5> "大于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::大于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
     <sp_l:@L> <left:Precedence5> ">=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::大于等于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <left:Precedence5> "大于等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::大于等于,
         right: Box::new(right),
@@ -1541,19 +1517,7 @@ Precedence4: AstNode = {
         right: Box::new(right),
         span: Span::new(sp_l, sp_r),
     }),
-    <sp_l:@L> <left:Precedence5> "小于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::小于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
     <sp_l:@L> <left:Precedence5> "<=" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::小于等于,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <left:Precedence5> "小于等于" <right:Precedence5> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::小于等于,
         right: Box::new(right),
@@ -1604,40 +1568,7 @@ Precedence5_5: AstNode = {
             })
         }
     },
-    <sp_l:@L> <left:Precedence5_5> "加" <right:Precedence6> <sp_r:@R> => {
-        // Check if both operands are strings - if so, create StringConcatExpression
-        let is_string_concat = match (&left, &right) {
-            (AstNode::字面量表达式(lit_left), AstNode::字面量表达式(lit_right)) => {
-                matches!(&lit_left.value, LiteralValue::字符串(_)) &&
-                matches!(&lit_right.value, LiteralValue::字符串(_))
-            },
-            (AstNode::字面量表达式(lit), _) => matches!(&lit.value, LiteralValue::字符串(_)),
-            (_, AstNode::字面量表达式(lit)) => matches!(&lit.value, LiteralValue::字符串(_)),
-            _ => false,
-        };
-
-        if is_string_concat {
-            AstNode::字符串连接表达式(StringConcatExpression {
-                left: Box::new(left),
-                right: Box::new(right),
-                span: Span::new(sp_l, sp_r),
-            })
-        } else {
-            AstNode::二元操作表达式(BinaryExpression {
-                left: Box::new(left),
-                operator: BinaryOperator::加,
-                right: Box::new(right),
-                span: Span::new(sp_l, sp_r),
-            })
-        }
-    },
     <sp_l:@L> <left:Precedence5_5> "-" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::减,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <left:Precedence5_5> "减" <right:Precedence6> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::减,
         right: Box::new(right),
@@ -1667,31 +1598,13 @@ Precedence6: AstNode = {
         right: Box::new(right),
         span: Span::new(sp_l, sp_r),
     }),
-    <sp_l:@L> <left:Precedence6> "乘" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::乘,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
     <sp_l:@L> <left:Precedence6> "/" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::除,
         right: Box::new(right),
         span: Span::new(sp_l, sp_r),
     }),
-    <sp_l:@L> <left:Precedence6> "除" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::除,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
     <sp_l:@L> <left:Precedence6> "%" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
-        left: Box::new(left),
-        operator: BinaryOperator::取余,
-        right: Box::new(right),
-        span: Span::new(sp_l, sp_r),
-    }),
-    <sp_l:@L> <left:Precedence6> "取余" <right:Precedence7> <sp_r:@R> => AstNode::二元操作表达式(BinaryExpression {
         left: Box::new(left),
         operator: BinaryOperator::取余,
         right: Box::new(right),
@@ -2624,9 +2537,7 @@ TypeName: String = {
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "循环" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
            id == "公开" || id == "私有" || id == "模块" || id == "自己" ||
-           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" || id == "弱" ||
-           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
-           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" {
+           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" || id == "弱" {
             return Err(lalrpop_util::ParseError::User {
                 error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作类型名。请换一个名字。").into_boxed_str()),
             });
@@ -2665,8 +2576,6 @@ Identifier: String = {
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" || id == "弱" ||
-           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
-           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
            id == "列表" || id == "字典" || id == "集合" || id == "数组" ||
            id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
            id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
@@ -2697,8 +2606,6 @@ ReceiverIdentifier: String = {
            id == "导出" || id == "作为" || id == "公开" || id == "私有" || id == "模块" ||
            id == "结构体" || id == "枚举" || id == "内联" || id == "最终" || id == "默认" ||
            id == "联合体" || id == "实现" || id == "特性" || id == "主程序入口" || id == "弱" ||
-           id == "等于" || id == "不等于" || id == "大于" || id == "小于" || id == "大于等于" || id == "小于等于" ||
-           id == "取余" || id == "加" || id == "减" || id == "乘" || id == "除" ||
            id == "列表" || id == "字典" || id == "集合" || id == "数组" ||
            id == "整数" || id == "长整数" || id == "短整数" || id == "字节" || id == "浮点数" ||
            id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
@@ -2737,32 +2644,17 @@ FieldIdentifier: String = {
     "最终" => "最终".to_string(),
 };
 
-// MethodIdentifier allows keyword tokens to be used as method names after ::
+// MethodIdentifier: `::` 后的方法名位置。
+// 词运算符（等于/加/减…）2026-08 从语法里删掉后已是普通标识符，不再需要逃生舱。
 MethodIdentifier: String = {
     <id:Identifier> => id,
-    "等于" => "等于".to_string(),
-    "不等于" => "不等于".to_string(),
-    "大于" => "大于".to_string(),
-    "小于" => "小于".to_string(),
 };
 
 // MemberFieldIdentifier: 用于 `对象.成员` 的成员名位置。
-// 标准库注册表里存在与关键字撞名的函数（如 文本.等于、向量.加、HTTP.选项），
-// 在成员位置放行这些关键字作为普通名字；关键字在表达式/类型位置的本职用法不受影响。
+// 曾经在这里给 文本.等于、向量.加 这类撞词运算符的函数开逃生舱；
+// 词运算符 2026-08 删掉后它们就是普通标识符，逃生舱一并拆除。
 MemberFieldIdentifier: String = {
     <id:FieldIdentifier> => id,
-    "等于" => "等于".to_string(),
-    "不等于" => "不等于".to_string(),
-    "大于" => "大于".to_string(),
-    "小于" => "小于".to_string(),
-    "大于等于" => "大于等于".to_string(),
-    "小于等于" => "小于等于".to_string(),
-    "加" => "加".to_string(),
-    "减" => "减".to_string(),
-    "乘" => "乘".to_string(),
-    "除" => "除".to_string(),
-    "取余" => "取余".to_string(),
-    // 注：选项 已由 FieldIdentifier 放行（HTTP.选项 走那条），这里不重复
 };
 
 ChannelTypeConstructor: TypeNode = {
