@@ -622,6 +622,60 @@ impl LLM会话 {
         Self::提取文本(&消息)
     }
 
+    /// 一次请求多个候选回答（OpenAI 的 `n` 参数），返回全部候选的 content 文本。
+    ///
+    /// Provider 差别与计费含义：
+    /// - openai 家族（默认分支）：请求体带 `"n": n`，服务端一次采样 n 个 choices，
+    ///   prompt tokens 只计一次、completion tokens 按候选累加 —— 最省钱的形态。
+    /// - anthropic / gemini 没有 n 语义：退化为**串行调 n 次**（各次独立采样）凑齐
+    ///   数组，计费等于 n 次完整请求（prompt tokens 也乘 n），耗时线性叠加。
+    ///
+    /// 只负责取候选，不写历史 —— 历史语义由 FFI 层统一处理（只第一个候选入历史）。
+    fn 调用多候选API(&self, 提示: &str, n: i64) -> Result<Vec<String>, String> {
+        let n = n.max(1);
+        match self.提供商.as_str() {
+            "anthropic" | "gemini" => {
+                // 无 n 语义的提供商：串行 n 次独立采样。
+                let mut 候选列表 = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    候选列表.push(self.调用API(提示)?);
+                }
+                Ok(候选列表)
+            }
+            _ => {
+                let mut 请求体 = self.构建请求体(提示, false, false);
+                请求体["n"] = json!(n);
+                let 响应体: Value = self
+                    .发送请求体(请求体)?
+                    .json()
+                    .map_err(|e| format!("解析响应失败: {}", e))?;
+                Self::提取全部候选(&响应体)
+            }
+        }
+    }
+
+    /// 解析 OpenAI 响应的**全部** choices（对话多候选专用，不再只看 choices[0]）：
+    /// 每个 choice 取 message.content 文本；content 为 null（如纯 tool_calls）取空串。
+    fn 提取全部候选(响应体: &Value) -> Result<Vec<String>, String> {
+        let choices = 响应体
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| "响应格式错误：无法提取 choices".to_string())?;
+        if choices.is_empty() {
+            return Err("响应格式错误：choices 为空".to_string());
+        }
+        Ok(choices
+            .iter()
+            .map(|c| {
+                c.get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect())
+    }
+
     /// 多模态图像对话：文本 + 单图 URL。内部以 OpenAI 多模态 content 数组为规范表示，
     /// 各提供商在 构建请求体带内容 分支里翻译形状。返回 (规范 user content, 回答文本)。
     fn 调用图像API(&self, 提示: &str, 图像URL: &str) -> Result<(Value, String), String> {
@@ -990,6 +1044,65 @@ pub extern "C" fn qi_llm_chat(session_handle: i64, prompt: *const c_char) -> *mu
     }
 
     std::ptr::null_mut()
+}
+
+/// 一次请求多个候选回答（OpenAI 的 `n` 参数）
+///
+/// 参数:
+/// - session_handle: 会话句柄
+/// - prompt: 用户提示
+/// - n: 候选个数（< 1 按 1 处理）
+///
+/// 返回: JSON 数组文本，每个元素是一个候选的 content 字符串
+/// （需要调用 qi_llm_free_string 释放）；失败返回 "LLM调用失败: ..." 文本（非 JSON 数组）。
+///
+/// Provider 差别与计费含义：
+/// - openai 家族：请求体带 `"n": n`，一次请求服务端采样 n 个候选，
+///   prompt tokens 只计一次，completion tokens 按候选累加。
+/// - anthropic / gemini 没有 n 语义：退化为**串行调 n 次**（各次独立采样），
+///   计费等于 n 次完整请求（prompt tokens 也乘 n），耗时线性叠加。
+///
+/// 会话历史语义：多候选下历史只能走一条线 —— **只把第一个候选**作为 assistant
+/// 消息追加进历史（连同 user 提示），其余候选只作为返回值交给调用方；
+/// 否则历史就分叉了，后续对话无法确定接在哪个候选之后。
+#[no_mangle]
+pub extern "C" fn qi_llm_chat_choices(
+    session_handle: i64,
+    prompt: *const c_char,
+    n: i64,
+) -> *mut c_char {
+    if prompt.is_null() {
+        return 转为C字符串指针("LLM调用失败: 提示为空".to_string());
+    }
+
+    let mut 会话池 = 获取会话池().lock().unwrap();
+
+    if let Some(会话) = 会话池.get_mut(&session_handle) {
+        let 提示 = unsafe { CStr::from_ptr(prompt) }
+            .to_string_lossy()
+            .to_string();
+
+        return match 会话.调用多候选API(&提示, n) {
+            Ok(候选列表) => {
+                // 只把第一个候选进历史（见函数文档），其余候选仅作返回值。
+                会话.历史.push(json!({
+                    "role": "user",
+                    "content": 提示.clone()
+                }));
+                会话.历史.push(json!({
+                    "role": "assistant",
+                    "content": 候选列表[0].clone()
+                }));
+
+                转为C字符串指针(
+                    serde_json::to_string(&候选列表).unwrap_or_else(|_| "[]".to_string()),
+                )
+            }
+            Err(错误) => 转为C字符串指针(format!("LLM调用失败: {}", 错误)),
+        };
+    }
+
+    转为C字符串指针("LLM调用失败: 无效会话句柄".to_string())
 }
 
 /// 多模态图像对话：文本提示 + 单张图 URL。
@@ -1718,6 +1831,24 @@ mod tests {
         assert!(体.get("system").is_none());
         assert!(体.get("contents").is_none());
         assert_eq!(会话.请求端点(), "https://example.com/chat/completions");
+    }
+
+    #[test]
+    fn 多候选_解析全部choices() {
+        // mock 一个带 3 个 choices 的响应，断言全部候选都被解析（不再只看 choices[0]）
+        let 响应 = json!({
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "候选一"}},
+                {"index": 1, "message": {"role": "assistant", "content": "候选二"}},
+                {"index": 2, "message": {"role": "assistant", "content": Value::Null}}
+            ]
+        });
+        let 候选 = LLM会话::提取全部候选(&响应).unwrap();
+        // null content → 空串
+        assert_eq!(候选, vec!["候选一", "候选二", ""]);
+        // 缺 choices / choices 为空 → Err（不 panic）
+        assert!(LLM会话::提取全部候选(&json!({})).is_err());
+        assert!(LLM会话::提取全部候选(&json!({"choices": []})).is_err());
     }
 
     #[test]
