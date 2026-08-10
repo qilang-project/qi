@@ -23,10 +23,22 @@ enum 参数值 {
 /// 错误码对 SQLite 保持 `extended_code` 原样 —— 它会写进 `执行参数` 返回的
 /// 结果 JSON，应用侧（如唯一约束冲突判断）依赖这个数字，不能变。
 /// 其它后端统一 -1：PG 的 SQLSTATE 是五位字母数字，塞不进 i32，也不该自己乱编号。
+///
+/// 实现 `std::error::Error` 是给连接池用的：r2d2 的 `ManageConnection::Error`
+/// 要求 `error::Error + 'static`，不实现就得在池那层再套一层错误类型。
+#[derive(Debug)]
 struct 数据库错误 {
     消息: String,
     错误码: i32,
 }
+
+impl std::fmt::Display for 数据库错误 {
+    fn fmt(&self, 输出: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(输出, "{}", self.消息)
+    }
+}
+
+impl std::error::Error for 数据库错误 {}
 
 impl 数据库错误 {
     fn 新(消息: impl Into<String>) -> Self {
@@ -170,6 +182,36 @@ impl 后端 {
             后端::PG(连接) => 连接.事务(动作),
             #[cfg(feature = "db-mysql")]
             后端::MySQL(连接) => 连接.事务(动作),
+        }
+    }
+
+    /// 探活。连接池在**借出前**调它（`test_on_check_out`）。
+    ///
+    /// 服务端重启、idle timeout、网络断，都会让池里留下僵尸连接 —— 只有真发一条
+    /// 语句才认得出来。坏连接由 r2d2 当场丢弃并新建，业务侧看不到这次失败。
+    #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+    fn 探活(&mut self) -> Result<(), 数据库错误> {
+        match self {
+            // SQLite 不进池（见 database/句柄.rs），这条分支只是让 match 完整。
+            后端::SQLite(连接) => Ok(连接.execute_batch("SELECT 1")?),
+            #[cfg(feature = "db-postgres")]
+            后端::PG(连接) => 连接.探活(),
+            #[cfg(feature = "db-mysql")]
+            后端::MySQL(连接) => 连接.探活(),
+        }
+    }
+
+    /// 连接是否已经确定断了。归还池子时问一次，true 就直接扔掉不复用。
+    #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+    fn 已断开(&mut self) -> bool {
+        match self {
+            后端::SQLite(_) => false,
+            #[cfg(feature = "db-postgres")]
+            后端::PG(连接) => 连接.已断开(),
+            // mysql crate 没有「连接是否已关闭」的只读查询；漏判的那条僵尸连接
+            // 会在下次借出时被 探活 拦下，代价只是一次重建。
+            #[cfg(feature = "db-mysql")]
+            后端::MySQL(_) => false,
         }
     }
 

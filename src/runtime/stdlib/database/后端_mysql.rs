@@ -80,6 +80,12 @@ impl MySQL连接 {
     fn 最后插入id(&mut self) -> i64 {
         self.最后插入
     }
+
+    /// COM_PING 是最便宜的往返（不解析 SQL、不走查询路径），服务端重启后
+    /// 这里会立刻报错，连接池据此丢弃僵尸连接。
+    fn 探活(&mut self) -> Result<(), 数据库错误> {
+        self.连接.ping().map_err(转mysql错误)
+    }
 }
 
 fn 转mysql参数(参数: &[参数值]) -> Params {

@@ -99,6 +99,16 @@ impl PG连接 {
         self.最后插入
     }
 
+    /// 空的 simple_query 就是一次完整往返，但不产生任何服务端工作 ——
+    /// rust-postgres 官方的池适配器（r2d2_postgres）也是这么探活的。
+    fn 探活(&mut self) -> Result<(), 数据库错误> {
+        self.客户端.simple_query("").map(|_| ()).map_err(转pg错误)
+    }
+
+    fn 已断开(&mut self) -> bool {
+        self.客户端.is_closed()
+    }
+
     /// PG 没有 `last_insert_rowid()`。`lastval()` 返回本会话最近一次 `nextval()`
     /// 的结果，插入自增主键后正是新 id —— 语义与 MySQL 的 `LAST_INSERT_ID()` 一致。
     ///
