@@ -296,9 +296,20 @@ pub extern "C" fn qi_db_close(conn_id: i64) -> i32 {
 /// 上层（`qi-web/迁移.qi` 的建表助手）靠它挑 DDL 方言 —— 驱动层不抹平 DDL 差异，
 /// 这是设计文档 4.3 定的分工。句柄无效时返回空串，不返回空指针，免得调用侧崩。
 #[no_mangle]
-pub extern "C" fn qi_db_backend(conn_id: i64) -> *mut c_char {
-    let Some(connection) = connection(conn_id) else {
-        return c_string(String::new());
+/// 句柄**既收连接也收事务**。
+///
+/// 迁移回调（qi-web/迁移.qi）签名是 `函数(事务句柄):整数`，拿不到连接句柄；
+/// 而它恰恰是最需要问后端的地方 —— 建表 DDL 三家方言不通用。只认连接句柄的话，
+/// 调用方得自己把连接透传进每个迁移回调，那是把驱动层的缺陷推给业务。
+/// 事务表本来就是 tx_id → conn_id 的映射，顺着查一次即可。
+pub extern "C" fn qi_db_backend(handle: i64) -> *mut c_char {
+    let connection = match connection(handle) {
+        Some(c) => c,
+        // 不是连接句柄，再按事务句柄查它所属的连接
+        None => match transaction(handle) {
+            Some((_, c)) => c,
+            None => return c_string(String::new()),
+        },
     };
     let state = connection.lock().unwrap();
     c_string(state.conn.名称().to_string())
