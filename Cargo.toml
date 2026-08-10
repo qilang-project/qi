@@ -139,6 +139,13 @@ cc = "1.1"
 # inkwell 是唯一后端（强制依赖），无需 feature 开关。llvm 保留为空 alias 兼容旧命令行。
 default = []
 runtime-rc-string = []
+# 数据库多后端的开关只在 qi-runtime 里有实体依赖（postgres / mysql crate）。
+# 这里声明成空 feature，是因为 qi/src/runtime/stdlib/database_ffi.rs 被 qi-runtime
+# include! 共享，里面带 `cfg(feature = "db-postgres")`；不声明的话本 crate 编译时
+# 会报 unexpected_cfgs。编译器内嵌的这份遗留 runtime 只需要 SQLite —— 生成程序
+# 链接的是 qi-runtime 那份归档，PG/MySQL 在那边默认开。
+db-postgres = []
+db-mysql = []
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
 llvm = []

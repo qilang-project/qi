@@ -5069,6 +5069,24 @@ impl ModuleRegistry {
             "i32",
         ));
 
+        // ── 多后端只读查询（见 qi-web/docs/多数据库设计.md 第五节）──────────
+        // 驱动层不抹平 DDL 方言（自增主键 / 当前时间 / upsert 三家写法互不兼容），
+        // 上层要靠 `后端()` 自己挑；`最后插入id()` 则把三家的取法收成一个 ——
+        // SQLite 有 rowid，PG 得问 lastval()，MySQL 是 LAST_INSERT_ID()。
+        db_module.add_function(ModuleFunction::new(
+            "后端",
+            "qi_db_backend",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+
+        db_module.add_function(ModuleFunction::new(
+            "最后插入id",
+            "qi_db_last_insert_id",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
         self.modules.insert("数据库".to_string(), db_module.clone());
         self.modules.insert("标准库.数据库".to_string(), db_module);
     }

@@ -1,6 +1,12 @@
 // 数据库模块 FFI
 //
-// 提供 SQLite 数据库操作、参数绑定和有所有权的事务句柄。
+// 对外是 16 个 C 函数（14 个老的一字不改 + `后端` / `最后插入id` 两个只读新增），
+// 对内按连接串 scheme 分发到 SQLite / PostgreSQL / MySQL 三个后端。
+// 设计见 qi-web/docs/多数据库设计.md。
+//
+// 分文件：本文件只留「连接表 / 事务表 / JSON 窄腰 / FFI 边界」，
+// 三个后端的实现在 database/ 下 include! 进来（同一个模块命名空间，不是子模块 ——
+// 原因写在 database/后端.rs 开头）。
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection, Error as SqlError};
@@ -12,8 +18,16 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::{Arc, Mutex};
 
+include!("database/后端.rs");
+
+#[cfg(feature = "db-postgres")]
+include!("database/后端_pg.rs");
+
+#[cfg(feature = "db-mysql")]
+include!("database/后端_mysql.rs");
+
 struct ConnectionState {
-    conn: Connection,
+    conn: 后端,
     // 0 表示旧 API 开启的连接级事务，正数表示新事务句柄。
     active_transaction: Option<i64>,
 }
@@ -82,15 +96,15 @@ fn write_failure(message: impl Into<String>, code: i32) -> JsonValue {
     })
 }
 
-fn write_result_json(result: Result<(usize, i64), SqlError>) -> *mut c_char {
+fn write_result_json(result: Result<(usize, i64), 数据库错误>) -> *mut c_char {
     let value = match result {
         Ok((rows, last_insert_id)) => write_success(rows, last_insert_id),
-        Err(error) => write_failure(error.to_string(), sqlite_error_code(&error)),
+        Err(错误) => write_failure(错误.消息, 错误.错误码),
     };
     c_string(value.to_string())
 }
 
-fn parse_params(params_json: &str) -> Result<Vec<SqlValue>, String> {
+fn parse_params(params_json: &str) -> Result<Vec<参数值>, String> {
     let value: JsonValue =
         serde_json::from_str(params_json).map_err(|error| format!("参数 JSON 无效: {error}"))?;
     let values = value
@@ -100,18 +114,18 @@ fn parse_params(params_json: &str) -> Result<Vec<SqlValue>, String> {
     values
         .iter()
         .map(|value| match value {
-            JsonValue::Null => Ok(SqlValue::Null),
-            JsonValue::Bool(value) => Ok(SqlValue::Integer(i64::from(*value))),
+            JsonValue::Null => Ok(参数值::空),
+            JsonValue::Bool(value) => Ok(参数值::布尔(*value)),
             JsonValue::Number(value) => {
                 if let Some(integer) = value.as_i64() {
-                    Ok(SqlValue::Integer(integer))
+                    Ok(参数值::整数(integer))
                 } else if let Some(float) = value.as_f64() {
-                    Ok(SqlValue::Real(float))
+                    Ok(参数值::浮点(float))
                 } else {
-                    Err("参数数字超出 SQLite 支持范围".to_string())
+                    Err("参数数字超出支持范围".to_string())
                 }
             }
-            JsonValue::String(value) => Ok(SqlValue::Text(value.clone())),
+            JsonValue::String(value) => Ok(参数值::文本(value.clone())),
             JsonValue::Array(_) | JsonValue::Object(_) => {
                 Err("参数只支持空值、布尔、整数、浮点和文本".to_string())
             }
@@ -119,43 +133,12 @@ fn parse_params(params_json: &str) -> Result<Vec<SqlValue>, String> {
         .collect()
 }
 
-fn row_value(value: ValueRef<'_>) -> JsonValue {
-    match value {
-        ValueRef::Null => JsonValue::Null,
-        ValueRef::Integer(value) => json!(value),
-        ValueRef::Real(value) => json!(value),
-        ValueRef::Text(value) => json!(String::from_utf8_lossy(value)),
-        ValueRef::Blob(value) => json!(value),
-    }
-}
-
-fn query_json(conn: &Connection, sql: &str, params: &[SqlValue]) -> Result<String, SqlError> {
-    let mut stmt = conn.prepare(sql)?;
-    let column_count = stmt.column_count();
-    let column_names: Vec<String> = (0..column_count)
-        .map(|index| stmt.column_name(index).unwrap_or("").to_string())
-        .collect();
-    let mut rows = stmt.query(params_from_iter(params.iter()))?;
-    let mut results = Vec::new();
-
-    while let Some(row) = rows.next()? {
-        let mut row_map = serde_json::Map::new();
-        for (index, column_name) in column_names.iter().enumerate() {
-            row_map.insert(column_name.clone(), row_value(row.get_ref(index)?));
-        }
-        results.push(JsonValue::Object(row_map));
-    }
-
-    Ok(JsonValue::Array(results).to_string())
-}
-
 fn execute_parameterized(
-    state: &ConnectionState,
+    state: &mut ConnectionState,
     sql: &str,
-    params: &[SqlValue],
-) -> Result<(usize, i64), SqlError> {
-    let rows = state.conn.execute(sql, params_from_iter(params.iter()))?;
-    Ok((rows, state.conn.last_insert_rowid()))
+    params: &[参数值],
+) -> Result<(usize, i64), 数据库错误> {
+    state.conn.执行参数(sql, params)
 }
 
 unsafe fn ffi_text<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>> {
@@ -165,14 +148,17 @@ unsafe fn ffi_text<'a>(value: *const c_char) -> Option<std::borrow::Cow<'a, str>
     Some(CStr::from_ptr(value).to_string_lossy())
 }
 
-/// 连接数据库
+/// 连接数据库。
+///
+/// 连接串按 scheme 分发：`postgres://` / `postgresql://` → PostgreSQL，
+/// `mysql://` → MySQL，`sqlite://` 或**任何无 scheme 的裸路径** → SQLite。
 #[no_mangle]
 pub extern "C" fn qi_db_connect(path: *const c_char) -> i64 {
     let Some(path) = (unsafe { ffi_text(path) }) else {
         return -1;
     };
 
-    match Connection::open(path.as_ref()) {
+    match 后端::打开(path.as_ref()) {
         Ok(conn) => {
             let id = next_id(&NEXT_CONNECTION_ID);
             CONNECTIONS.lock().unwrap().insert(
@@ -197,13 +183,13 @@ pub extern "C" fn qi_db_execute(conn_id: i64, sql: *const c_char) -> i64 {
     let Some(connection) = connection(conn_id) else {
         return -1;
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if matches!(state.active_transaction, Some(tx_id) if tx_id > 0) {
         return -1;
     }
     state
         .conn
-        .execute(sql.as_ref(), [])
+        .执行(sql.as_ref())
         .map(|rows| rows as i64)
         .unwrap_or(-1)
 }
@@ -228,11 +214,11 @@ pub extern "C" fn qi_db_execute_params(
     let Some(connection) = connection(conn_id) else {
         return c_string(write_failure("数据库连接无效", -1).to_string());
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if state.active_transaction.is_some() {
         return c_string(write_failure("数据库连接正被事务占用", -1).to_string());
     }
-    write_result_json(execute_parameterized(&state, sql.as_ref(), &params))
+    write_result_json(execute_parameterized(&mut state, sql.as_ref(), &params))
 }
 
 /// 查询 SQL（旧 API，保留兼容）
@@ -244,11 +230,13 @@ pub extern "C" fn qi_db_query(conn_id: i64, sql: *const c_char) -> *mut c_char {
     let Some(connection) = connection(conn_id) else {
         return std::ptr::null_mut();
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if matches!(state.active_transaction, Some(tx_id) if tx_id > 0) {
         return std::ptr::null_mut();
     }
-    query_json(&state.conn, sql.as_ref(), &[])
+    state
+        .conn
+        .查询(sql.as_ref(), &[])
         .map(c_string)
         .unwrap_or(std::ptr::null_mut())
 }
@@ -272,11 +260,13 @@ pub extern "C" fn qi_db_query_params(
     let Some(connection) = connection(conn_id) else {
         return std::ptr::null_mut();
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if state.active_transaction.is_some() {
         return std::ptr::null_mut();
     }
-    query_json(&state.conn, sql.as_ref(), &params)
+    state
+        .conn
+        .查询(sql.as_ref(), &params)
         .map(c_string)
         .unwrap_or(std::ptr::null_mut())
 }
@@ -291,7 +281,7 @@ pub extern "C" fn qi_db_close(conn_id: i64) -> i32 {
     let active_transaction = {
         let mut state = connection.lock().unwrap();
         if state.active_transaction.is_some() {
-            let _ = state.conn.execute("ROLLBACK", []);
+            let _ = state.conn.事务(事务动作::回滚);
         }
         state.active_transaction.take()
     };
@@ -299,6 +289,30 @@ pub extern "C" fn qi_db_close(conn_id: i64) -> i32 {
         TRANSACTIONS.lock().unwrap().remove(&tx_id);
     }
     0
+}
+
+/// 当前连接的后端名："sqlite" / "postgres" / "mysql"。
+///
+/// 上层（`qi-web/迁移.qi` 的建表助手）靠它挑 DDL 方言 —— 驱动层不抹平 DDL 差异，
+/// 这是设计文档 4.3 定的分工。句柄无效时返回空串，不返回空指针，免得调用侧崩。
+#[no_mangle]
+pub extern "C" fn qi_db_backend(conn_id: i64) -> *mut c_char {
+    let Some(connection) = connection(conn_id) else {
+        return c_string(String::new());
+    };
+    let state = connection.lock().unwrap();
+    c_string(state.conn.名称().to_string())
+}
+
+/// 最后插入的自增主键。三家的取法不同（rowid / lastval() / LAST_INSERT_ID()），
+/// 这里统一。句柄无效返回 -1。
+#[no_mangle]
+pub extern "C" fn qi_db_last_insert_id(conn_id: i64) -> i64 {
+    let Some(connection) = connection(conn_id) else {
+        return -1;
+    };
+    let mut state = connection.lock().unwrap();
+    state.conn.最后插入id()
 }
 
 /// 开始连接级事务（旧 API，保留兼容）。
@@ -311,7 +325,7 @@ pub extern "C" fn qi_db_begin_transaction(conn_id: i64) -> i32 {
     if state.active_transaction.is_some() {
         return -1;
     }
-    match state.conn.execute("BEGIN TRANSACTION", []) {
+    match state.conn.事务(事务动作::开始) {
         Ok(_) => {
             state.active_transaction = Some(0);
             0
@@ -330,7 +344,7 @@ pub extern "C" fn qi_db_commit(conn_id: i64) -> i32 {
     if state.active_transaction != Some(0) {
         return -1;
     }
-    match state.conn.execute("COMMIT", []) {
+    match state.conn.事务(事务动作::提交) {
         Ok(_) => {
             state.active_transaction = None;
             0
@@ -349,7 +363,7 @@ pub extern "C" fn qi_db_rollback(conn_id: i64) -> i32 {
     if state.active_transaction != Some(0) {
         return -1;
     }
-    match state.conn.execute("ROLLBACK", []) {
+    match state.conn.事务(事务动作::回滚) {
         Ok(_) => {
             state.active_transaction = None;
             0
@@ -368,7 +382,7 @@ pub extern "C" fn qi_db_transaction_open(conn_id: i64) -> i64 {
     if state.active_transaction.is_some() {
         return -1;
     }
-    if state.conn.execute("BEGIN IMMEDIATE", []).is_err() {
+    if state.conn.事务(事务动作::独占开始).is_err() {
         return -1;
     }
     let tx_id = next_id(&NEXT_TRANSACTION_ID);
@@ -398,11 +412,11 @@ pub extern "C" fn qi_db_transaction_execute_params(
     let Some((_, connection)) = transaction(tx_id) else {
         return c_string(write_failure("事务句柄无效", -1).to_string());
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if state.active_transaction != Some(tx_id) {
         return c_string(write_failure("事务已结束", -1).to_string());
     }
-    write_result_json(execute_parameterized(&state, sql.as_ref(), &params))
+    write_result_json(execute_parameterized(&mut state, sql.as_ref(), &params))
 }
 
 /// 在独占事务中参数化查询。
@@ -424,16 +438,18 @@ pub extern "C" fn qi_db_transaction_query_params(
     let Some((_, connection)) = transaction(tx_id) else {
         return std::ptr::null_mut();
     };
-    let state = connection.lock().unwrap();
+    let mut state = connection.lock().unwrap();
     if state.active_transaction != Some(tx_id) {
         return std::ptr::null_mut();
     }
-    query_json(&state.conn, sql.as_ref(), &params)
+    state
+        .conn
+        .查询(sql.as_ref(), &params)
         .map(c_string)
         .unwrap_or(std::ptr::null_mut())
 }
 
-fn finish_transaction(tx_id: i64, sql: &str) -> i32 {
+fn finish_transaction(tx_id: i64, 动作: 事务动作) -> i32 {
     let Some((_, connection)) = transaction(tx_id) else {
         return -1;
     };
@@ -442,7 +458,7 @@ fn finish_transaction(tx_id: i64, sql: &str) -> i32 {
         if state.active_transaction != Some(tx_id) {
             return -1;
         }
-        match state.conn.execute(sql, []) {
+        match state.conn.事务(动作) {
             Ok(_) => {
                 state.active_transaction = None;
                 0
@@ -458,12 +474,12 @@ fn finish_transaction(tx_id: i64, sql: &str) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn qi_db_transaction_commit(tx_id: i64) -> i32 {
-    finish_transaction(tx_id, "COMMIT")
+    finish_transaction(tx_id, 事务动作::提交)
 }
 
 #[no_mangle]
 pub extern "C" fn qi_db_transaction_rollback(tx_id: i64) -> i32 {
-    finish_transaction(tx_id, "ROLLBACK")
+    finish_transaction(tx_id, 事务动作::回滚)
 }
 
 /// 释放字符串
@@ -587,5 +603,64 @@ mod tests {
         assert_eq!(rows_json[0]["quantity"], 3);
         assert_eq!(qi_db_transaction_commit(tx_id), -1);
         qi_db_close(conn_id);
+    }
+
+    /// 裸路径不带 scheme —— 12+ 个现有应用都这么写，必须仍然落到 SQLite。
+    #[test]
+    fn 裸路径与sqlite前缀都落到sqlite后端() {
+        let conn_id = qi_db_connect(text(":memory:").as_ptr());
+        assert!(conn_id > 0);
+        assert_eq!(unsafe { take_string(qi_db_backend(conn_id)) }, "sqlite");
+        qi_db_close(conn_id);
+
+        let 临时 = std::env::temp_dir().join("qi_db_scheme_测试.db");
+        let _ = std::fs::remove_file(&临时);
+        let 连接串 = format!("sqlite://{}", 临时.display());
+        let conn_id = qi_db_connect(text(&连接串).as_ptr());
+        assert!(conn_id > 0);
+        assert_eq!(unsafe { take_string(qi_db_backend(conn_id)) }, "sqlite");
+        assert_eq!(
+            qi_db_execute(conn_id, text("CREATE TABLE t (id INTEGER)").as_ptr()),
+            0
+        );
+        qi_db_close(conn_id);
+        assert!(临时.exists(), "sqlite:// 前缀应当去掉后当成文件路径");
+        let _ = std::fs::remove_file(&临时);
+    }
+
+    #[test]
+    fn 最后插入id与后端名对无效句柄不崩() {
+        assert_eq!(qi_db_last_insert_id(-99), -1);
+        assert_eq!(unsafe { take_string(qi_db_backend(-99)) }, "");
+    }
+
+    #[test]
+    fn 最后插入id跟随插入递增() {
+        let conn_id = qi_db_connect(text(":memory:").as_ptr());
+        qi_db_execute(
+            conn_id,
+            text("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").as_ptr(),
+        );
+        for 期望 in 1..=3 {
+            let 写 = qi_db_execute_params(
+                conn_id,
+                text("INSERT INTO t (v) VALUES (?)").as_ptr(),
+                text(r#"["x"]"#).as_ptr(),
+            );
+            let _ = unsafe { take_string(写) };
+            assert_eq!(qi_db_last_insert_id(conn_id), 期望);
+        }
+        qi_db_close(conn_id);
+    }
+
+    /// 未编入的后端要给出**明确报错**（连接失败），不能悄悄退回 SQLite 去建个文件。
+    #[test]
+    fn 未知scheme不会被误当成文件路径() {
+        // db-postgres / db-mysql 默认开着，这里连的是不存在的地址，必然失败；
+        // 关键是它没有在当前目录建出一个名叫 "postgres://…" 的 SQLite 文件。
+        let 连接串 = "postgres://qi:qi@127.0.0.1:1/不存在的库";
+        let conn_id = qi_db_connect(text(连接串).as_ptr());
+        assert_eq!(conn_id, -1);
+        assert!(!std::path::Path::new(连接串).exists());
     }
 }
