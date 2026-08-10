@@ -136,6 +136,54 @@ pub struct ResolvedPackageManifest {
     pub manifest: PackageManifest,
 }
 
+/// 本地路径依赖解析失败的原因。
+///
+/// 分三种是因为排查手法完全不同：路径不存在要去改 qi.toml 那一行；包名不符是
+/// 路径指错了地方；模块找不到要去看被依赖包的 `[包] 入口` / `[源码] 目录`
+/// 和实际文件名。笼统一句「哪儿都没找到」会让这三种都变成撞运气。
+#[derive(Debug, Clone)]
+pub enum LocalDependencyError {
+    /// `[依赖]` 里写的路径展开后不是一个目录
+    PathMissing { declared: String, expanded: PathBuf },
+    /// 目录里确实是个包，但包名跟依赖别名对不上
+    PackageNameMismatch { root_dir: PathBuf, found: String },
+    /// 目录存在、包名也对（或该目录没有 qi.toml），但没有能对上的模块文件
+    ModuleNotFound { root_dir: PathBuf },
+}
+
+impl LocalDependencyError {
+    /// 拼出带上下文（别名、清单位置、导入路径）的完整报错。
+    pub fn message(&self, alias: &str, manifest_path: &Path, module_path: &[String]) -> String {
+        match self {
+            LocalDependencyError::PathMissing { declared, expanded } => format!(
+                "qi.toml 中依赖 `{}` 声明的本地路径不存在: {}\n  声明位置: {}（原文: {} = \"{}\"）",
+                alias,
+                expanded.display(),
+                manifest_path.display(),
+                alias,
+                declared
+            ),
+            LocalDependencyError::PackageNameMismatch { root_dir, found } => format!(
+                "qi.toml 中依赖 `{}` 指向的目录 {} 里是包 `{}`，没有名为 `{}` 的包\n  声明位置: {}\n  要么把依赖别名改成 `{}`，要么把路径指向真正的 `{}` 包",
+                alias,
+                root_dir.display(),
+                found,
+                alias,
+                manifest_path.display(),
+                found,
+                alias
+            ),
+            LocalDependencyError::ModuleNotFound { root_dir } => format!(
+                "qi.toml 中依赖 `{}` 指向的目录 {} 存在，但找不到模块 {}\n  声明位置: {}\n  检查该目录 qi.toml 的 [包] 入口 / [源码] 目录，以及包内实际文件名",
+                alias,
+                root_dir.display(),
+                module_path.join("."),
+                manifest_path.display()
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedDependency {
     pub alias: String,
@@ -399,6 +447,69 @@ impl ResolvedPackageManifest {
         }
 
         None
+    }
+
+    /// 按 `[依赖]` 里**声明的那条路径**解析模块文件。
+    ///
+    /// 声明才是权威来源：相对路径以 qi.toml 所在目录为基准展开，绝对路径直接用。
+    /// 这里刻意不向上查找被依赖包的 qi.toml（`load_dir` 而非 `discover`）——
+    /// 向上找会把依赖方自己或更上层的清单当成它的，`[源码] 目录` 全解释错。
+    pub fn resolve_local_dependency_module(
+        &self,
+        alias: &str,
+        declared_path: &str,
+        module_path: &[String],
+    ) -> Result<PathBuf, LocalDependencyError> {
+        let raw = Path::new(declared_path);
+        let expanded = if raw.is_absolute() {
+            raw.to_path_buf()
+        } else {
+            self.root_dir.join(raw)
+        };
+
+        if !expanded.is_dir() {
+            return Err(LocalDependencyError::PathMissing {
+                declared: declared_path.to_string(),
+                expanded,
+            });
+        }
+        let root_dir = expanded.canonicalize().unwrap_or(expanded);
+
+        let dep_manifest = Self::load_dir(&root_dir).ok().flatten();
+
+        // 包名跟别名对不上就当场停：qi 的模块系统按包名索引符号，硬着头皮解析
+        // 出那个包的入口，只会把错误推迟成 codegen 阶段的「符号不存在」。
+        if let Some(found) = dep_manifest.as_ref().and_then(|m| m.package_name()) {
+            if found != alias {
+                return Err(LocalDependencyError::PackageNameMismatch {
+                    found: found.to_string(),
+                    root_dir,
+                });
+            }
+        }
+
+        // 没有 qi.toml 的目录退化为默认布局（<别名>.qi / 子模块 .qi）
+        let effective = dep_manifest.unwrap_or_else(|| Self {
+            manifest_path: root_dir.join("qi.toml"),
+            root_dir: root_dir.clone(),
+            manifest: PackageManifest::default(),
+        });
+
+        if let Some(path) = effective.resolve_module_path(alias, module_path) {
+            return Ok(path);
+        }
+
+        // 兜底：入口文件跟目录同名（包目录 工具库/ 里放 工具库.qi）
+        if module_path.len() == 1 {
+            if let Some(dir_name) = root_dir.file_name().and_then(|name| name.to_str()) {
+                let candidate = root_dir.join(format!("{}.qi", dir_name));
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
+            }
+        }
+
+        Err(LocalDependencyError::ModuleNotFound { root_dir })
     }
 
     pub fn resolve_dependency(&self, alias: &str) -> Option<ResolvedDependency> {

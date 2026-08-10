@@ -1178,8 +1178,9 @@ impl QiCompiler {
 
     /// 解析项目 qi.toml 中声明的远程依赖（import 首段 == 依赖别名）。
     ///
-    /// 返回 `None` 表示与本步骤无关（无清单/别名不匹配/本地路径依赖），继续走后续解析链；
-    /// 返回 `Some(Err(..))` 表示确定是远程依赖但无法解析（缓存缺失 → 提示先运行 qi get）。
+    /// 返回 `None` 表示与本步骤无关（无清单 / 别名不匹配），继续走后续解析链；
+    /// 返回 `Some(Err(..))` 表示确定是声明过的依赖但无法解析（远程缓存缺失 →
+    /// 提示先运行 qi get；本地路径写歪 → 指出是路径不存在还是包对不上）。
     fn resolve_manifest_declared_dependency(
         &self,
         current_file: &PathBuf,
@@ -1193,8 +1194,25 @@ impl QiCompiler {
 
         let spec = match dependency.source() {
             Ok(crate::package::DependencySource::Remote(spec)) => spec,
-            // 本地路径依赖保持原有解析机制（qi_packages / 名称匹配等）
-            Ok(crate::package::DependencySource::LocalPath(_)) => return None,
+            // 本地路径依赖按声明的路径解析。声明失败时不立即判死：老工程里
+            // 「包恰好躺在某级祖先目录下」曾是唯一能跑通的路子（那时这条声明
+            // 根本没参与解析），留一层祖先扫描兜底免得升级即炸；兜底也不中，
+            // 才报路径级别的具体原因，而不是笼统的「哪儿都没找到」。
+            Ok(crate::package::DependencySource::LocalPath(declared)) => {
+                return Some(
+                    manifest
+                        .resolve_local_dependency_module(alias, &declared, module_path)
+                        .or_else(|reason| {
+                            self.resolve_local_manifest_package_path(current_file, module_path)
+                                .ok_or_else(|| {
+                                    CompilerError::Io(std::io::Error::new(
+                                        std::io::ErrorKind::NotFound,
+                                        reason.message(alias, &manifest.manifest_path, module_path),
+                                    ))
+                                })
+                        }),
+                );
+            }
             Err(message) => {
                 return Some(Err(CompilerError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
