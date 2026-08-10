@@ -1343,12 +1343,22 @@ impl ModuleRegistry {
     fn register_websocket_module(&mut self) {
         let mut ws_module = Module::new("WebSocket");
 
-        // WebSocket客户端连接
+        // WebSocket客户端连接。ws:// 明文，wss:// 走 TLS（rustls + 内置根证书）
         ws_module.add_function(ModuleFunction::new(
             "连接",
             "qi_websocket_connect",
-            vec!["字符串".to_string()], // URL (ws://host:port/path)
-            "整数",                     // 返回连接句柄，-1表示失败
+            vec!["字符串".to_string()], // URL (ws:// 或 wss://host:port/path)
+            "整数",                     // 返回连接句柄，<0 表示失败
+        ));
+
+        // 带自定义请求头连接：头是 JSON 对象 {"Authorization":"Bearer …"}。
+        // 实时语音（OpenAI Realtime / 百炼 qwen-omni）、MCP over wss 都在
+        // **握手阶段**用 Authorization 头鉴权，浏览器设不了，所以必须由服务端连。
+        ws_module.add_function(ModuleFunction::new(
+            "连接带头",
+            "qi_websocket_connect_headers",
+            vec!["字符串".to_string(), "字符串".to_string()], // URL, 头JSON
+            "整数",
         ));
 
         // WebSocket服务端接受连接（升级HTTP连接为WebSocket）
