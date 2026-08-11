@@ -106,10 +106,29 @@ version:
 # 确认无误后跑 make push-release V=…
 #
 # 版本号两种写法：tag 用零填充日期 2026.07.29-2，Cargo.toml 去前导零 2026.7.29-2。
+# 运行时归档的 tag 钉在 .github/workflows/release.yml 里。钉住是对的
+# （发布要可复现），但**忘了跟着 bump 是静默的**：包照样出，用户装上之后
+# 一编译就是 `undefined reference to qi_xxx` —— 2026.08.11-1 就是这么出的，
+# 运行时还停在 07-29，后来加的 WebSocket/mailbox/JSON 那批符号一个都不在。
+# 所以发布前对一次：钉的 tag 必须是 qi-runtime 的最新 tag。
+check-runtime-pin:
+	@pinned=$$(sed -n 's#.*--branch \([0-9.-]*\) https://github.com/qilang-project/qi-runtime.*#\1#p' \
+	    .github/workflows/release.yml); \
+	  latest=$$(git ls-remote --tags --refs https://github.com/qilang-project/qi-runtime.git \
+	    | awk -F/ '{print $$NF}' | sort -V | tail -1); \
+	  if [ "$$pinned" != "$$latest" ]; then \
+	    echo "运行时 tag 落后：release.yml 钉的是 $${pinned}，qi-runtime 最新是 $${latest}"; \
+	    echo "  要么给 qi-runtime 的新提交打 tag，要么把 release.yml 里的 --branch 改成 $${latest}"; \
+	    exit 1; \
+	  fi; \
+	  echo "运行时 tag 对得上：$$pinned"
+
 release:
 ifndef V
 	$(error 用法: make release V=2026.07.29-2)
 endif
+	@echo "==> 运行时 tag"
+	$(MAKE) check-runtime-pin
 	@echo "==> 门禁"
 	$(MAKE) ci
 	@echo "==> 改版本号 $(V)"
