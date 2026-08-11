@@ -5487,6 +5487,19 @@ impl ModuleRegistry {
             "i64",
         ));
         // 等下一条调用，最多等 N 毫秒；超时返回 0
+        // TLS 监听：ALPN 只报 h2（gRPC 只跑 HTTP/2，留 http/1.1 的口子
+        // 只会让配错的客户端拿到更难懂的错）
+        m.add_function(ModuleFunction::new(
+            "监听TLS",
+            "qi_grpc_listen_tls",
+            vec![
+                "字符串".to_string(),
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
         m.add_function(ModuleFunction::new(
             "接收调用",
             "qi_grpc_accept",
@@ -5499,11 +5512,33 @@ impl ModuleRegistry {
             vec!["整数".to_string()],
             "ptr",
         ));
-        // 请求消息的字节切片句柄（分帧头已经脱掉）
+        // 一元便利入口：第一条请求消息（会缓存，可多次调）
         m.add_function(ModuleFunction::new(
             "请求字节",
             "qi_grpc_request",
             vec!["整数".to_string()],
+            "i64",
+        ));
+        // 流式：收一条。**0 = 这轮没有（超时），-1 = 客户端半关**，
+        // 两者必须分开处理，混起来循环要么早退要么空转
+        m.add_function(ModuleFunction::new(
+            "收一条",
+            "qi_grpc_recv",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        // 流式：发一条（不收尾）
+        m.add_function(ModuleFunction::new(
+            "发一条",
+            "qi_grpc_send",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        // 每条调用都必须收尾，哪怕是错 —— 不收尾客户端只会等到超时
+        m.add_function(ModuleFunction::new(
+            "收尾",
+            "qi_grpc_finish",
+            vec!["整数".to_string(), "整数".to_string(), "字符串".to_string()],
             "i64",
         ));
         // 状态码 0 才发响应体；回复后句柄立即失效
@@ -5516,6 +5551,13 @@ impl ModuleRegistry {
                 "字符串".to_string(),
                 "整数".to_string(),
             ],
+            "i64",
+        ));
+        // 开了反射，grpcurl 不用带 -proto 就能 list/describe/调用
+        m.add_function(ModuleFunction::new(
+            "开反射",
+            "qi_grpc_enable_reflection",
+            vec!["整数".to_string(), "整数".to_string()],
             "i64",
         ));
         m.add_function(ModuleFunction::new(
@@ -5531,6 +5573,14 @@ impl ModuleRegistry {
             "连接",
             "qi_grpc_dial",
             vec!["字符串".to_string()],
+            "i64",
+        ));
+        // CA 留空走系统内置根证书。**没有「跳过校验」的开关** ——
+        // 那种开关一定会有人为了联调打开，然后带到线上
+        m.add_function(ModuleFunction::new(
+            "连接TLS",
+            "qi_grpc_dial_tls",
+            vec!["字符串".to_string(), "字符串".to_string()],
             "i64",
         ));
         m.add_function(ModuleFunction::new(
