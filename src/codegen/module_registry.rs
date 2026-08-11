@@ -5525,6 +5525,59 @@ impl ModuleRegistry {
             "i64",
         ));
 
+        // ── 客户端 ──
+        // 一条连接多路复用；别每次调用都重连（每次都要付握手的钱）
+        m.add_function(ModuleFunction::new(
+            "连接",
+            "qi_grpc_dial",
+            vec!["字符串".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "断开",
+            "qi_grpc_close_conn",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        // 阻塞到有结果。网络层失败也走结果句柄（状态码 UNAVAILABLE 之类），
+        // 调用方只有一条错误路径
+        m.add_function(ModuleFunction::new(
+            "调用",
+            "qi_grpc_call",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结果状态",
+            "qi_grpc_result_status",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结果消息",
+            "qi_grpc_result_message",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "结果字节",
+            "qi_grpc_result_bytes",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        // 连响应字节一起释放 —— 别单独释放 结果字节 拿到的那个句柄
+        m.add_function(ModuleFunction::new(
+            "结果释放",
+            "qi_grpc_result_free",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
         self.modules.insert("gRPC".to_string(), m.clone());
         self.modules.insert("标准库.gRPC".to_string(), m);
     }
