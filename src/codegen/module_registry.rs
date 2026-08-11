@@ -144,6 +144,7 @@ impl ModuleRegistry {
         self.register_compress_module();
         self.register_test_module();
         self.register_database_module();
+        self.register_redis_module();
         self.register_web_runtime_module();
         self.register_tls_module();
         self.register_sync_module();
@@ -5089,6 +5090,312 @@ impl ModuleRegistry {
 
         self.modules.insert("数据库".to_string(), db_module.clone());
         self.modules.insert("标准库.数据库".to_string(), db_module);
+    }
+
+    /// 注册 Redis 模块（标准库.Redis）
+    ///
+    /// 签名与 qi-runtime/src/stdlib/redis_ffi.rs 一一对应。
+    /// 失败约定：整数返回 -1，字符串返回 ""；"" 同时也是「键不存在」，
+    /// 分不清的时候用 最后错误()。
+    fn register_redis_module(&mut self) {
+        let mut m = Module::new("Redis");
+
+        // 连接串：redis://host:port/db，rediss:// 走 TLS。
+        // 池参数跟数据库层同一套：?pool_max=16&pool_timeout_ms=3000
+        m.add_function(ModuleFunction::new(
+            "连接",
+            "qi_redis_connect",
+            vec!["字符串".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "关闭",
+            "qi_redis_close",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "探活",
+            "qi_redis_ping",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "最后错误",
+            "qi_redis_last_error",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+
+        // ── 字符串键值 ──
+        m.add_function(ModuleFunction::new(
+            "设",
+            "qi_redis_set",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        // 会话、验证码这类东西用这个，别 设() 完再 设过期() ——
+        // 中间断一下就留下一个永不过期的键
+        m.add_function(ModuleFunction::new(
+            "设并过期",
+            "qi_redis_set_ex",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
+            "i64",
+        ));
+        // SET NX EX：抢到 1，已被占 0。分布式锁的基本件
+        m.add_function(ModuleFunction::new(
+            "设若不存在",
+            "qi_redis_set_nx",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "取",
+            "qi_redis_get",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "删",
+            "qi_redis_del",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "存在",
+            "qi_redis_exists",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        // 注意：自增后的新值可能是负数，别拿 -1 当失败判据
+        m.add_function(ModuleFunction::new(
+            "自增",
+            "qi_redis_incr",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "自增量",
+            "qi_redis_incr_by",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "设过期",
+            "qi_redis_expire",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        // 剩余秒数；-1 没设过期；-2 键不存在
+        m.add_function(ModuleFunction::new(
+            "剩余时间",
+            "qi_redis_ttl",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+
+        // ── 哈希 ──
+        m.add_function(ModuleFunction::new(
+            "哈希设",
+            "qi_redis_hset",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "哈希取",
+            "qi_redis_hget",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "ptr",
+        ));
+        // 返回 JSON 对象
+        m.add_function(ModuleFunction::new(
+            "哈希全取",
+            "qi_redis_hgetall",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "哈希删",
+            "qi_redis_hdel",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+
+        // ── 列表 ──
+        m.add_function(ModuleFunction::new(
+            "左推",
+            "qi_redis_lpush",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "右推",
+            "qi_redis_rpush",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "左弹",
+            "qi_redis_lpop",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "右弹",
+            "qi_redis_rpop",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "列表长度",
+            "qi_redis_llen",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        // 返回 JSON 数组；止 = -1 表示到末尾
+        m.add_function(ModuleFunction::new(
+            "列表范围",
+            "qi_redis_lrange",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+            ],
+            "ptr",
+        ));
+
+        // ── 集合 ──
+        m.add_function(ModuleFunction::new(
+            "集合添加",
+            "qi_redis_sadd",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "集合移除",
+            "qi_redis_srem",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "集合包含",
+            "qi_redis_sismember",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "集合成员",
+            "qi_redis_smembers",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        // 走 SCAN 游标，不是 KEYS —— KEYS 在大库上会把单线程的 Redis 卡住
+        m.add_function(ModuleFunction::new(
+            "扫描键",
+            "qi_redis_scan",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "ptr",
+        ));
+
+        // ── 发布订阅 ──
+        m.add_function(ModuleFunction::new(
+            "发布",
+            "qi_redis_publish",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        // 订阅独占一条连接，所以传 URL 自己连，不占用池
+        m.add_function(ModuleFunction::new(
+            "订阅",
+            "qi_redis_subscribe",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        // 收一条，最多等 N 毫秒；超时返回空串
+        m.add_function(ModuleFunction::new(
+            "订阅接收",
+            "qi_redis_sub_recv",
+            vec!["整数".to_string(), "整数".to_string()],
+            "ptr",
+        ));
+        // 连接断了之后 订阅接收 只会一直返回空串，跟「没人发消息」一模一样。
+        // 长跑的中继循环必须定期问这个，否则会静静地聋掉。
+        m.add_function(ModuleFunction::new(
+            "订阅活着",
+            "qi_redis_sub_alive",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "退订",
+            "qi_redis_unsubscribe",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
+        // 逃生口：没包到的命令不用等下一版运行时
+        m.add_function(ModuleFunction::new(
+            "命令",
+            "qi_redis_command",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+
+        self.modules.insert("Redis".to_string(), m.clone());
+        self.modules.insert("标准库.Redis".to_string(), m);
     }
 
     /// 注册同步原语模块（标准库.同步）
