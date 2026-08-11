@@ -145,6 +145,8 @@ impl ModuleRegistry {
         self.register_test_module();
         self.register_database_module();
         self.register_redis_module();
+        self.register_protobuf_module();
+        self.register_grpc_module();
         self.register_web_runtime_module();
         self.register_tls_module();
         self.register_sync_module();
@@ -5396,6 +5398,135 @@ impl ModuleRegistry {
 
         self.modules.insert("Redis".to_string(), m.clone());
         self.modules.insert("标准库.Redis".to_string(), m);
+    }
+
+    /// 注册 protobuf 模块（标准库.协议）
+    ///
+    /// 运行时编译 .proto 拿描述符，之后一律 JSON ↔ 线格式互转 —— qi 侧不认识
+    /// protobuf 的类型系统，只认 JSON。签名与
+    /// qi-runtime/src/stdlib/protobuf_ffi.rs 一一对应。
+    ///
+    /// 二进制走 标准库.字节切片 的句柄，不借道字符串 —— qi 的字符串是 C 串，
+    /// 装不了含 NUL 的字节。
+    fn register_protobuf_module(&mut self) {
+        let mut m = Module::new("协议");
+
+        // 文件表/导入目录都是逗号分隔；导入目录留空按文件自己的目录算
+        m.add_function(ModuleFunction::new(
+            "加载",
+            "qi_pb_load",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "释放",
+            "qi_pb_free",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "最后错误",
+            "qi_pb_last_error",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+        // 注册路由前自查，别等对面调用了才发现类型名拼错
+        m.add_function(ModuleFunction::new(
+            "有消息",
+            "qi_pb_has_message",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        // 返回 JSON：服务名、方法名、请求/响应类型、是否流式
+        m.add_function(ModuleFunction::new(
+            "服务表",
+            "qi_pb_services",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+
+        // JSON → 线格式，返回 标准库.字节切片 的句柄（用完照常 释放切片）
+        m.add_function(ModuleFunction::new(
+            "编码",
+            "qi_pb_json_to_bytes",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        // 线格式 → JSON，收字节切片句柄
+        m.add_function(ModuleFunction::new(
+            "解码",
+            "qi_pb_bytes_to_json",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "ptr",
+        ));
+
+        self.modules.insert("协议".to_string(), m.clone());
+        self.modules.insert("标准库.协议".to_string(), m);
+    }
+
+    /// 注册 gRPC 模块（标准库.gRPC）
+    ///
+    /// 只有协议那一层：HTTP/2 分帧 + trailers。**循环和分发都在 qi 侧**
+    /// （qi-grpc 包）。
+    ///
+    /// 是拉取式不是回调式：qi 把函数当值使用时会包一层闭包对象，FFI 拿到的是
+    /// 那个对象的地址而不是裸代码地址，回调过去必崩（h2_ffi 里那个回调同病，
+    /// 只是没人走过）。所以这里由 qi 主动 接收调用 → 处理 → 回复。
+    fn register_grpc_module(&mut self) {
+        let mut m = Module::new("gRPC");
+
+        // 起监听，立刻返回；端口占用这类错误在这一步同步报（返回 -1）
+        m.add_function(ModuleFunction::new(
+            "监听",
+            "qi_grpc_listen",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        // 等下一条调用，最多等 N 毫秒；超时返回 0
+        m.add_function(ModuleFunction::new(
+            "接收调用",
+            "qi_grpc_accept",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "方法名",
+            "qi_grpc_method",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+        // 请求消息的字节切片句柄（分帧头已经脱掉）
+        m.add_function(ModuleFunction::new(
+            "请求字节",
+            "qi_grpc_request",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        // 状态码 0 才发响应体；回复后句柄立即失效
+        m.add_function(ModuleFunction::new(
+            "回复",
+            "qi_grpc_respond",
+            vec![
+                "整数".to_string(),
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+            ],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "停止",
+            "qi_grpc_stop",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
+        self.modules.insert("gRPC".to_string(), m.clone());
+        self.modules.insert("标准库.gRPC".to_string(), m);
     }
 
     /// 注册同步原语模块（标准库.同步）
