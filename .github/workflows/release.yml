@@ -91,7 +91,7 @@ jobs:
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
           git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.08.11-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 --branch 2026.08.11-2 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 
