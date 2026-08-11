@@ -5553,6 +5553,14 @@ impl ModuleRegistry {
             ],
             "i64",
         ));
+        // 这条调用还剩多少毫秒预算（上游的 grpc-timeout）；没有返回 -1。
+        // 长活儿动手前问一句：只剩两百毫秒就别开工了，干完也没人要
+        m.add_function(ModuleFunction::new(
+            "剩余预算",
+            "qi_grpc_deadline_left",
+            vec!["整数".to_string()],
+            "i64",
+        ));
         // 开了反射，grpcurl 不用带 -proto 就能 list/describe/调用
         m.add_function(ModuleFunction::new(
             "开反射",
@@ -5624,6 +5632,53 @@ impl ModuleRegistry {
         m.add_function(ModuleFunction::new(
             "结果释放",
             "qi_grpc_result_free",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+
+        // ── 客户端流式 ──
+        // 三种流在这一层是同一件事：发几条、收几条由调用方决定
+        m.add_function(ModuleFunction::new(
+            "开流",
+            "qi_grpc_open_stream",
+            vec!["整数".to_string(), "字符串".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "流发一条",
+            "qi_grpc_stream_send",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        // 客户端流**必须**半关，否则服务端一直等下一条，两边干瞪眼
+        m.add_function(ModuleFunction::new(
+            "半关",
+            "qi_grpc_stream_close_send",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        // 0 = 这轮没有，-1 = 服务端已收尾（去查 流状态）
+        m.add_function(ModuleFunction::new(
+            "流收一条",
+            "qi_grpc_stream_recv",
+            vec!["整数".to_string(), "整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "流状态",
+            "qi_grpc_stream_status",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        m.add_function(ModuleFunction::new(
+            "流消息",
+            "qi_grpc_stream_message",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "关流",
+            "qi_grpc_stream_free",
             vec!["整数".to_string()],
             "i64",
         ));
