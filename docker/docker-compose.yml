@@ -1,0 +1,39 @@
+# qi 应用的 compose 示例。
+#
+#   docker compose -f qi/docker/docker-compose.yml up --build
+#
+# 构建上下文是**仓库根**（../..），因为示例要用到根下的 qi_packages。
+# 自己的项目通常把上下文设成项目自己的目录就行。
+# 服务名也只能 ASCII —— compose 的 schema 不接受中文键
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: qi/docker/Dockerfile
+      args:
+        APP: qi/docker/示例/健康页.qi
+        PACKAGES: qi_packages
+      # 发布包目前只有 x64；ARM 机器上靠这一行走模拟
+      platforms:
+        - linux/amd64
+    ports:
+      - "47901:47901"
+    environment:
+      # 容器里**必须**听 0.0.0.0 —— 听 127.0.0.1 的话端口映射过去也连不上，
+      # 而日志看着一切正常。这是容器化最常见的坑。
+      HOST: "0.0.0.0"
+      PORT: "47901"
+
+    # 健康检查跑**应用自己**（QI_HEALTHCHECK=1 时它当探针跑，打完自己的
+    # /健康 就退出）。**别用 curl** —— 运行层里没有它也不该有，
+    # 那样只会一直报 executable file not found，容器永远 unhealthy，
+    # 而应用其实好好的。
+    healthcheck:
+      test: ["CMD-SHELL", "QI_HEALTHCHECK=1 /usr/local/bin/app"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      # 给足启动时间：健康检查在 start_period 内失败不算数，
+      # 不设的话慢启动的应用会被反复重启，看着像「起不来」
+      start_period: 10s
+    restart: unless-stopped
