@@ -26,6 +26,17 @@ jobs:
             artifact: qi
             archive: qi-${{ github.ref_name }}-linux-x64.tar.gz
 
+          # linux-arm64。**不能交叉编译** —— llvm-sys 会去链宿主的 LLVM，
+          # 交叉时抓到的是 x86 那份，直接 panic（Mac 上试过，抓 libz3.dylib）。
+          # 所以用原生的 arm64 runner 跑，跟 x64 那条一模一样的配方。
+          #
+          # 加这条是因为 ARM 服务器（Graviton / Ampere）和 Apple Silicon 上
+          # 没有原生包就只能靠 qemu 模拟跑容器，慢且别扭。
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: qi
+            archive: qi-${{ github.ref_name }}-linux-arm64.tar.gz
+
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: qi.exe
@@ -91,7 +102,7 @@ jobs:
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
           git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.08.11-3 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 --branch 2026.08.12-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 

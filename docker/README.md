@@ -61,12 +61,13 @@ distroless **连 shell 都没有** —— 它那一层里一行 `RUN` 都不能�
 **3. `.dockerignore` 里排掉 `target/`。**
 qilang 仓库的 `target/` 有好几个 GB，不排掉光传构建上下文就要等很久。
 
-## 目前只有 linux-x64
+## 架构
 
-发布包没有 `linux-arm64`，所以在 ARM 机器（Apple Silicon、Graviton、Ampere）
-上要么加 `--platform linux/amd64` 走模拟，要么等 arm64 发布包。
-Dockerfile 在 arm64 上会**明确报错**而不是拉一个跑不了的二进制 ——
-否则报出来的是一句莫名其妙的 `exec format error`。
+x64 和 arm64 都有发布包（arm64 从 2026.08.12 那版开始）。Dockerfile 按
+构建平台自动挑，拉不到会**明说是哪个版本没有这个架构** —— 否则报出来的是
+一句莫名其妙的 `exec format error`。
+
+更早的版本在 ARM 上加 `--platform linux/amd64` 走模拟。
 
 ## compose
 

@@ -50,15 +50,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates clang \
     && rm -rf /var/lib/apt/lists/*
 
-# 发布包目前只有 linux-x64。在 arm64 上构建要么开 --platform linux/amd64
-# 走模拟，要么等 linux-arm64 的发布包。这里显式报错，免得拉下来一个
-# 跑不了的二进制再报一句莫名其妙的 "exec format error"。
+# 按构建平台挑发布包。**arm64 的包从 2026.08.12 那一版才开始有** ——
+# 更早的版本在 ARM 上只能加 --platform linux/amd64 走模拟。
+# 拉不到就明说是哪个版本没有这个架构，别让人对着
+# "exec format error" 猜半天。
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
       amd64) tarball="qi-${QI_VERSION}-linux-x64.tar.gz" ;; \
-      arm64) echo "qi 目前没有 linux-arm64 发布包；用 --platform linux/amd64 构建" >&2; exit 1 ;; \
+      arm64) tarball="qi-${QI_VERSION}-linux-arm64.tar.gz" ;; \
       *) echo "不支持的架构: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    if ! curl -fsIL "https://github.com/qilang-project/qi/releases/download/${QI_VERSION}/${tarball}" > /dev/null 2>&1; then \
+      echo "qi ${QI_VERSION} 没有 ${TARGETARCH} 的包（${tarball}）" >&2; \
+      echo "  换个版本，或者加 --platform linux/amd64 走模拟" >&2; \
+      exit 1; \
+    fi; \
     curl -fsSL -o /tmp/qi.tgz \
       "https://github.com/qilang-project/qi/releases/download/${QI_VERSION}/${tarball}"; \
     mkdir -p /opt/qi; \
