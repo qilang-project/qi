@@ -41,7 +41,7 @@ ARG RUNTIME_BASE=debian:12-slim
 # ── 构建层 ──────────────────────────────────────────────────────
 FROM debian:12-slim AS builder
 
-ARG QI_VERSION=2026.08.11-3
+ARG QI_VERSION=2026.08.12-1
 ARG TARGETARCH
 
 # clang 是**必须**的：qi 生成 LLVM IR，最后一步链接交给 clang。

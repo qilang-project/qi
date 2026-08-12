@@ -13,9 +13,6 @@ services:
       args:
         APP: qi/docker/示例/健康页.qi
         PACKAGES: qi_packages
-      # 发布包目前只有 x64；ARM 机器上靠这一行走模拟
-      platforms:
-        - linux/amd64
     ports:
       - "47901:47901"
     environment:
