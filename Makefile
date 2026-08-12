@@ -11,7 +11,8 @@
 #   make test             库单测
 #   make regress          codegen 回归
 #   make examples         示例冒烟
-#   make ci               CI 跑的全部（= check test regress examples）
+#   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
+#   make ci               CI 跑的全部（= check test regress examples grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -33,7 +34,7 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
-.PHONY: help build runtime test regress examples check lint-strict ci install \
+.PHONY: help build runtime test regress examples grpc check lint-strict ci install \
         release push-release clean version
 
 help:
@@ -66,6 +67,17 @@ regress: build $(RUNTIME_LIB)
 examples: build $(RUNTIME_LIB)
 	QI_BIN=$(QI) QI_RUNTIME_LIB=$(RUNTIME_LIB) bash scripts/run_examples.sh
 
+# gRPC 全套互通验收（qi-grpc 仓）。**gRPC 的故障方式是「挂着不动」和
+# 「静默丢消息」，不是干脆的崩溃** —— 别的测试全绿也照样发现不了，
+# 所以必须有一条专门盯它的。qi-grpc 不在时跳过（它是独立仓）。
+GRPC_DIR ?= $(CURDIR)/../qi-grpc
+grpc: build $(RUNTIME_LIB)
+	@if [ -x "$(GRPC_DIR)/跑验收.sh" ]; then \
+	  QI_BIN=$(QI) QI_RUNTIME_LIB=$(RUNTIME_LIB) bash "$(GRPC_DIR)/跑验收.sh"; \
+	else \
+	  echo "没有 $(GRPC_DIR)/跑验收.sh，跳过 gRPC 验收"; \
+	fi
+
 # 门禁用的 lint。clippy 只挡真 error ——
 # 仓库里还有一批历史 warning，现在就上 -D warnings 会让 CI 当场全红；
 # 想清理时跑 make lint-strict 看完整清单。
@@ -94,7 +106,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check test regress examples
+ci: check test regress examples grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

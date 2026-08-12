@@ -5553,6 +5553,52 @@ impl ModuleRegistry {
             ],
             "i64",
         ));
+        // ── 元数据 ──
+        // 鉴权、链路追踪、租户标识全靠它。**键按小写查**（HTTP/2 头名一律小写）
+        m.add_function(ModuleFunction::new(
+            "元数据",
+            "qi_grpc_metadata",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "ptr",
+        ));
+        m.add_function(ModuleFunction::new(
+            "全部元数据",
+            "qi_grpc_metadata_all",
+            vec!["整数".to_string()],
+            "ptr",
+        ));
+        // 往响应 trailers 里塞自定义元数据（grpc- 前缀不给用，那是协议的地盘）
+        m.add_function(ModuleFunction::new(
+            "设响应元数据",
+            "qi_grpc_set_trailer",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+        // 客户端：连接级默认元数据（auth token 放这儿，免得每处都记得传）
+        m.add_function(ModuleFunction::new(
+            "设默认元数据",
+            "qi_grpc_set_metadata",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "i64",
+        ));
+        // 客户端：带调用级元数据的调用（同名盖掉连接级默认）
+        m.add_function(ModuleFunction::new(
+            "调用带元数据",
+            "qi_grpc_call_meta",
+            vec![
+                "整数".to_string(),
+                "字符串".to_string(),
+                "整数".to_string(),
+                "整数".to_string(),
+                "字符串".to_string(),
+            ],
+            "i64",
+        ));
+
         // 这条调用还剩多少毫秒预算（上游的 grpc-timeout）；没有返回 -1。
         // 长活儿动手前问一句：只剩两百毫秒就别开工了，干完也没人要
         m.add_function(ModuleFunction::new(
@@ -5568,10 +5614,20 @@ impl ModuleRegistry {
             vec!["整数".to_string(), "整数".to_string()],
             "i64",
         ));
+        // 对面还在吗。**跟「收一条返回 -1」不是一回事** —— 那个是「客户端
+        // 发完了」，一元的正常路径每次都会走到；这个是「人跑了」
+        m.add_function(ModuleFunction::new(
+            "还活着",
+            "qi_grpc_alive",
+            vec!["整数".to_string()],
+            "i64",
+        ));
+        // 优雅停机：不收新连接，等在途调用做完（最多等 N 毫秒）。
+        // 返回还没做完的调用数
         m.add_function(ModuleFunction::new(
             "停止",
             "qi_grpc_stop",
-            vec!["整数".to_string()],
+            vec!["整数".to_string(), "整数".to_string()],
             "i64",
         ));
 
@@ -5590,6 +5646,13 @@ impl ModuleRegistry {
             "qi_grpc_dial_tls",
             vec!["字符串".to_string(), "字符串".to_string()],
             "i64",
+        ));
+        // 各后端的健康状况（JSON 数组）—— 排查「请求怎么都跑一台上去了」要用
+        m.add_function(ModuleFunction::new(
+            "后端状况",
+            "qi_grpc_backends",
+            vec!["整数".to_string()],
+            "ptr",
         ));
         m.add_function(ModuleFunction::new(
             "断开",

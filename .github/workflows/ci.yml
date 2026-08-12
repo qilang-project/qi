@@ -58,10 +58,22 @@ jobs:
       # 被测依赖：qi-runtime 提供示例链接用的归档（独立仓）。
       # 克隆到 ../ 是因为 qi-runtime 自己按 ../qi-gui 找 GUI 的 manifest；
       # Makefile 的 RUNTIME_DIR 默认就是 ../qi-runtime，本地和这里一致。
+      #
+      # **runtime 用 main 不钉 tag**：这是 CI 不是发布，要的就是「最新的
+      # 编译器配最新的运行时」能不能一起跑。钉 tag 的话，运行时刚加的符号
+      # 在 CI 里根本测不到 —— 发布那条路才需要可复现（见 release.yml）。
       - name: Clone 被测依赖
         run: |
           git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.07.29-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 https://github.com/qilang-project/qi-grpc.git ../qi-grpc
+
+      # gRPC 互通验收要 Go（对照客户端/服务端走 protoc 生成的静态桩，
+      # 桩已入库所以不用装 protoc）。没有 Go 时 跑验收.sh 会自己跳过 Go 那半边。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
 
       # 构建 + 单测 + codegen 回归 + 示例冒烟，全部走 Makefile ——
       # 和本地 make ci 是同一条路径，避免两边各写一份逐渐漂移
