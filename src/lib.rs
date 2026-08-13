@@ -1126,12 +1126,21 @@ impl QiCompiler {
                 return Ok(local_package_path);
             }
 
+            // QI_PACKAGES_PATH 支持 PATH 式多路径（Unix `:`、Windows `;`），按序
+            // 先到先得。以前整串被当**一个目录名**：拼了 "a:b" 的调用方所有包
+            // 全 miss，报「无法找到导入模块」——本地被祖先扫描兜住看不出来，
+            // 独立 checkout 的 CI 才炸（qi-harness service persistence 踩的）。
+            // split_paths 对不含分隔符的单路径原样返回，旧用法行为不变。
             if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
-                let packages_root = std::path::Path::new(&package_root);
-                if let Some(package_path) =
-                    self.resolve_package_path_from_root(packages_root, module_path)
-                {
-                    return Ok(package_path);
+                for packages_root in std::env::split_paths(&package_root) {
+                    if packages_root.as_os_str().is_empty() {
+                        continue;
+                    }
+                    if let Some(package_path) =
+                        self.resolve_package_path_from_root(&packages_root, module_path)
+                    {
+                        return Ok(package_path);
+                    }
                 }
             }
 
