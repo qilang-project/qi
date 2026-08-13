@@ -78,6 +78,9 @@ check_one 33_数组字面量混族.qi   'TypeMismatch'
 check_one 34_模板串洞未定义变量.qi 'UndefinedVariable'
 check_one 35_模板串洞未定义函数.qi "未定义的函数 '不存在的函数'"
 check_one 36_重载多候选实参错.qi 'TypeMismatch'
+# ── 2026-08：注册表 ptr 返回=字符串（闪购超卖假象的根因）──
+check_one 37_模块字符串返回赋整数.qi 'TypeMismatch'
+check_one 38_模块字符串返回传整数形参.qi 'TypeMismatch'
 
 rm -f /tmp/红码断言.ll
 echo ""

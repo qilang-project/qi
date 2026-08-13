@@ -91,11 +91,17 @@ fn 注册表() -> &'static ModuleRegistry {
 /// （哈希表/文件/数据库连接…），映射为未知，避免「句柄赋给字典变量」类误报。
 fn 注册表返回保守(t: &str) -> 推断 {
     match t {
-        "字符串" => Some(TypeNode::基础类型(BasicType::字符串)),
+        // "ptr" 就是 C 字符串：审计过注册表全部 46 个 ptr 返回
+        // （正则/路径/环境变量/DB/Redis/gRPC 元数据…），实现清一色
+        // `-> *mut c_char`，codegen 那侧也是 `"字符串" | "ptr" => Qi类型::字符串`
+        // （inkwell_gen/导入.rs）。之前映射成未知，于是
+        // `变量 动了: 整数 = 数据库.执行参数(…)` 一路沉默 —— 运行时指针
+        // 永远非零，「库存不够」的单也全报成交，靠 20 路并发抢购才暴露。
+        "字符串" | "ptr" => Some(TypeNode::基础类型(BasicType::字符串)),
         "浮点数" | "double" => Some(TypeNode::基础类型(BasicType::浮点数)),
         "布尔" => Some(TypeNode::基础类型(BasicType::布尔)),
         "空" | "void" => Some(TypeNode::基础类型(BasicType::空)),
-        _ => None, // 整数句柄 / ptr / 数组 / 其他 → 未知
+        _ => None, // 整数句柄 / 数组 / 其他 → 未知
     }
 }
 
@@ -706,8 +712,49 @@ impl 单元检查器 {
                 self.是字面量来源(&b.left) && self.是字面量来源(&b.right)
             }
             AstNode::标识符表达式(id) => self.是字面量变量(&id.name),
+            // 模块限定的注册表调用，返回类型是**具体值类型**（字符串/浮点/布尔）
+            // 时也算可信来源：这个类型来自注册表标注，跟字面量一样确定。
+            // 整数返回不算 —— 那是句柄语义（列表句柄/连接句柄…），存进什么
+            // 变量都是惯用法。没有这一条，`变量 n: 整数 = 数据库.执行参数(…)`
+            // 因为「初值不是字面量」直接跳过比对，改对返回类型映射也白改。
+            AstNode::函数调用表达式(call) => call
+                .module_qualifier
+                .as_deref()
+                .map(|q| self.是注册表具体返回(q, &call.callee))
+                .unwrap_or(false),
+            // 点号形式（数据库.执行参数(…)）解析成方法调用：接收者是裸标识符
+            // 且不是变量时，就是模块限定调用（与 限定调用 的判定一致）
+            AstNode::方法调用表达式(mc) => {
+                if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                    let 是变量 =
+                        self.查局部(&id.name).is_some() || self.全局变量.contains_key(&id.name);
+                    !是变量 && self.是注册表具体返回(&id.name, &mc.method_name)
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
+    }
+
+    /// 无副作用版的「这个模块限定调用返回具体值类型吗」。
+    /// 不能复用 推断表达式 —— 那个会顺手报实参的错（&mut + 重复报）。
+    fn 是注册表具体返回(&self, 限定名: &str, 函数名: &str) -> bool {
+        let 模块 = self
+            .模块别名
+            .get(限定名)
+            .cloned()
+            .unwrap_or_else(|| 限定名.to_string());
+        let Some((_, 返回)) = 注册表签名(Some(&模块), 函数名.trim_start_matches(':'))
+        else {
+            return false;
+        };
+        matches!(
+            注册表返回保守(&返回),
+            Some(TypeNode::基础类型(
+                BasicType::字符串 | BasicType::浮点数 | BasicType::布尔
+            ))
+        )
     }
 
     fn 查局部(&self, name: &str) -> Option<&推断> {
