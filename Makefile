@@ -12,8 +12,9 @@
 #   make regress          codegen 回归
 #   make ffi-link         FFI 链接控制（--库路径 / 直链 .a / macOS framework）
 #   make examples         示例冒烟
+#   make debuginfo        DWARF 调试信息验收（实跑 lldb 断点/单步/backtrace）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
-#   make ci               CI 跑的全部（= check test regress ffi-link examples grpc）
+#   make ci               CI 跑的全部（= check test regress ffi-link examples debuginfo grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -35,7 +36,7 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
-.PHONY: help build runtime test regress ffi-link examples grpc check lint-strict ci install \
+.PHONY: help build runtime test regress ffi-link examples debuginfo grpc check lint-strict ci install \
         release push-release clean version
 
 help:
@@ -78,6 +79,13 @@ examples: build $(RUNTIME_LIB)
 # gRPC 全套互通验收（qi-grpc 仓）。**gRPC 的故障方式是「挂着不动」和
 # 「静默丢消息」，不是干脆的崩溃** —— 别的测试全绿也照样发现不了，
 # 所以必须有一条专门盯它的。qi-grpc 不在时跳过（它是独立仓）。
+# DWARF 调试信息验收。**必须实跑 lldb** —— 元数据「生成了」和调试器「用得上」
+# 是两回事：模块标志漏一个、finalize 漏一次、macOS 的 debug map 找不到 .o，
+# dwarfdump 全都看不出问题，只有断点不命中才暴露。
+# 无 lldb / lldb 控制不了进程（沙箱、无开发者模式）时脚本自己报 SKIP，不假红。
+debuginfo: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/调试信息/断言.sh $(QI)
+
 GRPC_DIR ?= $(CURDIR)/../qi-grpc
 grpc: build $(RUNTIME_LIB)
 	@if [ -x "$(GRPC_DIR)/跑验收.sh" ]; then \
@@ -114,7 +122,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check test regress ffi-link examples grpc
+ci: check test regress ffi-link examples debuginfo grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

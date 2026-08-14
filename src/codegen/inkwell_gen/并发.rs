@@ -539,6 +539,10 @@ impl<'ctx> 后端<'ctx> {
         let tramp = self.module.add_function(名, fn_type, None);
 
         let 保存 = self.builder.get_insert_block();
+        // 这个 trampoline 是在某条语句中途合成的：它没有 DISubprogram，
+        // 继承外层的调试位置会被 verifier 拦下。摘下来、出去时放回去 ——
+        // 只清不放回也不行，外层这条语句剩下的调用就没位置了。
+        let 调试位置 = self.调试_暂离();
         let entry = self.ctx.append_basic_block(tramp, "entry");
         self.builder.position_at_end(entry);
 
@@ -588,6 +592,7 @@ impl<'ctx> 后端<'ctx> {
         if let Some(bb) = 保存 {
             self.builder.position_at_end(bb);
         }
+        self.调试_归位(调试位置);
         Ok(tramp.as_global_value().as_pointer_value())
     }
 

@@ -176,6 +176,8 @@ impl<'ctx> 后端<'ctx> {
         if self.导出表.is_empty() {
             return Ok(());
         }
+        // C ABI 包装 / 构造器都是合成函数，无 DISubprogram：先摘掉残留位置。
+        let _ = self.调试_暂离();
         let 记录: Vec<导出记录> = self.导出表.clone();
         for r in &记录 {
             self.生成单个导出包装(r)?;
