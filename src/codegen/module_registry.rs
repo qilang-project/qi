@@ -154,6 +154,33 @@ impl ModuleRegistry {
         self.register_reflect_module();
         self.register_plugin_module();
         self.register_tool_control_module();
+        self.register_mem_module();
+    }
+
+    /// 裸内存读写 —— 只给手写 C FFI 用。
+    ///
+    /// `外部 "c"` 能拿到 malloc 的 指针，C 回调也能收到 `void*`，但在此之前 Qi 侧
+    /// 没有任何办法把那块内存里的 i64 取出来 / 放回去（`*p` 只能读偏移 0，且不能赋值）。
+    /// qsort 的比较器就卡在这一步，所以补这两个原语。
+    ///
+    /// 没有边界检查是有意的：基址来自 C，Qi 拿不到那块分配的真实长度，
+    /// 补个 长度 参数只是安全的假象。用它就等于接受手写 FFI 的责任。
+    fn register_mem_module(&mut self) {
+        let mut mem_module = Module::new("内存");
+        mem_module.add_function(ModuleFunction::new(
+            "读整数",
+            "qi_mem_read_i64",
+            vec!["指针".to_string(), "整数".to_string()], // 基址, 字节偏移
+            "整数",
+        ));
+        mem_module.add_function(ModuleFunction::new(
+            "写整数",
+            "qi_mem_write_i64",
+            vec!["指针".to_string(), "整数".to_string(), "整数".to_string()], // 基址, 字节偏移, 值
+            "空",
+        ));
+        self.modules.insert("内存".to_string(), mem_module.clone());
+        self.modules.insert("标准库.内存".to_string(), mem_module);
     }
 
     fn register_tool_control_module(&mut self) {
