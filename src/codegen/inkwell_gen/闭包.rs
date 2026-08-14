@@ -319,6 +319,8 @@ impl<'ctx> 后端<'ctx> {
                 );
                 // 生成 dtor 体（保存/恢复 builder 插入点，与 生成trampoline 同法）
                 let 保存 = self.builder.get_insert_block();
+                // 合成函数无 DISubprogram，位置要摘下再放回（见 调试信息.rs）
+                let 调试位置 = self.调试_暂离();
                 let entry = self.ctx.append_basic_block(f, "entry");
                 self.builder.position_at_end(entry);
                 let env = f.get_nth_param(0).unwrap().into_pointer_value();
@@ -338,6 +340,7 @@ impl<'ctx> 后端<'ctx> {
                 if let Some(bb) = 保存 {
                     self.builder.position_at_end(bb);
                 }
+                self.调试_归位(调试位置);
                 f
             }
         };
@@ -523,6 +526,8 @@ impl<'ctx> 后端<'ctx> {
 
         // 保存 builder 位置，生成 tramp 体，再恢复
         let 保存 = self.builder.get_insert_block();
+        // 合成函数无 DISubprogram，位置要摘下再放回（见 调试信息.rs）
+        let 调试位置 = self.调试_暂离();
         let entry = self.ctx.append_basic_block(tramp, "entry");
         self.builder.position_at_end(entry);
 
@@ -552,6 +557,7 @@ impl<'ctx> 后端<'ctx> {
         if let Some(bb) = 保存 {
             self.builder.position_at_end(bb);
         }
+        self.调试_归位(调试位置);
         Ok(tramp.as_global_value().as_pointer_value())
     }
 

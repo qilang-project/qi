@@ -330,6 +330,9 @@ impl<'ctx> 后端<'ctx> {
         } else {
             super::包内符号名(self.当前包.as_deref(), &f.name, 元数)
         };
+        // 上一个函数留下的调试位置在这里彻底清掉：协程分支下面就 return 了，
+        // 它生成的函数没有 DISubprogram，继承到位置就是 verifier 错。
+        self.调试_离开函数();
         // QI_CORO：协程函数（返回 未来<T> 且含 等待）走 coro 变换（llvm.coro.*）。
         if self.协程函数集.contains(&mangled) {
             return self.生成协程函数体(f);
@@ -356,6 +359,10 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
+        // 调试信息：DW_AT_name 用中文原名（lldb 显示 / backtrace 可读），
+        // DW_AT_linkage_name 用 mangled 符号（对得回 nm 看到的东西）。
+        self.调试_进入函数(func, &f.name, &mangled, f.span, &sig.参数, sig.返回);
+
         // 剖析：序言计时（QI_PROF 关时空操作），用中文原名当显示名
         self.剖析入口(&f.name)?;
 
@@ -378,6 +385,8 @@ impl<'ctx> 后端<'ctx> {
             // ARC：RC 参数（字符串/结构体/数组，对调用方是借用）落地进局部槽
             // → retain 一次，与出口「释放所有 RC 局部」平衡；覆写时释放旧值也自洽。
             self.弧retain任意(arg, t);
+            // 调试信息：形参序号 1-based，lldb `frame variable` 据此列参数。
+            self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 1));
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -406,6 +415,7 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
+        self.调试_离开函数(); // 位置粘性，见 调试信息.rs 模块头
         self.符号.退出作用域();
         Ok(())
     }

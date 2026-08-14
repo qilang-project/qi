@@ -698,6 +698,8 @@ impl<'ctx> 后端<'ctx> {
         if !self.弧 {
             return Ok(());
         }
+        // 合成函数无 DISubprogram：进来前先摘掉可能残留的调试位置。
+        let _ = self.调试_暂离();
         // 泛型结构体实例迟到登记：先补齐 LLVM 类型（释放函数体要做 typed GEP）
         self.确保结构体llvm齐全();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());

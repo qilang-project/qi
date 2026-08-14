@@ -73,6 +73,8 @@ mod 表达式;
 mod 诊断;
 #[path = "语句.rs"]
 mod 语句;
+#[path = "调试信息.rs"]
+mod 调试信息;
 #[path = "闭包.rs"]
 mod 闭包;
 #[path = "闭包环.rs"]
@@ -135,6 +137,15 @@ fn 包内符号名(pkg: Option<&str>, name: &str, 元数: usize) -> String {
 
 struct 后端<'ctx> {
     ctx: &'ctx Context,
+    /// DWARF 调试信息状态（None = 本次编译不生成调试信息）。
+    ///
+    /// **必须声明在 module 之前**：结构体字段按声明顺序析构，而
+    /// DebugInfoBuilder 的 Drop 会 finalize（往 module 里回写延迟构造的元数据）。
+    /// module 先析构掉的话那是对已释放内存的写入。
+    调试: Option<调试信息::调试上下文<'ctx>>,
+    /// 本次编译是否生成调试信息（`--无调试信息` 关）。默认开：qi 没有
+    /// debug/release 之分，调试信息不进代码段、不影响运行性能，只增大产物体积。
+    调试开: bool,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     /// 符号表：函数签名 + 作用域变量类型。
@@ -237,11 +248,13 @@ struct 后端<'ctx> {
 }
 
 impl<'ctx> 后端<'ctx> {
-    fn new(ctx: &'ctx Context) -> Self {
+    fn new(ctx: &'ctx Context, 调试开: bool) -> Self {
         let module = ctx.create_module("qi_program");
         let builder = ctx.create_builder();
         Self {
             ctx,
+            调试: None,
+            调试开,
             module,
             builder,
             符号: 符号表::new(),
@@ -622,6 +635,10 @@ impl<'ctx> 后端<'ctx> {
         self.builder.position_at_end(bb);
 
         self.设当前程序(&programs[0]);
+        // 调试信息：main 的 DISubprogram 用 入口 的中文名 + 声明行，backtrace
+        // 里显示成「入口」而不是「main」，跟源码对得上。设当前程序 之后调 ——
+        // 它要靠 当前文件 定位源码。
+        self.调试_进入函数(main_fn, "入口", "main", 入口.span, &[], Qi类型::空);
         self.变量表.clear();
         self.作用域遮蔽栈.clear();
         self.弧隐藏引用计数槽.clear();
@@ -665,6 +682,9 @@ impl<'ctx> 后端<'ctx> {
                 .build_return(Some(&i32t.const_int(0, false)))
                 .map_err(|e| e.to_string())?;
         }
+        // 位置是粘性的：不清会漏进后面合成的闭包体 / 释放函数（它们没有
+        // DISubprogram），verifier 报 wrong subprogram。
+        self.调试_离开函数();
         Ok(())
     }
 }
@@ -713,6 +733,7 @@ pub fn compile_to_object(
         None,
         crate::config::OptimizationLevel::Basic,
         false,
+        true,
     )
     .map(|_| ())
 }
@@ -724,6 +745,9 @@ pub fn compile_to_object(
 ///
 /// `库模式`：true 时不生成 @main（不要求 入口()），改为生成所有 `导出 函数` 的 C ABI
 /// 包装 + 库加载构造器；返回导出函数的头文件信息（供 .h 生成）。
+///
+/// `带调试`：生成 DWARF 行号表 + 函数条目（lldb/gdb 可按 .qi 源码断点/单步）。
+/// 默认开，`--无调试信息` 关。
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
@@ -731,12 +755,15 @@ pub fn compile_to_object_multi(
     arch: Option<&str>,
     opt: crate::config::OptimizationLevel,
     库模式: bool,
+    带调试: bool,
 ) -> Result<Vec<CExportInfo>, String> {
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
     }
     let ctx = Context::create();
-    let mut 后端值 = 后端::new(&ctx);
+    let mut 后端值 = 后端::new(&ctx, 带调试);
+    // 编译单元要最先建：模块标志（Debug Info Version）得在任何元数据之前落位。
+    后端值.调试_建立单元(programs[0].source_path.as_deref());
     后端值.声明运行时();
 
     // 收集所有模块的导入别名（标准库导入）+ destructure 导入映射（跨包同名结构体消歧）
@@ -923,6 +950,10 @@ pub fn compile_to_object_multi(
     if 库模式 {
         后端值.生成导出包装()?;
     }
+
+    // 调试元数据落实必须在 verify 之前：verifier 看半成品会报「invalid
+    // debug info」，而那时元数据还只是占位节点，报错信息完全指不到真问题。
+    后端值.调试_收尾();
 
     后端值
         .module

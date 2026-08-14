@@ -228,6 +228,7 @@ impl QiCompiler {
             self.config.target_arch.as_deref(),
             self.config.optimization_level,
             true, // 库模式：无 @main，生成导出包装 + 构造器
+            !self.config.无调试信息,
         )
         .map_err(CompilerError::Codegen)?;
 
@@ -340,6 +341,8 @@ impl QiCompiler {
     fn build_dynamic_library(&self, obj: &PathBuf, lib_out: &PathBuf) -> Result<(), CompilerError> {
         let runtime = self.find_host_runtime_library()?;
         let mut cmd = std::process::Command::new("clang");
+        // 同 link_objects：debug map 里的 .o 时间戳会破坏产物可复现性。
+        cmd.env("ZERO_AR_DATE", "1");
         #[cfg(target_os = "macos")]
         {
             // 装载名用输出文件名，@rpath 让使用者可 -rpath 定位。
@@ -471,6 +474,7 @@ impl QiCompiler {
             self.config.target_arch.as_deref(),
             self.config.optimization_level,
             false, // 可执行模式：生成 @main
+            !self.config.无调试信息,
         )
         .map_err(CompilerError::Codegen)?;
         let exe = if cfg!(windows) {
@@ -588,6 +592,12 @@ impl QiCompiler {
         let lib_path = self.find_host_runtime_library()?;
 
         let mut command = std::process::Command::new("clang");
+        // macOS 的调试信息不进可执行文件，只留一张 debug map（N_OSO 条目）指回
+        // .o —— 而 ld64 会把 .o 的**修改时间**写进那条记录。同一份源码重编两次，
+        // 时间戳不同 → 可执行文件字节不同 → LC_UUID 也跟着变，「编译 5 次产物
+        // 一致」的确定性回归当场变红。ZERO_AR_DATE 让链接器把时间戳写 0
+        // （lldb 见 0 就跳过 .o 新旧校验，断点照常）。
+        command.env("ZERO_AR_DATE", "1");
         command.arg("-o").arg(executable_path);
 
         // Add all object files

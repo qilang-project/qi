@@ -17,6 +17,9 @@ impl<'ctx> 后端<'ctx> {
         node: &AstNode,
         func: FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // 调试信息：一条语句生成的所有指令共用这个位置 —— 断点/单步的根基。
+        // 无调试信息时是空操作。见 调试信息.rs。
+        self.调试_语句(node);
         match node {
             AstNode::变量声明(vd) => {
                 // 类型：注解优先（结构体感知），否则由初值推断。
@@ -111,6 +114,9 @@ impl<'ctx> 后端<'ctx> {
                         .build_store(ptr, v)
                         .map_err(|e| e.to_string())?;
                 }
+                // 调试信息：让 lldb `frame variable` 认得出变量名。挂在声明处，
+                // 块作用域遮蔽的同名变量各自登记一条（DWARF 允许同名不同 scope）。
+                self.调试_局部变量(&vd.name, 类型, ptr, vd.span, None);
                 self.声明局部槽(&vd.name, ptr, 类型);
                 self.符号.声明变量(&vd.name, 类型);
                 Ok(())

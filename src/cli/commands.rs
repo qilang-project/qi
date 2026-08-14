@@ -71,6 +71,11 @@ pub struct Cli {
     #[arg(long)]
     pub no_runtime_checks: bool,
 
+    /// 不生成 DWARF 调试信息（产物更小，但 lldb/gdb 无法按源码断点）
+    /// | Omit DWARF debug info (smaller binary, no source-level debugging)
+    #[arg(long = "无调试信息", alias = "no-debug-info")]
+    pub 无调试信息: bool,
+
     /// 将警告视为错误 | Treat warnings as errors
     #[arg(long)]
     pub warnings_as_errors: bool,

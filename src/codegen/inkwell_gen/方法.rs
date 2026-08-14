@@ -131,8 +131,13 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
-        // 剖析：序言计时（QI_PROF 关时空操作），显示名 = 接收者类型.方法名（消歧同名方法）
+        // 调试信息 + 剖析共用显示名 = 接收者类型.方法名（消歧同名方法）
         let 剖析显示名 = format!("{}.{}", m.receiver_type, m.method_name);
+        // 接收者 自身 不在 sig.参数 里，DWARF 签名前面补一个指针占位，
+        // 参数序号才跟 create_parameter_variable 的 1-based 对得上。
+        let mut 调试参数 = vec![接收者类型];
+        调试参数.extend_from_slice(&sig.参数);
+        self.调试_进入函数(func, &剖析显示名, &sym, m.span, &调试参数, sig.返回);
         self.剖析入口(&剖析显示名)?;
 
         // 接收者 自身：alloca 存指针
@@ -150,6 +155,7 @@ impl<'ctx> 后端<'ctx> {
         // ARC：接收者（结构体指针，对调用方是借用）落地进局部槽 → retain 一次，
         // 与出口「释放 RC 局部」平衡
         self.弧retain任意(recv_arg, 接收者类型);
+        self.调试_局部变量(&m.receiver_name, 接收者类型, recv_ptr, m.span, Some(1));
         self.变量表
             .insert(m.receiver_name.clone(), (recv_ptr, 接收者类型));
         self.符号.声明变量(&m.receiver_name, 接收者类型);
@@ -172,6 +178,8 @@ impl<'ctx> 后端<'ctx> {
                 .map_err(|e| e.to_string())?;
             // ARC：RC 参数（借用）落地进局部槽 → retain 一次，与出口统一释放平衡
             self.弧retain任意(arg, t);
+            // 形参序号从 2 起：1 号是接收者 自身
+            self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 2));
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -199,6 +207,7 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
+        self.调试_离开函数(); // 位置粘性，见 调试信息.rs 模块头
         self.符号.退出作用域();
         Ok(())
     }

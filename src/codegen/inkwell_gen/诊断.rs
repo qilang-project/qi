@@ -36,7 +36,7 @@ pub fn 静态分析(programs: &[Program]) -> Result<静态诊断, String> {
 
     // 只跑类型登记的前几趟（够环检测用），不生成函数体。
     let ctx = Context::create();
-    let mut 后端值 = 后端::new(&ctx);
+    let mut 后端值 = 后端::new(&ctx, false); // 静态分析不产物，不用调试信息
     后端值.声明运行时();
 
     for p in programs {

@@ -352,6 +352,8 @@ impl<'ctx> 后端<'ctx> {
         if !self.弧开() {
             return Ok(());
         }
+        // 合成函数无 DISubprogram：进来前先摘掉可能残留的调试位置。
+        let _ = self.调试_暂离();
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
         let sig = self.ctx.void_type().fn_type(&[ptrt.into()], false);
         let n = self.符号.枚举.len();

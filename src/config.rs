@@ -42,6 +42,11 @@ pub struct CompilerConfig {
     pub optimization_level: OptimizationLevel,
     /// Include debug symbols
     pub debug_symbols: bool,
+    /// 关闭 DWARF 调试信息生成（`--无调试信息`）。
+    /// 默认 false = 生成 —— qi 没有 debug/release 之分，调试信息不进代码段、
+    /// 不影响运行性能，只增大产物体积，所以默认给上。
+    #[serde(default)]
+    pub 无调试信息: bool,
     /// Enable runtime checks
     pub runtime_checks: bool,
     /// Output file path
@@ -90,6 +95,7 @@ impl Default for CompilerConfig {
             release_runtime: false,
             optimization_level: OptimizationLevel::Basic,
             debug_symbols: false,
+            无调试信息: false,
             runtime_checks: true,
             output_file: None,
             import_paths: Vec::new(),
@@ -162,6 +168,7 @@ impl CompilerConfig {
         }
 
         config.debug_symbols = cli.debug_symbols;
+        config.无调试信息 = cli.无调试信息;
         config.runtime_checks = !cli.no_runtime_checks;
         config.output_file = cli.output.clone();
         config.import_paths = cli.import_paths.clone();
