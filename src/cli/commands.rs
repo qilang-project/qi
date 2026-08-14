@@ -40,6 +40,8 @@ use std::path::PathBuf;
   qi get                            拉取 qi.toml 全部远程依赖 | Fetch all remote deps
   qi --target linux --release-runtime compile 程序.qi -o 程序
                                     交叉编译 Linux | Cross-compile for Linux
+  qi compile 程序.qi --库路径 /opt/homebrew/lib
+                                    给 外部 \"...\" 加库搜索目录 | Extra -L dir for 外部 blocks
 
 更多信息 | More: https://qilang.org")]
 pub struct Cli {
@@ -86,6 +88,15 @@ pub struct Cli {
     /// 导入路径 | Import paths
     #[arg(long, value_delimiter = ':')]
     pub import_paths: Vec<PathBuf>,
+
+    /// 链接库搜索目录，可重复；亦可用 QI_LIBRARY_PATH | Library search dir (-L), repeatable
+    #[arg(
+        long = "库路径",
+        alias = "library-path",
+        global = true,
+        value_name = "目录"
+    )]
+    pub library_paths: Vec<PathBuf>,
 
     /// 子命令 | Command
     #[command(subcommand)]

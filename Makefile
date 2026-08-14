@@ -10,9 +10,10 @@
 #   make runtime          构建 qi-runtime 归档（独立 cargo 项目，容易漏）
 #   make test             库单测
 #   make regress          codegen 回归
+#   make ffi-link         FFI 链接控制（--库路径 / 直链 .a / macOS framework）
 #   make examples         示例冒烟
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
-#   make ci               CI 跑的全部（= check test regress examples grpc）
+#   make ci               CI 跑的全部（= check test regress ffi-link examples grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -34,7 +35,7 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
-.PHONY: help build runtime test regress examples grpc check lint-strict ci install \
+.PHONY: help build runtime test regress ffi-link examples grpc check lint-strict ci install \
         release push-release clean version
 
 help:
@@ -62,6 +63,13 @@ test:
 
 regress: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/codegen回归/断言.sh $(QI)
+
+# FFI 链接控制（--库路径 / 直链文件 / macOS framework）。**单列一条**是因为它
+# 跟别的测试的失败方式不同：它要现场 cc + ar 造一个静态库，再让 qi 去链 ——
+# 依赖的是机器上的 cc/ar 和链接器行为，不是编译器内部逻辑。混进 regress 里，
+# 一旦某台机器没有 cc，看到的会是「codegen 回归挂了」这种指错方向的报错。
+ffi-link: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/ffi链接/断言.sh $(QI)
 
 # 显式传 QI_RUNTIME_LIB：不依赖「归档正好在编译器找得到的相对位置」。
 examples: build $(RUNTIME_LIB)
@@ -106,7 +114,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check test regress examples grpc
+ci: check test regress ffi-link examples grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

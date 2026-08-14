@@ -60,6 +60,10 @@ pub struct CompilerConfig {
     /// 库模式的 C 头文件输出路径（None 时与库同基名 .h）。
     #[serde(default)]
     pub header_output: Option<PathBuf>,
+    /// `--库路径`：链接期 `-L` 搜索目录（可传多次）。环境变量 QI_LIBRARY_PATH
+    /// 在链接时追加到这些之后（CLI 更具体，优先搜）。详见 crate::链接。
+    #[serde(default)]
+    pub library_paths: Vec<PathBuf>,
 }
 
 /// 反向 FFI 产出的库类型。
@@ -98,6 +102,7 @@ impl Default for CompilerConfig {
             verbose: false,
             library_kind: None,
             header_output: None,
+            library_paths: Vec::new(),
         }
     }
 }
@@ -165,6 +170,7 @@ impl CompilerConfig {
         config.runtime_checks = !cli.no_runtime_checks;
         config.output_file = cli.output.clone();
         config.import_paths = cli.import_paths.clone();
+        config.library_paths = cli.library_paths.clone();
         config.config_file = cli.config.clone();
         config.warnings_as_errors = cli.warnings_as_errors;
         config.verbose = cli.verbose;
@@ -208,6 +214,9 @@ impl CompilerConfig {
         }
         if self.import_paths.is_empty() {
             self.import_paths = other.import_paths;
+        }
+        if self.library_paths.is_empty() {
+            self.library_paths = other.library_paths;
         }
         if self.config_file.is_none() {
             self.config_file = other.config_file;

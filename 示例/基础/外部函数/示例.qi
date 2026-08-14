@@ -1,8 +1,20 @@
 // 外部 C 函数声明 —— 手写 C FFI 绑定示例。
 //
 // `外部 "库名" { ... }` 声明外部 C 函数，块内每行是无函数体的签名。
-// 库名决定链接期 `-l<库名>`：这里只用 libm（数学）与 libc（C 标准库），
-// mac 与 linux 都自带，保证跨平台可运行。
+// 库名决定链接期怎么找这个库，三种写法：
+//
+//   外部 "m"                       → -lm，按名字在系统路径 + 库搜索路径里找
+//   外部 "本地库/libfoo.a"         → 直链这个文件（含 / 或以 .a/.dylib/.so 结尾即走此路）
+//                                    相对路径以**本 .qi 文件所在目录**为基准，不是当前工作目录
+//   外部 "framework:Accelerate"    → -framework Accelerate（仅 macOS，别的平台会报错）
+//
+// 库不在系统默认路径时（homebrew 的 /opt/homebrew/lib、自己编的 .a），
+// 用 `--库路径 <目录>` 补搜索目录（可传多次），或设环境变量 QI_LIBRARY_PATH
+// （PATH 式多路径，Unix 用 : 分隔）；命令行的排在环境变量前面先搜。
+//   qi run 示例.qi --库路径 /opt/homebrew/lib
+//
+// 本例只用 libm（数学）与 libc（C 标准库），mac 与 linux 都自带，
+// 不需要任何库路径参数，保证跨平台可运行。
 //
 // 类型映射（C ABI）：整数→long/i64、浮点数→double、字符串→const char*。
 // 字符串实参传的是底层 data 指针（NUL 结尾，C 只读安全）。

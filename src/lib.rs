@@ -18,6 +18,10 @@ pub mod runtime;
 pub mod semantic;
 pub mod targets;
 pub mod utils;
+// rustc 不接受非 ASCII 模块名自动映射文件名（E0754），要显式 #[path]，
+// 跟 codegen/inkwell_gen 下那批中文模块一个写法。
+#[path = "链接.rs"]
+pub mod 链接;
 
 // Force export of async runtime FFI functions to ensure they're included in the static library
 pub use runtime::async_runtime::ffi::{
@@ -259,8 +263,14 @@ impl QiCompiler {
         });
 
         match kind {
+            // 静态库是 ar 打包，链接期才解析符号 —— 外部 C 库由**使用者**在最终链接时提供，
+            // 这里无处可放，故只有动态库需要把 外部 "..." 的链接目标带上。
             config::LibraryKind::静态 => self.build_static_library(&obj, &lib_out)?,
-            config::LibraryKind::动态 => self.build_dynamic_library(&obj, &lib_out)?,
+            config::LibraryKind::动态 => {
+                let 兜底目录 = source_file.parent().unwrap_or(std::path::Path::new("."));
+                let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
+                self.build_dynamic_library(&obj, &lib_out, &extern_libs)?
+            }
         }
 
         // 生成 C 头文件（.h）。
@@ -337,7 +347,12 @@ impl QiCompiler {
     }
 
     /// 动态库：clang -shared/-dynamiclib 用户.o + libqi_runtime.a（+ 平台系统库）→ .dylib/.so/.dll。
-    fn build_dynamic_library(&self, obj: &PathBuf, lib_out: &PathBuf) -> Result<(), CompilerError> {
+    fn build_dynamic_library(
+        &self,
+        obj: &PathBuf,
+        lib_out: &PathBuf,
+        extern_libs: &[crate::链接::链接项],
+    ) -> Result<(), CompilerError> {
         let runtime = self.find_host_runtime_library()?;
         let mut cmd = std::process::Command::new("clang");
         #[cfg(target_os = "macos")]
@@ -392,6 +407,11 @@ impl QiCompiler {
                 cmd.arg("-ldl");
             }
         }
+
+        // 库自身用到的 外部 "..." 目标（-L 搜索路径 + -l/直链文件/framework）。
+        let 搜索路径 = self.库搜索路径()?;
+        crate::链接::追加链接参数(&mut cmd, &搜索路径, extern_libs, self.目标是mac())
+            .map_err(CompilerError::Codegen)?;
 
         let out = cmd.output().map_err(CompilerError::Io)?;
         if !out.status.success() {
@@ -478,8 +498,9 @@ impl QiCompiler {
         } else {
             source_file.with_extension("")
         };
-        // 收集所有 外部 "库" 块声明的链接库（去重、去空串）—— 链接期加 -l<库>。
-        let extern_libs = Self::collect_extern_libs(&programs);
+        // 收集所有 外部 "库" 块声明的链接目标（-l / 直链文件 / framework）。
+        let 兜底目录 = source_file.parent().unwrap_or(std::path::Path::new("."));
+        let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
         self.link_objects(&[obj.clone()], &exe, &extern_libs)?;
         Ok(CompilationResult {
@@ -526,22 +547,49 @@ impl QiCompiler {
         format!("{}-unknown-linux-gnu", self.目标架构())
     }
 
-    /// 扫所有编译单元的 `外部 "库" { ... }` 块，收集需 `-l` 的库名。
-    /// 去重、去空串（空串 = 不额外链接）；库名如已隐式链接（m/c/pthread/dl）
-    /// 重复 `-l` 无害，故不特判，交链接器处理。
-    fn collect_extern_libs(programs: &[crate::parser::ast::Program]) -> Vec<String> {
-        let mut libs: Vec<String> = Vec::new();
+    /// 扫所有编译单元的 `外部 "库" { ... }` 块，解析成链接项（`-l名` / 直链文件 /
+    /// macOS framework，三种写法见 crate::链接）。去重、去空串（空串 = 不额外链接）；
+    /// 库名如已隐式链接（m/c/pthread/dl）重复 `-l` 无害，故不特判，交链接器处理。
+    ///
+    /// 直链写法的相对路径以**声明该外部块的那个 .qi 文件所在目录**为基准
+    /// （Program.source_path），跟导入解析一样跟着源码走，而不是当前工作目录 ——
+    /// 否则同一份源码换个目录编译就链不上。source_path 缺失时退回 `兜底目录`（入口文件所在目录）。
+    fn collect_extern_libs(
+        programs: &[crate::parser::ast::Program],
+        兜底目录: &std::path::Path,
+    ) -> Result<Vec<crate::链接::链接项>, CompilerError> {
+        let mut libs: Vec<crate::链接::链接项> = Vec::new();
         for p in programs {
+            let 源目录 = p
+                .source_path
+                .as_ref()
+                .map(PathBuf::from)
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .filter(|d| !d.as_os_str().is_empty())
+                .unwrap_or_else(|| 兜底目录.to_path_buf());
             for stmt in &p.statements {
                 if let crate::parser::ast::AstNode::外部声明(blk) = stmt {
-                    let lib = blk.library.trim();
-                    if !lib.is_empty() && !libs.iter().any(|l| l == lib) {
-                        libs.push(lib.to_string());
+                    let 项 = crate::链接::解析外部库名(&blk.library, &源目录)
+                        .map_err(CompilerError::Codegen)?;
+                    if let Some(项) = 项 {
+                        if !libs.iter().any(|l| *l == 项) {
+                            libs.push(项);
+                        }
                     }
                 }
             }
         }
-        libs
+        Ok(libs)
+    }
+
+    /// 目标平台是 macOS 吗（framework 只在这时可用；mac 宿主交叉到 Linux 也算不是）。
+    fn 目标是mac(&self) -> bool {
+        self.config.target_platform == config::CompilationTarget::MacOS
+    }
+
+    /// `-L` 搜索路径：`--库路径`（CLI）在前，环境变量 `QI_LIBRARY_PATH` 在后。
+    fn 库搜索路径(&self) -> Result<Vec<PathBuf>, CompilerError> {
+        crate::链接::库搜索路径(&self.config.library_paths).map_err(CompilerError::Codegen)
     }
 
     /// Link object files into executable
@@ -549,8 +597,10 @@ impl QiCompiler {
         &self,
         object_files: &[PathBuf],
         executable_path: &PathBuf,
-        extern_libs: &[String],
+        extern_libs: &[crate::链接::链接项],
     ) -> Result<(), CompilerError> {
+        // -L 搜索路径（CLI --库路径 优先，QI_LIBRARY_PATH 追加），两条链接路径共用。
+        let 搜索路径 = self.库搜索路径()?;
         // 交叉到 Linux：用 zig cc -target 链接，归档用交叉构建的 libqi_runtime.a。
         // rustls + bundled sqlite 已在归档里，无需 -lssl/-lcrypto/-lsqlite3；zig 自带 libc/pthread/m/dl。
         if self.交叉到linux() {
@@ -568,10 +618,9 @@ impl QiCompiler {
                 .arg("-lpthread")
                 .arg("-lm")
                 .arg("-ldl");
-            // 外部块声明的 C 库（-l<库>）
-            for lib in extern_libs {
-                command.arg(format!("-l{}", lib));
-            }
+            // 外部块声明的链接目标（-L 搜索路径 + -l/直链文件；framework 在此目标上会报错）
+            crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, false)
+                .map_err(CompilerError::Codegen)?;
 
             let output = command.output().map_err(CompilerError::Io)?;
             if !output.status.success() {
@@ -655,10 +704,10 @@ impl QiCompiler {
             }
         }
 
-        // 外部块声明的 C 库（-l<库>）。放在系统库之后，确保符号可被解析。
-        for lib in extern_libs {
-            command.arg(format!("-l{}", lib));
-        }
+        // 外部块声明的链接目标。放在系统库之后，确保符号可被解析。
+        // -L 搜索路径也在这里发（ld 对 -L 的位置不敏感，但排在 -l 前面更符合直觉）。
+        crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, self.目标是mac())
+            .map_err(CompilerError::Codegen)?;
 
         let output = command.output().map_err(CompilerError::Io)?;
 
