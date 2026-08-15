@@ -2866,6 +2866,10 @@ impl ModuleRegistry {
         gui_module.add_function(ModuleFunction::new(
             "任意键刚按",
             "qi_gui_egui_any_key_pressed",
+            vec![],
+            "整数",
+        ));
+
         // ── 画布精灵（2026-08）──
         // 在画布上贴图片：Scratch「角色」的平替，给儿童编程做小游戏用。
         // 纹理按路径缓存（每帧重解码 PNG 会把帧率打死），加载失败画品红占位方块。
