@@ -497,6 +497,19 @@ impl QiCompiler {
             !self.config.无调试信息,
         )
         .map_err(CompilerError::Codegen)?;
+        // WebAssembly：到目标文件为止。往下的 link_objects 会去找宿主的
+        // libqi_runtime.a（里头是 aarch64/x86_64 的原生代码），对 wasm32 目标
+        // 毫无意义 —— 早返回，把 .o 交给 wasm-ld（见 wasm演示/构建.sh）。
+        // 其余目标平台一律不进这个分支，原生路径逐字节不变。
+        if self.config.target_platform == config::CompilationTarget::Wasm {
+            return Ok(CompilationResult {
+                executable_path: obj,
+                ir_paths: Vec::new(),
+                object_paths: Vec::new(),
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                warnings: Vec::new(),
+            });
+        }
         let exe = if cfg!(windows) {
             source_file.with_extension("exe")
         } else {

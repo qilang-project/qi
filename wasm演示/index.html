@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qi → WebAssembly 演示</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    max-width: 720px; margin: 3rem auto; padding: 0 1.2rem;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+  .sub { opacity: .65; margin-top: 0; }
+  pre.src, pre.out {
+    padding: .9rem 1rem; border-radius: 8px; overflow-x: auto;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre.src { background: #f4f4f7; border: 1px solid #e0e0e6; }
+  pre.out { background: #101418; color: #d7e4d7; min-height: 6rem; }
+  @media (prefers-color-scheme: dark) {
+    pre.src { background: #1a1d21; border-color: #2c3036; }
+  }
+  button {
+    font: inherit; padding: .5rem 1.1rem; border-radius: 6px;
+    border: 1px solid currentColor; background: transparent; cursor: pointer;
+  }
+  .status { font-size: 13px; opacity: .7; margin-left: .8rem; }
+</style>
+</head>
+<body>
+
+<h1>Qi → WebAssembly</h1>
+<p class="sub">同一个 <code>试炼.wasm</code>，wasmtime 和浏览器里跑出一样的结果。</p>
+
+<pre class="src">包 主程序;
+
+函数 阶乘(n: 整数) : 整数 {
+    如果 (n &lt;= 1) { 返回 1; }
+    返回 n * 阶乘(n - 1);
+}
+
+函数 入口() {
+    打印行("你好，世界");
+    ...
+}</pre>
+
+<p>
+  <button id="run">运行 试炼.wasm</button>
+  <span class="status" id="status"></span>
+</p>
+
+<pre class="out" id="out"></pre>
+
+<script type="module">
+// 面向用户的文本用中文；标识符一律英文（见仓库 CLAUDE.md 的「中文只写在 qi 里」）
+const out = document.getElementById('out');
+const status = document.getElementById('status');
+const runBtn = document.getElementById('run');
+
+const decoder = new TextDecoder('utf-8');
+
+function append(text) {
+  out.textContent += text;
+}
+
+// 最小 WASI shim —— 这个 .wasm 一共只 import 四个 wasi 函数：
+//   fd_write / environ_get / environ_sizes_get / proc_exit
+// 纯计算程序不碰文件系统、时钟、随机数，所以四十行 JS 就够了。
+function makeWasi(getMemory) {
+  const view = () => new DataView(getMemory().buffer);
+  const bytes = () => new Uint8Array(getMemory().buffer);
+
+  return {
+    // 把 iovec 数组里的字节拼起来写到页面（fd 1=stdout, 2=stderr）
+    fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
+      const dv = view();
+      const mem = bytes();
+      let written = 0;
+      const chunks = [];
+      for (let i = 0; i < iovsLen; i++) {
+        const base = dv.getUint32(iovsPtr + i * 8, true);
+        const len = dv.getUint32(iovsPtr + i * 8 + 4, true);
+        chunks.push(mem.subarray(base, base + len));
+        written += len;
+      }
+      const total = chunks.reduce((n, c) => n + c.length, 0);
+      const flat = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { flat.set(c, off); off += c.length; }
+      append(decoder.decode(flat));
+      dv.setUint32(nwrittenPtr, written, true);
+      return 0;
+    },
+    // 没有环境变量：报告 0 条、0 字节即可
+    environ_sizes_get(countPtr, bufSizePtr) {
+      const dv = view();
+      dv.setUint32(countPtr, 0, true);
+      dv.setUint32(bufSizePtr, 0, true);
+      return 0;
+    },
+    environ_get() { return 0; },
+    proc_exit(code) {
+      if (code !== 0) append(`\n[进程退出，代码 ${code}]\n`);
+    },
+  };
+}
+
+async function run() {
+  runBtn.disabled = true;
+  out.textContent = '';
+  status.textContent = '加载中…';
+  try {
+    let instance;
+    const wasi = makeWasi(() => instance.exports.memory);
+    const response = await fetch('试炼.wasm');
+    if (!response.ok) throw new Error(`取不到 试炼.wasm（HTTP ${response.status}）`);
+    const result = await WebAssembly.instantiate(
+      await response.arrayBuffer(),
+      { wasi_snapshot_preview1: wasi }
+    );
+    instance = result.instance;
+    status.textContent = '运行中…';
+    instance.exports._start();
+    status.textContent = '完成';
+  } catch (err) {
+    // wasi 的 proc_exit(0) 在某些实现里以异常形式结束，属正常收尾
+    append(`\n[错误] ${err.message}\n`);
+    status.textContent = '出错';
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+runBtn.addEventListener('click', run);
+run();
+</script>
+
+</body>
+</html>
