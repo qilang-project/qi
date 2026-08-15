@@ -14,6 +14,7 @@
 #   make examples         示例冒烟
 #   make debuginfo        DWARF 调试信息验收（实跑 lldb 断点/单步/backtrace）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
+#   make gui-smoke        GUI 冒烟（要显示环境 + 带 gui feature 的运行时，不进 ci）
 #   make ci               CI 跑的全部（= check test regress ffi-link examples debuginfo grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
@@ -36,7 +37,7 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
-.PHONY: help build runtime test regress ffi-link examples debuginfo grpc check lint-strict ci install \
+.PHONY: help build runtime test regress ffi-link examples debuginfo grpc gui-smoke check lint-strict ci install \
         release push-release clean version
 
 help:
@@ -93,6 +94,13 @@ grpc: build $(RUNTIME_LIB)
 	else \
 	  echo "没有 $(GRPC_DIR)/跑验收.sh，跳过 gRPC 验收"; \
 	fi
+
+# GUI 冒烟。**故意不进 ci** —— 它要真开窗，依赖显示环境；CI 的 runner 是无头的，
+# 挂进去只会得到一条永远 SKIP（或者更糟：偶发假红）的噪音用例。
+# 想跑就单独 make gui-smoke，前提是 RUNTIME_LIB 那份归档是带 --features gui 编的
+# （不带的话 GUI 全是 stub，窗口根本不会出现，脚本会 SKIP 掉）。
+gui-smoke: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/gui自动化/断言.sh $(QI)
 
 # 门禁用的 lint。clippy 只挡真 error ——
 # 仓库里还有一批历史 warning，现在就上 -D warnings 会让 CI 当场全红；
