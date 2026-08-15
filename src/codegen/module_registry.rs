@@ -2845,6 +2845,54 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // ── 画布精灵（2026-08）──
+        // 在画布上贴图片：Scratch「角色」的平替，给儿童编程做小游戏用。
+        // 纹理按路径缓存（每帧重解码 PNG 会把帧率打死），加载失败画品红占位方块。
+        // 相对路径相对**进程 CWD** 解析（示例约定 cd 到自己目录再跑）。
+        // 实现见 qi-gui/src/egui_sprite.rs。
+        //
+        // 画布图片(路径, x, y, 宽, 高)：左上角对齐，拉伸到宽高（<=0 按原图比例补）
+        gui_module.add_function(ModuleFunction::new(
+            "画布图片",
+            "qi_gui_egui_canvas_image",
+            vec![s(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布图片旋转(路径, 中心x, 中心y, 宽, 高, 角度)：绕中心转，角度制整数，正数顺时针
+        gui_module.add_function(ModuleFunction::new(
+            "画布图片旋转",
+            "qi_gui_egui_canvas_image_rotated",
+            vec![s(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 画布图片翻转(路径, x, y, 宽, 高, 水平翻)：水平翻 != 0 时左右镜像（角色转身用）
+        gui_module.add_function(ModuleFunction::new(
+            "画布图片翻转",
+            "qi_gui_egui_canvas_image_flipped",
+            vec![s(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 图片宽(路径) / 图片高(路径) → 整数：原始像素尺寸（等比缩放要用；读不到返回 0）
+        gui_module.add_function(ModuleFunction::new(
+            "图片宽",
+            "qi_gui_egui_image_width",
+            vec![s()],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "图片高",
+            "qi_gui_egui_image_height",
+            vec![s()],
+            "整数",
+        ));
+        // 精灵层版本() → 整数：能力探测（无 GUI 的运行时返回 0）
+        gui_module.add_function(ModuleFunction::new(
+            "精灵层版本",
+            "qi_gui_egui_sprite_version",
+            vec![],
+            "整数",
+        ));
+
         // Register module with various names
         self.modules
             .insert("图形化".to_string(), gui_module.clone());
