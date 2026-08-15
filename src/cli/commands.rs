@@ -484,13 +484,27 @@ impl Cli {
                 eprintln!("警告: {}", warning);
             }
 
+            // WebAssembly：编译器只负责产出 wasm32 目标文件，**不链接**。
+            // 链接需要 wasm-ld + wasi sysroot + wasm 版最小运行时归档，
+            // 这三样目前由 wasm演示/构建.sh 串起来（见该目录 README 段）。
             if matches!(
                 config.target_platform,
                 crate::config::CompilationTarget::Wasm
             ) {
-                return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    "WebAssembly 编译为可执行文件暂未实现".to_string(),
-                )));
+                let obj = &result.executable_path;
+                let obj = if let Some(output_path) = &output {
+                    if files.len() > 1 {
+                        return Err(CliError::Compilation(crate::CompilerError::Codegen(
+                            "无法将多个输入文件编译到单个输出文件".to_string(),
+                        )));
+                    }
+                    std::fs::rename(obj, output_path)?;
+                    output_path.clone()
+                } else {
+                    obj.clone()
+                };
+                println!("生成 WebAssembly 目标文件: {:?}", obj);
+                continue;
             }
 
             // 库模式：编译器已直接写到最终库路径（+ .h），不走可执行改名逻辑。
@@ -533,6 +547,14 @@ impl Cli {
 
         if !config.verbose && config.library_kind.is_none() {
             let count = files.len();
+            // wasm 产出的是目标文件（还要 wasm-ld 一步），别叫「可执行文件」
+            if matches!(
+                config.target_platform,
+                crate::config::CompilationTarget::Wasm
+            ) {
+                println!("成功编译 {} 个 WebAssembly 目标文件", count);
+                return Ok(());
+            }
             let target = match config.target_platform {
                 crate::config::CompilationTarget::Linux => " (Linux)",
                 crate::config::CompilationTarget::Windows => " (Windows)",

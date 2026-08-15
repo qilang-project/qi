@@ -91,3 +91,8 @@ rustfmt.toml
 示例/标准库/MCP服务器/stdio服务
 示例/标准库/MCP服务器/通知服务
 示例/标准库/MCP服务器/通知服务HTTP
+
+# wasm spike：worktree 里的独立构建目录 + wasm 演示产物
+target-wt/
+wasm演示/*.wasm
+wasm演示/*.o
