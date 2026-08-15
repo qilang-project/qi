@@ -2845,6 +2845,31 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // ── 键盘（2026-08）──
+        // 按键按住(键名) → 整数：本帧该键处于按下状态（持续触发，适合移动）
+        // 键名大小写不敏感：上/下/左/右（也认 UP/DOWN/LEFT/RIGHT）、A~Z、0~9、
+        // 空格/回车/ESC/SHIFT/TAB。认不出的键名返回 0 并警告一次。
+        gui_module.add_function(ModuleFunction::new(
+            "按键按住",
+            "qi_gui_egui_key_down",
+            vec![s()],
+            "整数",
+        ));
+        // 按键刚按(键名) → 整数：本帧刚按下的边沿（适合跳跃/开火，按住不连发）
+        gui_module.add_function(ModuleFunction::new(
+            "按键刚按",
+            "qi_gui_egui_key_pressed",
+            vec![s()],
+            "整数",
+        ));
+        // 任意键刚按() → 整数：本帧有任何键刚按下（"按任意键开始"）
+        gui_module.add_function(ModuleFunction::new(
+            "任意键刚按",
+            "qi_gui_egui_any_key_pressed",
+            vec![],
+            "整数",
+        ));
+
         // Register module with various names
         self.modules
             .insert("图形化".to_string(), gui_module.clone());
