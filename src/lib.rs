@@ -413,8 +413,14 @@ impl QiCompiler {
 
         // 库自身用到的 外部 "..." 目标（-L 搜索路径 + -l/直链文件/framework）。
         let 搜索路径 = self.库搜索路径()?;
-        crate::链接::追加链接参数(&mut cmd, &搜索路径, extern_libs, self.目标是mac())
-            .map_err(CompilerError::Codegen)?;
+        crate::链接::追加链接参数(
+            &mut cmd,
+            &搜索路径,
+            extern_libs,
+            self.目标是mac(),
+            self.目标是windows(),
+        )
+        .map_err(CompilerError::Codegen)?;
 
         let out = cmd.output().map_err(CompilerError::Io)?;
         if !out.status.success() {
@@ -604,6 +610,11 @@ impl QiCompiler {
         self.config.target_platform == config::CompilationTarget::MacOS
     }
 
+    /// 目标平台是 Windows 吗（MSVC 上 `-lc`/`-lm` 得丢掉，见 链接::追加链接参数）。
+    fn 目标是windows(&self) -> bool {
+        self.config.target_platform == config::CompilationTarget::Windows
+    }
+
     /// `-L` 搜索路径：`--库路径`（CLI）在前，环境变量 `QI_LIBRARY_PATH` 在后。
     fn 库搜索路径(&self) -> Result<Vec<PathBuf>, CompilerError> {
         crate::链接::库搜索路径(&self.config.library_paths).map_err(CompilerError::Codegen)
@@ -636,7 +647,7 @@ impl QiCompiler {
                 .arg("-lm")
                 .arg("-ldl");
             // 外部块声明的链接目标（-L 搜索路径 + -l/直链文件；framework 在此目标上会报错）
-            crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, false)
+            crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, false, false)
                 .map_err(CompilerError::Codegen)?;
 
             let output = command.output().map_err(CompilerError::Io)?;
@@ -729,8 +740,14 @@ impl QiCompiler {
 
         // 外部块声明的链接目标。放在系统库之后，确保符号可被解析。
         // -L 搜索路径也在这里发（ld 对 -L 的位置不敏感，但排在 -l 前面更符合直觉）。
-        crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, self.目标是mac())
-            .map_err(CompilerError::Codegen)?;
+        crate::链接::追加链接参数(
+            &mut command,
+            &搜索路径,
+            extern_libs,
+            self.目标是mac(),
+            self.目标是windows(),
+        )
+        .map_err(CompilerError::Codegen)?;
 
         let output = command.output().map_err(CompilerError::Io)?;
 
