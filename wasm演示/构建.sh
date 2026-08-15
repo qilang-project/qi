@@ -20,7 +20,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 src="${1:-试炼.qi}"
 stem="${src%.qi}"
 
-qic="$here/../target-wt/release/qi"
+# 编译器：优先 $QI，其次 workspace 的共享 target，最后 PATH 上的 qi
+qic="${QI:-$here/../../target/release/qi}"
+if [ ! -x "$qic" ] && command -v qi >/dev/null 2>&1; then
+  qic="$(command -v qi)"
+fi
 rt_src="$here/../../qi-runtime/wasm最小"
 rt_lib="$rt_src/target/wasm32-wasip1/release/libqi_runtime_wasm.a"
 
@@ -41,7 +45,7 @@ if ! command -v wasmtime >/dev/null 2>&1; then
   exit 1
 fi
 if [ ! -x "$qic" ]; then
-  echo "缺少编译器 $qic —— 先在 qi/ 跑：CARGO_TARGET_DIR=\$PWD/target-wt cargo build --release" >&2
+  echo "缺少编译器 $qic —— 先在 workspace 根跑：cargo build --release -p qi-compiler" >&2
   exit 1
 fi
 
