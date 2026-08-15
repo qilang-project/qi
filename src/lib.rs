@@ -1281,6 +1281,62 @@ impl QiCompiler {
                         }),
                 );
             }
+            // 注册中心依赖装在 <项目根>/qi_packages/<别名>/（扁平安装）。
+            // 这里必须显式处理：默认解析链第 5 步扫的是 QI_PACKAGES_PATH 与祖先
+            // 目录里的**直接子目录**，qi_packages/<别名> 是孙子层，扫不到。
+            Ok(crate::package::DependencySource::Registry { version }) => {
+                let package_root = manifest.registry_package_dir(alias);
+                if !package_root.is_dir() {
+                    return Some(Err(CompilerError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!(
+                            "注册中心依赖 `{}` = \"{}\" 尚未安装。\n  预期位置: {}\n  请先在项目目录运行: qi 包 安装",
+                            alias,
+                            version,
+                            package_root.display()
+                        ),
+                    ))));
+                }
+
+                let dep_manifest = crate::package::ResolvedPackageManifest::load_dir(&package_root)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| crate::package::ResolvedPackageManifest {
+                        manifest_path: package_root.join("qi.toml"),
+                        root_dir: package_root.clone(),
+                        manifest: Default::default(),
+                    });
+
+                // 装好的版本跟 qi.toml 写的对不上，说明改了 qi.toml 还没重装。
+                // 不拦下来的话，编译用的是旧代码，报错会指向完全不相干的地方。
+                if let Some(标记) = crate::package::install::读标记(&package_root) {
+                    if 标记.版本 != version {
+                        return Some(Err(CompilerError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            format!(
+                                "注册中心依赖 `{}` 已装的是 {}，qi.toml 要的是 {}。\n  请运行: qi 包 安装",
+                                alias, 标记.版本, version
+                            ),
+                        ))));
+                    }
+                }
+
+                return Some(
+                    dep_manifest
+                        .resolve_module_path(alias, module_path)
+                        .ok_or_else(|| {
+                            CompilerError::Io(std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                format!(
+                                    "注册中心依赖 `{}` 已装于 {}，但找不到模块 {}（检查包内文件名或其 qi.toml 的 [源码] 配置）",
+                                    alias,
+                                    package_root.display(),
+                                    module_path.join(".")
+                                ),
+                            ))
+                        }),
+                );
+            }
             Err(message) => {
                 return Some(Err(CompilerError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,

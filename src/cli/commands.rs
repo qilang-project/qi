@@ -38,6 +38,10 @@ use std::path::PathBuf;
   qi test                           跑测试(*_测.qi) | Run tests
   qi get github.com/user/repo@v1.0  拉取远程依赖进缓存并登记 | Fetch remote dependency
   qi get                            拉取 qi.toml 全部远程依赖 | Fetch all remote deps
+  qi 包 安装                        装齐 qi.toml [依赖] 的注册中心包 | Install registry deps
+  qi 包 添加 海龟 0.1.0             登记依赖并安装 | Add a dependency and install it
+  qi 包 发布                        打包当前目录发到注册中心 | Publish the current package
+  qi 包 搜索 海龟                   搜注册中心 | Search the registry
   qi --target linux --release-runtime compile 程序.qi -o 程序
                                     交叉编译 Linux | Cross-compile for Linux
   qi compile 程序.qi --库路径 /opt/homebrew/lib
@@ -286,6 +290,35 @@ pub enum Commands {
         help: Option<bool>,
     },
 
+    /// 包管理：安装 / 添加 / 发布 / 搜索注册中心包 | Package manager
+    #[command(name = "包", visible_aliases = &["pkg"])]
+    #[command(subcommand_required = true, arg_required_else_help = true)]
+    #[command(help_template = "\
+{name} - {about}
+
+用法 | Usage: {usage}
+
+子命令 | Commands:
+{subcommands}
+
+选项 | Options:
+{options}
+
+示例 | Examples:
+  qi 包 安装                     装齐 qi.toml [依赖] | Install declared deps
+  qi 包 添加 海龟 0.1.0          登记并安装 | Add and install
+  qi 包 发布                     发布当前包 | Publish current package
+  qi 包 搜索 绘图                搜注册中心 | Search registry
+
+环境变量 | Environment:
+  QI_REGISTRY        注册中心地址（默认 https://pkg.qilang.org）| Registry base URL
+  QI_REGISTRY_TOKEN  发布用的 Bearer token | Publish token
+")]
+    Pkg {
+        #[command(subcommand)]
+        command: PkgCommands,
+    },
+
     /// 一体化工程诊断：环检测 + CPU 热点 + 内存泄漏 | All-in-one project diagnosis
     #[command(visible_aliases = &["诊断"])]
     #[command(help_template = "\
@@ -344,6 +377,56 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+}
+
+/// `qi 包` 下面的四个动作。中文是主名，英文做 alias —— 与 qi 一贯的
+/// 「中文命令是第一等公民、英文等价可用」保持一致。
+#[derive(Subcommand)]
+pub enum PkgCommands {
+    /// 装齐 qi.toml [依赖] 里的注册中心包 | Install declared registry dependencies
+    #[command(name = "安装", visible_aliases = &["install"])]
+    Install {
+        /// 详细输出（打印 sha256、lock 命中情况）| Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// 把包写进 qi.toml [依赖] 并立即安装 | Add a dependency and install it
+    #[command(name = "添加", visible_aliases = &["add"])]
+    Add {
+        /// 包名称（可为中文）| Package name
+        name: String,
+
+        /// 精确版本，如 0.1.0（v1 不支持范围）| Exact version
+        version: String,
+
+        /// 详细输出 | Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// 打包当前目录并发布到注册中心 | Package the current dir and publish
+    #[command(name = "发布", visible_aliases = &["publish"])]
+    Publish {
+        /// 只打包并报 sha256，不上传（发布前自查）| Pack only, do not upload
+        #[arg(long = "只打包", alias = "dry-run")]
+        dry_run: bool,
+
+        /// 详细输出 | Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// 按名称/描述搜索注册中心的包 | Search the registry by name/description
+    #[command(name = "搜索", visible_aliases = &["search"])]
+    Search {
+        /// 关键词 | Keyword
+        keyword: String,
+    },
+
+    /// 列出本项目已装的注册中心包 | List installed registry packages
+    #[command(name = "列出", visible_aliases = &["list", "ls"])]
+    List,
 }
 
 impl Cli {
@@ -413,6 +496,21 @@ impl Cli {
                 name,
                 help: _,
             }) => crate::cli::get::run(spec, name, config.verbose),
+            Some(Commands::Pkg { command }) => match command {
+                PkgCommands::Install { verbose } => {
+                    crate::cli::pkg::安装(verbose || config.verbose)
+                }
+                PkgCommands::Add {
+                    name,
+                    version,
+                    verbose,
+                } => crate::cli::pkg::添加(name, version, verbose || config.verbose),
+                PkgCommands::Publish { dry_run, verbose } => {
+                    crate::cli::pkg::发布(dry_run, verbose || config.verbose)
+                }
+                PkgCommands::Search { keyword } => crate::cli::pkg::搜索(keyword),
+                PkgCommands::List => crate::cli::pkg::列出(),
+            },
             Some(Commands::Doctor {
                 file,
                 args,

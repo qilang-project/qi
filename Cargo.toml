@@ -123,6 +123,11 @@ configparser = "3.1"
 # Compression
 flate2 = "1.0"
 
+# 包管理客户端：tar.gz 打包/解包（flate2 已在上面提供 gzip 层）
+tar = "0.4"
+# 中文包名进 URL 要 percent-encode（reqwest 依赖树里本来就有这个 crate，不新增编译量）
+percent-encoding = "2"
+
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
 lazy_static = "1.5"

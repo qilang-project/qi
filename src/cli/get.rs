@@ -61,6 +61,15 @@ pub fn run(
                     println!("依赖 {} → 本地路径 {}（跳过）", alias, path);
                 }
             }
+            // 注册中心依赖归 `qi 包 安装` 管，qi get 只负责 git 那条线
+            Ok(DependencySource::Registry { version }) => {
+                if verbose {
+                    println!(
+                        "依赖 {} → 注册中心 {}（跳过；用 qi 包 安装）",
+                        alias, version
+                    );
+                }
+            }
             Err(message) => {
                 return Err(package_err(format!(
                     "qi.toml 中依赖 `{}` 配置有误: {}",

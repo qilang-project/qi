@@ -1,5 +1,8 @@
 //! Package manifest, identifiers, and lockfile support.
 
+pub mod archive;
+pub mod install;
+pub mod registry;
 pub mod remote;
 
 use std::collections::{HashMap, HashSet};
@@ -67,13 +70,32 @@ pub struct ManifestDependencyDetail {
     pub subdir: Option<String>,
 }
 
-/// 依赖来源：本地路径 或 远程 git 仓库。
+/// 依赖来源：本地路径、远程 git 仓库，或注册中心。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DependencySource {
     /// 本地路径依赖（相对于清单所在目录）
     LocalPath(String),
     /// 远程 git 依赖
     Remote(remote::RemoteSpec),
+    /// 注册中心依赖：`名称 = "0.1.0"`，装在 `<项目>/qi_packages/<别名>/`
+    Registry { version: String },
+}
+
+/// 是不是「主.次.补」三段纯数字版本号。
+///
+/// 这个判定是 `[依赖] 海龟 = "0.1.0"` 与 `[依赖] 本地 = "../本地"` 的分水岭。
+/// 卡得这么死是故意的：v1 只做精确版本相等比较（见 docs/包管理设计.md），
+/// 放宽成「像版本就算」会让 `1.0`、`v2` 这类写法悄悄变成注册中心依赖，
+/// 而它们更可能是用户写歪了的路径。
+pub fn is_exact_version(raw: &str) -> bool {
+    let mut 段数 = 0;
+    for 段 in raw.split('.') {
+        if 段.is_empty() || !段.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        段数 += 1;
+    }
+    段数 == 3
 }
 
 impl ManifestDependency {
@@ -100,14 +122,21 @@ impl ManifestDependency {
     }
 
     /// 判定依赖来源：
+    /// - 裸字符串是「主.次.补」三段数字 → 注册中心依赖
     /// - 裸字符串形如 `host.tld/路径[@ref]` 或 URL/ssh 形式 → 远程
     /// - 其余裸字符串 → 本地路径
-    /// - 详细表：`git` 与 `路径` 互斥，二者必居其一
+    /// - 详细表：`git` / `路径` / 纯 `版本` 三选一
     pub fn source(&self) -> Result<DependencySource, String> {
         match self {
-            ManifestDependency::PathString(raw) => Ok(match remote::parse_remote_string(raw) {
-                Some(spec) => DependencySource::Remote(spec),
-                None => DependencySource::LocalPath(raw.clone()),
+            ManifestDependency::PathString(raw) => Ok(if is_exact_version(raw) {
+                DependencySource::Registry {
+                    version: raw.clone(),
+                }
+            } else {
+                match remote::parse_remote_string(raw) {
+                    Some(spec) => DependencySource::Remote(spec),
+                    None => DependencySource::LocalPath(raw.clone()),
+                }
             }),
             ManifestDependency::Detail(detail) => {
                 if detail.git.is_some() && detail.path.is_some() {
@@ -121,8 +150,17 @@ impl ManifestDependency {
                     )))
                 } else if let Some(path) = &detail.path {
                     Ok(DependencySource::LocalPath(path.clone()))
+                } else if let Some(version) = &detail.version {
+                    // `包 = { 版本 = "0.1.0" }` —— 光有版本没有路径/git，只能是注册中心。
+                    // 改动前这里报「依赖需要指定 路径 或 git」，现在它有了归宿。
+                    Ok(DependencySource::Registry {
+                        version: version.clone(),
+                    })
                 } else {
-                    Err("依赖需要指定 `路径`（本地）或 `git`（远程）".to_string())
+                    Err(
+                        "依赖需要指定 `路径`（本地）、`git`（远程）或 `版本`（注册中心）"
+                            .to_string(),
+                    )
                 }
             }
         }
@@ -255,7 +293,7 @@ impl PackageId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct LockFile {
+pub(crate) struct LockFile {
     #[serde(rename = "格式版本")]
     format_version: u32,
     #[serde(rename = "根包")]
@@ -265,7 +303,7 @@ struct LockFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct LockPackageEntry {
+pub(crate) struct LockPackageEntry {
     #[serde(rename = "名称")]
     name: String,
     #[serde(rename = "版本", default, skip_serializing_if = "Option::is_none")]
@@ -277,6 +315,9 @@ struct LockPackageEntry {
     /// 远程包解析出的 commit hash
     #[serde(rename = "提交", default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// 注册中心包体的 sha256（协议里的版本指纹，安装时逐字节校验）
+    #[serde(rename = "sha256", default, skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
     #[serde(rename = "依赖", default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<LockDependencyEntry>,
 }
@@ -297,6 +338,55 @@ struct LockDependencyEntry {
     /// 远程依赖解析出的 commit hash
     #[serde(rename = "提交", default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// 注册中心依赖的包体 sha256
+    #[serde(rename = "sha256", default, skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
+}
+
+/// 从 qi.lock 里读出的一条注册中心包锁定信息。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct 锁定包 {
+    pub 名称: String,
+    pub 版本: String,
+    pub sha256: String,
+    pub 来源: String,
+}
+
+/// 读取项目 qi.lock 里锁定的注册中心包（按名称索引）。
+///
+/// 只挑出「来源不是 workspace/path/git+…」且带 sha256 的条目 —— 那些才是
+/// 注册中心装下来的。lock 不存在 / 解析不动一律返回空表：lock 是**加速与钉死**
+/// 的手段，不是必需品，坏 lock 不该让 `qi 包 安装` 整个走不下去。
+pub fn read_registry_lock(project_root: &Path) -> HashMap<String, 锁定包> {
+    let mut 结果 = HashMap::new();
+    let Ok(内容) = std::fs::read_to_string(project_root.join("qi.lock")) else {
+        return 结果;
+    };
+    // 跟读 qi.toml 走同一条归一化：中文裸键在 TOML 1.0 里非法，
+    // 工具自己写出来的 lock 是带引号的，但 qi.lock 是要提交进 git、
+    // 也可能被人手改的，手写的 `名称 = "…"` 不该直接被当成坏文件丢掉。
+    let Ok(lock) = toml::from_str::<LockFile>(&normalize_manifest_text(&内容)) else {
+        return 结果;
+    };
+    for 条目 in lock.packages {
+        let (Some(sha256), Some(版本)) = (条目.sha256.clone(), 条目.version.clone()) else {
+            continue;
+        };
+        if 条目.source == "workspace" || 条目.source == "path" || 条目.source.starts_with("git+")
+        {
+            continue;
+        }
+        结果.insert(
+            条目.name.clone(),
+            锁定包 {
+                名称: 条目.name,
+                版本,
+                sha256,
+                来源: 条目.source,
+            },
+        );
+    }
+    结果
 }
 
 impl ResolvedPackageManifest {
@@ -540,7 +630,38 @@ impl ResolvedPackageManifest {
                     remote: Some(spec),
                 })
             }
+            DependencySource::Registry { .. } => {
+                let root_dir = self.registry_package_dir(alias);
+                // 同远程：只认包自己那份 qi.toml，向上查找会把项目清单当成它的
+                let manifest = Self::load_dir(&root_dir).ok().flatten();
+                Some(ResolvedDependency {
+                    alias: alias.to_string(),
+                    root_dir,
+                    manifest,
+                    remote: None,
+                })
+            }
         }
+    }
+
+    /// 注册中心依赖的安装位置：`<项目根>/qi_packages/<别名>/`（扁平安装）。
+    pub fn registry_package_dir(&self, alias: &str) -> PathBuf {
+        self.root_dir.join("qi_packages").join(alias)
+    }
+
+    /// 项目清单里声明的全部注册中心依赖（别名 → 版本），已按别名排序。
+    pub fn registry_dependencies(&self) -> Vec<(String, String)> {
+        let mut 结果: Vec<(String, String)> = self
+            .manifest
+            .dependencies
+            .iter()
+            .filter_map(|(alias, dep)| match dep.source() {
+                Ok(DependencySource::Registry { version }) => Some((alias.clone(), version)),
+                _ => None,
+            })
+            .collect();
+        结果.sort_by(|a, b| a.0.cmp(&b.0));
+        结果
     }
 
     pub fn write_lock_file_for_entry(entry_file: &Path) -> Result<Option<PathBuf>, String> {
@@ -569,6 +690,11 @@ enum LockPackageOrigin {
     Remote {
         source: String,
         commit: Option<String>,
+    },
+    /// 注册中心包：来源是注册中心地址，指纹是包体 sha256
+    Registry {
+        source: String,
+        sha256: String,
     },
 }
 
@@ -607,51 +733,66 @@ fn collect_lock_package(
     let mut dependencies = Vec::new();
     for (alias, dep) in dependency_items {
         let resolved = manifest.resolve_dependency(alias);
-        let (dep_name, dep_version, dep_path, dep_source, dep_commit, dep_manifest, dep_remote) =
-            if let Some(resolved) = resolved {
-                let dep_manifest = resolved.manifest.clone();
-                let dep_name = dep_manifest
-                    .as_ref()
-                    .and_then(|manifest| manifest.package_name().map(|name| name.to_string()))
-                    .unwrap_or_else(|| alias.clone());
-                let dep_version = dep_manifest
-                    .as_ref()
-                    .and_then(|manifest| manifest.manifest.package.as_ref())
-                    .and_then(|pkg| pkg.version.clone())
-                    .or_else(|| dep.version().map(|v| v.to_string()));
-                let dep_path = Some(resolved.root_dir.display().to_string());
-                let dep_source = resolved
-                    .remote
-                    .as_ref()
-                    .map(|spec| format!("git+{}", spec.coordinate()));
-                let dep_commit = resolved
-                    .remote
-                    .as_ref()
-                    .and_then(|spec| remote::read_meta(&spec.cache_dir()))
-                    .map(|meta| meta.commit);
-                (
-                    dep_name,
-                    dep_version,
-                    dep_path,
-                    dep_source,
-                    dep_commit,
-                    dep_manifest,
-                    resolved.remote,
-                )
-            } else {
-                let dep_path = dep
-                    .path()
-                    .map(|path| manifest.root_dir.join(path).display().to_string());
-                (
-                    alias.clone(),
-                    dep.version().map(|v| v.to_string()),
-                    dep_path,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            };
+        let (
+            dep_name,
+            dep_version,
+            dep_path,
+            dep_source,
+            dep_commit,
+            dep_sha256,
+            dep_manifest,
+            dep_remote,
+        ) = if let Some(resolved) = resolved {
+            let dep_manifest = resolved.manifest.clone();
+            let dep_name = dep_manifest
+                .as_ref()
+                .and_then(|manifest| manifest.package_name().map(|name| name.to_string()))
+                .unwrap_or_else(|| alias.clone());
+            // 注册中心装下来的包，安装标记里有权威的 版本/sha256/来源
+            let dep_marker = install::读标记(&resolved.root_dir);
+            let dep_version = dep_manifest
+                .as_ref()
+                .and_then(|manifest| manifest.manifest.package.as_ref())
+                .and_then(|pkg| pkg.version.clone())
+                .or_else(|| dep_marker.as_ref().map(|m| m.版本.clone()))
+                .or_else(|| dep.version().map(|v| v.to_string()));
+            let dep_path = Some(resolved.root_dir.display().to_string());
+            let dep_source = resolved
+                .remote
+                .as_ref()
+                .map(|spec| format!("git+{}", spec.coordinate()))
+                .or_else(|| dep_marker.as_ref().map(|m| m.来源.clone()));
+            let dep_commit = resolved
+                .remote
+                .as_ref()
+                .and_then(|spec| remote::read_meta(&spec.cache_dir()))
+                .map(|meta| meta.commit);
+            let dep_sha256 = dep_marker.as_ref().map(|m| m.sha256.clone());
+            (
+                dep_name,
+                dep_version,
+                dep_path,
+                dep_source,
+                dep_commit,
+                dep_sha256,
+                dep_manifest,
+                resolved.remote,
+            )
+        } else {
+            let dep_path = dep
+                .path()
+                .map(|path| manifest.root_dir.join(path).display().to_string());
+            (
+                alias.clone(),
+                dep.version().map(|v| v.to_string()),
+                dep_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
 
         dependencies.push(LockDependencyEntry {
             alias: alias.clone(),
@@ -660,6 +801,7 @@ fn collect_lock_package(
             path: dep_path,
             source: dep_source.clone(),
             commit: dep_commit.clone(),
+            sha256: dep_sha256.clone(),
         });
 
         if let Some(dep_manifest) = dep_manifest {
@@ -668,11 +810,15 @@ fn collect_lock_package(
                 .canonicalize()
                 .unwrap_or_else(|_| dep_manifest.root_dir.clone());
             if !visited.contains(&dep_key) {
-                let dep_origin = match (dep_source, dep_remote) {
-                    (Some(source), Some(_)) => LockPackageOrigin::Remote {
+                let dep_origin = match (dep_source, dep_remote, dep_sha256) {
+                    (Some(source), Some(_), _) => LockPackageOrigin::Remote {
                         source,
                         commit: dep_commit,
                     },
+                    // 无 remote spec 但有 sha256 → 注册中心包，来源就是注册中心地址
+                    (Some(source), None, Some(sha256)) => {
+                        LockPackageOrigin::Registry { source, sha256 }
+                    }
                     _ => LockPackageOrigin::Path,
                 };
                 let entry = collect_lock_package(&dep_manifest, dep_origin, visited, packages)?;
@@ -683,10 +829,11 @@ fn collect_lock_package(
 
     dependencies.sort_by(|a, b| a.alias.cmp(&b.alias));
 
-    let (source, commit) = match origin {
-        LockPackageOrigin::Root => ("workspace".to_string(), None),
-        LockPackageOrigin::Path => ("path".to_string(), None),
-        LockPackageOrigin::Remote { source, commit } => (source, commit),
+    let (source, commit, sha256) = match origin {
+        LockPackageOrigin::Root => ("workspace".to_string(), None, None),
+        LockPackageOrigin::Path => ("path".to_string(), None, None),
+        LockPackageOrigin::Remote { source, commit } => (source, commit, None),
+        LockPackageOrigin::Registry { source, sha256 } => (source, None, Some(sha256)),
     };
 
     Ok(LockPackageEntry {
@@ -699,20 +846,34 @@ fn collect_lock_package(
         source,
         path: Some(root_key.display().to_string()),
         commit,
+        sha256,
         dependencies: if was_new { dependencies } else { Vec::new() },
     })
 }
 
-fn normalize_manifest_text(raw: &str) -> String {
-    let table_regex = Regex::new(r#"(?m)^\s*\[([^\]\n]+)\]\s*$"#).unwrap();
-    let normalized_tables = table_regex.replace_all(raw, |caps: &regex::Captures| {
+pub(crate) fn normalize_manifest_text(raw: &str) -> String {
+    // 数组表头 `[[包]]` 要先处理：下面那条单表头正则的 `\]\s*$` 匹配不到它，
+    // 漏掉的话中文数组表头会以裸键形式留在文本里，TOML 1.0 直接判非法。
+    let array_table_regex = Regex::new(r#"(?m)^\s*\[\[([^\]\n]+)\]\]\s*$"#).unwrap();
+    let normalized_array_tables = array_table_regex.replace_all(raw, |caps: &regex::Captures| {
         let key = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if needs_quoted_manifest_key(key) {
-            format!(r#"["{}"]"#, key)
+            format!(r#"[["{}"]]"#, key)
         } else {
             caps.get(0).unwrap().as_str().to_string()
         }
     });
+
+    let table_regex = Regex::new(r#"(?m)^\s*\[([^\]\n]+)\]\s*$"#).unwrap();
+    let normalized_tables =
+        table_regex.replace_all(&normalized_array_tables, |caps: &regex::Captures| {
+            let key = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
+            if needs_quoted_manifest_key(key) {
+                format!(r#"["{}"]"#, key)
+            } else {
+                caps.get(0).unwrap().as_str().to_string()
+            }
+        });
 
     let top_level_key_regex = Regex::new(r#"(?m)^(\s*)([^"\s=\[\]#][^=]*?)(\s*=)"#).unwrap();
     let normalized_keys =
@@ -743,6 +904,13 @@ fn normalize_manifest_text(raw: &str) -> String {
 }
 
 fn needs_quoted_manifest_key(key: &str) -> bool {
+    // 已经是带引号的写法就别再包一层。qi.lock 是 `toml::to_string_pretty` 写出来的，
+    // 中文键本来就带引号（还有 `["根包"."依赖"]` 这种带点的），再包一次会变成
+    // `[""根包""]` —— 解析必挂，而 read_registry_lock 对解析失败是静默跳过的，
+    // 表现就是「lock 明明在那儿，sha256 校验却没生效」。
+    if key.contains('"') || key.contains('\'') {
+        return false;
+    }
     key.chars().any(|ch| !ch.is_ascii())
 }
 
@@ -783,6 +951,109 @@ mod tests {
 
     fn parse_manifest(text: &str) -> PackageManifest {
         toml::from_str(&normalize_manifest_text(text)).unwrap()
+    }
+
+    #[test]
+    fn test_版本字符串依赖识别为注册中心() {
+        let manifest = parse_manifest(
+            r#"
+[依赖]
+海龟 = "0.1.0"
+Web = "github.com/liliang-cn/qi-web@v1.0"
+本地包 = "../本地包"
+详细 = { 版本 = "1.2.3" }
+"#,
+        );
+
+        assert_eq!(
+            manifest.dependencies["海龟"].source().unwrap(),
+            DependencySource::Registry {
+                version: "0.1.0".to_string()
+            }
+        );
+        assert_eq!(
+            manifest.dependencies["详细"].source().unwrap(),
+            DependencySource::Registry {
+                version: "1.2.3".to_string()
+            }
+        );
+        // 版本形状之外的裸串，判定跟改动前一模一样
+        assert!(matches!(
+            manifest.dependencies["Web"].source().unwrap(),
+            DependencySource::Remote(_)
+        ));
+        assert_eq!(
+            manifest.dependencies["本地包"].source().unwrap(),
+            DependencySource::LocalPath("../本地包".to_string())
+        );
+    }
+
+    #[test]
+    fn test_精确版本判定() {
+        assert!(is_exact_version("0.1.0"));
+        assert!(is_exact_version("10.20.30"));
+        // 范围 / 两段 / 带 v / 路径 一律不算，免得把写歪的路径当成版本
+        assert!(!is_exact_version("^0.1"));
+        assert!(!is_exact_version("0.1"));
+        assert!(!is_exact_version("v1.0.0"));
+        assert!(!is_exact_version("1.0.0-beta"));
+        assert!(!is_exact_version("../本地"));
+        assert!(!is_exact_version(""));
+        assert!(!is_exact_version("1.0.0.0"));
+    }
+
+    /// 工具写出的 qi.lock 必须能被自己读回来。
+    ///
+    /// 这条曾经真的挂过：归一化把已带引号的中文键又包了一层（`[["包"]]` →
+    /// `[[""包""]]`），解析失败被静默吞掉，表现是「lock 在那儿但 sha256 校验没生效」
+    /// —— 供应链校验假绿是最不能接受的一类 bug，所以钉一条回归。
+    #[test]
+    fn test_lock文件写完能读回_含sha256() {
+        let 临时 = TempDir::new().unwrap();
+        let 项目 = 临时.path().join("工程");
+        let 包 = 项目.join("qi_packages").join("海龟");
+        std::fs::create_dir_all(&包).unwrap();
+        std::fs::write(
+            项目.join("qi.toml"),
+            "[包]\n名称 = \"应用\"\n\n[依赖]\n海龟 = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            包.join("qi.toml"),
+            "[包]\n名称 = \"海龟\"\n版本 = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(包.join("海龟.qi"), "包 海龟;\n").unwrap();
+        // 用 toml 序列化写标记（中文键会被自动加引号），跟 install::写标记 同形；
+        // 手写裸键在 TOML 1.0 里非法，那样这条测试验的就不是 lock 而是归一化了。
+        std::fs::write(
+            包.join(install::标记文件名),
+            toml::to_string_pretty(&install::安装标记 {
+                名称: "海龟".to_string(),
+                版本: "0.1.0".to_string(),
+                sha256: "deadbeef".to_string(),
+                来源: "https://pkg.qilang.org".to_string(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let 清单 = ResolvedPackageManifest::load_dir(&项目).unwrap().unwrap();
+        ResolvedPackageManifest::write_lock_file_for_manifest(&清单).unwrap();
+
+        let 读回 = read_registry_lock(&清单.root_dir);
+        let 条目 = 读回.get("海龟").expect("lock 里应有海龟这条注册中心记录");
+        assert_eq!(条目.版本, "0.1.0");
+        assert_eq!(条目.sha256, "deadbeef");
+        assert_eq!(条目.来源, "https://pkg.qilang.org");
+    }
+
+    #[test]
+    fn test_归一化不动已带引号的键() {
+        let 原文 = "\"格式版本\" = 1\n\n[[\"包\"]]\n\"名称\" = \"海龟\"\n";
+        assert_eq!(normalize_manifest_text(原文), 原文);
+        // 裸中文键仍然要补引号
+        assert!(normalize_manifest_text("[[包]]\n名称 = \"x\"\n").contains("[[\"包\"]]"));
     }
 
     #[test]
@@ -850,13 +1121,35 @@ Cli = { git = "git@github.com:x/cli.git", ref = "main" }
         let err = manifest.dependencies["坏"].source().unwrap_err();
         assert!(err.contains("不能同时指定"), "错误信息: {}", err);
 
+        // `{ 版本 = "…" }` 从「三样都没给」改判为注册中心依赖 —— 有了注册中心，
+        // 光写版本就有明确含义了。版本形状是否合法（三段数字）由 `qi 包 安装`
+        // 报，那里能带上别名和更长的解释。
         let manifest = parse_manifest(
             r#"
 [依赖]
-空 = { 版本 = "1.0" }
+仅版本 = { 版本 = "1.0" }
 "#,
         );
-        assert!(manifest.dependencies["空"].source().is_err());
+        assert_eq!(
+            manifest.dependencies["仅版本"].source().unwrap(),
+            DependencySource::Registry {
+                version: "1.0".to_string()
+            }
+        );
+
+        // 三样一个都没给才是配置错误
+        let manifest = parse_manifest(
+            r#"
+[依赖]
+空 = { 子目录 = "x" }
+"#,
+        );
+        let err = manifest.dependencies["空"].source().unwrap_err();
+        assert!(
+            err.contains("版本"),
+            "错误信息应提到 版本 这条出路: {}",
+            err
+        );
     }
 
     #[test]
@@ -869,6 +1162,7 @@ Cli = { git = "git@github.com:x/cli.git", ref = "main" }
                 source: "workspace".to_string(),
                 path: Some("/项目".to_string()),
                 commit: None,
+                sha256: None,
                 dependencies: vec![LockDependencyEntry {
                     alias: "Web".to_string(),
                     name: "qi-web".to_string(),
@@ -876,6 +1170,7 @@ Cli = { git = "git@github.com:x/cli.git", ref = "main" }
                     path: Some("/缓存/github.com/x/y@v1.0".to_string()),
                     source: Some("git+https://github.com/x/y.git@v1.0".to_string()),
                     commit: Some("abcdef0123456".to_string()),
+                    sha256: None,
                 }],
             },
             packages: vec![LockPackageEntry {
@@ -884,6 +1179,7 @@ Cli = { git = "git@github.com:x/cli.git", ref = "main" }
                 source: "git+https://github.com/x/y.git@v1.0".to_string(),
                 path: Some("/缓存/github.com/x/y@v1.0".to_string()),
                 commit: Some("abcdef0123456".to_string()),
+                sha256: None,
                 dependencies: vec![],
             }],
         };

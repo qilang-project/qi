@@ -3,3 +3,4 @@
 pub mod commands;
 pub mod doctor;
 pub mod get;
+pub mod pkg;
