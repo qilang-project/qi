@@ -74,6 +74,89 @@ impl<'ctx> 后端<'ctx> {
         Ok((base.into(), Qi类型::数组(元素)))
     }
 
+    /// `数组<T>(n)` → 按运行期长度分配，长度头写 n，元素槽清零。
+    ///
+    /// 为什么需要它：字面量 `[a,b,c]` 只能写死元素个数，而「查库查出 n 行、
+    /// 渲染成 n 张卡片」这类场景 n 是运行期才知道的。有了它，配上本来就能用的
+    /// 索引赋值与 `对于` 迭代，动态列表就齐了 —— 不必再往语言里塞一个新容器类型。
+    ///
+    /// 元素清零而不是留脏内存：RC 元素（字符串/结构体/数组）的槽必须是
+    /// null 才安全 —— 本体归零时会逐槽 release，读到野指针就是段错误。
+    pub(super) fn 生成数组创建(
+        &mut self,
+        cre: &crate::parser::ast::ArrayCreateExpression,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
+        let 元素 = match &cre.element_type {
+            crate::parser::ast::TypeNode::数组类型(at) => {
+                super::类型检查::注解元素类型公开(&at.element_type, &self.符号)
+            }
+            _ => 元素类型::整数,
+        };
+        let i64t = self.ctx.i64_type();
+        let (nv, _) = self
+            .生成表达式(&cre.length)?
+            .ok_or_else(|| "数组长度表达式无值".to_string())?;
+        let n = nv.into_int_value();
+
+        // 负数长度按 0 处理：分配 (n+1)*8 时 n 为负会算出一个巨大的 usize，
+        // 直接把分配器打爆。夹一下比崩了好排查。
+        let 零 = i64t.const_zero();
+        let 是负 = self
+            .builder
+            .build_int_compare(inkwell::IntPredicate::SLT, n, 零, "neglen")
+            .map_err(|e| e.to_string())?;
+        let n = self
+            .builder
+            .build_select(是负, 零, n, "len0")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+
+        let 槽数 = self
+            .builder
+            .build_int_add(n, i64t.const_int(1, false), "slots")
+            .map_err(|e| e.to_string())?;
+        let 字节数 = self
+            .builder
+            .build_int_mul(槽数, i64t.const_int(8, false), "bytes")
+            .map_err(|e| e.to_string())?;
+
+        let alloc名 = if self.弧开() {
+            "qi_obj_alloc"
+        } else {
+            "qi_runtime_alloc"
+        };
+        let alloc = self
+            .module
+            .get_function(alloc名)
+            .ok_or_else(|| format!("运行时函数未声明: {}", alloc名))?;
+        let base = self
+            .builder
+            .build_call(alloc, &[字节数.into()], "arrmem")
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| "alloc 未返回".to_string())?
+            .into_pointer_value();
+
+        let head = self.槽指针(base, i64t.into(), 0)?;
+        self.builder
+            .build_store(head, n)
+            .map_err(|e| e.to_string())?;
+
+        // 元素区清零：memset 比逐槽循环省事，且对所有元素类型都对
+        // （0 对整数是 0、对浮点是 0.0、对指针是 null）。
+        let 元素字节 = self
+            .builder
+            .build_int_mul(n, i64t.const_int(8, false), "elembytes")
+            .map_err(|e| e.to_string())?;
+        let 首元素 = self.槽指针(base, i64t.into(), 1)?;
+        self.builder
+            .build_memset(首元素, 8, self.ctx.i8_type().const_zero(), 元素字节)
+            .map_err(|e| e.to_string())?;
+
+        Ok((base.into(), Qi类型::数组(元素)))
+    }
+
     /// `arr[idx]` → GEP(idx+1) + load，返回元素值。
     pub(super) fn 生成数组访问(
         &mut self,

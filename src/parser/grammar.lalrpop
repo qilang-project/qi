@@ -1670,6 +1670,18 @@ Precedence8: AstNode = {
             span: Span::new(sp_l, sp_r),
         })
     },
+    <sp_l:@L> // 定长数组构造：数组<类型>(个数)。长度运行期才知道时用它，
+    // 字面量 [a,b,c] 只能写死元素。
+    <arr_type:ArrayTypeConstructor> "(" <length:Expr> ")" <sp_r:@R> => AstNode::数组创建表达式(ArrayCreateExpression {
+        element_type: arr_type,
+        length: Box::new(length),
+        span: Span::new(sp_l, sp_r),
+    }),
+    <sp_l:@L> <arr_type:ArrayTypeConstructor> "（" <length:Expr> "）" <sp_r:@R> => AstNode::数组创建表达式(ArrayCreateExpression {
+        element_type: arr_type,
+        length: Box::new(length),
+        span: Span::new(sp_l, sp_r),
+    }),
     <sp_l:@L> // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
     <channel_type:ChannelTypeConstructor> "(" ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
@@ -2524,6 +2536,13 @@ MethodIdentifier: String = {
 // 词运算符 2026-08 删掉后它们就是普通标识符，逃生舱一并拆除。
 MemberFieldIdentifier: String = {
     <id:FieldIdentifier> => id,
+};
+
+ArrayTypeConstructor: TypeNode = {
+    "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
+        element_type: Box::new(element_type),
+        size: None,
+    }),
 };
 
 ChannelTypeConstructor: TypeNode = {

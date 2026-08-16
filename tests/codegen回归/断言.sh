@@ -42,7 +42,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))

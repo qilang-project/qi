@@ -62,6 +62,7 @@ pub enum AstNode {
     结构体实例化表达式(StructLiteralExpression),
     字段访问表达式(FieldAccessExpression),
     方法调用表达式(MethodCallExpression),
+    数组创建表达式(ArrayCreateExpression),
     通道创建表达式(ChannelCreateExpression),
     通道发送表达式(ChannelSendExpression),
     通道接收表达式(ChannelReceiveExpression),
@@ -662,6 +663,17 @@ pub struct ReferenceType {
 #[derive(Debug, Clone)]
 pub struct GoroutineSpawnExpression {
     pub expression: Box<AstNode>,
+    pub span: Span,
+}
+
+/// 定长数组构造（`数组<类型>(个数)`）—— 长度是运行期才知道的那种。
+///
+/// 数组字面量 `[a, b, c]` 只能写死元素，而服务端渲染、数据库查询这类场景
+/// 长度要到运行时才知道。语法照 `通道<T>(n)` 那套，读起来是一家的。
+#[derive(Debug, Clone)]
+pub struct ArrayCreateExpression {
+    pub element_type: TypeNode,
+    pub length: Box<AstNode>,
     pub span: Span,
 }
 

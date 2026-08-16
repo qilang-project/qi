@@ -1018,6 +1018,14 @@ impl 符号表 {
     }
 }
 
+/// 供 codegen 侧（数组创建）复用的同一份解析。
+pub(super) fn 注解元素类型公开(
+    t: &crate::parser::ast::TypeNode,
+    表: &符号表,
+) -> super::类型::元素类型 {
+    注解元素类型(t, 表)
+}
+
 /// 注解 TypeNode → 元素类型（**不可变**解析，供 推断表达式类型 的通道创建臂用）。
 /// 基础类型走 从注解；自定义类型查注册表（已登记的结构体/枚举）；
 /// 泛型注解（实例可能尚未存在）保守按 指针。
@@ -1272,6 +1280,15 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
                 .first()
                 .map(|e| super::类型::元素类型::从标量(推断表达式类型(e, 表)))
                 .unwrap_or(super::类型::元素类型::整数);
+            Qi类型::数组(elem)
+        }
+        AstNode::数组创建表达式(cre) => {
+            let elem = match &cre.element_type {
+                crate::parser::ast::TypeNode::数组类型(at) => {
+                    注解元素类型(&at.element_type, 表)
+                }
+                _ => super::类型::元素类型::整数,
+            };
             Qi类型::数组(elem)
         }
         AstNode::数组访问表达式(acc) => {

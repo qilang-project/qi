@@ -232,6 +232,7 @@ impl<'ctx> 后端<'ctx> {
             }
 
             AstNode::数组字面量表达式(arr) => self.生成数组字面量(arr).map(Some),
+            AstNode::数组创建表达式(cre) => self.生成数组创建(cre).map(Some),
             AstNode::数组访问表达式(acc) => self.生成数组访问(acc).map(Some),
 
             // 取地址：局部/全局变量 → 其 alloca 指针（按 字符串/ptr 语义暴露）

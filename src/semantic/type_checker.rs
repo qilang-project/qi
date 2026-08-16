@@ -85,6 +85,11 @@ impl TypeChecker {
             AstNode::数组字面量表达式(array_literal) => {
                 self.check_array_literal(array_literal)
             }
+            // 数组<T>(n)：长度必须是整数表达式；结果类型就是注解里那个 数组<T>
+            AstNode::数组创建表达式(cre) => {
+                self.check(&cre.length)?;
+                Ok(cre.element_type.clone())
+            }
             // 区间只出现在 对于 循环目标位置：起止各自检查，本身无值
             AstNode::区间表达式(range) => {
                 self.check(&range.start)?;
