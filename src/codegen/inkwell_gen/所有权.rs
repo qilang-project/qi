@@ -402,6 +402,10 @@ impl<'ctx> 后端<'ctx> {
                 false
             }
 
+            // 临时基的字段访问（`新名片(i).姓名`）：生成字段访问 会 retain 字段
+            // 再释放基本体 → 这份字段串是 OWNED（判定与插桩条件同源，见 字段基是临时）
+            AstNode::字段访问表达式(fa) => self.字段基是临时(&fa.object),
+
             // 等待：Round E3 起 qi_future_await_ptr 是 take/新分配语义 → OWNED
             // （Pointer payload +1 移交；String payload 每次 rc_cstr 新分配）。
             // 数值 future 的 await 结果非指针，插桩点先验类型，不受影响。
@@ -510,6 +514,24 @@ impl<'ctx> 后端<'ctx> {
         }
     }
 
+    /// `基.字段` 里的**基**是不是一次性临时（本表达式内新建、除本次求值外
+    /// 无人持有）—— 例如 `新建 点{…}.横`、`新点(i).纵`、`c.加一().值`。
+    ///
+    /// 判 true 时 生成字段访问 会在 load 完字段后**释放基本体**；若字段本身也是
+    /// RC，先 retain 字段再放基（否则基归零 → 释放函数级联回收字段 → 刚 load
+    /// 出来的字段指针当场悬垂），于是**该字段访问的结果对 RC 字段而言是 OWNED**。
+    ///
+    /// 所以本判定同时被 表达式拥有字符串 / 表达式拥有对象 引用，且必须与
+    /// 生成字段访问 的插桩条件**逐字一致**：只改判定不改 codegen = 双放，
+    /// 只改 codegen 不改判定 = 那份 retain 没人放（漏）。
+    pub(super) fn 字段基是临时(&self, object: &AstNode) -> bool {
+        if !self.弧 {
+            return false;
+        }
+        let bt = 推断表达式类型(object, &self.符号);
+        matches!(bt, Qi类型::结构体(_)) && self.表达式拥有RC(object, bt)
+    }
+
     /// 该表达式是否为「装箱枚举构造」（`形状.圆(x)` 方法式 / `形状.点` 字段式）。
     /// 装箱枚举构造 = qi_obj_alloc rc=1 新对象 → OWNED。
     pub(super) fn 枚举构造是装箱(&self, object: &AstNode, 变体: &str) -> bool {
@@ -565,8 +587,11 @@ impl<'ctx> 后端<'ctx> {
 
             AstNode::函数调用表达式(call) => self.调用拥有对象(&call.callee),
 
-            // 装箱枚举字段式构造 `形状.点`（无载荷变体仍是装箱指针）→ OWNED
-            AstNode::字段访问表达式(fa) => self.枚举构造是装箱(&fa.object, &fa.field),
+            // 装箱枚举字段式构造 `形状.点`（无载荷变体仍是装箱指针）→ OWNED；
+            // 临时基的字段访问（`新盒(i).内层`）同理 —— 字段已 retain、基已放
+            AstNode::字段访问表达式(fa) => {
+                self.枚举构造是装箱(&fa.object, &fa.field) || self.字段基是临时(&fa.object)
+            }
 
             AstNode::方法调用表达式(mc) => {
                 // 装箱枚举方法式构造 `形状.圆(x)` → OWNED

@@ -386,6 +386,16 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_load(llvmt, fptr, field)
             .map_err(|e| e.to_string())?;
+        // ARC：基是一次性临时（`新建 点{…}.横` / `新点(i).纵` / `c.加一().值`）——
+        // 谁也不持有它，不放就是每次求值漏一个本体（度量：100 轮漏 100 个）。
+        // 顺序是命根子：**先 retain 字段再放基**。反过来的话基归零 → 释放函数
+        // 逐字段级联回收 → 手里这个刚 load 的字段指针立刻悬垂。
+        // retain 后该字段访问的结果变成 OWNED，判定侧 表达式拥有字符串 /
+        // 表达式拥有对象 的 字段访问表达式 分支引用的是同一个 字段基是临时。
+        if self.弧开() && self.字段基是临时(object) {
+            self.弧retain任意(v, ftype);
+            self.弧release任意(base.into(), Qi类型::结构体(idx));
+        }
         Ok((v, ftype))
     }
 
