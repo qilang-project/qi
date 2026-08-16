@@ -39,7 +39,7 @@ use std::path::PathBuf;
   qi get github.com/user/repo@v1.0  拉取远程依赖进缓存并登记 | Fetch remote dependency
   qi get                            拉取 qi.toml 全部远程依赖 | Fetch all remote deps
   qi 包 安装                        装齐 qi.toml [依赖] 的注册中心包 | Install registry deps
-  qi 包 添加 海龟 0.1.0             登记依赖并安装 | Add a dependency and install it
+  qi 包 添加 海龟                   登记最新版依赖并安装 | Add latest and install
   qi 包 发布                        打包当前目录发到注册中心 | Publish the current package
   qi 包 搜索 海龟                   搜注册中心 | Search the registry
   qi --target linux --release-runtime compile 程序.qi -o 程序
@@ -306,7 +306,7 @@ pub enum Commands {
 
 示例 | Examples:
   qi 包 安装                     装齐 qi.toml [依赖] | Install declared deps
-  qi 包 添加 海龟 0.1.0          登记并安装 | Add and install
+  qi 包 添加 海龟 [0.1.0]        登记并安装，省略版本取最新 | Add and install
   qi 包 发布                     发布当前包 | Publish current package
   qi 包 搜索 绘图                搜注册中心 | Search registry
 
@@ -397,8 +397,8 @@ pub enum PkgCommands {
         /// 包名称（可为中文）| Package name
         name: String,
 
-        /// 精确版本，如 0.1.0（v1 不支持范围）| Exact version
-        version: String,
+        /// 精确版本，如 0.1.0（v1 不支持范围）；省略则取注册中心的最新版 | Exact version, omit for latest
+        version: Option<String>,
 
         /// 详细输出 | Verbose output
         #[arg(short, long)]

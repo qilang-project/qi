@@ -120,8 +120,16 @@ fn 安装到(项目: &ResolvedPackageManifest, verbose: bool) -> Result<(), CliE
 
 // ───────────────────────── 添加 ─────────────────────────
 
-/// `qi 包 添加 <名称> <版本>`
-pub fn 添加(名称: String, 版本: String, verbose: bool) -> Result<(), CliError> {
+/// `qi 包 添加 <名称> [版本]`
+///
+/// 省略版本 = 取注册中心的最新版（`go get` 不写版本时的行为）。解析出来的
+/// **具体版本号**才写进 qi.toml —— 清单里始终是精确版本，重跑安装必然装到同一份，
+/// 「最新」只发生在你敲命令的那一刻，不会随时间漂移。
+pub fn 添加(名称: String, 版本: Option<String>, verbose: bool) -> Result<(), CliError> {
+    let 版本 = match 版本 {
+        Some(v) => v,
+        None => 解析最新版(&名称)?,
+    };
     if !is_exact_version(&版本) {
         return Err(包错(format!(
             "版本 \"{}\" 不是「主.次.补」三段数字。\n  v1 只支持精确版本，请写成如 0.1.0",
@@ -143,6 +151,31 @@ pub fn 添加(名称: String, 版本: String, verbose: bool) -> Result<(), CliEr
         .map_err(包错)?
         .ok_or_else(|| 包错("改写 qi.toml 后反而读不出来了，请检查文件内容"))?;
     安装到(&刷新后, verbose)
+}
+
+/// 问注册中心要某个包的最新版本号。找不到包时把「搜索」指出来，别只甩一个 404。
+fn 解析最新版(名称: &str) -> Result<String, CliError> {
+    let 中心 = 注册中心::新建().map_err(包错)?;
+    let 全部 = 中心.列出包().map_err(包错)?;
+
+    let 命中 = 全部.iter().find(|包| 包.name == 名称).ok_or_else(|| {
+        包错(format!(
+            "注册中心 {} 上没有名为 \"{}\" 的包。\n  用 qi 包 搜索 {} 看看有没有相近的",
+            中心.地址(),
+            名称,
+            名称
+        ))
+    })?;
+
+    let 版本 = 命中.latest.clone().ok_or_else(|| {
+        包错(format!(
+            "包 \"{}\" 在注册中心存在但还没有任何已发布版本",
+            名称
+        ))
+    })?;
+
+    println!("解析 {} 最新版 → {}", 名称, 版本);
+    Ok(版本)
 }
 
 /// 保守地把 `名称 = "版本"` 写进 qi.toml 的 [依赖] 表。
