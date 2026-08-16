@@ -40,7 +40,8 @@ impl<'ctx> 后端<'ctx> {
         let ft = match name {
             "qi_exc_alloc_frame" => ptrt.fn_type(&[], false),
             "qi_exc_pop" | "qi_exc_clear" => voidt.fn_type(&[], false),
-            "qi_exc_throw" => voidt.fn_type(&[ptrt.into()], false),
+            "qi_exc_throw" | "qi_exc_stage" => voidt.fn_type(&[ptrt.into()], false),
+            "qi_exc_throw_staged" => voidt.fn_type(&[], false),
             "qi_exc_message" => ptrt.fn_type(&[], false),
             _ => return Err(format!("未知异常运行时函数: {}", name)),
         };
@@ -119,10 +120,36 @@ impl<'ctx> 后端<'ctx> {
                 .into_pointer_value()
         };
 
-        let throw_fn = self.取异常运行时("qi_exc_throw")?;
-        self.builder
-            .build_call(throw_fn, &[msg.into()], "")
-            .map_err(|e| e.to_string())?;
+        // ARC：longjmp 把本帧整个跳过 —— 函数出口那段「释放全部 RC 局部」永远
+        // 不会执行，于是每抛一次就漏一帧对象（度量：50 次抛出漏 50 个结构体）。
+        //
+        // 只有 try深度 == 0 才敢在这里补释放：那意味着本函数里没有正压着的
+        // 异常帧，这次抛出**必然跳出本函数**，本帧局部再也不会被读到。反过来，
+        // 若 catch 就在本函数内（深度 > 0），longjmp 回到 catch 之后代码还会
+        // 继续读这些局部、函数出口还会再释放一次 —— 那就是 use-after-free
+        // 叠加双放，比泄漏坏得多。宁可那种情形继续漏。
+        //
+        // 协程体（QI_CORO）也不动：它的"局部"在 coro frame 里，归状态机管。
+        //
+        // 顺序：stage 把消息**拷进** LAST_ERROR（此后消息指针死活无关）→
+        // 释放本帧局部（消息本身可能就是其中一个 RC 局部）→ throw_staged。
+        let 抛前释放 = self.弧开() && self.try深度 == 0 && self.协程当前.is_none();
+        if 抛前释放 {
+            let stage_fn = self.取异常运行时("qi_exc_stage")?;
+            self.builder
+                .build_call(stage_fn, &[msg.into()], "")
+                .map_err(|e| e.to_string())?;
+            self.弧释放局部()?;
+            let throw_fn = self.取异常运行时("qi_exc_throw_staged")?;
+            self.builder
+                .build_call(throw_fn, &[], "")
+                .map_err(|e| e.to_string())?;
+        } else {
+            let throw_fn = self.取异常运行时("qi_exc_throw")?;
+            self.builder
+                .build_call(throw_fn, &[msg.into()], "")
+                .map_err(|e| e.to_string())?;
+        }
         // qi_exc_throw 不返回（longjmp / panic）—— 终结当前块
         self.builder
             .build_unreachable()
@@ -229,6 +256,15 @@ impl<'ctx> 后端<'ctx> {
                 } else {
                     self.入口块alloca(self.ctx.ptr_type(AddressSpace::default()).into(), var)?
                 };
+                // ARC：qi_exc_message 每次返回 rc=1 **新串**（OWNED，见 runtime
+                // exception_ffi::qi_exc_message → rc_cstr_from_string），所以存进
+                // 槽时不 retain（直接转移）；但覆写前必须释放旧值 —— 尝试/捕获 嵌在
+                // 循环里时这条槽被反复覆写，不放旧值就是每轮漏一条串（度量：100 轮
+                // 50 次捕获漏 49 条，最后一条由出口统一释放）。槽是 entry 块
+                // null 初始化，首轮 release(null) 是 no-op。
+                if self.弧开() {
+                    self.弧释放槽旧值(slot)?;
+                }
                 self.builder
                     .build_store(slot, msg)
                     .map_err(|e| e.to_string())?;
