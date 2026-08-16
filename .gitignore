@@ -96,3 +96,7 @@ rustfmt.toml
 target-wt/
 wasm演示/*.wasm
 wasm演示/*.o
+
+# 验收脚本的现场工作目录（造静态库/编产物，跑完即删；异常退出会留下）
+tests/ffi链接/临时/
+tests/绑定生成/构建/
