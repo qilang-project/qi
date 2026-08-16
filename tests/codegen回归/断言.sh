@@ -92,8 +92,11 @@ out="/tmp/codegen回归_det.bin"
 det_why=""
 det_md5s=""
 for i in 1 2 3 4 5; do
-    if ! run_limited "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
-        det_ok=0; det_why="第 $i 次编译失败"; break
+    det_err=$(run_limited "$QI" compile "$det_src" -o "$out" 2>&1)
+    if [ $? -ne 0 ]; then
+        det_ok=0
+        det_why="第 $i 次编译失败: $(echo "$det_err" | head -3 | tr '\n' ' ')"
+        break
     fi
     m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
     det_md5s="$det_md5s $m"

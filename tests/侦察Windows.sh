@@ -170,22 +170,25 @@ else
       # 直接 spawn clang，没有这层转换，所以那是 shell 的问题不是开关的问题。
       export MSYS2_ARG_CONV_EXCL='*'
       BASEFLAGS="-Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt"
-      for 组 in "无Brepro::" "有Brepro::-Wl,/Brepro"; do
-        名=${组%%::*}
-        额外=${组##*::}
-        rm -f 定1.exe 定2.exe 定3.exe
+      # 循环变量一律 ASCII —— bash 的变量名**根本不接受非 ASCII**，
+      # `for 组 in ...` 报的是「'组': not a valid identifier」，
+      # 而且整段就这么被跳过了（上一轮这个实验一行都没跑）。
+      for grp in "noBrepro::" "withBrepro::-Wl,/Brepro"; do
+        gname=${grp%%::*}
+        gflag=${grp##*::}
+        rm -f det1.exe det2.exe det3.exe
         for n in 1 2 3; do
           # shellcheck disable=SC2086
-          clang -o "定$n.exe" 斐波那契.o "$RTLIB" $BASEFLAGS $额外 $SYSLIBS >/dev/null 2>&1
+          clang -o "det$n.exe" 斐波那契.o "$RTLIB" $BASEFLAGS $gflag $SYSLIBS >/dev/null 2>&1
           sleep 1.2   # 跨秒
         done
-        if [ -f 定3.exe ]; then
-          echo "  $名: $(md5sum 定1.exe 定2.exe 定3.exe | awk '{print $1}' | sort -u | wc -l) 个不同哈希（1 = 确定）"
-          if ! cmp -s 定1.exe 定2.exe; then
-            echo "     差异字节偏移: $(cmp -l 定1.exe 定2.exe | head -8 | awk '{printf "%s ", $1}')"
+        if [ -f det3.exe ]; then
+          echo "  $gname: $(md5sum det1.exe det2.exe det3.exe | awk '{print $1}' | sort -u | wc -l) 个不同哈希（1 = 确定）"
+          if ! cmp -s det1.exe det2.exe; then
+            echo "     差异字节偏移: $(cmp -l det1.exe det2.exe | head -8 | awk '{printf "%s ", $1}')"
           fi
         else
-          echo "  $名: 链接失败"
+          echo "  $gname: 链接失败"
         fi
       done
       unset MSYS2_ARG_CONV_EXCL
@@ -215,6 +218,24 @@ else
       echo "(无 lldb)"
     fi
   )
+  echo
+  echo "-- qi compile -o <各种输出路径>：确定性回归那条就死在这 --"
+  # 「编译 5 次产物一致」报的是「第 1 次编译失败」，而同一个源文件
+  # `qi run` 是好的 —— 区别只在 -o 指到哪儿、叫什么。四种排列各试一次，
+  # 一轮就能定位是 /tmp、是扩展名、还是文件名里的中文。
+  DET_SRC="$PWD/tests/codegen回归/04_模块限定分发确定性.qi"
+  if [ -f "$DET_SRC" ]; then
+    for target in "/tmp/qi_det_ascii.bin" "/tmp/qi_det_ascii.exe" \
+                  "/tmp/codegen回归_det.bin" "$W/qi_det_ascii.bin"; do
+      echo "  -o $target"
+      "$QI" compile "$DET_SRC" -o "$target" 2>&1 | grep -v "LNK4286\|LNK4217" | head -6 | sed 's/^/     /'
+      if [ -f "$target" ]; then echo "     → 产物存在 $(ls -l "$target" | awk '{print $5}') 字节"; else echo "     → 没产物"; fi
+      rm -f "$target"
+    done
+  else
+    echo "  找不到 $DET_SRC"
+  fi
+
   echo
   echo "-- 外部 \"c\" 在 MSVC 上会变成 c.lib：单独试一下 --"
   D2="$W/qi外部c"
