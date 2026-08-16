@@ -160,18 +160,35 @@ else
           grep -E "LNK[0-9]+|error" "链接$i.log" | grep -v "LNK4286\|LNK4217\|LNK4098" | head -4 | sed 's/^/         /'
         fi
       done
-      # 确定性：同一组开关连编两次，字节必须一致（PE 头有 TimeDateStamp）
-      if [ -f "试4.exe" ]; then
-        clang -o "试4b.exe" 斐波那契.o "$RTLIB" \
-          -Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt -Wl,/Brepro \
-          >/dev/null 2>&1
-        echo "  /Brepro 两次产物一致? $(md5sum 试4.exe 试4b.exe | awk '{print $1}' | uniq | wc -l) 个不同哈希（1 = 一致）"
-      fi
-      if [ -f "试3.exe" ]; then
-        clang -o "试3b.exe" 斐波那契.o "$RTLIB" \
-          -Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt >/dev/null 2>&1
-        echo "  不加 /Brepro 两次产物一致? $(md5sum 试3.exe 试3b.exe 2>/dev/null | awk '{print $1}' | uniq | wc -l) 个不同哈希"
-      fi
+      # ── 确定性实验 ──
+      # 「编译 5 次产物一致」在 Windows 上老是红，得先搞清楚到底是什么在变。
+      # 关键：**必须跨过秒边界**（PE 头的 TimeDateStamp 是秒粒度，连着两次
+      # 链接经常落在同一秒里，看起来「一致」其实什么都没测到）。
+      # 还要关掉 MSYS 的参数转换：`-Wl,/Brepro` 里那个 /Brepro 会被当成
+      # POSIX 绝对路径改写成 C:\Program Files\Git\Brepro（上一轮就栽在这，
+      # 报 LNK1181 cannot open input file ...\Brepro.obj）。qi 自己是原生程序
+      # 直接 spawn clang，没有这层转换，所以那是 shell 的问题不是开关的问题。
+      export MSYS2_ARG_CONV_EXCL='*'
+      BASEFLAGS="-Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt"
+      for 组 in "无Brepro::" "有Brepro::-Wl,/Brepro"; do
+        名=${组%%::*}
+        额外=${组##*::}
+        rm -f 定1.exe 定2.exe 定3.exe
+        for n in 1 2 3; do
+          # shellcheck disable=SC2086
+          clang -o "定$n.exe" 斐波那契.o "$RTLIB" $BASEFLAGS $额外 $SYSLIBS >/dev/null 2>&1
+          sleep 1.2   # 跨秒
+        done
+        if [ -f 定3.exe ]; then
+          echo "  $名: $(md5sum 定1.exe 定2.exe 定3.exe | awk '{print $1}' | sort -u | wc -l) 个不同哈希（1 = 确定）"
+          if ! cmp -s 定1.exe 定2.exe; then
+            echo "     差异字节偏移: $(cmp -l 定1.exe 定2.exe | head -8 | awk '{printf "%s ", $1}')"
+          fi
+        else
+          echo "  $名: 链接失败"
+        fi
+      done
+      unset MSYS2_ARG_CONV_EXCL
     else
       echo "  （没有 斐波那契.o 或 QI_RUNTIME_LIB，跳过）"
     fi

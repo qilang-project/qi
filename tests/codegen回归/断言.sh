@@ -89,23 +89,35 @@ first_md5=""
 # 名字一换字节就变，跟 codegen 确不确定毫无关系。同名重编照样能测出真问题
 # （5 次编译跨越秒边界，时间戳类的不确定性一样会暴露）。
 out="/tmp/codegen回归_det.bin"
+det_why=""
+det_md5s=""
 for i in 1 2 3 4 5; do
     if ! run_limited "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
-        det_ok=0; break
+        det_ok=0; det_why="第 $i 次编译失败"; break
     fi
     m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
+    det_md5s="$det_md5s $m"
+    # 留一份副本：不一致时要拿它指出**差在第几个字节**，
+    # 否则只知道「不一致」，得再烧一轮 CI 才知道是时间戳还是别的。
+    cp "$out" "/tmp/codegen回归_det_副本$i.bin" 2>/dev/null
     if [ -z "$first_md5" ]; then first_md5="$m"
-    elif [ "$m" != "$first_md5" ]; then det_ok=0; break
+    elif [ "$m" != "$first_md5" ]; then det_ok=0; det_why="第 $i 次与第 1 次不同"
     fi
 done
-rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp
 if [ $det_ok -eq 1 ]; then
     echo "PASS 04(编译5次产物一致)"
     passed=$((passed+1))
 else
-    echo "FAIL 04(编译5次产物不一致或编译失败)"
+    echo "FAIL 04(编译5次产物不一致或编译失败: ${det_why})"
+    echo "  各次 md5:${det_md5s}"
+    if [ -f /tmp/codegen回归_det_副本1.bin ] && [ -f /tmp/codegen回归_det_副本2.bin ]; then
+        echo "  头 20 处差异（字节偏移 十进制，1 起）:"
+        cmp -l /tmp/codegen回归_det_副本1.bin /tmp/codegen回归_det_副本2.bin 2>&1 | head -20 | sed 's/^/    /'
+    fi
     failed=$((failed+1))
 fi
+rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp \
+      /tmp/codegen回归_det_副本*.bin
 
 # ── 红码：必须报错的用例 ──
 #
