@@ -73,7 +73,7 @@ mod 表达式;
 mod 诊断;
 #[path = "语句.rs"]
 mod 语句;
-#[path = "调试信息.rs"]
+#[path = "调试信息/mod.rs"]
 mod 调试信息;
 #[path = "闭包.rs"]
 mod 闭包;
@@ -148,6 +148,9 @@ struct 后端<'ctx> {
     调试开: bool,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
+    /// 目标机的数据布局。调试信息算结构体字段偏移/类型位宽要它；
+    /// 在 compile_to_object_multi 的最开头填好（None 只出现在单测里）。
+    目标数据: Option<inkwell::targets::TargetData>,
     /// 符号表：函数签名 + 作用域变量类型。
     符号: 符号表,
     /// 当前函数内的局部变量：名字 → (alloca 指针, Qi 类型)。
@@ -257,6 +260,7 @@ impl<'ctx> 后端<'ctx> {
             调试开,
             module,
             builder,
+            目标数据: None,
             符号: 符号表::new(),
             变量表: HashMap::new(),
             当前返回类型: Qi类型::空,
@@ -748,6 +752,54 @@ pub fn compile_to_object(
 ///
 /// `带调试`：生成 DWARF 行号表 + 函数条目（lldb/gdb 可按 .qi 源码断点/单步）。
 /// 默认开，`--无调试信息` 关。
+/// 目标三元组 + 目标机。宿主==目标 时走默认三元组（本地路径零风险）；
+/// 交叉时按 平台+架构 显式构造（cutover 到 inkwell 时曾丢失，产物错成宿主 Mach-O）。
+fn 建目标机(
+    target: CompilationTarget,
+    arch: Option<&str>,
+    opt: crate::config::OptimizationLevel,
+) -> Result<(inkwell::targets::TargetTriple, TargetMachine), String> {
+    let 宿主即目标 = match target {
+        CompilationTarget::Linux => cfg!(target_os = "linux"),
+        CompilationTarget::MacOS => cfg!(target_os = "macos"),
+        CompilationTarget::Windows => cfg!(target_os = "windows"),
+        CompilationTarget::Wasm => false,
+    } && arch.is_none_or(|a| a == std::env::consts::ARCH);
+    let triple = if 宿主即目标 {
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|e| format!("初始化目标失败: {}", e))?;
+        TargetMachine::get_default_triple()
+    } else {
+        Target::initialize_all(&InitializationConfig::default());
+        let a = arch.unwrap_or("x86_64");
+        let t = match target {
+            CompilationTarget::Linux => format!("{}-unknown-linux-gnu", a),
+            CompilationTarget::Windows => format!("{}-pc-windows-msvc", a),
+            CompilationTarget::MacOS => format!("{}-apple-darwin", a),
+            CompilationTarget::Wasm => "wasm32-unknown-unknown".to_string(),
+        };
+        inkwell::targets::TargetTriple::create(&t)
+    };
+    let tm_opt = match opt {
+        crate::config::OptimizationLevel::None => LlvmOpt::None,
+        crate::config::OptimizationLevel::Basic => LlvmOpt::Less,
+        crate::config::OptimizationLevel::Standard => LlvmOpt::Default,
+        crate::config::OptimizationLevel::Maximum => LlvmOpt::Aggressive,
+    };
+    let t = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+    let tm = t
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            tm_opt,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| "无法创建 target machine".to_string())?;
+    Ok((triple, tm))
+}
+
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
@@ -762,6 +814,19 @@ pub fn compile_to_object_multi(
     }
     let ctx = Context::create();
     let mut 后端值 = 后端::new(&ctx, 带调试);
+
+    // 目标机/数据布局要在**任何 codegen 之前**定好。原先它排在最后，够用是因为
+    // 之前没人在生成期问过「这个结构体的第 k 个字段在第几字节」；复合类型的
+    // DWARF 条目要填 DW_AT_data_member_location，非问不可 —— 而字段偏移只有
+    // TargetData 知道（`{i1, i64}` 的第二个字段在 8 不在 1）。顺带把
+    // set_data_layout 提前也更正确：优化前就按目标布局折叠常量。
+    let (triple, tm) = 建目标机(target, arch, opt)?;
+    后端值.module.set_triple(&triple);
+    后端值
+        .module
+        .set_data_layout(&tm.get_target_data().get_data_layout());
+    后端值.目标数据 = Some(tm.get_target_data());
+
     // 编译单元要最先建：模块标志（Debug Info Version）得在任何元数据之前落位。
     后端值.调试_建立单元(programs[0].source_path.as_deref());
     后端值.声明运行时();
@@ -965,39 +1030,12 @@ pub fn compile_to_object_multi(
         let _ = 后端值.module.print_to_file(Path::new(&p));
     }
 
-    // 目标三元组：宿主==目标 时走默认三元组（本地路径零风险）；
-    // 交叉时按 平台+架构 显式构造（cutover 到 inkwell 时曾丢失，产物错成宿主 Mach-O）。
-    let 宿主即目标 = match target {
-        CompilationTarget::Linux => cfg!(target_os = "linux"),
-        CompilationTarget::MacOS => cfg!(target_os = "macos"),
-        CompilationTarget::Windows => cfg!(target_os = "windows"),
-        CompilationTarget::Wasm => false,
-    } && arch.is_none_or(|a| a == std::env::consts::ARCH);
-    let triple = if 宿主即目标 {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| format!("初始化目标失败: {}", e))?;
-        TargetMachine::get_default_triple()
-    } else {
-        Target::initialize_all(&InitializationConfig::default());
-        let a = arch.unwrap_or("x86_64");
-        let t = match target {
-            CompilationTarget::Linux => format!("{}-unknown-linux-gnu", a),
-            CompilationTarget::Windows => format!("{}-pc-windows-msvc", a),
-            CompilationTarget::MacOS => format!("{}-apple-darwin", a),
-            CompilationTarget::Wasm => "wasm32-unknown-unknown".to_string(),
-        };
-        inkwell::targets::TargetTriple::create(&t)
-    };
-    // 优化级别 → (目标机 codegen 级别, 新 PassManager 管线串)
-    let (tm_opt, pass_pipeline): (LlvmOpt, Option<String>) = match opt {
-        crate::config::OptimizationLevel::None => (LlvmOpt::None, None),
-        crate::config::OptimizationLevel::Basic => (LlvmOpt::Less, Some("default<O1>".into())),
-        crate::config::OptimizationLevel::Standard => {
-            (LlvmOpt::Default, Some("default<O2>".into()))
-        }
-        crate::config::OptimizationLevel::Maximum => {
-            (LlvmOpt::Aggressive, Some("default<O3>".into()))
-        }
+    // 优化管线串（目标机档位已在建目标机时定好）。
+    let pass_pipeline: Option<String> = match opt {
+        crate::config::OptimizationLevel::None => None,
+        crate::config::OptimizationLevel::Basic => Some("default<O1>".into()),
+        crate::config::OptimizationLevel::Standard => Some("default<O2>".into()),
+        crate::config::OptimizationLevel::Maximum => Some("default<O3>".into()),
     };
     // QI_CORO：确保 coroutine 变换的 CoroEarly/CoroSplit/CoroCleanup 一定运行。
     // - default<O1/O2/O3> 已含 coro pass（对无协程模块 no-op）→ 保持不变。
@@ -1008,23 +1046,6 @@ pub fn compile_to_object_multi(
     } else {
         pass_pipeline
     };
-    let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
-    let tm = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            tm_opt,
-            RelocMode::PIC,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| "无法创建 target machine".to_string())?;
-    后端值.module.set_triple(&triple);
-    // 数据布局必须跟目标机匹配（结构体偏移/对齐在跨架构时不同）；
-    // 也必须在跑优化 pass 之前设好，否则按错误布局折叠常量/对齐。
-    后端值
-        .module
-        .set_data_layout(&tm.get_target_data().get_data_layout());
     // 模块级优化管线（新 PassManager）。setjmp 已带 returns_twice、
     // retain/release 是不透明外部调用，O3 下语义安全。
     if let Some(pipeline) = &pass_pipeline {

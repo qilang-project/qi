@@ -263,6 +263,16 @@ impl<'ctx> 后端<'ctx> {
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
 
+        // 调试信息：协程也是用户写的函数，跟普通函数同待遇。必须**先于** coro
+        // 序言设位置 —— 序言里的 llvm.coro.id/size/begin 是 call 指令，
+        // 有 DISubprogram 的函数里裸 call 会被 verifier 挑刺。
+        //
+        // CoroSplit 之后这个函数会被拆成 ramp/.resume/.destroy 三个 LLVM 函数，
+        // 克隆体各自继承（LLVM 自己复制）DISubprogram 和每条指令的 !dbg，
+        // 所以 `等待` 之后那些行的断点最终落在 .resume 里 —— 照样命中，
+        // backtrace 里的函数名也还是这个中文名。
+        self.调试_进入函数(func, &f.name, &mangled, f.span, &sig.参数, sig.返回);
+
         // promise alloca（i64）—— 存标量返回值位模式；先清零（无显式返回时默认 0）。
         let i64t = self.ctx.i64_type();
         let promise = self
@@ -320,6 +330,9 @@ impl<'ctx> 后端<'ctx> {
             // R2：RC 参数与普通函数同纪律 —— 落地进槽 retain 一次；
             // 与 cleanup 路径「释放所有 RC 槽」平衡（正常完成与提前 destroy 共用）。
             self.弧retain任意(arg, t);
+            // 调试信息：形参序号 1-based，与普通函数同款。CoroSplit 会把跨挂起
+            // 存活的槽搬进 coro frame，dbg.declare 跟着走，`frame variable` 仍读得到。
+            self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 1));
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }
@@ -342,6 +355,8 @@ impl<'ctx> 后端<'ctx> {
 
         self.协程当前 = None;
         self.符号.退出作用域();
+        // 与普通函数体一样收尾：清作用域 + 清 builder 位置，别漏给下一个函数。
+        self.调试_离开函数();
         Ok(())
     }
 

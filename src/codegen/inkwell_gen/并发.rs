@@ -497,7 +497,7 @@ impl<'ctx> 后端<'ctx> {
             expression: g.expression.clone(),
             span: g.span.clone(),
         })];
-        let 闭包obj = self.合成nullary闭包(body)?;
+        let 闭包obj = self.合成nullary闭包(body, g.span)?;
 
         // 2. 共享 trampoline
         let tramp = self.取协程trampoline()?;
