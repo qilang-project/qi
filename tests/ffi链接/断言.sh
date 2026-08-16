@@ -72,10 +72,8 @@ esac
 
 if [ "$IS_WIN" -eq 1 ]; then
     EXE=".exe"
-    LIBFILE="qitest.lib"
 else
     EXE=""
-    LIBFILE="libqitest.a"
 fi
 
 # 造库的编译器。**Windows 上必须先挑 clang**：runner 上 `cc` 是 mingw 的 gcc，
@@ -115,33 +113,46 @@ if [ -z "$ARTOOL" ]; then
     exit 0
 fi
 
-# ── 准备：现场编一个静态库 ──
+# ── 准备：现场编静态库 ──
+# **新加用例要用这个函数造库，别直接写 cc / ar**：那两个名字在 Windows 上
+# 一个是 mingw 的 gcc（碰中文路径直接死，且产 GNU 目标文件链不进 MSVC）、
+# 一个压根不存在，而库文件名两边也不一样（libfoo.a ↔ foo.lib）。
+# $1 = 库名（不带前后缀），$2 = .c 源文件路径。产物落在 $WORK/lib/。
+库文件名() {
+    if [ "$IS_WIN" -eq 1 ]; then echo "$1.lib"; else echo "lib$1.a"; fi
+}
+造静态库() {
+    lib_name="$1"; lib_src="$2"
+    lib_out="$WORK/lib/$(库文件名 "$lib_name")"
+    if ! "$CCTOOL" -c -o "$WORK/$lib_name.o" "$lib_src" 2>"$WORK/cc_$lib_name.err"; then
+        echo "FAIL 准备阶段：$CCTOOL 编不出 $lib_name"
+        cat "$WORK/cc_$lib_name.err"
+        exit 1
+    fi
+    if [ "$IS_WIN" -eq 1 ]; then
+        # llvm-lib/lib 是原生程序，路径得给 Windows 形式（MSYS 只转「看起来像路径」
+        # 的独立参数，`/out:/d/a/...` 这种粘在一起的它不转）。
+        "$ARTOOL" "/out:$(cygpath -w "$lib_out")" "$(cygpath -w "$WORK/$lib_name.o")" \
+            >"$WORK/ar_$lib_name.err" 2>&1 || true
+    else
+        "$ARTOOL" rcs "$lib_out" "$WORK/$lib_name.o" 2>"$WORK/ar_$lib_name.err" || true
+    fi
+    if [ ! -f "$lib_out" ]; then
+        echo "FAIL 准备阶段：$ARTOOL 打不出 $(库文件名 "$lib_name")"
+        cat "$WORK/ar_$lib_name.err"
+        exit 1
+    fi
+}
+
 cat > "$WORK/qitest.c" <<'EOF'
 /* qi 的 整数 ↔ C 的 long（i64）。测试用：返回 3 倍。
    注意 Windows/MSVC 的 long 是 32 位！qi 的 整数 是 i64，所以这里用 long long，
    两边都是 64 位（unix 上 long==long long==64 位，改成 long long 无副作用）。 */
 long long qi_test_triple(long long x) { return x * 3; }
 EOF
-if ! "$CCTOOL" -c -o "$WORK/qitest.o" "$WORK/qitest.c" 2>"$WORK/cc.err"; then
-    echo "FAIL 准备阶段：$CCTOOL 编不出测试库"
-    cat "$WORK/cc.err"
-    exit 1
-fi
-if [ "$IS_WIN" -eq 1 ]; then
-    # llvm-lib/lib 是原生程序，路径得给 Windows 形式（MSYS 只转「看起来像路径」的
-    # 独立参数，`/out:/d/a/...` 这种粘在一起的它不转）。
-    ar_ok=1
-    "$ARTOOL" "/out:$(cygpath -w "$WORK/lib/$LIBFILE")" "$(cygpath -w "$WORK/qitest.o")" \
-        >"$WORK/ar.err" 2>&1 || ar_ok=0
-else
-    ar_ok=1
-    "$ARTOOL" rcs "$WORK/lib/$LIBFILE" "$WORK/qitest.o" 2>"$WORK/ar.err" || ar_ok=0
-fi
-if [ $ar_ok -ne 1 ] || [ ! -f "$WORK/lib/$LIBFILE" ]; then
-    echo "FAIL 准备阶段：$ARTOOL 打不出 $LIBFILE"
-    cat "$WORK/ar.err"
-    exit 1
-fi
+造静态库 qitest "$WORK/qitest.c"
+# 用例 02/03 要按文件名直链它（写进 .qi 源码里），名字只在 库文件名() 一处定义
+LIBFILE="$(库文件名 qitest)"
 
 # 三个正例共用的程序体：3 * 14 = 42
 写用例() {
@@ -343,18 +354,15 @@ fi
 # 这几条盯的是「返回寄存器高 32 位」那个坑：C 的 int 只写 eax/w0，用 i64 原型去接
 # 就把没写过的高位一起读了，-1 变成 4294967295。标了 C整数 之后编译器按 i32 收发，
 # 返回符号扩展、实参截断，负数错误码才是负数。
-cat > "$WORK/宽度.c" <<'EOF'
+cat > "$WORK/qiwidth.c" <<'EOF'
 int qi_w_neg(void) { return -1; }
 int qi_w_err(void) { return -2; }
 unsigned int qi_w_umax(void) { return 4294967295u; }
-long qi_w_echo(int x) { return (long)x; }   /* 验实参确实按 32 位有符号到达 */
+/* 回声的返回类型用 long long：MSVC 的 long 只有 32 位，写 long 在 Windows 上
+   等于又把「返回值宽度」这个变量引回来了，而这条要验的是**实参**宽度。 */
+long long qi_w_echo(int x) { return (long long)x; }
 EOF
-if ! cc -c -o "$WORK/宽度.o" "$WORK/宽度.c" 2>"$WORK/cc2.err"; then
-    echo "FAIL 准备阶段：cc 编不出宽度测试库"
-    cat "$WORK/cc2.err"
-    exit 1
-fi
-ar rcs "$WORK/lib/libqiwidth.a" "$WORK/宽度.o" 2>/dev/null
+造静态库 qiwidth "$WORK/qiwidth.c"
 
 cat > "$WORK/10_C整数返回.qi" <<'EOF'
 包 主程序;
@@ -369,9 +377,9 @@ cat > "$WORK/10_C整数返回.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/10_C整数返回.qi" -o "$WORK/bin10" \
+if run_limited "$QI" compile "$WORK/10_C整数返回.qi" -o "$WORK/bin10$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o10" 2>&1 \
-   && out=$("$WORK/bin10" 2>&1) \
+   && out=$("$WORK/bin10$EXE" 2>&1) \
    && [ "$out" = "$(printf -- '-1\n-2')" ]; then
     pass "10 C整数 返回：负数错误码符号扩展正确"
 else
@@ -391,9 +399,9 @@ cat > "$WORK/11_无符号与实参.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/11_无符号与实参.qi" -o "$WORK/bin11" \
+if run_limited "$QI" compile "$WORK/11_无符号与实参.qi" -o "$WORK/bin11$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o11" 2>&1 \
-   && out=$("$WORK/bin11" 2>&1) \
+   && out=$("$WORK/bin11$EXE" 2>&1) \
    && [ "$out" = "$(printf -- '4294967295\n-7')" ]; then
     pass "11 C无符号整数 零扩展 + C整数 实参截断"
 else
@@ -412,9 +420,9 @@ cat > "$WORK/12_不标仍是64位.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/12_不标仍是64位.qi" -o "$WORK/bin12" \
+if run_limited "$QI" compile "$WORK/12_不标仍是64位.qi" -o "$WORK/bin12$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o12" 2>&1 \
-   && out=$("$WORK/bin12" 2>&1) \
+   && out=$("$WORK/bin12$EXE" 2>&1) \
    && [ "$out" = "-15" ]; then
     pass "12 防回归：不标宽度的 整数 仍走 i64"
 else

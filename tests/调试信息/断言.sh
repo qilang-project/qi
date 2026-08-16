@@ -48,10 +48,11 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) IS_WIN=1 ;;
 esac
 if [ "$IS_WIN" -eq 1 ]; then
-  EXE_NAME="斐波那契.exe"
+  EXE_SUFFIX=".exe"
 else
-  EXE_NAME="斐波那契"
+  EXE_SUFFIX=""
 fi
+EXE_NAME="斐波那契$EXE_SUFFIX"
 # .o 的名字与后缀无关（源文件名换后缀），两个平台都是 斐波那契.o
 OBJ_NAME="斐波那契.o"
 
@@ -285,7 +286,9 @@ fi
 echo
 echo "-- 5. 复合类型展开 --"
 CSRC="复合类型.qi"
-CEXE="复合类型"
+# 可执行名带平台后缀，.o 不带（源文件名换后缀，两平台一致）
+CEXE_OBJ="复合类型.o"
+CEXE="复合类型$EXE_SUFFIX"
 CLINE=31   # 查看() 里的 `返回 岁数;` —— 五种复合值此刻都活着
 
 if "$QI_BIN" -O none compile "$CSRC" >编译复合.log 2>&1; then
@@ -305,7 +308,7 @@ fi
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 dwarfdump，跳过复合类型元数据断言"
 else
-  "$DWARFDUMP" --debug-info "$CEXE.o" >dwarf复合.txt 2>&1
+  "$DWARFDUMP" --debug-info "$CEXE_OBJ" >dwarf复合.txt 2>&1
   assert_contains "有结构体条目 DW_TAG_structure_type" dwarf复合.txt "DW_TAG_structure_type"
   assert_contains "有字段条目 DW_TAG_member" dwarf复合.txt "DW_TAG_member"
   assert_contains "字段名「年龄」入表（中文原名）" dwarf复合.txt "\"$(to_octal 年龄)\""
@@ -360,7 +363,8 @@ fi
 echo
 echo "-- 6. 协程与闭包 --"
 ASRC="协程闭包.qi"
-AEXE="协程闭包"
+AEXE_OBJ="协程闭包.o"
+AEXE="协程闭包$EXE_SUFFIX"
 ALINE_CLOSURE=17   # 闭包体里的 `返回 局部和;`
 ALINE_CORO=10      # 协程里 `等待 睡眠(1);` 之后那行
 
@@ -381,7 +385,7 @@ fi
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 dwarfdump，跳过协程/闭包元数据断言"
 else
-  "$DWARFDUMP" --debug-info "$AEXE.o" >dwarf协程.txt 2>&1
+  "$DWARFDUMP" --debug-info "$AEXE_OBJ" >dwarf协程.txt 2>&1
   assert_contains "闭包有 DISubprogram，名字可读（外层·闭包0）" dwarf协程.txt "\"$(to_octal 外层·闭包0)\""
   assert_contains "协程有 DISubprogram（中文名 慢加）" dwarf协程.txt "\"$(to_octal 慢加)\""
   assert_contains "协程的局部变量 中途 入表" dwarf协程.txt "\"$(to_octal 中途)\""
