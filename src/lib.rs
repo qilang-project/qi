@@ -683,6 +683,18 @@ impl QiCompiler {
 
         // Add threading libraries (platform-specific)
         if cfg!(windows) {
+            // MSVC 的 C 运行时有**静态**(libucrt.lib)和**动态**(ucrt DLL + 导入库)
+            // 两套，混用必炸。rustc 的 msvc 目标默认动态 CRT，所以 qi_runtime.lib
+            // 里的 C 代码（sqlite3 / aws-lc）引用的是 __imp_malloc 这类 dllimport
+            // 桩；而 clang 驱动默认链**静态** CRT —— 于是 23 个 __imp_* 全部解析
+            // 不了（LNK2019 → LNK1120），Windows 上一个 .qi 都编不出来。
+            // Windows 包发了十几版没人报，是因为 CI 的 Windows job 只 cargo build
+            // 加库单测，从没真编过一个程序。
+            command.arg("-fms-runtime-lib=dll");
+            // 确定性：PE 头里有 TimeDateStamp，link.exe 默认写当前时间，
+            // 同一份源码两次编译字节就不同（codegen 回归有「编译 5 次产物一致」
+            // 这一条）。/Brepro 让链接器改写内容哈希，等价于 mac 上的 ZERO_AR_DATE。
+            command.arg("-Wl,/Brepro");
             // On Windows, link with essential Windows API libraries
             command.args(&[
                 "-lkernel32", // Core Windows API functions

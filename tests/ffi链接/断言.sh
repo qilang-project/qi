@@ -78,10 +78,18 @@ else
     LIBFILE="libqitest.a"
 fi
 
-# 造库的编译器：unix 上就是 cc；Windows 上 qi 自己也靠 clang 当链接器驱动，
-# 所以 clang 一定在（不在的话整套本来就跑不了，早失败早说清楚）。
+# 造库的编译器。**Windows 上必须先挑 clang**：runner 上 `cc` 是 mingw 的 gcc，
+# 它一碰中文路径就死（工作目录是 tests/ffi链接/临时）——
+#   Assembler messages: Fatal error: can't create .../ffi??/??/qitest.o: Invalid argument
+# mingw 的 as 走 ANSI 代码页，UTF-8 路径全成问号。clang 用宽字符 API，没这问题。
+# 而且 mingw 产的是 GNU 目标文件，本来也链不进 MSVC。
 CCTOOL=""
-for c in cc clang gcc; do
+if [ "$IS_WIN" -eq 1 ]; then
+    CANDIDATES="clang cc gcc"
+else
+    CANDIDATES="cc clang gcc"
+fi
+for c in $CANDIDATES; do
     if command -v "$c" >/dev/null 2>&1; then CCTOOL="$c"; break; fi
 done
 if [ -z "$CCTOOL" ]; then

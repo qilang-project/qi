@@ -93,6 +93,18 @@ if [ -x "$W/hello.exe" ]; then
 else
   echo "没链出 hello.exe"
 fi
+# qi 在 Windows 上要加的两个链接开关，先确认 clang 认（不认就是「未知参数」，
+# 一眼看得出，省得埋进编译器里再猜）：
+#   -fms-runtime-lib=dll  动态 CRT，与 rustc 的 msvc 默认一致
+#   -Wl,/Brepro           PE 头时间戳写内容哈希 → 同源码重编字节一致
+echo "-- -fms-runtime-lib=dll --"
+clang -fms-runtime-lib=dll -o "$W/hello2.exe" "$W/hello.c" 2>&1 | head -10
+echo "   rc=$? 运行: $("$W/hello2.exe" 2>&1)"
+echo "-- -Wl,/Brepro --"
+clang -Wl,/Brepro -o "$W/hello3.exe" "$W/hello.c" 2>&1 | head -10
+echo "   rc=$? 运行: $("$W/hello3.exe" 2>&1)"
+clang -Wl,/Brepro -o "$W/hello4.exe" "$W/hello.c" 2>&1 | head -5
+echo "   两次 /Brepro 产物一致? $(md5sum "$W/hello3.exe" "$W/hello4.exe" | awk '{print $1}' | uniq | wc -l) 个不同哈希（1 = 一致）"
 
 echo
 echo "=============== 6. qi 编译一个 .qi ==============="
@@ -105,7 +117,9 @@ else
   cp tests/调试信息/斐波那契.qi "$D/" 2>/dev/null
   ( cd "$D" || exit 0
     echo "-- -O none compile（默认带调试信息）--"
-    "$QI" -O none compile 斐波那契.qi 2>&1 | head -30
+    # 别 head 截断：链接失败时真正有用的是 LNK2019 那几十行，
+    # 上一轮就是被 head -30 切掉，只看到「exit code 1120」这么一句。
+    "$QI" -O none compile 斐波那契.qi 2>&1 | grep -v "LNK4286\|LNK4217"
     echo "rc=$?"
     ls -l
     # 产物到底叫什么、能不能在 bash 里直接跑
