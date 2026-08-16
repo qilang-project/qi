@@ -30,6 +30,14 @@ pub(super) struct 待合成闭包 {
     pub body: Vec<AstNode>,
     /// 登记闭包时所在的包（体在末尾统一合成，须还原包上下文才能解析本包结构体/函数）。
     pub 包: Option<String>,
+    /// 闭包表达式在源码里的位置（DISubprogram 的声明行）。
+    pub span: crate::lexer::tokens::Span,
+    /// 登记闭包时所在的源文件。体在所有函数之后统一合成，那时 后端.当前文件
+    /// 早已翻到别的文件了 —— 不带着走，行号会算到另一个文件的同一行上去。
+    pub 文件: Option<String>,
+    /// 调试用显示名，形如 `累加·闭包3`。backtrace 里只看到 `__closure_3`
+    /// 是查不出「这是谁的闭包」的，尤其一个函数里挂了好几个回调时。
+    pub 显示名: String,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -101,6 +109,16 @@ impl<'ctx> 后端<'ctx> {
         super::包内符号名(None, name, 元数)
     }
 
+    /// 闭包的调试显示名：`<外层函数中文名>·闭包<编号>`。
+    /// 外层名取自调试上下文（关调试信息时没有）—— 那种情况下退回合成符号，
+    /// 反正也不生成 DISubprogram。
+    fn 闭包显示名(&self, 编号: u32) -> String {
+        match self.调试_当前函数名() {
+            Some(外) => format!("{}·闭包{}", 外, 编号),
+            None => format!("__closure_{}", 编号),
+        }
+    }
+
     /// 真闭包表达式 → 合成函数 + fat obj + 填捕获。
     pub(super) fn 生成闭包表达式(
         &mut self,
@@ -158,8 +176,10 @@ impl<'ctx> 后端<'ctx> {
         let idx = self.符号.登记函数值签名(sig);
 
         // 生成唯一符号，登记到待合成列表
-        let 符号名 = format!("__closure_{}", self.闭包计数);
+        let 编号 = self.闭包计数;
+        let 符号名 = format!("__closure_{}", 编号);
         self.闭包计数 += 1;
+        let 显示名 = self.闭包显示名(编号);
         self.待合成闭包.push(待合成闭包 {
             符号名: 符号名.clone(),
             参数类型,
@@ -169,6 +189,9 @@ impl<'ctx> 后端<'ctx> {
             弱名单: 弱名单.clone(),
             body: c.body.clone(),
             包: self.当前包.clone(),
+            span: c.span,
+            文件: self.当前文件.clone(),
+            显示名,
         });
 
         // 声明合成函数原型（body 稍后生成），建 fat obj
@@ -224,6 +247,7 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 合成nullary闭包(
         &mut self,
         body: Vec<AstNode>,
+        span: crate::lexer::tokens::Span,
     ) -> Result<PointerValue<'ctx>, String> {
         // 扫自由变量（捕获）：body 内引用、且当前作用域确有记录、非 body 内声明。
         let 空参: HashSet<String> = HashSet::new();
@@ -241,8 +265,10 @@ impl<'ctx> 后端<'ctx> {
             .filter_map(|n| self.变量表.get(&n).map(|(_, t)| (n, *t)))
             .collect();
 
-        let 符号名 = format!("__closure_{}", self.闭包计数);
+        let 编号 = self.闭包计数;
+        let 符号名 = format!("__closure_{}", 编号);
         self.闭包计数 += 1;
+        let 显示名 = self.闭包显示名(编号);
         self.待合成闭包.push(待合成闭包 {
             符号名: 符号名.clone(),
             参数类型: Vec::new(),
@@ -252,6 +278,9 @@ impl<'ctx> 后端<'ctx> {
             弱名单: std::collections::HashSet::new(), // nullary 协程闭包无捕获列表语法
             body,
             包: self.当前包.clone(),
+            span,
+            文件: self.当前文件.clone(),
+            显示名,
         });
 
         let fn_val = self.声明闭包原型(&符号名, &捕获, self.待合成闭包.last().unwrap())?;
@@ -604,7 +633,11 @@ impl<'ctx> 后端<'ctx> {
         let 保存返回 = self.当前返回类型;
         let 保存try深度 = self.try深度;
         let 保存包 = self.当前包.clone();
+        let 保存文件 = self.当前文件.clone();
         self.设当前包(cl.包.clone());
+        // 调试信息按「登记闭包时那个文件」算行号 —— 体是在所有函数之后统一
+        // 合成的，此刻 当前文件 指向最后处理的那个模块，用它算行号会串文件。
+        self.当前文件 = cl.文件.clone();
 
         self.符号.进入作用域();
         self.当前返回类型 = cl.返回类型;
@@ -612,6 +645,19 @@ impl<'ctx> 后端<'ctx> {
 
         let entry = self.ctx.append_basic_block(func, "entry");
         self.builder.position_at_end(entry);
+
+        // 调试信息：闭包体也是用户写的代码，凭什么断不进去。DW_AT_name 用
+        // 「外层·闭包N」这种人能读的形式，linkage name 仍是 __closure_N。
+        // 这一句同时把 builder 的调试位置设到闭包声明行 —— 下面 剖析入口 /
+        // 闭包读槽 里的 call 靠它满足 verifier 的「有 dbg 的函数里调用要带 !dbg」。
+        self.调试_进入函数(
+            func,
+            &cl.显示名,
+            &cl.符号名,
+            cl.span,
+            &cl.参数类型,
+            cl.返回类型,
+        );
 
         // 剖析：序言计时（QI_PROF 关时空操作），显示名 = 闭包合成符号（__closure_N，天然唯一）
         let 剖析显示名 = cl.符号名.clone();
@@ -639,6 +685,9 @@ impl<'ctx> 后端<'ctx> {
             } else {
                 self.弧retain任意(v, *t);
             }
+            // 捕获在 lldb 里当普通局部变量看 —— 它确实就是个局部槽，
+            // 只是初值来自 env。不登记的话闭包帧里空空如也。
+            self.调试_局部变量(名, *t, a, cl.span, None);
             self.变量表.insert(名.clone(), (a, *t));
             self.符号.声明变量(名, *t);
         }
@@ -659,6 +708,8 @@ impl<'ctx> 后端<'ctx> {
             self.builder.build_store(a, p).map_err(|e| e.to_string())?;
             // ARC：RC 参数（借用）→ retain，与出口释放平衡
             self.弧retain任意(p, t);
+            // 形参序号是 1-based（env 是隐藏首参，不算用户形参）。
+            self.调试_局部变量(名, t, a, cl.span, Some(i as u32 + 1));
             self.变量表.insert(名.clone(), (a, t));
             self.符号.声明变量(名, t);
         }
@@ -685,6 +736,10 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
+        // 调试位置必须在离开闭包体时清掉：下一个闭包/合成函数继承这个作用域，
+        // verifier 会报「!dbg attachment points at wrong subprogram」。
+        self.调试_离开函数();
+
         self.符号.退出作用域();
         self.变量表 = 保存变量;
         self.弱局部 = 保存弱局部;
@@ -693,6 +748,7 @@ impl<'ctx> 后端<'ctx> {
         self.当前返回类型 = 保存返回;
         self.try深度 = 保存try深度;
         self.设当前包(保存包);
+        self.当前文件 = 保存文件;
         if let Some(bb) = 保存位置 {
             self.builder.position_at_end(bb);
         }

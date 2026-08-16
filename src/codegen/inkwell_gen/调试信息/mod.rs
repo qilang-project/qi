@@ -1,4 +1,8 @@
-//! DWARF 调试信息生成（行号表 + 函数条目 + 局部变量）。
+//! DWARF 调试信息生成（行号表 + 函数条目 + 局部变量 + 复合类型）。
+//!
+//! 本模块管框架：编译单元、文件/行号换算、每函数的 DISubprogram、每语句位置、
+//! 局部变量条目、以及进出合成函数时的位置管理。
+//! 结构体/数组/枚举展开成能在 lldb 里点开字段的形状在 [`复合类型`] 里。
 //!
 //! 为什么值得做：没有它，lldb 里既不能按 `文件.qi:行号` 下断点，也不能单步，
 //! 崩溃栈全是 `_Z_E587B0…` 这样的 mangled 符号 —— 出了问题只能靠打印猜。
@@ -37,10 +41,16 @@
 //!   - 有调试信息的函数（用户函数/方法/main）：一进 entry 就设声明行位置，
 //!     此后每条语句覆盖；这样形参 retain、剖析计时这些「语句之前」的指令
 //!     也有位置（规则 2）。
-//!   - 编译器合成的函数（闭包 dtor、trampoline、qi.release.* 等）没有
-//!     DISubprogram，进去前 [`调试_暂离`]、出来后 [`调试_归位`]（规则 1）。
+//!   - **真正**由编译器凭空造出来的函数（闭包 env dtor、trampoline、
+//!     qi.release.* 等）没有 DISubprogram，进去前 [`调试_暂离`]、出来后
+//!     [`调试_归位`]（规则 1）。注意闭包**体**和协程**体**不在此列 ——
+//!     它们是用户写的代码，各自有真的 DISubprogram（见 闭包.rs / 协程.rs），
+//!     走的是和普通函数一样的 调试_进入函数 / 调试_离开函数。
 //!     嵌套合成（语句中途建 trampoline）必须 **restore** 而不是只清，否则
 //!     外层这条语句剩下的调用就没位置了（又违反规则 2）。
+
+#[path = "复合类型.rs"]
+mod 复合类型;
 
 use super::后端;
 use super::类型::Qi类型;
@@ -112,9 +122,15 @@ pub(super) struct 调试上下文<'ctx> {
     当前文件: Option<String>,
     /// 基础 DIType 缓存。键是 DW_ATE 编码 + 位宽，够区分我们用到的那几个。
     基础类型: HashMap<(u32, u64), DIBasicType<'ctx>>,
-    /// 指针类 DIType（字符串/结构体/数组…统一近似成 `char*` / `void*`）。
+    /// 指针类 DIType（字符串统一近似成 `char*`；深度耗尽的复合类型退回 `void*`）。
     字符指针: Option<DIType<'ctx>>,
     不透明指针: Option<DIType<'ctx>>,
+    /// 复合 DIType 缓存：(类型键, 剩余展开深度) → 引用类型。见 复合类型.rs。
+    /// 键里必须带深度 —— 同一结构体在不同深度是不同的条目（深层那份字段更浅）。
+    复合类型: HashMap<(String, u8), DIType<'ctx>>,
+    /// 当前函数的中文显示名。闭包合成时拿它拼「外层·闭包N」，让 backtrace
+    /// 里的闭包帧看得出是谁的闭包。
+    当前函数显示名: Option<String>,
 }
 
 impl<'ctx> 调试上下文<'ctx> {
@@ -202,13 +218,29 @@ impl<'ctx> 后端<'ctx> {
             基础类型: HashMap::new(),
             字符指针: None,
             不透明指针: None,
+            复合类型: HashMap::new(),
+            当前函数显示名: None,
         });
     }
 
-    /// Qi 类型 → DIType。做到基础类型 + 指针近似为止：
-    /// 结构体/数组/枚举的成员布局要给每个类型建 DICompositeType 并解决递归引用，
-    /// 收益（`frame variable` 能展开字段）远小于工作量，留待后续。
+    /// Qi 类型 → DIType 的统一入口。复合类型（结构体/数组/枚举）按
+    /// [`复合类型::最大展开深度`] 展开成可在 lldb 里点开字段的形状，见 复合类型.rs。
     fn 调试_类型(&mut self, t: Qi类型) -> Option<DIType<'ctx>> {
+        self.调试_类型深度(t, 复合类型::最大展开深度)
+    }
+
+    /// 标量与指针近似类型：整数/浮点/布尔/字符串/裸指针/函数值/通道/未来。
+    /// 复合类型不走这里（走 调试_类型深度）。
+    fn 调试_标量类型(&mut self, t: Qi类型) -> Option<DIType<'ctx>> {
+        // 闭包/通道/未来/裸指针：内部布局是运行时的私事（fat obj / 调度器句柄 /
+        // coro frame），展开出来的字段对写 qi 的人没有意义 —— 统一 void*，
+        // 与深度耗尽时的兜底共用同一份构造。
+        if matches!(
+            t,
+            Qi类型::指针 | Qi类型::函数值(_) | Qi类型::通道(_) | Qi类型::未来(_)
+        ) {
+            return self.调试_不透明指针();
+        }
         let d = self.调试.as_mut()?;
         let 基础 =
             |d: &mut 调试上下文<'ctx>, 名: &str, 位宽: u64, 编码: u32| -> Option<DIType<'ctx>> {
@@ -232,7 +264,12 @@ impl<'ctx> 后端<'ctx> {
                 if d.字符指针.is_none() {
                     let c = d
                         .生成器
-                        .create_basic_type("字符", 8, DW_ATE_SIGNED_CHAR, DIFlagsConstants::PUBLIC)
+                        // 基础类型名故意用英文 `char`：lldb 判断「这个指针要不要
+                        // 按 C 字符串打印」是**按 DW_AT_name 匹配内建类型名**的
+                        // （DWARFASTParserClang::GetBuiltinTypeForDWARFEncodingAndBitSize），
+                        // 叫「字符」它认不出来，`名字` 就只打一个地址。
+                        // 外层指针类型名仍是「字符串」，用户看到的是 (字符串) 名字 = "小明"。
+                        .create_basic_type("char", 8, DW_ATE_SIGNED_CHAR, DIFlagsConstants::PUBLIC)
                         .ok()?;
                     let p = d.生成器.create_pointer_type(
                         "字符串",
@@ -245,32 +282,7 @@ impl<'ctx> 后端<'ctx> {
                 }
                 d.字符指针
             }
-            // 结构体/数组/枚举/闭包/通道/未来：LLVM 里都是不透明指针。
-            // 标成 void* 至少让 lldb 知道「这是个地址」，`frame variable` 打得出值。
-            Qi类型::指针
-            | Qi类型::结构体(_)
-            | Qi类型::装箱枚举(_)
-            | Qi类型::函数值(_)
-            | Qi类型::数组(_)
-            | Qi类型::通道(_)
-            | Qi类型::未来(_) => {
-                if d.不透明指针.is_none() {
-                    let u = d
-                        .生成器
-                        .create_basic_type("字节", 8, DW_ATE_SIGNED_CHAR, DIFlagsConstants::PUBLIC)
-                        .ok()?;
-                    let p = d.生成器.create_pointer_type(
-                        "指针",
-                        u.as_type(),
-                        64,
-                        64,
-                        inkwell::AddressSpace::default(),
-                    );
-                    d.不透明指针 = Some(p.as_type());
-                }
-                d.不透明指针
-            }
-            // 整数 / 未知 / 无载荷枚举都是 i64
+            // 整数 / 未知 都是 i64（复合类型在 复合类型.rs 里真展开，不落到这里）
             _ => 基础(d, "整数", 64, DW_ATE_SIGNED),
         }
     }
@@ -339,6 +351,7 @@ impl<'ctx> 后端<'ctx> {
         func.set_subprogram(sp);
         d.当前作用域 = Some(sp);
         d.当前文件 = Some(文件路径);
+        d.当前函数显示名 = Some(显示名.to_string());
 
         // 立刻设一个位置：形参落地 / ARC retain / 剖析计时都排在第一条语句
         // 之前，它们里面有 call —— 没位置会被 verifier 拦下（规则 2）。
@@ -348,6 +361,12 @@ impl<'ctx> 后端<'ctx> {
         self.builder.set_current_debug_location(loc);
     }
 
+    /// 当前正在生成的函数的中文显示名。闭包登记时拿它拼「外层·闭包N」。
+    /// 关调试信息时恒为 None（闭包显示名退回合成符号，不影响生成的代码）。
+    pub(super) fn 调试_当前函数名(&self) -> Option<String> {
+        self.调试.as_ref()?.当前函数显示名.clone()
+    }
+
     /// 离开一个有调试信息的函数：清作用域 + 清 builder 位置。
     /// 不清的话，下一个**没有** DISubprogram 的合成函数会继承这个位置，
     /// verifier 报「!dbg attachment points at wrong subprogram」。
@@ -355,6 +374,7 @@ impl<'ctx> 后端<'ctx> {
         if let Some(d) = self.调试.as_mut() {
             d.当前作用域 = None;
             d.当前文件 = None;
+            d.当前函数显示名 = None;
             self.builder.unset_current_debug_location();
         }
     }

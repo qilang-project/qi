@@ -16,6 +16,11 @@
 #     - 无优化档（-O none）验收完整调试体验：文件行号断点 / backtrace / 单步 / 变量；
 #     - 默认优化档只验收较弱但稳定的性质：函数符号断点能命中、backtrace 有函数名。
 #
+# 三份样本各管一段：
+#   斐波那契.qi —— 行号表 / 断点 / 单步 / 标量变量（第 1~4 节）
+#   复合类型.qi —— 结构体展开 / 嵌套 / 自引用 / 数组 / 枚举（第 5 节）
+#   协程闭包.qi —— 协程体与闭包体的 DISubprogram（第 6 节）
+#
 # shell 变量一律 ASCII（macOS 自带 bash 3.2，中文变量名在它上面不可靠）。
 
 set -u
@@ -66,8 +71,16 @@ assert_not_contains() {
 # UTF-8 字符串 → dwarfdump 打印用的八进制转义（"斐" → \346\226\220）。
 # dwarfdump 对 .debug_str 里的非 ASCII 一律转义，DW_AT_decl_file 却是原样，
 # 两种都要断言，所以得能算出转义形式。
+# 只转非 ASCII：dwarfdump 把可打印 ASCII 原样输出（"外层·闭包0" 里那个 0
+# 就是字面的 0，转成 \060 会永远匹配不上）。
 to_octal() {
-  printf '%s' "$1" | od -An -to1 -v | tr -s ' ' '\n' | grep -v '^$' | sed 's/^/\\/' | tr -d '\n'
+  printf '%s' "$1" | od -An -to1 -v | tr -s ' ' '\n' | grep -v '^$' | while read -r b; do
+    if [ "$b" -ge 40 ] && [ "$b" -le 176 ]; then
+      printf "\\$(printf '%03o' "0$b")"
+    else
+      printf '\\%s' "$b"
+    fi
+  done
 }
 
 # ---- 工具探测 ----------------------------------------------------------
@@ -98,6 +111,8 @@ echo
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 cp "$SCRIPT_DIR/$SRC_NAME" "$WORK_DIR/$SRC_NAME"
+cp "$SCRIPT_DIR/复合类型.qi" "$WORK_DIR/复合类型.qi"
+cp "$SCRIPT_DIR/协程闭包.qi" "$WORK_DIR/协程闭包.qi"
 cd "$WORK_DIR" || exit 2
 
 # ---- 1. 无优化档编译（调试信息默认开，不用加任何开关）------------------
@@ -242,6 +257,154 @@ else
   "$DWARFDUMP" --debug-info "$EXE_NAME.o" >dwarf无.txt 2>&1
   assert_not_contains "无调试信息产物里没有 qi 函数的 DWARF 条目" dwarf无.txt "DW_TAG_subprogram"
   assert_not_contains "无调试信息产物里没有编译单元" dwarf无.txt "DW_TAG_compile_unit"
+fi
+
+# ---- 5. 复合类型：结构体 / 嵌套 / 自引用 / 数组 / 枚举 --------------------
+# 上一轮这些全是 void*，`frame variable` 只给地址。这一节全部断言「看得到字段名和值」。
+echo
+echo "-- 5. 复合类型展开 --"
+CSRC="复合类型.qi"
+CEXE="复合类型"
+CLINE=31   # 查看() 里的 `返回 岁数;` —— 五种复合值此刻都活着
+
+if "$QI_BIN" -O none compile "$CSRC" >编译复合.log 2>&1; then
+  pass "复合类型样本编译成功"
+else
+  fail "复合类型样本编译失败"
+  cat 编译复合.log
+fi
+
+COUT="$(./"$CEXE" 2>&1)"
+if [ "$COUT" = "18" ]; then
+  pass "复合类型样本输出正确（18）"
+else
+  fail "复合类型样本输出错误：期望 18，实得 [$COUT]"
+fi
+
+if [ -z "$DWARFDUMP" ]; then
+  skip "没有 dwarfdump，跳过复合类型元数据断言"
+else
+  "$DWARFDUMP" --debug-info "$CEXE.o" >dwarf复合.txt 2>&1
+  assert_contains "有结构体条目 DW_TAG_structure_type" dwarf复合.txt "DW_TAG_structure_type"
+  assert_contains "有字段条目 DW_TAG_member" dwarf复合.txt "DW_TAG_member"
+  assert_contains "字段名「年龄」入表（中文原名）" dwarf复合.txt "\"$(to_octal 年龄)\""
+  assert_contains "字段有偏移 DW_AT_data_member_location" dwarf复合.txt "DW_AT_data_member_location"
+  assert_contains "有枚举条目 DW_TAG_enumeration_type" dwarf复合.txt "DW_TAG_enumeration_type"
+  assert_contains "有枚举变体 DW_TAG_enumerator" dwarf复合.txt "DW_TAG_enumerator"
+  assert_contains "枚举变体名「绿」入表" dwarf复合.txt "\"$(to_octal 绿)\""
+  # 结构体值标成引用（qi 的结构体本来就是引用语义）—— lldb 靠它自动展开
+  assert_contains "结构体标成 DW_TAG_reference_type" dwarf复合.txt "DW_TAG_reference_type"
+  # 自引用没炸成无穷多份：限深展开下 车厢 的条目应是个位数
+  CHE_COUNT="$(grep -cF "\"$(to_octal 车厢)\"" dwarf复合.txt)"
+  if [ "$CHE_COUNT" -ge 1 ] && [ "$CHE_COUNT" -le 8 ]; then
+    pass "自引用结构体条目数收敛（车厢 出现 $CHE_COUNT 次，限深展开生效）"
+  else
+    fail "自引用结构体条目数异常（车厢 出现 $CHE_COUNT 次，期望 1~8）"
+  fi
+fi
+
+if [ -z "$LLDB" ] || [ "$LLDB_USABLE" -eq 0 ]; then
+  skip "lldb 不可用，跳过复合类型的 lldb 断言"
+else
+  # 默认 frame variable：一层字段；-P 4 再往下钻（引用成员要显式给深度）
+  "$LLDB" -b \
+    -o "breakpoint set -f $CSRC -l $CLINE" \
+    -o run \
+    -o "frame variable" \
+    -o "frame variable -P 4" \
+    -o quit ./"$CEXE" >lldb复合.log 2>&1
+
+  assert_contains "复合类型断点命中" lldb复合.log "stop reason = breakpoint"
+  # 1) 结构体字段展开（不再是 void*）
+  assert_contains "结构体展开出字段 年龄 和它的值" lldb复合.log "年龄 = 18"
+  assert_contains "结构体的类型显示成 (学生 &) 而不是指针" lldb复合.log "(学生 &) 某学生"
+  assert_contains "字符串字段按 C 串打印出内容" lldb复合.log "\"小明\""
+  assert_contains "浮点字段值正确" lldb复合.log "分数 = 92.5"
+  # 2) 嵌套结构体展开两层（学生 → 住址 → 邮编）
+  assert_contains "嵌套结构体展开到第二层（住址.邮编）" lldb复合.log "邮编 = 310000"
+  # 3) 自引用结构体：能显示且不死循环（脚本能跑到这里本身就说明没死循环）
+  assert_contains "自引用结构体第一层（车头.编号）" lldb复合.log "编号 = 1"
+  assert_contains "自引用结构体链下去第三层（编号 = 3）" lldb复合.log "编号 = 3"
+  # 4) 数组：长度头看得见
+  assert_contains "数组看得到长度字段" lldb复合.log "长度 = 3"
+  assert_contains "数组看得到首元素" lldb复合.log "首元素 = 10"
+  # 5) 枚举：无载荷打变体名，装箱打 标记 + 载荷
+  assert_contains "无载荷枚举打印成变体名（绿）而不是序号" lldb复合.log "某色 = 绿"
+  assert_contains "装箱枚举看得到 标记" lldb复合.log "标记 = 数字"
+  assert_contains "装箱枚举看得到载荷位模式" lldb复合.log "载荷0 = 42"
+fi
+
+# ---- 6. 协程体 / 闭包体的 DISubprogram ----------------------------------
+# 这两种函数以前完全没有调试条目：断点设不进去，backtrace 里只有裸地址。
+echo
+echo "-- 6. 协程与闭包 --"
+ASRC="协程闭包.qi"
+AEXE="协程闭包"
+ALINE_CLOSURE=17   # 闭包体里的 `返回 局部和;`
+ALINE_CORO=10      # 协程里 `等待 睡眠(1);` 之后那行
+
+if "$QI_BIN" -O none compile "$ASRC" >编译协程.log 2>&1; then
+  pass "协程闭包样本编译成功"
+else
+  fail "协程闭包样本编译失败"
+  cat 编译协程.log
+fi
+
+AOUT="$(./"$AEXE" 2>&1 | tr '\n' ' ')"
+if [ "$AOUT" = "105 18 " ]; then
+  pass "协程闭包样本输出正确（105 18）"
+else
+  fail "协程闭包样本输出错误：期望 [105 18 ]，实得 [$AOUT]"
+fi
+
+if [ -z "$DWARFDUMP" ]; then
+  skip "没有 dwarfdump，跳过协程/闭包元数据断言"
+else
+  "$DWARFDUMP" --debug-info "$AEXE.o" >dwarf协程.txt 2>&1
+  assert_contains "闭包有 DISubprogram，名字可读（外层·闭包0）" dwarf协程.txt "\"$(to_octal 外层·闭包0)\""
+  assert_contains "协程有 DISubprogram（中文名 慢加）" dwarf协程.txt "\"$(to_octal 慢加)\""
+  assert_contains "协程的局部变量 中途 入表" dwarf协程.txt "\"$(to_octal 中途)\""
+  assert_contains "闭包的捕获 基数 当局部变量入表" dwarf协程.txt "\"$(to_octal 基数)\""
+fi
+
+if [ -z "$LLDB" ] || [ "$LLDB_USABLE" -eq 0 ]; then
+  skip "lldb 不可用，跳过协程/闭包的 lldb 断言"
+else
+  # 6.1 闭包体断点
+  "$LLDB" -b \
+    -o "breakpoint set -f $ASRC -l $ALINE_CLOSURE" \
+    -o run \
+    -o "thread backtrace" \
+    -o "frame variable" \
+    -o quit ./"$AEXE" >lldb闭包.log 2>&1
+  assert_contains "闭包体断点命中" lldb闭包.log "stop reason = breakpoint"
+  assert_contains "闭包帧定位到 $ASRC:$ALINE_CLOSURE" lldb闭包.log "$ASRC:$ALINE_CLOSURE"
+  assert_contains "闭包帧下面就是外层函数帧（外层 里调回调那行）" lldb闭包.log "$ASRC:19"
+  assert_contains "闭包形参可见" lldb闭包.log "增量 = 5"
+  assert_contains "闭包捕获的外层变量可见" lldb闭包.log "基数 = 100"
+  assert_contains "闭包局部变量可见" lldb闭包.log "局部和 = 105"
+
+  # 6.2 协程体断点（等待 之后的行）。CoroSplit 把协程拆成 ramp/.resume/
+  #     .destroy/.cleanup，同一行会有多个 location —— 命中哪个克隆都算数。
+  SLOW_SYM="_Z_$(printf '%s' '主程序$慢加#1' | od -An -tx1 -v | tr -d ' \n' | tr 'a-f' 'A-F')"
+  "$LLDB" -b \
+    -o "breakpoint set -f $ASRC -l $ALINE_CORO" \
+    -o "breakpoint list" \
+    -o run \
+    -o "thread backtrace" \
+    -o "frame variable" \
+    -o quit ./"$AEXE" >lldb协程.log 2>&1
+  assert_contains "协程体断点命中（等待 之后的行）" lldb协程.log "stop reason = breakpoint"
+  assert_contains "协程断点落在 慢加 的函数体（含其 mangled 符号）" lldb协程.log "$SLOW_SYM"
+  assert_contains "协程帧定位回 $ASRC" lldb协程.log "$ASRC:"
+  assert_contains "协程跨挂起存活的局部变量可读（中途 = 8）" lldb协程.log "中途 = 8"
+  # CoroSplit 后行号表没被丢：三个克隆各自都有这一行的 location
+  CORO_LOCS="$(grep -c "$ASRC:" lldb协程.log)"
+  if [ "$CORO_LOCS" -ge 2 ]; then
+    pass "CoroSplit 后行号表保留（$ASRC 位置出现 $CORO_LOCS 次，含各克隆）"
+  else
+    fail "CoroSplit 后行号表疑似丢失（$ASRC 位置只出现 $CORO_LOCS 次）"
+  fi
 fi
 
 # ---- 收尾 --------------------------------------------------------------
