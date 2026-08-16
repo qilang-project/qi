@@ -179,7 +179,31 @@ pub fn 解包(包体: &[u8], 目标目录: &Path) -> Result<usize, String> {
             .map_err(|e| format!("tar 条目路径非法: {}", e))?
             .into_owned();
 
-        if 路径.is_absolute() || 路径.components().any(|c| matches!(c, Component::ParentDir)) {
+        // 越界判定必须**跨平台一致**：同一个包在 Linux 上装得下、在 Windows 上逃逸，
+        // 是最难查的一类。所以不问宿主系统，只看路径长什么样。
+        //
+        // 只问 is_absolute() 不够：Windows 上 `/tmp/x` 没有盘符，is_absolute() 是
+        // **false**，可 `根.join("/tmp/x")` 照样把 `根` 整个丢掉，解到 C:\tmp\x 去。
+        // 所以直接看组件 —— RootDir（打头的 /）和 Prefix（C: 或 UNC）都算越界。
+        //
+        // 反斜杠也拦：tar 规定路径用 `/`，名字里带 `\` 在 Linux 上是一个普通文件名，
+        // 到 Windows 就成了目录分隔符 —— 同一个包在两个平台解出不同结构，
+        // `..\..\evil` 这种正好绕过按组件做的检查。
+        let 有越界组件 = 路径.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        });
+        let 串 = 路径.to_string_lossy();
+        let 有反斜杠 = 串.contains('\\');
+        // `C:/x` 在 Unix 上只是个叫 "C:" 的普通目录名（不是 Prefix），到 Windows
+        // 才变成盘符。按形状认，两边都拒。
+        let 有盘符 = 串.split('/').any(|段| {
+            let b = 段.as_bytes();
+            b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()
+        });
+        if 路径.is_absolute() || 有越界组件 || 有反斜杠 || 有盘符 {
             return Err(format!(
                 "包体含越界路径 {}，拒绝解包（注册中心返回的内容不可信）",
                 路径.display()
@@ -356,9 +380,18 @@ mod tests {
         let 包体 = 手搓tar("子目录/../../越界.txt", "坏东西".as_bytes());
         assert!(解包(&包体, &临时.path().join("目标乙")).is_err());
 
-        // 绝对路径也不收
+        // 绝对路径也不收。注意这条在 Windows 上曾漏网：`/tmp/…` 没盘符，
+        // is_absolute() 是 false，可 join 进去照样把安装目录整个丢掉。
         let 包体 = 手搓tar("/tmp/越界.txt", "坏东西".as_bytes());
         assert!(解包(&包体, &临时.path().join("目标丙")).is_err());
+
+        // 带盘符的绝对路径（Windows 形态）
+        let 包体 = 手搓tar("C:/越界.txt", "坏东西".as_bytes());
+        assert!(解包(&包体, &临时.path().join("目标丁")).is_err());
+
+        // 反斜杠：Linux 上是一个普通文件名，Windows 上是目录分隔符 —— 两边都拒
+        let 包体 = 手搓tar("..\\越界.txt", "坏东西".as_bytes());
+        assert!(解包(&包体, &临时.path().join("目标戊")).is_err());
     }
 
     #[test]

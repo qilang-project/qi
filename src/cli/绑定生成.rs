@@ -126,6 +126,8 @@ pub fn 运行(opts: &选项) -> Result<产物, String> {
 
     // clang 的 JSON 位置信息是「变了才打」的增量编码：同一个文件里连续几个声明，
     // 只有第一个带 file 字段。所以得按文档顺序走一遍，自己维护「当前文件」。
+    // glibc 把声明拆进 bits/*.h，只认「文件名相等」会一个函数都收不到。
+    let 直接包含 = 直接包含集(opts, &头文件);
     let mut 当前文件 = String::new();
     for 节点 in tu {
         if let Some(l) = 节点.get("loc") {
@@ -142,7 +144,8 @@ pub fn 运行(opts: &选项) -> Result<产物, String> {
             }
         }
 
-        if !opts.全部头文件 && !同一文件(&本节点文件, &头文件) {
+        if !opts.全部头文件 && !是本头文件的(&本节点文件, &头文件, &直接包含)
+        {
             continue;
         }
         if 节点.get("isImplicit").and_then(|v| v.as_bool()) == Some(true) {
@@ -241,6 +244,8 @@ fn 收宏(
         .map_err(|e| format!("跑不起来 clang 预处理：{}", e))?;
     let 文本 = String::from_utf8_lossy(&输出.stdout);
 
+    // 宏跟函数同一条规矩：glibc 的 math.h 把宏也散在 bits/ 里。
+    let 直接包含 = 直接包含集(opts, 头文件);
     let mut 当前文件 = String::new();
     for 行 in 文本.lines() {
         let 行 = 行.trim_start();
@@ -253,7 +258,7 @@ fn 收宏(
         let Some(剩) = 行.strip_prefix("#define ") else {
             continue;
         };
-        if !opts.全部头文件 && !同一文件(&当前文件, 头文件) {
+        if !opts.全部头文件 && !是本头文件的(&当前文件, 头文件, &直接包含) {
             continue;
         }
         let 剩 = 剩.trim();
@@ -372,6 +377,88 @@ fn 同一文件(a: &str, b: &Path) -> bool {
         Ok(p) => p == b,
         Err(_) => pa == b,
     }
+}
+
+/// 「这个声明算不算目标头文件的」—— 目标头本身，或者它**直接** `#include` 的头。
+///
+/// 光比文件名在 glibc 上会颗粒无收：`/usr/include/math.h` 自己一个函数都不声明，
+/// 全都在 `bits/mathcalls.h` 里（macOS 的 math.h 才是直接写在里面）。拆到 `bits/`
+/// 是 glibc 的标准做法，那些声明**就是** math.h 对外的 API，不收等于什么都没生成。
+///
+/// 只放行深度 1，不放行整棵包含树：math.h 也会拉进 features.h / stddef.h，
+/// 那些该由用户单独绑，不该混进 libm 的绑定里。
+fn 是本头文件的(文件: &str, 头文件: &Path, 直接包含: &HashSet<PathBuf>) -> bool {
+    if 同一文件(文件, 头文件) {
+        return true;
+    }
+    if 文件.is_empty() {
+        return false;
+    }
+    let p = Path::new(文件);
+    let 规范 = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    直接包含.contains(&规范)
+}
+
+/// 跑一遍预处理，从行标记的进/出栈算出目标头文件**直接**包含了哪些头。
+///
+/// 行标记形如 `# 1 "/usr/include/bits/mathcalls.h" 1`，末尾的 `1` = 进入新文件、
+/// `2` = 返回上一层。维护一个栈，凡是「栈顶是目标头时进入的那个文件」就是深度 1。
+/// 拿不到（clang 跑不起来等）就返回空集 —— 退化成原来的「只认本文件」，不会更糟。
+fn 直接包含集(opts: &选项, 头文件: &Path) -> HashSet<PathBuf> {
+    let mut 出: HashSet<PathBuf> = HashSet::new();
+    let mut cmd = Command::new(clang程序());
+    cmd.arg("-E");
+    for d in &opts.包含目录 {
+        cmd.arg("-I").arg(d);
+    }
+    for a in &opts.clang参数 {
+        cmd.arg(a);
+    }
+    cmd.arg(头文件);
+    let Ok(输出) = cmd.output() else {
+        return 出;
+    };
+    let 文本 = String::from_utf8_lossy(&输出.stdout);
+
+    let mut 栈: Vec<PathBuf> = Vec::new();
+    for 行 in 文本.lines() {
+        let Some(剩) = 行.trim_start().strip_prefix("# ") else {
+            continue;
+        };
+        let Some(f) = 行标记文件(剩) else {
+            continue;
+        };
+        // `<built-in>` / `<command line>` / `<scratch space>` 是预处理器的伪文件，
+        // 不是真 include。当成直接包含放进来的话，Apple clang 预定义的 TARGET_OS_*
+        // 那一大票会被认成「目标头文件自己的宏」—— 实测漏进 18 个。
+        if f.starts_with('<') {
+            continue;
+        }
+        let p = Path::new(&f);
+        let 规范 = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        // 标记末尾的 1/2 是进栈/出栈；两者都没有就是同一文件内的行号重置。
+        let 尾: Vec<&str> = 剩
+            .rsplit('"')
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        if 尾.contains(&"1") {
+            if 栈.last().map(|t| 同一文件(&t.to_string_lossy(), 头文件)) == Some(true) {
+                出.insert(规范.clone());
+            }
+            栈.push(规范);
+        } else if 尾.contains(&"2") {
+            栈.pop();
+            // 返回后栈顶就是当前文件，行标记给的正是它，保持栈与文本同步。
+            if 栈.last() != Some(&规范) {
+                栈.push(规范);
+            }
+        } else if 栈.is_empty() {
+            栈.push(规范); // 最开头那条 `# 1 "目标.h"`，没有 flag
+        }
+    }
+    出
 }
 
 /// typedef 名 → 底层类型串。clang 只对「最外层是 typedef」的类型给

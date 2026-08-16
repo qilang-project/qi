@@ -135,7 +135,14 @@ else
     assert_has zlib绑定.qi '函数 zlibVersion(): 字符串;' "zlib const char* 返回映射成字符串"
     assert_has zlib绑定.qi 'in: 函数(指针, 指针): 整数' "zlib 函数指针参数映射成 qi 回调类型"
     assert_has zlib绑定.qi '常量 Z_OK = 0;' "zlib #define 数字宏变成常量"
-    assert_has zlib绑定.qi '常量 ZLIB_VERNUM = 4800;' "zlib 十六进制宏换算成十进制"
+    # 别写死 4800（= 0x12c0，zlib 1.2.12）—— Ubuntu 22.04 是 1.2.11（0x12b0=4784）。
+    # 这条要盯的是「0x 被换算成了十进制」，不是本机装了哪版 zlib。
+    if grep -qE '^常量 ZLIB_VERNUM = [0-9]+;' zlib绑定.qi \
+       && ! grep -q '常量 ZLIB_VERNUM = 0x' zlib绑定.qi; then
+      pass "zlib 十六进制宏换算成十进制"
+    else
+      fail "zlib 十六进制宏换算成十进制" "实际: $(grep ZLIB_VERNUM zlib绑定.qi | head -1)"
+    fi
     assert_missing zlib绑定.qi 'ZLIB_VERSION = ' "zlib 字符串宏不收"
     assert_missing zlib绑定.qi '函数 gzprintf' "zlib 变参函数被跳过"
     assert_has zlib绑定.qi '// 跳过清单' "zlib 顶部注释有跳过清单"
@@ -293,6 +300,36 @@ if "$QI" 绑定 bianjiao.h --库 x --无常量 -o 边角无常量.qi >生成b3.l
 else
   fail "边角 --无常量 生成" "$(cat 生成b3.log)"
 fi
+
+# ══ 4. 拆头文件：声明在被 include 的头里 ═══════════════════
+# glibc 的 math.h 自己一个函数都不声明，全在 bits/mathcalls.h 里 —— 只认
+# 「文件名相等」的话 Linux 上一个函数都收不到（CI 上 libm 那两条就是这么红的）。
+# 规矩是「目标头 + 它直接 include 的头」，深度 2 不收，伪文件不收。
+mkdir -p 拆头 && cd 拆头 || exit 1
+cat > inner.h <<'EOF'
+double split_cos(double x);
+int split_add(int a, int b);
+#define SPLIT_MAX 99
+#include "deep2.h"
+EOF
+cat > deep2.h <<'EOF'
+int deep_two_should_not_appear(void);
+EOF
+cat > outer.h <<'EOF'
+#include "inner.h"
+EOF
+
+if "$QI" 绑定 outer.h --库 "" -o 拆头绑定.qi >生成s.log 2>&1; then
+  pass "拆头 生成绑定"
+  assert_has 拆头绑定.qi '函数 split_cos(' "拆头 深度1 头里的函数收得到"
+  assert_has 拆头绑定.qi '常量 SPLIT_MAX = 99;' "拆头 深度1 头里的宏收得到"
+  assert_missing 拆头绑定.qi 'deep_two_should_not_appear' "拆头 深度2 的函数不收（不是整棵包含树）"
+  # 伪文件 <built-in>：Apple clang 在这里预定义了 TARGET_OS_*，误当直接包含会漏一堆
+  assert_missing 拆头绑定.qi 'TARGET_OS' "拆头 <built-in> 伪文件的预定义宏不漏进来"
+else
+  fail "拆头 生成绑定" "$(cat 生成s.log)"
+fi
+cd "$WORK" || exit 1
 
 echo
 echo "==== 绑定生成验收：PASS=$PASS FAIL=$FAIL ===="
