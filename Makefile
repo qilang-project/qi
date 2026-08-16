@@ -11,11 +11,12 @@
 #   make test             库单测
 #   make regress          codegen 回归
 #   make ffi-link         FFI 链接控制（--库路径 / 直链 .a / macOS framework）
+#   make bindgen          `qi 绑定` 端到端（zlib/libm/手写头文件 → 真链接真调用）
 #   make examples         示例冒烟
 #   make debuginfo        DWARF 调试信息验收（实跑 lldb 断点/单步/backtrace）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
 #   make gui-smoke        GUI 冒烟（要显示环境 + 带 gui feature 的运行时，不进 ci）
-#   make ci               CI 跑的全部（= check test regress ffi-link examples debuginfo grpc）
+#   make ci               CI 跑的全部（= check test regress ffi-link bindgen examples debuginfo grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -37,7 +38,7 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
-.PHONY: help build runtime test regress ffi-link examples debuginfo grpc gui-smoke check lint-strict ci install \
+.PHONY: help build runtime test regress ffi-link bindgen examples debuginfo grpc gui-smoke check lint-strict ci install \
         release push-release clean version
 
 help:
@@ -72,6 +73,12 @@ regress: build $(RUNTIME_LIB)
 # 一旦某台机器没有 cc，看到的会是「codegen 回归挂了」这种指错方向的报错。
 ffi-link: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/ffi链接/断言.sh $(QI)
+
+# `qi 绑定` 的端到端验收（C 头文件 → 外部块 → 真链接真调用）。也**单列一条**：
+# 它依赖机器上的 clang（要 -ast-dump=json）和系统头文件（zlib.h/math.h），
+# 跟编译器内部逻辑无关，混进 regress 里失败信息会指错方向。
+bindgen: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/绑定生成/断言.sh $(QI)
 
 # 显式传 QI_RUNTIME_LIB：不依赖「归档正好在编译器找得到的相对位置」。
 examples: build $(RUNTIME_LIB)
@@ -130,7 +137,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check test regress ffi-link examples debuginfo grpc
+ci: check test regress ffi-link bindgen examples debuginfo grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建
