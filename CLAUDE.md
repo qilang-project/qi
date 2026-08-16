@@ -161,6 +161,33 @@ Qi uses the `未来<T>` (Future) type for asynchronous operations:
 - Float vs integer detection checks both literal content and variable types
 - Parameters tracked with `param_` prefix in `variable_types` HashMap
 
+### C FFI 的 32 位整数：`C整数` / `C无符号整数`
+
+qi 的 `整数` 是 i64，C 的 `int` 只有 32 位。用 i64 原型去接 `int` 返回值，读到的是
+被调方**根本没写过**的高 32 位 —— `-1` 变 4294967295，负数错误码判负全线失效
+（zlib 一半以上的函数都靠负数报错）。
+
+外部块签名里把这种位置写成 `C整数`（无符号则 `C无符号整数`）：
+
+```qi
+外部 "z" {
+    函数 inflate(strm: 指针, flush: 整数): C整数;   // C 侧是 int
+}
+```
+
+编译器按 i32 建原型、返回补 sext（无符号 zext）、实参补 trunc；**调用方拿到的仍是
+普通 `整数`**，类型推断毫不知情。`qi 绑定` 对 C 的 int/short/enum 返回自动产出它。
+
+实现要点：
+- **不占保留字**。`C整数` 以 ASCII 字母开头，词法上就是普通标识符 →
+  `TypeNode::自定义类型`，在 `登记外部函数` 里拦截，别处照常按未定义类型走
+- 宽度存在 `符号表.外部c宽度`（函数名 → (形参宽度表, 返回宽度)），**签名表里仍是
+  `整数`** —— 这是刻意的，类型系统不该知道 C ABI 的事
+- 只有 `外部.rs` 的建原型和调用点查这张表；表里没有的函数逐字节走老路
+- 写在外部块之外会被类型检查器报错（`QI_TYPECHECK=1`）—— 名字暗示 32 位却静默
+  退化成 `整数` 是骗人的
+- 回归钉在 `tests/ffi链接/断言.sh` 用例 10-12（含"不标宽度仍走 i64"的防回归）
+
 ### LLVM IR Generation
 - Parameters used directly (no load instructions needed)
 - Variables require alloca + store + load pattern

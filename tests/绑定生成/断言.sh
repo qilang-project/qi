@@ -131,7 +131,7 @@ else
   if [ -f zlib绑定.qi ]; then
     assert_has zlib绑定.qi '外部 "z" {' "zlib 外部块用了 --库 给的库名"
     assert_has zlib绑定.qi '函数 compressBound(sourceLen: 整数): 整数;' "zlib compressBound 签名（uLong typedef 展开成整数）"
-    assert_has zlib绑定.qi '函数 compress(dest: 指针, destLen: 指针, source: 指针, sourceLen: 整数): 整数;' "zlib compress 签名（Bytef*/uLongf* 展开成指针）"
+    assert_has zlib绑定.qi '函数 compress(dest: 指针, destLen: 指针, source: 指针, sourceLen: 整数): C整数;' "zlib compress 签名（Bytef*/uLongf* 展开成指针）"
     assert_has zlib绑定.qi '函数 zlibVersion(): 字符串;' "zlib const char* 返回映射成字符串"
     assert_has zlib绑定.qi 'in: 函数(指针, 指针): 整数' "zlib 函数指针参数映射成 qi 回调类型"
     assert_has zlib绑定.qi '常量 Z_OK = 0;' "zlib #define 数字宏变成常量"
@@ -160,6 +160,7 @@ else
       assert_out zlib.out "返回码都是 Z_OK: 是" "zlib 生成的常量 Z_OK 可用"
       assert_out zlib.out "Z_BEST_COMPRESSION=9" "zlib 常量值正确"
       assert_out zlib.out "版本非空: 是" "zlib char* 返回拷成 qi 串可用"
+      assert_out zlib.out "坏数据返回负数错误码: 是" "zlib C整数 返回：Z_DATA_ERROR 读成负数"
       assert_out zlib.out "内存已释放，未崩溃" "zlib 全程无崩溃"
     else
       fail "zlib 往返程序跑通" "$(tail -20 zlib.out)"
@@ -213,7 +214,7 @@ fi
 
 if [ -f 边角绑定.qi ]; then
   # 前缀过滤
-  assert_has 边角绑定.qi '函数 bj_add(a: 整数, b: 整数): 整数;' "边角 前缀内的函数保留"
+  assert_has 边角绑定.qi '函数 bj_add(a: 整数, b: 整数): C整数;' "边角 前缀内的函数保留"
   assert_missing 边角绑定.qi 'other_add' "边角 前缀外的函数被过滤掉"
   # 去重（bianjiao.h 里 bj_add 声明了两遍）
   assert_count 边角绑定.qi '函数 bj_add(' 1 "边角 重复声明去重（bj_add 只出现一次）"
@@ -230,7 +231,7 @@ if [ -f 边角绑定.qi ]; then
   # 无参 + void
   assert_has 边角绑定.qi '函数 bj_reset(): 空;' "边角 无参 void 函数"
   # 窄返回标注
-  assert_has 边角绑定.qi '函数 bj_add(a: 整数, b: 整数): 整数;  // C:int 返回' "边角 C int 返回被标注"
+  assert_has 边角绑定.qi '函数 bj_add(a: 整数, b: 整数): C整数;  // C:int 返回' "边角 C int 返回被标注"
   assert_missing 边角绑定.qi '函数 bj_counter(): 整数;  // C:int' "边角 C long 返回不标窄返回"
 
   # 跳过项：变参 / 按值结构体 / static inline —— 既不生成，也要出现在跳过清单

@@ -985,6 +985,21 @@ impl 单元检查器 {
     }
 
     fn 检查变量声明(&mut self, d: &VariableDeclaration) {
+        // `C整数` / `C无符号整数` 是给 `外部` 块标 C 侧 32 位用的，别处写了不会变成
+        // 32 位类型，只会静默退化成 整数 —— 名字骗人，所以在这里挡住。
+        if let Some(TypeNode::自定义类型(名)) = d.type_annotation.as_ref() {
+            if 名 == "C整数" || 名 == "C无符号整数" {
+                self.报(TypeError::InvalidOperation {
+                    operation: format!("把 `{}` 当普通类型用", 名),
+                    type_name: format!(
+                        "`{}` 只能写在 `外部` 块的签名里（标明 C 那边是 32 位）。\
+                         普通变量请用 整数",
+                        名
+                    ),
+                    span: d.span,
+                });
+            }
+        }
         let 初值型: 推断 = d.initializer.as_deref().and_then(|e| self.推断表达式(e));
         let 声明型: 推断 = d.type_annotation.as_ref().and_then(|t| self.解析类型(t));
         let 可报 = d

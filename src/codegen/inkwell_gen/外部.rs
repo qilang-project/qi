@@ -31,11 +31,23 @@
 
 use super::后端;
 use super::类型::Qi类型;
-use super::类型检查::函数签名;
-use crate::parser::ast::{ExternBlock, ExternFn, Program};
+use super::类型检查::{C整数宽, 函数签名};
+use crate::parser::ast::{ExternBlock, ExternFn, Program, TypeNode};
 use inkwell::types::BasicType;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::AddressSpace;
+
+/// 类型注解是不是 `C整数` / `C无符号整数`？
+///
+/// 这两个名字没进保留字表，词法上是普通标识符，所以到这里是
+/// `TypeNode::自定义类型("C整数")`。只在外部块里认它 —— 别处写 `C整数`
+/// 会照常按「未定义的自定义类型」报错，正是我们要的效果。
+fn 取c整数宽(t: &TypeNode) -> Option<C整数宽> {
+    match t {
+        TypeNode::自定义类型(名) => C整数宽::从类型名(名),
+        _ => None,
+    }
+}
 
 impl<'ctx> 后端<'ctx> {
     /// 登记一个模块里所有外部块的 C 函数：建 LLVM 原型（C 名不修饰）+ 存签名。
@@ -72,7 +84,9 @@ impl<'ctx> 后端<'ctx> {
         }
 
         // 参数类型：解析注解 → Qi类型，逐个校验 C ABI 可映射。
+        // `C整数` / `C无符号整数` 在 qi 侧就是 `整数`，只额外记一笔"C 那边是 32 位"。
         let mut 参数类型: Vec<Qi类型> = Vec::new();
+        let mut 参数宽度: Vec<Option<C整数宽>> = Vec::new();
         for p in &f.parameters {
             if p.is_variadic {
                 return Err(format!(
@@ -80,29 +94,47 @@ impl<'ctx> 后端<'ctx> {
                     f.name, p.name
                 ));
             }
-            let t = p
+            let 注解 = p
                 .type_annotation
                 .as_ref()
-                .map(|t| self.符号.解析类型(t))
                 .ok_or_else(|| format!("外部函数 {} 的参数 {} 缺少类型注解", f.name, p.name))?;
+            let 宽 = 取c整数宽(注解);
+            let t = if 宽.is_some() {
+                Qi类型::整数
+            } else {
+                self.符号.解析类型(注解)
+            };
             self.校验外部参数类型(&f.name, &p.name, t)?;
             参数类型.push(t);
+            参数宽度.push(宽);
         }
 
-        let 返回类型 = match &f.return_type {
-            Some(t) => self.符号.解析类型(t),
-            None => Qi类型::空,
+        let 返回宽度 = f.return_type.as_ref().and_then(取c整数宽);
+        let 返回类型 = match (&f.return_type, 返回宽度) {
+            (_, Some(_)) => Qi类型::整数,
+            (Some(t), None) => self.符号.解析类型(t),
+            (None, None) => Qi类型::空,
         };
         self.校验外部返回类型(&f.name, 返回类型)?;
 
-        // 建 C ABI LLVM 原型（C 名原样，不 mangle）。
+        // 建 C ABI LLVM 原型（C 名原样，不 mangle）。标了 32 位的位置用 i32，
+        // 让 LLVM 自己按 C ABI 收发窄整数 —— 加宽由调用点显式补，不靠寄存器残留。
+        let i32t = self.ctx.i32_type();
         let 参数llvm: Vec<inkwell::types::BasicMetadataTypeEnum> = 参数类型
             .iter()
-            .map(|t| self.外部llvm类型(*t).into())
+            .zip(参数宽度.iter())
+            .map(|(t, w)| {
+                if w.is_some() {
+                    i32t.into()
+                } else {
+                    self.外部llvm类型(*t).into()
+                }
+            })
             .collect();
-        let fn_type = match 返回类型 {
-            Qi类型::空 => self.ctx.void_type().fn_type(&参数llvm, false),
-            其他 => self.外部llvm类型(其他).fn_type(&参数llvm, false),
+        let fn_type = match (返回类型, 返回宽度) {
+            (_, Some(_)) => i32t.fn_type(&参数llvm, false),
+            (Qi类型::空, None) => self.ctx.void_type().fn_type(&参数llvm, false),
+            (其他, None) => self.外部llvm类型(其他).fn_type(&参数llvm, false),
         };
         // 幂等：同名 C 符号跨模块可能重复声明（多个文件都 `外部 "m"`），复用已有原型。
         if self.module.get_function(&f.name).is_none() {
@@ -119,6 +151,11 @@ impl<'ctx> 后端<'ctx> {
             },
         );
         self.符号.外部函数.insert(f.name.clone());
+        if 返回宽度.is_some() || 参数宽度.iter().any(|w| w.is_some()) {
+            self.符号
+                .外部c宽度
+                .insert(f.name.clone(), (参数宽度, 返回宽度));
+        }
         Ok(())
     }
 
@@ -317,9 +354,14 @@ impl<'ctx> 后端<'ctx> {
         }
 
         let i64t = self.ctx.i64_type();
+        // 这个函数哪些位置是 C 的 32 位整数（没标就是全 64 位，表里查不到）。
+        let 宽度表 = self.符号.外部c宽度.get(&call.callee).cloned();
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         for (i, a) in call.arguments.iter().enumerate() {
             let pt = sig.参数[i];
+            let 参数宽 = 宽度表
+                .as_ref()
+                .and_then(|(ps, _)| ps.get(i).copied().flatten());
             match pt {
                 // 小结构体按值：从 Qi 堆结构体 load 出字段，组成 LLVM struct 值传入。
                 Qi类型::结构体(idx) => {
@@ -355,6 +397,20 @@ impl<'ctx> 后端<'ctx> {
                 }
                 _ => v,
             };
+            // 标了 C 32 位的形参：i64 → i32 截断（C 侧本来就只看低 32 位）。
+            let v = if 参数宽.is_some() {
+                let iv = v.into_int_value();
+                if iv.get_type().get_bit_width() > 32 {
+                    self.builder
+                        .build_int_truncate(iv, self.ctx.i32_type(), "c_i32arg")
+                        .map_err(|e| e.to_string())?
+                        .into()
+                } else {
+                    v
+                }
+            } else {
+                v
+            };
             args.push(v.into());
         }
 
@@ -362,6 +418,22 @@ impl<'ctx> 后端<'ctx> {
             .builder
             .build_call(f, &args, "cffi")
             .map_err(|e| e.to_string())?;
+
+        // C 侧是 32 位的返回值：i32 → i64 扩展后才是 qi 的 整数。
+        // 符号性必须照 C 声明来 —— `int` 用 sext（-1 才是 -1），`unsigned` 用 zext。
+        if let Some(宽) = 宽度表.as_ref().and_then(|(_, r)| *r) {
+            let rv = cs
+                .try_as_basic_value()
+                .basic()
+                .ok_or_else(|| "外部函数应有返回值".to_string())?
+                .into_int_value();
+            let 扩展 = match 宽 {
+                C整数宽::有符号32 => self.builder.build_int_s_extend(rv, i64t, "c_i32ret_s"),
+                C整数宽::无符号32 => self.builder.build_int_z_extend(rv, i64t, "c_i32ret_u"),
+            }
+            .map_err(|e| e.to_string())?;
+            return Ok(Some((扩展.into(), Qi类型::整数)));
+        }
 
         match sig.返回 {
             Qi类型::空 => Ok(None),

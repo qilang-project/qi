@@ -12,6 +12,8 @@
 # 现场用 cc 编一个 libqitest.a（qi_test_triple(x)=3x），不依赖机器上装了什么库。
 # 注意 C 侧签名用 long 而非 int：qi 的 整数 是 i64，C ABI 对应 long ——
 # 写 int 在 arm64 上是「调用方传 64 位、被调方只写 w0」，返回值高 32 位是垃圾。
+# C 那边确实是 int 的时候，签名里写 `C整数`（无符号则 `C无符号整数`），编译器会
+# 按 i32 收发再补符号扩展 —— 用例 10-12 钉的就是这条。
 #
 # 用法：qi/tests/ffi链接/断言.sh [qi二进制路径]
 #   默认用 workspace 的 target/debug/qi。链接要 QI_RUNTIME_LIB 指向 libqi_runtime.a。
@@ -236,6 +238,88 @@ if [ $rc -ne 0 ] && echo "$out" | grep -q "找不到这个库文件"; then
     pass "09 负例：直链文件不存在"
 else
     fail "09 负例：直链文件不存在 (rc=$rc，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
+fi
+
+# ── 10-12：C 的 32 位整数（`C整数` / `C无符号整数`）──
+# 这几条盯的是「返回寄存器高 32 位」那个坑：C 的 int 只写 eax/w0，用 i64 原型去接
+# 就把没写过的高位一起读了，-1 变成 4294967295。标了 C整数 之后编译器按 i32 收发，
+# 返回符号扩展、实参截断，负数错误码才是负数。
+cat > "$WORK/宽度.c" <<'EOF'
+int qi_w_neg(void) { return -1; }
+int qi_w_err(void) { return -2; }
+unsigned int qi_w_umax(void) { return 4294967295u; }
+long qi_w_echo(int x) { return (long)x; }   /* 验实参确实按 32 位有符号到达 */
+EOF
+if ! cc -c -o "$WORK/宽度.o" "$WORK/宽度.c" 2>"$WORK/cc2.err"; then
+    echo "FAIL 准备阶段：cc 编不出宽度测试库"
+    cat "$WORK/cc2.err"
+    exit 1
+fi
+ar rcs "$WORK/lib/libqiwidth.a" "$WORK/宽度.o" 2>/dev/null
+
+cat > "$WORK/10_C整数返回.qi" <<'EOF'
+包 主程序;
+外部 "qiwidth" {
+    函数 qi_w_neg(): C整数;
+    函数 qi_w_err(): C整数;
+}
+函数 入口() {
+    打印行(qi_w_neg());
+    打印行(qi_w_err());
+}
+EOF
+
+total=$((total+1))
+if run_limited "$QI" compile "$WORK/10_C整数返回.qi" -o "$WORK/bin10" \
+       --库路径 "$WORK/lib" >"$WORK/o10" 2>&1 \
+   && out=$("$WORK/bin10" 2>&1) \
+   && [ "$out" = "$(printf -- '-1\n-2')" ]; then
+    pass "10 C整数 返回：负数错误码符号扩展正确"
+else
+    fail "10 C整数 返回（实得: $(echo "${out:-}" | tr '\n' ' ')，期望 -1 -2）"
+fi
+
+cat > "$WORK/11_无符号与实参.qi" <<'EOF'
+包 主程序;
+外部 "qiwidth" {
+    函数 qi_w_umax(): C无符号整数;
+    函数 qi_w_echo(x: C整数): 整数;
+}
+函数 入口() {
+    打印行(qi_w_umax());
+    打印行(qi_w_echo(-7));
+}
+EOF
+
+total=$((total+1))
+if run_limited "$QI" compile "$WORK/11_无符号与实参.qi" -o "$WORK/bin11" \
+       --库路径 "$WORK/lib" >"$WORK/o11" 2>&1 \
+   && out=$("$WORK/bin11" 2>&1) \
+   && [ "$out" = "$(printf -- '4294967295\n-7')" ]; then
+    pass "11 C无符号整数 零扩展 + C整数 实参截断"
+else
+    fail "11 C无符号整数/实参（实得: $(echo "${out:-}" | tr '\n' ' ')，期望 4294967295 -7）"
+fi
+
+# 防回归：不标宽度就还是 64 位语义 —— 这条钉住「默认行为一个字节没变」。
+cat > "$WORK/12_不标仍是64位.qi" <<'EOF'
+包 主程序;
+外部 "qitest" {
+    函数 qi_test_triple(x: 整数): 整数;
+}
+函数 入口() {
+    打印行(qi_test_triple(-5));
+}
+EOF
+
+total=$((total+1))
+if run_limited "$QI" compile "$WORK/12_不标仍是64位.qi" -o "$WORK/bin12" \
+       --库路径 "$WORK/lib" >"$WORK/o12" 2>&1 \
+   && out=$("$WORK/bin12" 2>&1) \
+   && [ "$out" = "-15" ]; then
+    pass "12 防回归：不标宽度的 整数 仍走 i64"
+else
+    fail "12 防回归 整数 仍走 i64（实得: ${out:-}，期望 -15）"
 fi
 
 echo "ffi链接: $passed/$total 通过"
