@@ -131,6 +131,52 @@ else
       fi
     done
     echo
+    echo "-- 链接开关组合实验（qi 的 .o + qi_runtime.lib）--"
+    # 这一段是本脚本最值钱的地方：把 qi 真正发的那条 clang 链接命令**原样**
+    # 试几种 CRT 开关组合，一次跑完就知道哪组能过。否则每猜一次要烧一轮 CI。
+    #
+    # 背景：clang 驱动无条件写 -defaultlib:libcmt（静态 CRT），而 rustc 编的
+    # qi_runtime.lib 要动态 CRT，__imp_* 全解析不了。
+    # （-fms-runtime-lib=dll 是**编译期**开关，对纯链接是空操作，别被名字骗了。）
+    SYSLIBS="-lkernel32 -luser32 -ladvapi32 -lntdll -luserenv -lws2_32 -lshell32 -lole32"
+    RTLIB="$(cygpath -u "${QI_RUNTIME_LIB:-}" 2>/dev/null || echo "${QI_RUNTIME_LIB:-}")"
+    if [ -f "斐波那契.o" ] && [ -n "$RTLIB" ]; then
+      i=0
+      # 组合名::额外开关（用位置参数，bash 3.2 数组的老坑）
+      set -- \
+        "A 裸链（对照）::" \
+        "B 只踢 libcmt::-Wl,/nodefaultlib:libcmt" \
+        "C 踢 libcmt + 显式动态 CRT::-Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt" \
+        "D C + Brepro::-Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt -Wl,/Brepro"
+      for one in "$@"; do
+        name=${one%%::*}
+        flags=${one##*::}
+        i=$((i+1))
+        # shellcheck disable=SC2086
+        if clang -o "试$i.exe" 斐波那契.o "$RTLIB" $flags $SYSLIBS >"链接$i.log" 2>&1; then
+          echo "  [OK]   $name → 运行: $(./"试$i.exe" 2>&1 | head -1)"
+        else
+          echo "  [失败] $name"
+          grep -E "LNK[0-9]+|error" "链接$i.log" | grep -v "LNK4286\|LNK4217\|LNK4098" | head -4 | sed 's/^/         /'
+        fi
+      done
+      # 确定性：同一组开关连编两次，字节必须一致（PE 头有 TimeDateStamp）
+      if [ -f "试4.exe" ]; then
+        clang -o "试4b.exe" 斐波那契.o "$RTLIB" \
+          -Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt -Wl,/Brepro \
+          >/dev/null 2>&1
+        echo "  /Brepro 两次产物一致? $(md5sum 试4.exe 试4b.exe | awk '{print $1}' | uniq | wc -l) 个不同哈希（1 = 一致）"
+      fi
+      if [ -f "试3.exe" ]; then
+        clang -o "试3b.exe" 斐波那契.o "$RTLIB" \
+          -Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt >/dev/null 2>&1
+        echo "  不加 /Brepro 两次产物一致? $(md5sum 试3.exe 试3b.exe 2>/dev/null | awk '{print $1}' | uniq | wc -l) 个不同哈希"
+      fi
+    else
+      echo "  （没有 斐波那契.o 或 QI_RUNTIME_LIB，跳过）"
+    fi
+
+    echo
     echo "-- .o 的节表（找 .debug_* / CodeView 的 .debug\$S）--"
     if command -v llvm-objdump >/dev/null 2>&1; then
       llvm-objdump -h 斐波那契.o 2>&1 | head -40

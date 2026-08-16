@@ -683,14 +683,23 @@ impl QiCompiler {
 
         // Add threading libraries (platform-specific)
         if cfg!(windows) {
-            // MSVC 的 C 运行时有**静态**(libucrt.lib)和**动态**(ucrt DLL + 导入库)
-            // 两套，混用必炸。rustc 的 msvc 目标默认动态 CRT，所以 qi_runtime.lib
-            // 里的 C 代码（sqlite3 / aws-lc）引用的是 __imp_malloc 这类 dllimport
-            // 桩；而 clang 驱动默认链**静态** CRT —— 于是 23 个 __imp_* 全部解析
-            // 不了（LNK2019 → LNK1120），Windows 上一个 .qi 都编不出来。
+            // MSVC 的 C 运行时有**静态**(libcmt + libucrt)和**动态**(msvcrt + ucrt
+            // 导入库)两套，混用必炸。rustc 的 msvc 目标默认动态 CRT，所以
+            // qi_runtime.lib 里的 C 代码（sqlite3 / aws-lc）引用的是 __imp_malloc
+            // 这类 dllimport 桩；而 clang 驱动**无条件**往链接行上写
+            // `-defaultlib:libcmt`（静态）—— 两边打架，link.exe 报 LNK4098
+            // 「defaultlib 'MSVCRT' conflicts」，然后 23 个 __imp_* 全解析不了
+            // （LNK2019 → LNK1120）。结果是 Windows 上**一个 .qi 都编不出来**。
             // Windows 包发了十几版没人报，是因为 CI 的 Windows job 只 cargo build
             // 加库单测，从没真编过一个程序。
-            command.arg("-fms-runtime-lib=dll");
+            //
+            // 注意别写成 `-fms-runtime-lib=dll` —— 那个只影响**编译**（决定
+            // 目标文件里写哪条 /DEFAULTLIB 指令），我们这里只做链接，它是空操作。
+            // 必须直接改链接行：踢掉 libcmt，显式要动态那套。
+            command
+                .arg("-Wl,/nodefaultlib:libcmt")
+                .arg("-Wl,/defaultlib:msvcrt")
+                .arg("-Wl,/defaultlib:ucrt");
             // 确定性：PE 头里有 TimeDateStamp，link.exe 默认写当前时间，
             // 同一份源码两次编译字节就不同（codegen 回归有「编译 5 次产物一致」
             // 这一条）。/Brepro 让链接器改写内容哈希，等价于 mac 上的 ZERO_AR_DATE。
