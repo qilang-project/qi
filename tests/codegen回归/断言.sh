@@ -46,14 +46,20 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
-    actual=$(run_limited "$QI" run "$f" 2>/dev/null)
+    # 两边都 tr -d '\r' 再比。Windows 上 git 默认 core.autocrlf=true，
+    # 检出到 runner 的 .期望 文件行尾是 CRLF，而程序输出是 LF ——
+    # 于是每条正例都「值完全正确却报输出不符」，最难看的那种红。
+    actual=$(run_limited "$QI" run "$f" 2>/dev/null | tr -d '\r')
     rc=$?
     if [ $rc -ne 0 ]; then
         echo "FAIL $name (运行失败 rc=$rc)"
         failed=$((failed+1))
         continue
     fi
-    if ! diff -q <(printf '%s\n' "$actual") "$expect" >/dev/null 2>&1; then
+    # 直接比字符串，不走 `diff <(...)`：进程替换在 git-bash(MSYS) 上不可靠，
+    # 而且 $() 已经把两边的尾随换行都吃掉了，比出来的语义一样。
+    expect_text=$(tr -d '\r' < "$expect")
+    if [ "$actual" != "$expect_text" ]; then
         echo "FAIL $name (输出不符)"
         echo "  期望: $(tr '\n' ' ' < "$expect")"
         echo "  实际: $(printf '%s' "$actual" | tr '\n' ' ')"
@@ -78,8 +84,12 @@ total=$((total+1))
 det_src="$HERE/04_模块限定分发确定性.qi"
 det_ok=1
 first_md5=""
+# **每次都编到同一个输出路径**。以前是 det_1..det_5 五个不同文件名 ——
+# 在 Windows 上这本身就会让产物不同：PE 的导出表里存着模块名（= 输出文件名），
+# 名字一换字节就变，跟 codegen 确不确定毫无关系。同名重编照样能测出真问题
+# （5 次编译跨越秒边界，时间戳类的不确定性一样会暴露）。
+out="/tmp/codegen回归_det.bin"
 for i in 1 2 3 4 5; do
-    out="/tmp/codegen回归_det_$i.bin"
     if ! run_limited "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
         det_ok=0; break
     fi
@@ -88,7 +98,7 @@ for i in 1 2 3 4 5; do
     elif [ "$m" != "$first_md5" ]; then det_ok=0; break
     fi
 done
-rm -f /tmp/codegen回归_det_*.bin
+rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp
 if [ $det_ok -eq 1 ]; then
     echo "PASS 04(编译5次产物一致)"
     passed=$((passed+1))

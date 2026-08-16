@@ -153,21 +153,19 @@ jobs:
         continue-on-error: true
         run: bash tests/侦察Windows.sh target/release/qi.exe
 
-      # 首轮先让三套都跑完再一起看日志（continue-on-error），
-      # 排完错要把这三行删掉，否则 Windows 永远不会真红。
+      # 三套都是硬门禁（排错阶段挂过 continue-on-error，现已撤掉）。
+      # DWARF 那套在 Windows 上会跳过「调试器端到端」一节 ——
+      # 产物是 DWARF-in-COFF，Windows 调试器走 PDB/CodeView，脚本会打印理由。
       - name: FFI 链接控制
         shell: bash
-        continue-on-error: true
         run: bash tests/ffi链接/断言.sh target/release/qi.exe
 
       - name: codegen 回归（含 C 回调）
         shell: bash
-        continue-on-error: true
         run: bash tests/codegen回归/断言.sh target/release/qi.exe
 
       - name: DWARF 调试信息
         shell: bash
-        continue-on-error: true
         run: bash tests/调试信息/断言.sh target/release/qi.exe
 
   clippy:

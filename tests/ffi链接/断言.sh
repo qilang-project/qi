@@ -204,8 +204,18 @@ else
     fi
 fi
 
-# 直链绝对路径写法
-写用例 "$WORK/03_直链绝对.qi" "$WORK/lib/$LIBFILE"
+# 直链绝对路径写法。
+# **写进 .qi 源码里的绝对路径必须是宿主形式**：qi.exe 是原生程序，不认
+# git-bash 的 /d/a/... —— MSYS 只转换命令行参数，源码里的字符串它管不着，
+# 于是编译器把 /d/a/... 当成当前盘的相对根，报「找不到这个库文件
+# \\?\D:\d\a\...」。cygpath -m 给的是 D:/a/... 这种正斜杠 Windows 路径：
+# 反斜杠不能用 —— 那是 qi 字符串里的转义符（"D:\a" 的 \a 会被当转义）。
+if [ "$IS_WIN" -eq 1 ]; then
+    LIBABS="$(cygpath -m "$WORK/lib/$LIBFILE")"
+else
+    LIBABS="$WORK/lib/$LIBFILE"
+fi
+写用例 "$WORK/03_直链绝对.qi" "$LIBABS"
 编译运行断言42 "03 直链绝对路径" "$WORK/03_直链绝对.qi" "$WORK/bin03$EXE"
 
 # ── ③ QI_LIBRARY_PATH 环境变量 ──
