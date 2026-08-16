@@ -168,7 +168,10 @@ else
       # POSIX 绝对路径改写成 C:\Program Files\Git\Brepro（上一轮就栽在这，
       # 报 LNK1181 cannot open input file ...\Brepro.obj）。qi 自己是原生程序
       # 直接 spawn clang，没有这层转换，所以那是 shell 的问题不是开关的问题。
-      export MSYS2_ARG_CONV_EXCL='*'
+      # 只豁免 -Wl, 开头的参数。上一轮写成 '*' 全豁免，结果连
+      # qi_runtime.lib 的路径都不转了，clang 拿到 /d/a/... 打不开 —— 两组
+      # 都「链接失败」，什么也没测出来。
+      export MSYS2_ARG_CONV_EXCL='-Wl,'
       BASEFLAGS="-Wl,/nodefaultlib:libcmt -Wl,/defaultlib:msvcrt -Wl,/defaultlib:ucrt"
       # 循环变量一律 ASCII —— bash 的变量名**根本不接受非 ASCII**，
       # `for 组 in ...` 报的是「'组': not a valid identifier」，
