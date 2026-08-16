@@ -344,6 +344,41 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// C 头文件 → qi 外部块绑定 | Generate qi FFI bindings from a C header
+    #[command(visible_aliases = &["绑定"])]
+    Bindgen {
+        /// C 头文件路径 | C header file
+        header: PathBuf,
+
+        /// 外部块库名（`外部 "<名>"`），如 z / sqlite3 | Library name for the extern block
+        #[arg(long = "库", alias = "lib", default_value = "")]
+        library: String,
+
+        /// 只收该前缀的函数，可重复（大头文件降噪）| Only take functions with this prefix
+        #[arg(long = "前缀", alias = "prefix")]
+        prefix: Vec<String>,
+
+        /// 输出文件路径（不给就打到标准输出）| Output file path
+        #[arg(short, long = "输出", alias = "output")]
+        output: Option<PathBuf>,
+
+        /// 连被 include 进来的头文件里的声明也收 | Also take decls from included headers
+        #[arg(long = "全部头文件", alias = "all-headers")]
+        all_headers: bool,
+
+        /// 不生成常量（宏 + 枚举）| Skip constants
+        #[arg(long = "无常量", alias = "no-consts")]
+        no_consts: bool,
+
+        /// 透传给 clang 的 -I 目录，可重复 | Include dir passed to clang
+        #[arg(short = 'I', long = "包含", alias = "include")]
+        include: Vec<PathBuf>,
+
+        /// 透传给 clang 的其他参数（-D…/-std=…），可重复 | Extra clang argument
+        #[arg(long = "clang参数", alias = "clang-arg")]
+        clang_arg: Vec<String>,
+    },
 }
 
 impl Cli {
@@ -430,6 +465,25 @@ impl Cli {
                 filter,
                 verbose,
             }) => self.test_files(path, filter, verbose, config).await,
+            Some(Commands::Bindgen {
+                header,
+                library,
+                prefix,
+                output,
+                all_headers,
+                no_consts,
+                include,
+                clang_arg,
+            }) => Self::生成绑定(
+                header,
+                library,
+                prefix,
+                output,
+                all_headers,
+                no_consts,
+                include,
+                clang_arg,
+            ),
             None => {
                 // Default compilation behavior when no subcommand is provided
                 if self.source_files.is_empty() {
@@ -1029,6 +1083,68 @@ impl Cli {
                 结果.push(p);
             }
         }
+    }
+
+    /// `qi 绑定 <头文件> --库 <名>` —— 把 C 头文件翻成一份 qi 外部块（见 cli/绑定生成.rs）。
+    /// 不给 `-o` 就打到标准输出，方便 `qi 绑定 x.h --库 x | less` 先看看再落盘。
+    #[allow(clippy::too_many_arguments)]
+    fn 生成绑定(
+        header: PathBuf,
+        library: String,
+        prefix: Vec<String>,
+        output: Option<PathBuf>,
+        all_headers: bool,
+        no_consts: bool,
+        include: Vec<PathBuf>,
+        clang_arg: Vec<String>,
+    ) -> Result<(), CliError> {
+        // 生成文件顶部要记「这份东西是怎么来的」，好让人一眼知道怎么重新生成。
+        let mut 命令行 = format!("qi 绑定 {}", header.display());
+        if !library.is_empty() {
+            命令行.push_str(&format!(" --库 {}", library));
+        }
+        for p in &prefix {
+            命令行.push_str(&format!(" --前缀 {}", p));
+        }
+        if all_headers {
+            命令行.push_str(" --全部头文件");
+        }
+        if no_consts {
+            命令行.push_str(" --无常量");
+        }
+        for d in &include {
+            命令行.push_str(&format!(" -I {}", d.display()));
+        }
+        for a in &clang_arg {
+            命令行.push_str(&format!(" --clang参数 {}", a));
+        }
+        if let Some(o) = &output {
+            命令行.push_str(&format!(" -o {}", o.display()));
+        }
+
+        let opts = crate::cli::绑定生成::选项 {
+            头文件: header,
+            库: library,
+            前缀: prefix,
+            全部头文件: all_headers,
+            无常量: no_consts,
+            包含目录: include,
+            clang参数: clang_arg,
+            命令行,
+        };
+        let 产物 = crate::cli::绑定生成::运行(&opts).map_err(CliError::Package)?;
+
+        match output {
+            Some(路径) => {
+                std::fs::write(&路径, &产物.源码)?;
+                println!(
+                    "生成绑定: {:?}（函数 {} 个，常量 {} 个，跳过 {} 项）",
+                    路径, 产物.函数数, 产物.常量数, 产物.跳过数
+                );
+            }
+            None => print!("{}", 产物.源码),
+        }
+        Ok(())
     }
 
     /// `qi test` —— 发现并运行测试文件（*_测.qi），逐个编译+运行，聚合结果，有失败则非零退出。
