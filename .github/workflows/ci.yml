@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    # win-完整性：Windows 三套验收（FFI 链接 / C 回调 / 调试信息）的迭代分支。
-    # 合并回 main 之前可以删掉这一项。
-    branches: [main, master, develop, "feat-*", "win-完整性"]
+    branches: [main, master, develop, "feat-*"]
   pull_request:
     branches: [main, master]
 
@@ -156,6 +154,11 @@ jobs:
       # 三套都是硬门禁（排错阶段挂过 continue-on-error，现已撤掉）。
       # DWARF 那套在 Windows 上会跳过「调试器端到端」一节 ——
       # 产物是 DWARF-in-COFF，Windows 调试器走 PDB/CodeView，脚本会打印理由。
+      #
+      # ⚠ 漂移风险：mac/Linux 走 `make ci`，Windows 是这里逐条列。
+      # 往 `make ci` 加第四套验收时，**记得也往下面加一步**，否则 Windows
+      # 会静默少跑一套 —— Windows 包此前一个 .qi 都编不出来，正是因为
+      # Windows job 只有 cargo build + 库单测，端到端一条都没跑。
       - name: FFI 链接控制
         shell: bash
         run: bash tests/ffi链接/断言.sh target/release/qi.exe
