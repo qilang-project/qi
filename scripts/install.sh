@@ -71,6 +71,16 @@ choose_install_dir() {
     fi
 }
 
+# 目标路径要不要 sudo？目录可能还不存在，得往上走到第一个存在的祖先再看写权限
+# （对着不存在的路径测 -w 永远是 false，会平白无故请求 sudo）。
+need_sudo_for() {
+    local p="$1"
+    while [ ! -e "$p" ] && [ "$p" != / ] && [ -n "$p" ]; do
+        p=$(dirname "$p")
+    done
+    [ -w "$p" ] && echo "" || echo "sudo"
+}
+
 # 3. 拉取最新 release tag（如果用户没指定）
 resolve_version() {
     if [ "$VERSION" = latest ]; then
@@ -131,15 +141,24 @@ main() {
     prefix=$(dirname "$install_dir")
     lib_dst="$prefix/lib/qi"
 
-    local SUDO=""
-    [ -w "$install_dir" ] || SUDO="sudo"
+    # bin 和 lib 的写权限要**分别**判断。真实踩过：/usr/local/bin 属于当前用户
+    # （Homebrew 建的），/usr/local/lib/qi 却是上一次 sudo 安装留下的 root 目录 ——
+    # 按 bin 的权限推出 SUDO=""，二进制装进去了，运行时 cp 全线 Permission denied，
+    # 于是留下一个「装好了但编译不了」的半吊子安装。
+    local SUDO_BIN SUDO_LIB
+    SUDO_BIN=$(need_sudo_for "$install_dir")
+    SUDO_LIB=$(need_sudo_for "$lib_dst")
 
-    $SUDO install -m 0755 "$src_bin" "$install_dir/qi"
+    $SUDO_BIN install -m 0755 "$src_bin" "$install_dir/qi" \
+        || err "写不进 $install_dir。换个目录：curl … | INSTALL_DIR=\$HOME/.local/bin bash"
     ok "已安装 → $install_dir/qi"
 
     if [ -d "$tmp/lib/qi" ]; then
-        $SUDO mkdir -p "$lib_dst"
-        $SUDO cp -R "$tmp/lib/qi/." "$lib_dst/"
+        if ! ($SUDO_LIB mkdir -p "$lib_dst" && $SUDO_LIB cp -R "$tmp/lib/qi/." "$lib_dst/"); then
+            err "写不进 $lib_dst（多半是上次 sudo 安装留下的 root 目录）。二选一：
+     sudo rm -rf $lib_dst   然后重跑本脚本
+     或整个装到自己目录：curl … | INSTALL_DIR=\$HOME/.local/bin bash"
+        fi
         ok "运行时 → $lib_dst"
     else
         warn "包里没有 lib/qi（旧版发布包？）编译时可能要自己设 QI_RUNTIME_LIB"
