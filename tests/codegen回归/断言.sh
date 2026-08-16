@@ -46,14 +46,20 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
-    actual=$(run_limited "$QI" run "$f" 2>/dev/null)
+    # 两边都 tr -d '\r' 再比。Windows 上 git 默认 core.autocrlf=true，
+    # 检出到 runner 的 .期望 文件行尾是 CRLF，而程序输出是 LF ——
+    # 于是每条正例都「值完全正确却报输出不符」，最难看的那种红。
+    actual=$(run_limited "$QI" run "$f" 2>/dev/null | tr -d '\r')
     rc=$?
     if [ $rc -ne 0 ]; then
         echo "FAIL $name (运行失败 rc=$rc)"
         failed=$((failed+1))
         continue
     fi
-    if ! diff -q <(printf '%s\n' "$actual") "$expect" >/dev/null 2>&1; then
+    # 直接比字符串，不走 `diff <(...)`：进程替换在 git-bash(MSYS) 上不可靠，
+    # 而且 $() 已经把两边的尾随换行都吃掉了，比出来的语义一样。
+    expect_text=$(tr -d '\r' < "$expect")
+    if [ "$actual" != "$expect_text" ]; then
         echo "FAIL $name (输出不符)"
         echo "  期望: $(tr '\n' ' ' < "$expect")"
         echo "  实际: $(printf '%s' "$actual" | tr '\n' ' ')"
@@ -78,24 +84,43 @@ total=$((total+1))
 det_src="$HERE/04_模块限定分发确定性.qi"
 det_ok=1
 first_md5=""
+# **每次都编到同一个输出路径**。以前是 det_1..det_5 五个不同文件名 ——
+# 在 Windows 上这本身就会让产物不同：PE 的导出表里存着模块名（= 输出文件名），
+# 名字一换字节就变，跟 codegen 确不确定毫无关系。同名重编照样能测出真问题
+# （5 次编译跨越秒边界，时间戳类的不确定性一样会暴露）。
+out="/tmp/codegen回归_det.bin"
+det_why=""
+det_md5s=""
 for i in 1 2 3 4 5; do
-    out="/tmp/codegen回归_det_$i.bin"
-    if ! run_limited "$QI" compile "$det_src" -o "$out" >/dev/null 2>&1; then
-        det_ok=0; break
+    det_err=$(run_limited "$QI" compile "$det_src" -o "$out" 2>&1)
+    if [ $? -ne 0 ]; then
+        det_ok=0
+        det_why="第 $i 次编译失败: $(echo "$det_err" | head -3 | tr '\n' ' ')"
+        break
     fi
     m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
+    det_md5s="$det_md5s $m"
+    # 留一份副本：不一致时要拿它指出**差在第几个字节**，
+    # 否则只知道「不一致」，得再烧一轮 CI 才知道是时间戳还是别的。
+    cp "$out" "/tmp/codegen回归_det_副本$i.bin" 2>/dev/null
     if [ -z "$first_md5" ]; then first_md5="$m"
-    elif [ "$m" != "$first_md5" ]; then det_ok=0; break
+    elif [ "$m" != "$first_md5" ]; then det_ok=0; det_why="第 $i 次与第 1 次不同"
     fi
 done
-rm -f /tmp/codegen回归_det_*.bin
 if [ $det_ok -eq 1 ]; then
     echo "PASS 04(编译5次产物一致)"
     passed=$((passed+1))
 else
-    echo "FAIL 04(编译5次产物不一致或编译失败)"
+    echo "FAIL 04(编译5次产物不一致或编译失败: ${det_why})"
+    echo "  各次 md5:${det_md5s}"
+    if [ -f /tmp/codegen回归_det_副本1.bin ] && [ -f /tmp/codegen回归_det_副本2.bin ]; then
+        echo "  头 20 处差异（字节偏移 十进制，1 起）:"
+        cmp -l /tmp/codegen回归_det_副本1.bin /tmp/codegen回归_det_副本2.bin 2>&1 | head -20 | sed 's/^/    /'
+    fi
     failed=$((failed+1))
 fi
+rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp \
+      /tmp/codegen回归_det_副本*.bin
 
 # ── 红码：必须报错的用例 ──
 #

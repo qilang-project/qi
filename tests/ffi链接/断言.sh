@@ -50,6 +50,7 @@ failed=0
 
 pass() { echo "PASS $1"; passed=$((passed+1)); }
 fail() { echo "FAIL $1"; failed=$((failed+1)); }
+skip() { echo "SKIP $1"; }
 
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -57,21 +58,101 @@ trap cleanup EXIT
 rm -rf "$WORK"
 mkdir -p "$WORK/lib" || exit 1
 
-# ── 准备：现场编一个静态库 ──
+# ── 平台差异（Windows 走 git-bash，uname 是 MINGW64_NT-…）──
+# 三处不同，都不是「换个名字」而已：
+#   ① 可执行后缀：Windows 上 qi 产 .exe；-o 给什么名就是什么名，得自己带后缀
+#   ② 静态库文件名：unix 是 libqitest.a + `-lqitest`；MSVC 下 clang 的驱动把
+#      `-lqitest` 直接翻成 `qitest.lib`，所以文件必须叫 qitest.lib（不是 libqitest.a）
+#   ③ 造库的工具：Windows 上没有 cc/ar，用 clang -c + llvm-lib（MSVC 格式归档，
+#      link.exe 才认；llvm-ar 出的是 GNU 格式归档，link.exe 不吃）
+IS_WIN=0
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WIN=1 ;;
+esac
+
+if [ "$IS_WIN" -eq 1 ]; then
+    EXE=".exe"
+else
+    EXE=""
+fi
+
+# 造库的编译器。**Windows 上必须先挑 clang**：runner 上 `cc` 是 mingw 的 gcc，
+# 它一碰中文路径就死（工作目录是 tests/ffi链接/临时）——
+#   Assembler messages: Fatal error: can't create .../ffi??/??/qitest.o: Invalid argument
+# mingw 的 as 走 ANSI 代码页，UTF-8 路径全成问号。clang 用宽字符 API，没这问题。
+# 而且 mingw 产的是 GNU 目标文件，本来也链不进 MSVC。
+CCTOOL=""
+if [ "$IS_WIN" -eq 1 ]; then
+    CANDIDATES="clang cc gcc"
+else
+    CANDIDATES="cc clang gcc"
+fi
+for c in $CANDIDATES; do
+    if command -v "$c" >/dev/null 2>&1; then CCTOOL="$c"; break; fi
+done
+if [ -z "$CCTOOL" ]; then
+    echo "SKIP 全套：这台机器上没有 cc/clang/gcc，造不出测试用的静态库"
+    echo "ffi链接: 0/0 通过（无 C 编译器）"
+    exit 0
+fi
+
+# 打包器：MSVC 格式用 llvm-lib/lib（/out: 语法），unix 用 ar rcs。
+ARTOOL=""
+if [ "$IS_WIN" -eq 1 ]; then
+    for a in llvm-lib lib; do
+        if command -v "$a" >/dev/null 2>&1; then ARTOOL="$a"; break; fi
+    done
+else
+    for a in ar llvm-ar; do
+        if command -v "$a" >/dev/null 2>&1; then ARTOOL="$a"; break; fi
+    done
+fi
+if [ -z "$ARTOOL" ]; then
+    echo "SKIP 全套：找不到打包器（Windows 要 llvm-lib/lib，unix 要 ar），造不出静态库"
+    echo "ffi链接: 0/0 通过（无归档工具）"
+    exit 0
+fi
+
+# ── 准备：现场编静态库 ──
+# **新加用例要用这个函数造库，别直接写 cc / ar**：那两个名字在 Windows 上
+# 一个是 mingw 的 gcc（碰中文路径直接死，且产 GNU 目标文件链不进 MSVC）、
+# 一个压根不存在，而库文件名两边也不一样（libfoo.a ↔ foo.lib）。
+# $1 = 库名（不带前后缀），$2 = .c 源文件路径。产物落在 $WORK/lib/。
+库文件名() {
+    if [ "$IS_WIN" -eq 1 ]; then echo "$1.lib"; else echo "lib$1.a"; fi
+}
+造静态库() {
+    lib_name="$1"; lib_src="$2"
+    lib_out="$WORK/lib/$(库文件名 "$lib_name")"
+    if ! "$CCTOOL" -c -o "$WORK/$lib_name.o" "$lib_src" 2>"$WORK/cc_$lib_name.err"; then
+        echo "FAIL 准备阶段：$CCTOOL 编不出 $lib_name"
+        cat "$WORK/cc_$lib_name.err"
+        exit 1
+    fi
+    if [ "$IS_WIN" -eq 1 ]; then
+        # llvm-lib/lib 是原生程序，路径得给 Windows 形式（MSYS 只转「看起来像路径」
+        # 的独立参数，`/out:/d/a/...` 这种粘在一起的它不转）。
+        "$ARTOOL" "/out:$(cygpath -w "$lib_out")" "$(cygpath -w "$WORK/$lib_name.o")" \
+            >"$WORK/ar_$lib_name.err" 2>&1 || true
+    else
+        "$ARTOOL" rcs "$lib_out" "$WORK/$lib_name.o" 2>"$WORK/ar_$lib_name.err" || true
+    fi
+    if [ ! -f "$lib_out" ]; then
+        echo "FAIL 准备阶段：$ARTOOL 打不出 $(库文件名 "$lib_name")"
+        cat "$WORK/ar_$lib_name.err"
+        exit 1
+    fi
+}
+
 cat > "$WORK/qitest.c" <<'EOF'
-/* qi 的 整数 ↔ C 的 long（i64）。测试用：返回 3 倍。 */
-long qi_test_triple(long x) { return x * 3; }
+/* qi 的 整数 ↔ C 的 long（i64）。测试用：返回 3 倍。
+   注意 Windows/MSVC 的 long 是 32 位！qi 的 整数 是 i64，所以这里用 long long，
+   两边都是 64 位（unix 上 long==long long==64 位，改成 long long 无副作用）。 */
+long long qi_test_triple(long long x) { return x * 3; }
 EOF
-if ! cc -c -o "$WORK/qitest.o" "$WORK/qitest.c" 2>"$WORK/cc.err"; then
-    echo "FAIL 准备阶段：cc 编不出测试库"
-    cat "$WORK/cc.err"
-    exit 1
-fi
-if ! ar rcs "$WORK/lib/libqitest.a" "$WORK/qitest.o" 2>"$WORK/ar.err"; then
-    echo "FAIL 准备阶段：ar 打不出 libqitest.a"
-    cat "$WORK/ar.err"
-    exit 1
-fi
+造静态库 qitest "$WORK/qitest.c"
+# 用例 02/03 要按文件名直链它（写进 .qi 源码里），名字只在 库文件名() 一处定义
+LIBFILE="$(库文件名 qitest)"
 
 # 三个正例共用的程序体：3 * 14 = 42
 写用例() {
@@ -114,19 +195,19 @@ EOF
 # ── ① --库路径 + -l 写法 ──
 写用例 "$WORK/01_库路径.qi" "qitest"
 编译运行断言42 "01 --库路径 + 外部 \"qitest\"" \
-    "$WORK/01_库路径.qi" "$WORK/bin01" --库路径 "$WORK/lib"
+    "$WORK/01_库路径.qi" "$WORK/bin01$EXE" --库路径 "$WORK/lib"
 
 # ── ② 直链文件写法（相对路径，基准 = 源文件所在目录）──
-# 故意在 $ROOT 下调用，且相对路径 lib/libqitest.a 相对 CWD 并不存在 ——
+# 故意在 $ROOT 下调用，且相对路径 lib/<归档> 相对 CWD 并不存在 ——
 # 只有以源文件目录为基准才找得到。
-写用例 "$WORK/02_直链相对.qi" "lib/libqitest.a"
+写用例 "$WORK/02_直链相对.qi" "lib/$LIBFILE"
 total=$((total+1))
-out=$(cd "$ROOT" && run_limited "$QI" compile "$WORK/02_直链相对.qi" -o "$WORK/bin02" 2>&1)
+out=$(cd "$ROOT" && run_limited "$QI" compile "$WORK/02_直链相对.qi" -o "$WORK/bin02$EXE" 2>&1)
 rc=$?
 if [ $rc -ne 0 ]; then
     fail "02 直链相对路径 (编译失败 rc=$rc: $(echo "$out" | head -3 | tr '\n' ' '))"
 else
-    got=$("$WORK/bin02" 2>&1)
+    got=$("$WORK/bin02$EXE" 2>&1)
     if [ "$got" = "42" ]; then
         pass "02 直链相对路径(基准=源文件目录)"
     else
@@ -134,19 +215,41 @@ else
     fi
 fi
 
-# 直链绝对路径写法
-写用例 "$WORK/03_直链绝对.qi" "$WORK/lib/libqitest.a"
-编译运行断言42 "03 直链绝对路径" "$WORK/03_直链绝对.qi" "$WORK/bin03"
+# 直链绝对路径写法。
+# **写进 .qi 源码里的绝对路径必须是宿主形式**：qi.exe 是原生程序，不认
+# git-bash 的 /d/a/... —— MSYS 只转换命令行参数，源码里的字符串它管不着，
+# 于是编译器把 /d/a/... 当成当前盘的相对根，报「找不到这个库文件
+# \\?\D:\d\a\...」。cygpath -m 给的是 D:/a/... 这种正斜杠 Windows 路径：
+# 反斜杠不能用 —— 那是 qi 字符串里的转义符（"D:\a" 的 \a 会被当转义）。
+if [ "$IS_WIN" -eq 1 ]; then
+    LIBABS="$(cygpath -m "$WORK/lib/$LIBFILE")"
+else
+    LIBABS="$WORK/lib/$LIBFILE"
+fi
+写用例 "$WORK/03_直链绝对.qi" "$LIBABS"
+编译运行断言42 "03 直链绝对路径" "$WORK/03_直链绝对.qi" "$WORK/bin03$EXE"
 
 # ── ③ QI_LIBRARY_PATH 环境变量 ──
 写用例 "$WORK/04_env.qi" "qitest"
 total=$((total+1))
-out=$(QI_LIBRARY_PATH="$WORK/lib" run_limited "$QI" compile "$WORK/04_env.qi" -o "$WORK/bin04" 2>&1)
+# QI_LIBRARY_PATH 是给 qi 这个原生程序读的**环境变量**：MSYS 不转换环境变量，
+# 所以 Windows 上必须自己转成 C:\... 形式（命令行参数才有自动转换）。
+if [ "$IS_WIN" -eq 1 ]; then
+    LIBDIR_ENV="$(cygpath -w "$WORK/lib")"
+    NODIR_ENV="$(cygpath -w "$WORK/没这个目录")"
+    PATHSEP=";"   # Windows 的 PATH 式分隔符是分号（std::env::split_paths 按平台走）
+else
+    LIBDIR_ENV="$WORK/lib"
+    NODIR_ENV="$WORK/没这个目录"
+    PATHSEP=":"
+fi
+
+out=$(QI_LIBRARY_PATH="$LIBDIR_ENV" run_limited "$QI" compile "$WORK/04_env.qi" -o "$WORK/bin04$EXE" 2>&1)
 rc=$?
 if [ $rc -ne 0 ]; then
     fail "04 QI_LIBRARY_PATH (编译失败 rc=$rc: $(echo "$out" | head -3 | tr '\n' ' '))"
 else
-    got=$("$WORK/bin04" 2>&1)
+    got=$("$WORK/bin04$EXE" 2>&1)
     if [ "$got" = "42" ]; then
         pass "04 QI_LIBRARY_PATH"
     else
@@ -156,10 +259,10 @@ fi
 
 # PATH 式多路径：前面塞一个不存在的目录，后面才是真的 —— 不存在的应被静默跳过。
 total=$((total+1))
-out=$(QI_LIBRARY_PATH="$WORK/没这个目录:$WORK/lib" \
-      run_limited "$QI" compile "$WORK/04_env.qi" -o "$WORK/bin04b" 2>&1)
+out=$(QI_LIBRARY_PATH="${NODIR_ENV}${PATHSEP}${LIBDIR_ENV}" \
+      run_limited "$QI" compile "$WORK/04_env.qi" -o "$WORK/bin04b$EXE" 2>&1)
 rc=$?
-if [ $rc -eq 0 ] && [ "$("$WORK/bin04b" 2>&1)" = "42" ]; then
+if [ $rc -eq 0 ] && [ "$("$WORK/bin04b$EXE" 2>&1)" = "42" ]; then
     pass "05 QI_LIBRARY_PATH 多路径(不存在的静默跳过)"
 else
     fail "05 QI_LIBRARY_PATH 多路径 (rc=$rc: $(echo "$out" | head -3 | tr '\n' ' '))"
@@ -176,8 +279,10 @@ else
 fi
 
 # ── ④ macOS framework 写法 ──
-if [ "$(uname -s)" = "Darwin" ]; then
-    cat > "$WORK/07_框架.qi" <<'EOF'
+# 非 mac 上不是「跳过」而是**必须报错**：以前这里一句 SKIP 了事，于是
+# 「framework 写法在 Linux/Windows 上会不会悄悄变成 -lframework:CoreFoundation」
+# 这条防线从来没在 mac 之外验过。现在两边都验。
+cat > "$WORK/07_框架.qi" <<'EOF'
 外部 "framework:CoreFoundation" {
     函数 CFAbsoluteTimeGetCurrent(): 浮点数;
 }
@@ -191,13 +296,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
     }
 }
 EOF
-    total=$((total+1))
-    out=$(run_limited "$QI" compile "$WORK/07_框架.qi" -o "$WORK/bin07" 2>&1)
-    rc=$?
+total=$((total+1))
+out=$(run_limited "$QI" compile "$WORK/07_框架.qi" -o "$WORK/bin07$EXE" 2>&1)
+rc=$?
+if [ "$(uname -s)" = "Darwin" ]; then
     if [ $rc -ne 0 ]; then
         fail "07 framework:CoreFoundation (编译失败 rc=$rc: $(echo "$out" | head -3 | tr '\n' ' '))"
     else
-        got=$("$WORK/bin07" 2>&1)
+        got=$("$WORK/bin07$EXE" 2>&1)
         if [ "$got" = "正数" ]; then
             pass "07 framework:CoreFoundation"
         else
@@ -205,7 +311,11 @@ EOF
         fi
     fi
 else
-    echo "SKIP 07 framework 写法（非 macOS）"
+    if [ $rc -ne 0 ] && echo "$out" | grep -q "macOS 专有"; then
+        pass "07 负例：非 macOS 上 framework 写法必须报错"
+    else
+        fail "07 负例：非 macOS 上 framework 写法必须报错 (rc=$rc，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
+    fi
 fi
 
 # ── ⑥ 负例：必须非零退出且错误信息是人话 ──
@@ -244,18 +354,15 @@ fi
 # 这几条盯的是「返回寄存器高 32 位」那个坑：C 的 int 只写 eax/w0，用 i64 原型去接
 # 就把没写过的高位一起读了，-1 变成 4294967295。标了 C整数 之后编译器按 i32 收发，
 # 返回符号扩展、实参截断，负数错误码才是负数。
-cat > "$WORK/宽度.c" <<'EOF'
+cat > "$WORK/qiwidth.c" <<'EOF'
 int qi_w_neg(void) { return -1; }
 int qi_w_err(void) { return -2; }
 unsigned int qi_w_umax(void) { return 4294967295u; }
-long qi_w_echo(int x) { return (long)x; }   /* 验实参确实按 32 位有符号到达 */
+/* 回声的返回类型用 long long：MSVC 的 long 只有 32 位，写 long 在 Windows 上
+   等于又把「返回值宽度」这个变量引回来了，而这条要验的是**实参**宽度。 */
+long long qi_w_echo(int x) { return (long long)x; }
 EOF
-if ! cc -c -o "$WORK/宽度.o" "$WORK/宽度.c" 2>"$WORK/cc2.err"; then
-    echo "FAIL 准备阶段：cc 编不出宽度测试库"
-    cat "$WORK/cc2.err"
-    exit 1
-fi
-ar rcs "$WORK/lib/libqiwidth.a" "$WORK/宽度.o" 2>/dev/null
+造静态库 qiwidth "$WORK/qiwidth.c"
 
 cat > "$WORK/10_C整数返回.qi" <<'EOF'
 包 主程序;
@@ -270,9 +377,9 @@ cat > "$WORK/10_C整数返回.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/10_C整数返回.qi" -o "$WORK/bin10" \
+if run_limited "$QI" compile "$WORK/10_C整数返回.qi" -o "$WORK/bin10$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o10" 2>&1 \
-   && out=$("$WORK/bin10" 2>&1) \
+   && out=$("$WORK/bin10$EXE" 2>&1) \
    && [ "$out" = "$(printf -- '-1\n-2')" ]; then
     pass "10 C整数 返回：负数错误码符号扩展正确"
 else
@@ -292,9 +399,9 @@ cat > "$WORK/11_无符号与实参.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/11_无符号与实参.qi" -o "$WORK/bin11" \
+if run_limited "$QI" compile "$WORK/11_无符号与实参.qi" -o "$WORK/bin11$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o11" 2>&1 \
-   && out=$("$WORK/bin11" 2>&1) \
+   && out=$("$WORK/bin11$EXE" 2>&1) \
    && [ "$out" = "$(printf -- '4294967295\n-7')" ]; then
     pass "11 C无符号整数 零扩展 + C整数 实参截断"
 else
@@ -313,9 +420,9 @@ cat > "$WORK/12_不标仍是64位.qi" <<'EOF'
 EOF
 
 total=$((total+1))
-if run_limited "$QI" compile "$WORK/12_不标仍是64位.qi" -o "$WORK/bin12" \
+if run_limited "$QI" compile "$WORK/12_不标仍是64位.qi" -o "$WORK/bin12$EXE" \
        --库路径 "$WORK/lib" >"$WORK/o12" 2>&1 \
-   && out=$("$WORK/bin12" 2>&1) \
+   && out=$("$WORK/bin12$EXE" 2>&1) \
    && [ "$out" = "-15" ]; then
     pass "12 防回归：不标宽度的 整数 仍走 i64"
 else

@@ -650,7 +650,7 @@ impl Cli {
                             "无法将多个输入文件编译到单个输出文件".to_string(),
                         )));
                     }
-                    std::fs::rename(obj, output_path)?;
+                    移动产物(obj, output_path)?;
                     output_path.clone()
                 } else {
                     obj.clone()
@@ -680,7 +680,7 @@ impl Cli {
             if let Some(output_path) = &output {
                 if files.len() == 1 {
                     // Single file: rename the output
-                    std::fs::rename(&final_executable, output_path)?;
+                    移动产物(&final_executable, output_path)?;
                     if config.verbose {
                         println!("  输出文件: {:?}", output_path);
                     }
@@ -2107,6 +2107,27 @@ impl Cli {
         Err(CliError::Compilation(crate::CompilerError::Codegen(
             format!("无法找到 Qi Compiler 库文件: {:?}", lib_path),
         )))
+    }
+}
+
+/// 把编译产物挪到 `-o` 指定的位置：先 rename，跨卷失败就退回「复制 + 删源」。
+///
+/// **rename 不能跨文件系统**。产物是生成在源文件旁边的，`-o` 却常指向别处：
+/// Windows 上仓库在 D:\ 而 `/tmp` 映射到 C:\Users\…\Temp，于是
+/// `qi compile x.qi -o /tmp/x.bin` 直接报
+/// `I/O 错误: The system cannot move the file to a different disk drive. (os error 17)`。
+/// Unix 上同样会炸（EXDEV），只是 mac/Linux 的 CI 里 /tmp 和仓库恰好同卷，
+/// 一直没撞上 —— codegen 回归的「编译 5 次产物一致」正是编到 /tmp，
+/// 在 Windows 上就成了「第 1 次编译失败」。
+fn 移动产物(源: &std::path::Path, 目标: &std::path::Path) -> Result<(), std::io::Error> {
+    match std::fs::rename(源, 目标) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(源, 目标)?;
+            // 源删不掉不算失败：产物已经在目标位置了，剩个临时文件不该让编译报错。
+            let _ = std::fs::remove_file(源);
+            Ok(())
+        }
     }
 }
 

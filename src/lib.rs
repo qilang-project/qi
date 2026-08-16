@@ -413,8 +413,14 @@ impl QiCompiler {
 
         // 库自身用到的 外部 "..." 目标（-L 搜索路径 + -l/直链文件/framework）。
         let 搜索路径 = self.库搜索路径()?;
-        crate::链接::追加链接参数(&mut cmd, &搜索路径, extern_libs, self.目标是mac())
-            .map_err(CompilerError::Codegen)?;
+        crate::链接::追加链接参数(
+            &mut cmd,
+            &搜索路径,
+            extern_libs,
+            self.目标是mac(),
+            self.目标是windows(),
+        )
+        .map_err(CompilerError::Codegen)?;
 
         let out = cmd.output().map_err(CompilerError::Io)?;
         if !out.status.success() {
@@ -604,6 +610,11 @@ impl QiCompiler {
         self.config.target_platform == config::CompilationTarget::MacOS
     }
 
+    /// 目标平台是 Windows 吗（MSVC 上 `-lc`/`-lm` 得丢掉，见 链接::追加链接参数）。
+    fn 目标是windows(&self) -> bool {
+        self.config.target_platform == config::CompilationTarget::Windows
+    }
+
     /// `-L` 搜索路径：`--库路径`（CLI）在前，环境变量 `QI_LIBRARY_PATH` 在后。
     fn 库搜索路径(&self) -> Result<Vec<PathBuf>, CompilerError> {
         crate::链接::库搜索路径(&self.config.library_paths).map_err(CompilerError::Codegen)
@@ -636,7 +647,7 @@ impl QiCompiler {
                 .arg("-lm")
                 .arg("-ldl");
             // 外部块声明的链接目标（-L 搜索路径 + -l/直链文件；framework 在此目标上会报错）
-            crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, false)
+            crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, false, false)
                 .map_err(CompilerError::Codegen)?;
 
             let output = command.output().map_err(CompilerError::Io)?;
@@ -672,6 +683,27 @@ impl QiCompiler {
 
         // Add threading libraries (platform-specific)
         if cfg!(windows) {
+            // MSVC 的 C 运行时有**静态**(libcmt + libucrt)和**动态**(msvcrt + ucrt
+            // 导入库)两套，混用必炸。rustc 的 msvc 目标默认动态 CRT，所以
+            // qi_runtime.lib 里的 C 代码（sqlite3 / aws-lc）引用的是 __imp_malloc
+            // 这类 dllimport 桩；而 clang 驱动**无条件**往链接行上写
+            // `-defaultlib:libcmt`（静态）—— 两边打架，link.exe 报 LNK4098
+            // 「defaultlib 'MSVCRT' conflicts」，然后 23 个 __imp_* 全解析不了
+            // （LNK2019 → LNK1120）。结果是 Windows 上**一个 .qi 都编不出来**。
+            // Windows 包发了十几版没人报，是因为 CI 的 Windows job 只 cargo build
+            // 加库单测，从没真编过一个程序。
+            //
+            // 注意别写成 `-fms-runtime-lib=dll` —— 那个只影响**编译**（决定
+            // 目标文件里写哪条 /DEFAULTLIB 指令），我们这里只做链接，它是空操作。
+            // 必须直接改链接行：踢掉 libcmt，显式要动态那套。
+            command
+                .arg("-Wl,/nodefaultlib:libcmt")
+                .arg("-Wl,/defaultlib:msvcrt")
+                .arg("-Wl,/defaultlib:ucrt");
+            // 确定性：PE 头里有 TimeDateStamp，link.exe 默认写当前时间，
+            // 同一份源码两次编译字节就不同（codegen 回归有「编译 5 次产物一致」
+            // 这一条）。/Brepro 让链接器改写内容哈希，等价于 mac 上的 ZERO_AR_DATE。
+            command.arg("-Wl,/Brepro");
             // On Windows, link with essential Windows API libraries
             command.args(&[
                 "-lkernel32", // Core Windows API functions
@@ -729,8 +761,14 @@ impl QiCompiler {
 
         // 外部块声明的链接目标。放在系统库之后，确保符号可被解析。
         // -L 搜索路径也在这里发（ld 对 -L 的位置不敏感，但排在 -l 前面更符合直觉）。
-        crate::链接::追加链接参数(&mut command, &搜索路径, extern_libs, self.目标是mac())
-            .map_err(CompilerError::Codegen)?;
+        crate::链接::追加链接参数(
+            &mut command,
+            &搜索路径,
+            extern_libs,
+            self.目标是mac(),
+            self.目标是windows(),
+        )
+        .map_err(CompilerError::Codegen)?;
 
         let output = command.output().map_err(CompilerError::Io)?;
 

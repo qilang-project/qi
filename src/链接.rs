@@ -27,7 +27,10 @@ pub enum 链接项 {
 
 /// 被当成「直链文件」的后缀。注意 `.so.1` 这类带版本号的写法不在此列 ——
 /// 它含不含分隔符都可能，与其猜，不如让用户写全路径（含 `/` 一样会走直链分支）。
-const 直链后缀: &[&str] = &["a", "dylib", "so", "dll", "o"];
+/// `lib` 是 Windows/MSVC 的静态库后缀（`qitest.lib`）。少了它，Windows 上写
+/// `外部 "qitest.lib"` 会被当成库名 → `-lqitest.lib` → clang 再补一次后缀
+/// 变成 `qitest.lib.lib`，报的是「打不开 qitest.lib.lib」这种没人写过的名字。
+const 直链后缀: &[&str] = &["a", "dylib", "so", "dll", "o", "lib"];
 
 /// framework 写法的两种前缀（英文的是文档写法，中文的顺手也认）。
 const 框架前缀: &[&str] = &["framework:", "框架:"];
@@ -142,15 +145,25 @@ fn 加入去重(列表: &mut Vec<PathBuf>, p: PathBuf) {
     }
 }
 
+/// Windows/MSVC 上「已经在 C 运行时里」的库名 —— 发 `-l` 过去只会链不上。
+///
+/// clang 的 MSVC 驱动把 `-lc` 原样翻成 `c.lib`，而 MSVC 根本没有 c.lib/m.lib：
+/// malloc/free/qsort/pow 这些都在 ucrt + vcruntime 里，clang 默认就链了。
+/// 于是 `外部 "c" { 函数 qsort(...); }` 这种完全正常的写法在 Windows 上会
+/// 挂在 `LNK1104: cannot open file 'c.lib'` —— 报错还指向一个用户没写过的文件名。
+/// unix 上 `-lc`/`-lm` 是对的，所以只在目标是 Windows 时丢。
+const WINDOWS_内建库: &[&str] = &["c", "m"];
+
 /// 把搜索路径 + 链接项追加到链接命令上。`-L` 全部排在前面，再是各链接项。
 ///
-/// `目标是mac` 看的是**编译目标**而非宿主：mac 上交叉编译到 Linux 时
-/// `framework:` 一样是错的。
+/// `目标是mac` / `目标是windows` 看的都是**编译目标**而非宿主：mac 上交叉编译到
+/// Linux 时 `framework:` 一样是错的。
 pub fn 追加链接参数(
     命令: &mut std::process::Command,
     搜索路径: &[PathBuf],
     链接项列表: &[链接项],
     目标是mac: bool,
+    目标是windows: bool,
 ) -> Result<(), String> {
     for p in 搜索路径 {
         命令.arg(format!("-L{}", p.display()));
@@ -158,6 +171,9 @@ pub fn 追加链接参数(
     for 项 in 链接项列表 {
         match 项 {
             链接项::库名(名) => {
+                if 目标是windows && WINDOWS_内建库.contains(&名.as_str()) {
+                    continue;
+                }
                 命令.arg(format!("-l{}", 名));
             }
             链接项::文件(路径) => {
@@ -247,9 +263,42 @@ mod 测试 {
     #[test]
     fn 非mac目标遇到框架要报错() {
         let mut cmd = std::process::Command::new("true");
-        let e =
-            追加链接参数(&mut cmd, &[], &[链接项::框架("Accelerate".into())], false).unwrap_err();
+        let e = 追加链接参数(
+            &mut cmd,
+            &[],
+            &[链接项::框架("Accelerate".into())],
+            false,
+            false,
+        )
+        .unwrap_err();
         assert!(e.contains("macOS 专有"), "错误信息: {}", e);
+    }
+
+    /// Windows 目标上 `外部 "c"`/`外部 "m"` 不该发 -l（MSVC 没有 c.lib/m.lib），
+    /// 别的库名照发；非 Windows 目标一律照发。
+    #[test]
+    fn windows目标丢掉内建库名() {
+        let 项 = [
+            链接项::库名("c".into()),
+            链接项::库名("m".into()),
+            链接项::库名("qitest".into()),
+        ];
+
+        let mut win = std::process::Command::new("clang");
+        追加链接参数(&mut win, &[], &项, false, true).unwrap();
+        let win参数: Vec<String> = win
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(win参数, vec!["-lqitest".to_string()]);
+
+        let mut nix = std::process::Command::new("clang");
+        追加链接参数(&mut nix, &[], &项, false, false).unwrap();
+        let nix参数: Vec<String> = nix
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(nix参数, vec!["-lc", "-lm", "-lqitest"]);
     }
 
     #[test]

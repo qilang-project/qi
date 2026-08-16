@@ -41,7 +41,20 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="$SCRIPT_DIR/_产物"
 SRC_NAME="斐波那契.qi"
-EXE_NAME="斐波那契"
+
+# Windows（git-bash）：qi 产的是 斐波那契.exe，不是无后缀的 斐波那契。
+IS_WIN=0
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) IS_WIN=1 ;;
+esac
+if [ "$IS_WIN" -eq 1 ]; then
+  EXE_SUFFIX=".exe"
+else
+  EXE_SUFFIX=""
+fi
+EXE_NAME="斐波那契$EXE_SUFFIX"
+# .o 的名字与后缀无关（源文件名换后缀），两个平台都是 斐波那契.o
+OBJ_NAME="斐波那契.o"
 
 PASS=0
 FAIL=0
@@ -139,7 +152,7 @@ echo "-- 2. DWARF 元数据 --"
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 llvm-dwarfdump/dwarfdump，跳过元数据断言"
 else
-  "$DWARFDUMP" --debug-info "$EXE_NAME.o" >dwarf.txt 2>&1
+  "$DWARFDUMP" --debug-info "$OBJ_NAME" >dwarf.txt 2>&1
   # DW_AT_name 里的中文函数名（八进制转义形式）
   for fname in 斐波那契 累加 入口; do
     assert_contains "DW_AT_name 含中文函数名「${fname}」" dwarf.txt "\"$(to_octal "$fname")\""
@@ -157,7 +170,7 @@ else
   assert_contains "局部变量名「合计」入表" dwarf.txt "\"$(to_octal 合计)\""
 
   # 行号表非空 —— 断点全靠它
-  "$DWARFDUMP" --debug-line "$EXE_NAME.o" >dwarfline.txt 2>&1
+  "$DWARFDUMP" --debug-line "$OBJ_NAME" >dwarfline.txt 2>&1
   # 行号表的 file_names 也是八进制转义的
   assert_contains "行号表里有 ${SRC_NAME}" dwarfline.txt "$(to_octal 斐波那契).qi"
   assert_contains "行号表有真实行号条目（is_stmt 行）" dwarfline.txt "is_stmt"
@@ -172,7 +185,9 @@ echo "-- 3. lldb 端到端 --"
 # clang -g -O0 的 C 程序当对照——它停不下来就说明是环境问题，不是 qi 的问题，
 # 此时报 SKIP 而不是 FAIL（否则每个沙箱里跑的人都会看到一片假红）。
 LLDB_USABLE=0
-if [ -n "$LLDB" ] && command -v clang >/dev/null 2>&1; then
+if [ "$IS_WIN" -eq 1 ]; then
+  : # Windows 上不做预检，理由见下面的 SKIP 分支
+elif [ -n "$LLDB" ] && command -v clang >/dev/null 2>&1; then
   printf '#include <stdio.h>\nint f(int x){return x*2;}\nint main(){printf("%%d\\n", f(21));return 0;}\n' >对照.c
   if clang -g -O0 -o 对照 对照.c >/dev/null 2>&1; then
     "$LLDB" -b -o "breakpoint set -f 对照.c -l 2" -o run -o quit ./对照 >对照.log 2>&1
@@ -182,7 +197,14 @@ if [ -n "$LLDB" ] && command -v clang >/dev/null 2>&1; then
   fi
 fi
 
-if [ -z "$LLDB" ]; then
+if [ "$IS_WIN" -eq 1 ]; then
+  # Windows 平台性 SKIP（不是「懒得测」，是这条路在 Windows 上本来就不通）：
+  # qi 在 Windows 上把 DWARF 塞进 COFF，而 Windows 侧的调试器（VS / WinDbg /
+  # lldb 的 Windows 端）走的是 PDB/CodeView 那套，认不出 DWARF；
+  # runner 上也没有能控制进程的交互式调试器。
+  # 所以 Windows 只验收「元数据到底有没有」（第 2、4 节），断点/单步不假装能验。
+  skip "Windows：调试器端到端不验收 —— 产物是 DWARF-in-COFF，Windows 调试器走 PDB/CodeView；runner 无可用交互调试器"
+elif [ -z "$LLDB" ]; then
   skip "没有 lldb，跳过端到端调试验收"
 elif [ "$LLDB_USABLE" -eq 0 ]; then
   skip "lldb 在本环境无法控制进程（clang -g -O0 的对照程序也停不下来）——沙箱/签名/开发者模式问题，非 qi 缺陷"
@@ -236,7 +258,7 @@ fi
 # ---- 4. --无调试信息：产物里查不到调试条目 ------------------------------
 echo
 echo "-- 4. --无调试信息 开关 --"
-rm -f "$EXE_NAME" "$EXE_NAME.o"
+rm -f "$EXE_NAME" "$OBJ_NAME"
 if "$QI_BIN" -O none --无调试信息 compile "$SRC_NAME" >编译无调试.log 2>&1; then
   pass "--无调试信息 编译成功"
 else
@@ -254,7 +276,7 @@ fi
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 dwarfdump，跳过「无调试条目」断言"
 else
-  "$DWARFDUMP" --debug-info "$EXE_NAME.o" >dwarf无.txt 2>&1
+  "$DWARFDUMP" --debug-info "$OBJ_NAME" >dwarf无.txt 2>&1
   assert_not_contains "无调试信息产物里没有 qi 函数的 DWARF 条目" dwarf无.txt "DW_TAG_subprogram"
   assert_not_contains "无调试信息产物里没有编译单元" dwarf无.txt "DW_TAG_compile_unit"
 fi
@@ -264,7 +286,9 @@ fi
 echo
 echo "-- 5. 复合类型展开 --"
 CSRC="复合类型.qi"
-CEXE="复合类型"
+# 可执行名带平台后缀，.o 不带（源文件名换后缀，两平台一致）
+CEXE_OBJ="复合类型.o"
+CEXE="复合类型$EXE_SUFFIX"
 CLINE=31   # 查看() 里的 `返回 岁数;` —— 五种复合值此刻都活着
 
 if "$QI_BIN" -O none compile "$CSRC" >编译复合.log 2>&1; then
@@ -284,7 +308,7 @@ fi
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 dwarfdump，跳过复合类型元数据断言"
 else
-  "$DWARFDUMP" --debug-info "$CEXE.o" >dwarf复合.txt 2>&1
+  "$DWARFDUMP" --debug-info "$CEXE_OBJ" >dwarf复合.txt 2>&1
   assert_contains "有结构体条目 DW_TAG_structure_type" dwarf复合.txt "DW_TAG_structure_type"
   assert_contains "有字段条目 DW_TAG_member" dwarf复合.txt "DW_TAG_member"
   assert_contains "字段名「年龄」入表（中文原名）" dwarf复合.txt "\"$(to_octal 年龄)\""
@@ -339,7 +363,8 @@ fi
 echo
 echo "-- 6. 协程与闭包 --"
 ASRC="协程闭包.qi"
-AEXE="协程闭包"
+AEXE_OBJ="协程闭包.o"
+AEXE="协程闭包$EXE_SUFFIX"
 ALINE_CLOSURE=17   # 闭包体里的 `返回 局部和;`
 ALINE_CORO=10      # 协程里 `等待 睡眠(1);` 之后那行
 
@@ -360,7 +385,7 @@ fi
 if [ -z "$DWARFDUMP" ]; then
   skip "没有 dwarfdump，跳过协程/闭包元数据断言"
 else
-  "$DWARFDUMP" --debug-info "$AEXE.o" >dwarf协程.txt 2>&1
+  "$DWARFDUMP" --debug-info "$AEXE_OBJ" >dwarf协程.txt 2>&1
   assert_contains "闭包有 DISubprogram，名字可读（外层·闭包0）" dwarf协程.txt "\"$(to_octal 外层·闭包0)\""
   assert_contains "协程有 DISubprogram（中文名 慢加）" dwarf协程.txt "\"$(to_octal 慢加)\""
   assert_contains "协程的局部变量 中途 入表" dwarf协程.txt "\"$(to_octal 中途)\""
