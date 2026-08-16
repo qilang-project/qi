@@ -1,8 +1,0 @@
-外部 "qitest" {
-    函数 qi_test_triple(x: 整数): 整数;
-}
-
-函数 入口() {
-    变量 n: 整数 = qi_test_triple(14);
-    打印行(n);
-}
