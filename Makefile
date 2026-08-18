@@ -38,8 +38,54 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
+# ── LLVM 版本：必须是 21 ────────────────────────────────────────
+#
+# llvm-sys 的 crate 名（llvm-sys 211）钉的是 LLVM 21.1。装了别的大版本时
+# **它不会拒绝构建**，只会在生成 IR 时发出这一版的 intrinsic 签名，然后：
+#
+#   LLVM 模块校验失败: Intrinsic has incorrect return type! ptr @llvm.coro.end
+#
+# 于是 `make ci` 挂掉 17 条协程/调试信息断言，看起来像真 bug，实际上只是
+# 本机装了 LLVM 22。这个错误信息里没有一个字提到版本。
+#
+# 更坑的是 homebrew：`llvm@21` 和 `llvm@22` 是**同一个 llvm formula 的别名**，
+# 升级到 22 之后两个别名都被指向 22.1.8 —— `/opt/homebrew/opt/llvm@21`
+# 这个名字直接在撒谎。所以下面按 Cellar 里的**真实版本目录**找，不认别名。
+#
+# mac 上还有一层：21.1.6 的 llvm-config 链的是 libz3.4.15.dylib，而 brew 的
+# z3 早升到 4.16，于是 llvm-config 一跑就 dyld 报 Library not loaded。
+# 补个软链就好（brew 升级 z3 之后可能要再补一次）：
+#   ln -sfn /opt/homebrew/Cellar/z3/4.16.0/lib/libz3.dylib \
+#           /opt/homebrew/opt/z3/lib/libz3.4.15.dylib
+#
+# 显式设了 LLVM_SYS_211_PREFIX 就用它（CI 就是这么干的），不去猜。
+ifeq ($(origin LLVM_SYS_211_PREFIX), undefined)
+  LLVM21 := $(firstword $(wildcard /opt/homebrew/Cellar/llvm/21.*) \
+                        $(wildcard /opt/homebrew/Cellar/llvm@21/21.*) \
+                        $(wildcard /usr/lib/llvm-21) \
+                        $(wildcard /usr/local/opt/llvm@21))
+  ifneq ($(LLVM21),)
+    export LLVM_SYS_211_PREFIX := $(LLVM21)
+  endif
+endif
+
+# 版本对不上就**当场停下**，别让它跑到 17 条看不懂的断言失败那儿去。
+check-llvm:
+	@if [ -n "$$LLVM_SYS_211_PREFIX" ]; then cfg="$$LLVM_SYS_211_PREFIX/bin/llvm-config"; \
+	  else cfg=llvm-config; fi; \
+	  v=$$("$$cfg" --version 2>/dev/null); \
+	  case "$$v" in \
+	    21.*) echo "LLVM $${v}  ($${LLVM_SYS_211_PREFIX:-PATH})" ;; \
+	    "") echo "找不到 llvm-config。装 LLVM 21，或设 LLVM_SYS_211_PREFIX"; exit 1 ;; \
+	    *) echo "LLVM 版本不对：找到 $${v}，要 21.x"; \
+	       echo "  设 LLVM_SYS_211_PREFIX 指向 21，比如："; \
+	       echo "    export LLVM_SYS_211_PREFIX=/opt/homebrew/Cellar/llvm/21.1.6"; \
+	       echo "  （注意 /opt/homebrew/opt/llvm@21 可能是指向 22 的别名，不可信）"; \
+	       exit 1 ;; \
+	  esac
+
 .PHONY: help build runtime test regress ffi-link bindgen examples debuginfo grpc gui-smoke check lint-strict ci install \
-        release push-release clean version
+        release push-release clean version check-llvm
 
 help:
 	@awk '/^# 常用：/{f=1;next} /^$$/{f=0} f{sub(/^#[ ]?/,"");print}' $(MAKEFILE_LIST)
@@ -137,7 +183,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check test regress ffi-link bindgen examples debuginfo grpc
+ci: check-llvm check test regress ffi-link bindgen examples debuginfo grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建
