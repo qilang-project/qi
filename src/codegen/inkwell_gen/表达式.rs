@@ -7,6 +7,7 @@ use super::后端;
 use super::类型::Qi类型;
 use super::类型检查::推断表达式类型;
 use crate::parser::ast::{AstNode, BinaryOperator, LiteralValue, UnaryOperator};
+use inkwell::types::BasicMetadataTypeEnum;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
 use inkwell::{FloatPredicate, IntPredicate};
 
@@ -3444,15 +3445,33 @@ impl<'ctx> 后端<'ctx> {
             .module
             .get_function(rtname)
             .ok_or_else(|| format!("运行时函数未声明: {}", rtname))?;
+        let 形参 = f.get_type().get_param_types();
         let mut args: Vec<BasicMetadataValueEnum> = Vec::new();
         let mut 弧待释放: Vec<(BasicValueEnum, Qi类型, &AstNode)> = Vec::new();
-        for a in arguments {
+        for (下标, a) in arguments.iter().enumerate() {
             let (v, t) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "内建实参无值".to_string())?;
             if t == Qi类型::字符串 {
                 弧待释放.push((v, t, a)); // 弧消费后释放 内部再判 OWNED
             }
+            // 比较表达式产出的是 **i1**，而 qi_runtime_int_to_string 这类要 i64。
+            // 原来直接 push 进去，发出来的 IR 是
+            //     call ptr @qi_runtime_int_to_string(i1 %icmp)
+            // LLVM 模块校验器当场拒绝，用户看到的是一坨 IR，完全看不出是自己
+            // 写了 `整数转字符串(x >= 0)`。类型检查器认为 布尔 可以当整数用
+            // （语言里到处拿 1/0 当真假），那 codegen 就有义务把它零扩展上去。
+            let v = match (形参.get(下标), v) {
+                (Some(BasicMetadataTypeEnum::IntType(形)), BasicValueEnum::IntValue(实))
+                    if 实.get_type().get_bit_width() < 形.get_bit_width() =>
+                {
+                    self.builder
+                        .build_int_z_extend(实, *形, "内建实参扩宽")
+                        .map_err(|e| e.to_string())?
+                        .into()
+                }
+                _ => v,
+            };
             args.push(v.into());
         }
         let cs = self

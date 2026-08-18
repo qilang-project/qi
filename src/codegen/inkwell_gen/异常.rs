@@ -50,15 +50,44 @@ impl<'ctx> 后端<'ctx> {
 
     /// 幂等声明 libc `setjmp`（带 returns_twice —— LLVM 必须知道它会返回两次，
     /// 否则跨 setjmp 的寄存器缓存在 longjmp 回跳路径上是垃圾）。
+    /// 目标是 Windows 吗（从 module 的 triple 判，交叉编译也对）。
+    fn 目标是Windows(&self) -> bool {
+        self.module
+            .get_triple()
+            .as_str()
+            .to_string_lossy()
+            .contains("windows")
+    }
+
     fn 取setjmp(&mut self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("setjmp") {
+        // ── Windows 上 setjmp 不是函数，是宏 ──────────────────────────
+        //
+        // MSVC 的 <setjmp.h> 里 setjmp(env) 展开成 _setjmp(env, _AddressOfReturnAddress())
+        // —— **两个参数**。按 Unix 那样 declare i32 @setjmp(ptr) 发出去，
+        // 第二个参数（帧指针）是寄存器里的垃圾，缓冲区里存的帧记录也就是垃圾；
+        // 等到 longjmp 拿它去做 SEH unwind（RtlUnwindEx），进程当场死于
+        // STATUS_INVALID_HANDLE (0xC0000008)。
+        //
+        // 症状：Windows 上任何 尝试/捕获 程序，`抛出` 那一刻进程消失，
+        // 捕获块一次都没跑过，退出码 -1073741784。mac/Linux 一切正常。
+        //
+        // **帧指针传 NULL** 是 MSVC 有意支持的一条路：longjmp 见 Frame 为 0
+        // 就跳过 unwind，只恢复寄存器。那正是这里要的语义 —— qi 的 抛出 是
+        // 裸跳转，本来就没有 SEH 帧要展开（见 exception_ffi.rs 里
+        // throw_with 的注释：longjmp 那条路径上一个拥有堆内存的局部都不许有）。
+        let win = self.目标是Windows();
+        let 名 = if win { "_setjmp" } else { "setjmp" };
+        if let Some(f) = self.module.get_function(名) {
             return f;
         }
         let i32t = self.ctx.i32_type();
         let ptrt = self.ctx.ptr_type(AddressSpace::default());
-        let f = self
-            .module
-            .add_function("setjmp", i32t.fn_type(&[ptrt.into()], false), None);
+        let 签名 = if win {
+            i32t.fn_type(&[ptrt.into(), ptrt.into()], false)
+        } else {
+            i32t.fn_type(&[ptrt.into()], false)
+        };
+        let f = self.module.add_function(名, 签名, None);
         let kind = inkwell::attributes::Attribute::get_named_enum_kind_id("returns_twice");
         f.add_attribute(
             inkwell::attributes::AttributeLoc::Function,
@@ -191,9 +220,16 @@ impl<'ctx> 后端<'ctx> {
             .try_as_basic_value()
             .basic()
             .ok_or_else(|| "alloc_frame 未返回".to_string())?;
+        // Windows 的 _setjmp 要第二个参数（帧指针），传 NULL = 不做 unwind
+        let setjmp实参: Vec<inkwell::values::BasicMetadataValueEnum> = if self.目标是Windows() {
+            let 空 = self.ctx.ptr_type(AddressSpace::default()).const_null();
+            vec![buf.into(), 空.into()]
+        } else {
+            vec![buf.into()]
+        };
         let rc = self
             .builder
-            .build_call(setjmp_fn, &[buf.into()], "exc.rc")
+            .build_call(setjmp_fn, &setjmp实参, "exc.rc")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()
