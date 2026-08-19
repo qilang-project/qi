@@ -3440,6 +3440,15 @@ impl ModuleRegistry {
             "整数",                   // 返回长度
         ));
 
+        // 按显示形态取值 —— 通用表格渲染要的就是它：不必先知道列是什么类型。
+        // 只有 获取字符串 的话，数字列一律渲染成空白，而空白看着像「没数据」。
+        json_module.add_function(ModuleFunction::new(
+            "取显示值",
+            "qi_json_get_display",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串",
+        ));
+
         // 对象的键列表 —— 没有它就没法遍历一个对象（合并载荷、导出字段都要）
         json_module.add_function(ModuleFunction::new(
             "键列表",
