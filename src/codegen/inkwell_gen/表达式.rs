@@ -506,17 +506,77 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
-        // 逻辑与/或：位运算即可（操作数为 i1）
+        // 逻辑与/或：**短路**。
+        //
+        // 曾经这里是一句 build_and / build_or —— 两侧都先求值再按位算。
+        // 对纯值表达式没区别，可只要右边有副作用就露馅，而最常见的副作用
+        // 恰恰是「守卫」这个惯用法：
+        //
+        //     变量 d: 整数 = 0;
+        //     如果 (d != 0 与 (100 / d) > 5) { … }   // 除零，退出码 None
+        //
+        // 左边已经判定是假，右边照样求值，于是这条教科书写法直接崩。
+        // `或` 同理：`如果 (缓存命中 或 去查数据库() > 0)` 每次都会查库。
+        //
+        // 这是差分模糊测试（tests/差分模糊.rs，种子 777024）跑出来的第一个
+        // 真发现：生成的程序比参考求值器多打印了一次函数副作用。
+        //
+        // 改法是标准的控制流降级：左边为真/假就直接跳过右边，用 phi 收口。
+        //   与：left ? eval(right) : false
+        //   或：left ? true : eval(right)
         if b.operator == 与 || b.operator == 或 {
-            let l = self.生成为i1(&b.left)?;
-            let r = self.生成为i1(&b.right)?;
-            let v = if b.operator == 与 {
-                self.builder.build_and(l, r, "and")
+            let 是与 = b.operator == 与;
+            let 左值 = self.生成为i1(&b.left)?;
+            let 当前函数 = self
+                .builder
+                .get_insert_block()
+                .and_then(|bb| bb.get_parent())
+                .ok_or_else(|| "逻辑短路：不在函数体内".to_string())?;
+
+            let 右块 = self.ctx.append_basic_block(当前函数, "短路.右");
+            let 汇合块 = self.ctx.append_basic_block(当前函数, "短路.汇合");
+
+            // 左操作数可能自己就是一串控制流（嵌套的 与/或），phi 要认的是
+            // **求完左边之后所在的那个块**，不是进函数时那个。
+            let 左结束块 = self
+                .builder
+                .get_insert_block()
+                .ok_or_else(|| "逻辑短路：左操作数后无插入点".to_string())?;
+            if 是与 {
+                self.builder
+                    .build_conditional_branch(左值, 右块, 汇合块)
+                    .map_err(|e| e.to_string())?;
             } else {
-                self.builder.build_or(l, r, "or")
+                self.builder
+                    .build_conditional_branch(左值, 汇合块, 右块)
+                    .map_err(|e| e.to_string())?;
             }
-            .map_err(|e| e.to_string())?;
-            return Ok((v.into(), Qi类型::布尔));
+
+            self.builder.position_at_end(右块);
+            let 右值 = self.生成为i1(&b.right)?;
+            // 同理：右操作数也可能建了块，phi 认的是它结束时所在的块
+            let 右结束块 = self
+                .builder
+                .get_insert_block()
+                .ok_or_else(|| "逻辑短路：右操作数后无插入点".to_string())?;
+            self.builder
+                .build_unconditional_branch(汇合块)
+                .map_err(|e| e.to_string())?;
+
+            self.builder.position_at_end(汇合块);
+            let i1 = self.ctx.bool_type();
+            let phi = self
+                .builder
+                .build_phi(i1, if 是与 { "与" } else { "或" })
+                .map_err(|e| e.to_string())?;
+            // 短路那条边带的是定值：与 短路出 假，或 短路出 真
+            let 短路值 = if 是与 {
+                i1.const_zero()
+            } else {
+                i1.const_all_ones()
+            };
+            phi.add_incoming(&[(&短路值, 左结束块), (&右值, 右结束块)]);
+            return Ok((phi.as_basic_value(), Qi类型::布尔));
         }
 
         // 位运算：& | ^ << >>（仅整数合法）
