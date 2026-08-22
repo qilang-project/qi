@@ -81,6 +81,8 @@ check_one 36_重载多候选实参错.qi 'TypeMismatch'
 # ── 2026-08：注册表 ptr 返回=字符串（闪购超卖假象的根因）──
 check_one 37_模块字符串返回赋整数.qi 'TypeMismatch'
 check_one 38_模块字符串返回传整数形参.qi 'TypeMismatch'
+# ── 2026-08：数组元素门槛从「直接字面量」放宽到「字面量来源」──
+check_one 39_数组元素字面量变量混族.qi 'TypeMismatch'
 
 rm -f /tmp/红码断言.ll
 echo ""

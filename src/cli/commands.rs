@@ -1380,21 +1380,17 @@ impl Cli {
             }
         }
 
-        // 语义类型检查（宽容默认，warning 不挡退出码）。
-        // 只对 包 主程序 的入口跑：包成员文件单独作入口时，同包兄弟文件不进
-        // 编译单元，会产生「未定义」伪影（与 codegen 行为同源）——降级跳过。
-        // 全语料校准：302 绿码 0 误报 / 36 红码全抓（qi/tests/类型检查{绿码,红码}）。
-        // QI_TYPECHECK=off 可关；QI_TYPECHECK=strict 时警告升级为失败。
+        // 语义类型检查。只对 包 主程序 的入口跑：包成员文件单独作入口时，同包
+        // 兄弟文件不进编译单元，会产生「未定义」伪影（与 codegen 行为同源）——降级跳过。
+        // 全语料校准：432 个入口 0 误报 / 39 红码全抓（qi/tests/类型检查{绿码,红码}）。
+        //
+        // 档位与 compile 路径（lib.rs collect_programs_带检查）保持一致：
+        // 未设/strict = 失败；warn/1 = 只警告；off = 不跑。两条路径必须同档，
+        // 否则 `qi check` 过了 `qi run` 却编不过，比不检查还难受。
         let mut 类型警告数 = 0usize;
-        if all_passed
-            && std::env::var("QI_TYPECHECK")
-                .map(|v| v == "off")
-                .unwrap_or(false)
-                == false
-        {
-            let strict = std::env::var("QI_TYPECHECK")
-                .map(|v| v == "strict")
-                .unwrap_or(false);
+        let 档位 = std::env::var("QI_TYPECHECK").unwrap_or_else(|_| "strict".to_string());
+        if all_passed && 档位 != "off" {
+            let strict = 档位 == "strict";
             let compiler = crate::QiCompiler::with_config(config.clone());
             for file in &files {
                 // 导入解析失败等一律静默跳过——check 的语义警告是尽力而为。
@@ -1445,10 +1441,8 @@ impl Cli {
         if all_passed {
             if !config.verbose {
                 if 类型警告数 > 0 {
-                    println!(
-                        "语法检查通过；类型警告 {} 条（QI_TYPECHECK=strict 可升级为失败）",
-                        类型警告数
-                    );
+                    // 走到这儿说明档位是 warn/1（strict 已在上面返回失败）
+                    println!("语法检查通过；类型警告 {} 条", 类型警告数);
                 } else {
                     println!("所有文件语法检查通过");
                 }

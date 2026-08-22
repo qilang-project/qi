@@ -163,20 +163,33 @@ impl QiCompiler {
             }
         }
 
-        // 【语义类型检查·度量阶段】QI_TYPECHECK=1 时非致命地对**整个编译单元**
-        // 跑一遍宽容语义分析（semantic::单元检查：两遍——先跨文件收集声明，再逐
-        // Program 检查），逐条打印结构化错误，绝不中止 codegen。设计原则与沉默
-        // 面见 qi/src/semantic/单元检查.rs 模块文档；红码合同见
-        // qi/tests/类型检查红码/。无 QI_TYPECHECK 环境变量时零行为变化。
-        // 取值语义：未设/off=不跑；strict=报错致命（中止编译）；其他值（如 1）=只打印。
-        // 【硬错·永远拦】跟 QI_TYPECHECK 档位无关的那一类：**证明是错**的写法。
+        // 【语义类型检查】对**整个编译单元**跑一遍宽容语义分析（semantic::单元检查：
+        // 两遍——先跨文件收集声明，再逐 Program 检查）。设计原则与沉默面见
+        // qi/src/semantic/单元检查.rs 模块文档；红码合同见 qi/tests/类型检查红码/。
         //
+        // 取值语义：未设/strict = 报错致命（默认）；warn/1 = 只打印不中止；off = 不跑。
+        //
+        // ── 2026-08-22：默认档位从「不跑」抬到「致命」 ──────────────────
+        //
+        // 这个开关原先默认关着，理由写在这儿：「仓库里还有一批历史写法过不了，
+        // 现在就全上会让所有项目当场编不过」。那批在 07/08 两轮补全里清完了，
+        // 抬档前重新量过全语料：
+        //
+        //   qi/示例          211 个入口 → 报错 0 条
+        //   项目/各包 examples 221 个入口 → 报错 4 条，全在 项目/学外语/出一课.qi，
+        //                                  且全是**真错**（实参个数不匹配），
+        //                                  那文件本来就编不过
+        //
+        // 关着的代价是实测出来的，不是推测：`变量 歪: 字符串 = "x"` 传给 整数 形参、
+        // 或经变量返回错类型，检查器**能抓**（红码 06/07 一直绿着），而默认不跑
+        // 就一路放到 codegen —— 跑出来是**退出码 0、打印字符串的堆地址**，
+        // 或者直接段错误。检查写好了却关着，等于白写。
+        //
+        // 【硬错·永远拦】跟档位无关的那一类：**证明是错**的写法。
         // 目前只有「已知结构体喂给标量形参」——`取查询(上下文值, "k")` 这种。
         // 它零误报（只认本单元声明过的结构体名），而放过去的代价是编译通过、
         // 运行时静默返回空值：真事是「保存后『已保存』永远不出现，cookie 却存对了」，
-        // 没有任何报错，查了很久。这种错不该只给个警告让人带到线上。
-        //
-        // 别的检查仍是度量性质（默认不跑）—— 仓库里有一批历史写法过不了。
+        // 没有任何报错，查了很久。off 档也拦它。
         if 跑类型检查 && std::env::var("QI_TYPECHECK").as_deref() != Ok("off") {
             let 硬 = crate::semantic::单元检查::硬错检查(&programs);
             if !硬.is_empty() {
@@ -191,25 +204,28 @@ impl QiCompiler {
             }
         }
 
-        match std::env::var("QI_TYPECHECK") {
-            Ok(v) if v != "off" && 跑类型检查 => {
-                let 错误 = crate::semantic::分析编译单元(&programs);
-                for e in &错误 {
-                    // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
-                    let s: String = format!("{:?}", e).chars().take(2000).collect();
-                    eprintln!("[类型检查] 报错: {}", s);
-                }
-                if !错误.is_empty() {
-                    eprintln!("[类型检查] 共 {} 条报错", 错误.len());
-                    if v == "strict" {
-                        return Err(CompilerError::Codegen(format!(
-                            "类型检查失败（QI_TYPECHECK=strict）：{} 条报错",
-                            错误.len()
-                        )));
-                    }
+        // 档位：未设 → strict。off 在上面的硬错块之后就不再往下走。
+        let 档位 = std::env::var("QI_TYPECHECK").unwrap_or_else(|_| "strict".to_string());
+        if 跑类型检查 && 档位 != "off" {
+            let 错误 = crate::semantic::分析编译单元(&programs);
+            for e in &错误 {
+                // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
+                let s: String = format!("{:?}", e).chars().take(2000).collect();
+                eprintln!("[类型检查] 报错: {}", s);
+            }
+            if !错误.is_empty() {
+                eprintln!("[类型检查] 共 {} 条报错", 错误.len());
+                // warn / 1 / 其它值 = 只打印；strict（含默认）= 致命
+                if 档位 == "strict" {
+                    return Err(CompilerError::Codegen(format!(
+                        "类型检查失败：{} 条报错。\n\
+                         确认是检查器误报可以先用 QI_TYPECHECK=warn 只打印、\n\
+                         QI_TYPECHECK=off 完全关掉 —— 但请连同复现代码开一个 issue，\n\
+                         误报是检查器的 bug，不是写法问题。",
+                        错误.len()
+                    )));
                 }
             }
-            _ => {}
         }
 
         Ok(programs)
