@@ -86,6 +86,8 @@ check_one 39_数组元素字面量变量混族.qi 'TypeMismatch'
 # ── 2026-08：注册表区分「真整数」与「句柄」，整数返回不再一律沉默 ──
 check_one 40_时间整数返回赋字符串.qi 'TypeMismatch'
 check_one 41_字符串下标返回赋字符串.qi 'TypeMismatch'
+check_one 42_句柄返回赋字符串.qi 'TypeMismatch'
+check_one 43_列表大小赋字符串.qi 'TypeMismatch'
 
 rm -f /tmp/红码断言.ll
 echo ""
