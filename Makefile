@@ -14,9 +14,10 @@
 #   make bindgen          `qi 绑定` 端到端（zlib/libm/手写头文件 → 真链接真调用）
 #   make examples         示例冒烟
 #   make debuginfo        DWARF 调试信息验收（实跑 lldb 断点/单步/backtrace）
+#   make fuzz             差分模糊（参考求值器 / 无优化 / 最大优化 三方比对）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
 #   make gui-smoke        GUI 冒烟（要显示环境 + 带 gui feature 的运行时，不进 ci）
-#   make ci               CI 跑的全部（= check test regress ffi-link bindgen examples debuginfo grpc）
+#   make ci               CI 跑的全部（= check test regress ffi-link bindgen examples debuginfo fuzz grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -84,7 +85,7 @@ check-llvm:
 	       exit 1 ;; \
 	  esac
 
-.PHONY: help build runtime test regress ffi-link bindgen examples debuginfo grpc gui-smoke check lint-strict ci install \
+.PHONY: help build runtime test regress ffi-link bindgen examples debuginfo fuzz grpc gui-smoke check lint-strict ci install \
         release push-release clean version check-llvm
 
 help:
@@ -140,6 +141,20 @@ examples: build $(RUNTIME_LIB)
 debuginfo: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/调试信息/断言.sh $(QI)
 
+# 差分模糊：随机生成良类型程序，比 参考求值器 / 无优化 / 最大优化 三份答案。
+# 单列一条并且 cargo test 里 #[ignore]，是因为每个程序要编译链接**两次**，
+# 12 个程序 ~20 秒，比整套单测（1.8 秒）还慢一个量级 —— 混进 `make test`
+# 会让所有人以后都觉得单测慢。
+#
+# 数量默认 12、种子固定：CI 每次跑同一批程序，红了原样复现。想扩覆盖面就
+# 改种子，而不是让它每次随机 —— 随机的红一次就再也复现不出来。
+#   QI_FUZZ_COUNT=300 QI_FUZZ_SEED=777000 make fuzz
+FUZZ_COUNT ?= 12
+FUZZ_SEED ?= 20260822
+fuzz: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_FUZZ_COUNT=$(FUZZ_COUNT) QI_FUZZ_SEED=$(FUZZ_SEED) \
+	  cargo test --release --test 差分模糊 -- --ignored --nocapture
+
 GRPC_DIR ?= $(CURDIR)/../qi-grpc
 grpc: build $(RUNTIME_LIB)
 	@if [ -x "$(GRPC_DIR)/跑验收.sh" ]; then \
@@ -183,7 +198,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm check test regress ffi-link bindgen examples debuginfo grpc
+ci: check-llvm check test regress ffi-link bindgen examples debuginfo fuzz grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建
