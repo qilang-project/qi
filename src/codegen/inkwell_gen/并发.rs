@@ -17,36 +17,62 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, Poi
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 
+/// 无限定并发原语表：名字 → (FFI 名, 参数种类, 返回是否句柄ptr)。
+/// 种类：'h'=句柄ptr、'i'=i32 整数、'l'=i64 整数。
+///
+/// ⚠ 表里有 `完成` / `加锁` / `解锁` / `获取时间` / `设置超时` 这类**极短的裸名字**，
+/// 用户随手就会撞上。调用点（表达式.rs 生成函数调用）已经用 用户定义了同名函数
+/// 挡在前面：本编译单元声明过同名函数就根本不查这张表。往表里加名字时请掂量一下：
+/// 撞上的代价曾经是段错误，不是报错。
+///
+/// 单独抽成自由函数，是为了让「实参个数不符」的诊断（表达式.rs 未定义分支）
+/// 跟生成走**同一张表**，不会各抄一份然后漂移。
+pub(super) fn 同步内建表(callee: &str) -> Option<(&'static str, &'static [char], bool)> {
+    let r: (&'static str, &'static [char], bool) = match callee {
+        "创建等待组" | "新建等待组" => ("qi_runtime_waitgroup_create", &[], true),
+        "等待组增加" | "等待组添加" | "添加等待" => {
+            ("qi_runtime_waitgroup_add", &['h', 'i'], false)
+        }
+        "等待组完成" | "完成" => ("qi_runtime_waitgroup_done", &['h'], false),
+        "等待组等待" => ("qi_runtime_waitgroup_wait", &['h'], false),
+        "创建互斥锁" | "新建互斥锁" => ("qi_runtime_mutex_create", &[], true),
+        "互斥锁加锁" | "互斥锁锁定" | "加锁" => {
+            ("qi_runtime_mutex_lock", &['h'], false)
+        }
+        "互斥锁解锁" | "解锁" => ("qi_runtime_mutex_unlock", &['h'], false),
+        "尝试加锁" => ("qi_runtime_mutex_trylock", &['h'], false),
+        "获取时间" => ("qi_runtime_get_time_ms", &[], false),
+        "设置超时" => ("qi_runtime_set_timeout", &['l'], false),
+        "创建定时器" => ("qi_runtime_timer_create", &['l'], true),
+        "定时器过期" => ("qi_runtime_timer_expired", &['h'], false),
+        "停止定时器" => ("qi_runtime_timer_stop", &['h'], false),
+        _ => return None,
+    };
+    Some(r)
+}
+
 impl<'ctx> 后端<'ctx> {
     /// 同步 / 定时器内建（无模块限定的并发原语，如 创建等待组()、等待组完成(wg)）。
     /// 返回 None 表示不是这类内建。句柄一律按 整数(i64) 暴露给 Qi；FFI 侧句柄参数用 ptr。
+    /// 名字表见 同步内建表（含「短名字易撞」的告诫）。
     pub(super) fn 生成同步内建(
         &mut self,
         callee: &str,
         arguments: &[AstNode],
     ) -> Result<Option<Option<(BasicValueEnum<'ctx>, Qi类型)>>, String> {
-        // (FFI 名, 参数是否为句柄ptr的布尔序列, 额外整数参数个数, 返回是否句柄ptr)
-        // 简化：用 (FFI, 参数种类列表, 返回种类)。种类: 'h'=句柄ptr, 'i'=i32整数, 'l'=i64整数, 'r'=返回ptr句柄, 'v'=i32/i64返回
-        let (ffi, 参数种类, 返回句柄): (&str, &[char], bool) = match callee {
-            "创建等待组" | "新建等待组" => ("qi_runtime_waitgroup_create", &[], true),
-            "等待组增加" | "等待组添加" | "添加等待" => {
-                ("qi_runtime_waitgroup_add", &['h', 'i'], false)
-            }
-            "等待组完成" | "完成" => ("qi_runtime_waitgroup_done", &['h'], false),
-            "等待组等待" => ("qi_runtime_waitgroup_wait", &['h'], false),
-            "创建互斥锁" | "新建互斥锁" => ("qi_runtime_mutex_create", &[], true),
-            "互斥锁加锁" | "互斥锁锁定" | "加锁" => {
-                ("qi_runtime_mutex_lock", &['h'], false)
-            }
-            "互斥锁解锁" | "解锁" => ("qi_runtime_mutex_unlock", &['h'], false),
-            "尝试加锁" => ("qi_runtime_mutex_trylock", &['h'], false),
-            "获取时间" => ("qi_runtime_get_time_ms", &[], false),
-            "设置超时" => ("qi_runtime_set_timeout", &['l'], false),
-            "创建定时器" => ("qi_runtime_timer_create", &['l'], true),
-            "定时器过期" => ("qi_runtime_timer_expired", &['h'], false),
-            "停止定时器" => ("qi_runtime_timer_stop", &['h'], false),
-            _ => return Ok(None),
+        let Some((ffi, 参数种类, 返回句柄)) = 同步内建表(callee) else {
+            return Ok(None);
         };
+
+        // 实参个数对不上就**不是**这个内建。以前直接 `arguments[i]` 索引，少传一个
+        // 参数（`等待组增加(组)` 忘了第二个）就是编译器 panic：
+        //   index out of bounds: the len is 1 but the index is 1
+        // ——报错里连函数名和行号都没有。让路给后面的解析链（用户函数 / 无限定
+        // 标准库回退，如 3 参的 工具控制.完成）；全都不认时，表达式.rs 的未定义
+        // 分支会再查一次这张表，报出「需要 N 个实参」。
+        if arguments.len() != 参数种类.len() {
+            return Ok(None);
+        }
 
         let i32t = self.ctx.i32_type();
         let i64t = self.ctx.i64_type();
