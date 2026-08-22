@@ -83,6 +83,9 @@ check_one 37_模块字符串返回赋整数.qi 'TypeMismatch'
 check_one 38_模块字符串返回传整数形参.qi 'TypeMismatch'
 # ── 2026-08：数组元素门槛从「直接字面量」放宽到「字面量来源」──
 check_one 39_数组元素字面量变量混族.qi 'TypeMismatch'
+# ── 2026-08：注册表区分「真整数」与「句柄」，整数返回不再一律沉默 ──
+check_one 40_时间整数返回赋字符串.qi 'TypeMismatch'
+check_one 41_字符串下标返回赋字符串.qi 'TypeMismatch'
 
 rm -f /tmp/红码断言.ll
 echo ""
