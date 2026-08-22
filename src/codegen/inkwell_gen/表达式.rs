@@ -686,8 +686,24 @@ impl<'ctx> 后端<'ctx> {
             };
             Ok((v, Qi类型::浮点数))
         } else {
-            let li = lv.into_int_value();
-            let ri = rv.into_int_value();
+            let mut li = lv.into_int_value();
+            let mut ri = rv.into_int_value();
+            // 位宽对齐：布尔是 i1，整数是 i64，混在一起 LLVM 不收。
+            //
+            // 「布尔(i1) 按隐式加宽规则 zext 成 i64 参与」这条规则位运算和逻辑
+            // 运算都照做了（见 生成位运算 / 891 行附近），唯独算术与比较这条
+            // 路径漏了，于是 `变量 n: 整数 = 1; 变量 b: 布尔 = 真; n == b` 发出
+            //     icmp eq i64 %n1, i1 %b2
+            // ——非法 IR。verifier 兜得住，但报的是一句没有源码定位的英文
+            // 「Both operands to ICmp instruction are not of the same type!」。
+            //
+            // 让它可比而不是报错，是因为 qi 惯用整数当布尔（`字符串::等于(甲,乙) == 1`
+            // 满仓库都是），真=1/假=0 的 zext 正是这套惯用法的语义。
+            // 两侧同宽（含 布尔==布尔）时 整数加宽到i64 原样返回，不多发指令。
+            if li.get_type().get_bit_width() != ri.get_type().get_bit_width() {
+                li = self.整数加宽到i64(li)?;
+                ri = self.整数加宽到i64(ri)?;
+            }
             let v: BasicValueEnum = match b.operator {
                 加 => self
                     .builder
