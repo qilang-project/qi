@@ -207,14 +207,49 @@ impl QiCompiler {
         // 档位：未设 → strict。off 在上面的硬错块之后就不再往下走。
         let 档位 = std::env::var("QI_TYPECHECK").unwrap_or_else(|_| "strict".to_string());
         if 跑类型检查 && 档位 != "off" {
-            let 错误 = crate::semantic::分析编译单元(&programs);
-            for e in &错误 {
-                // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
-                let s: String = format!("{:?}", e).chars().take(2000).collect();
-                eprintln!("[类型检查] 报错: {}", s);
+            // 分组而不是拉平：span 是各自文件内的字节偏移，只有 entry（组 0，
+            // 即 source_file 本身）能拿它换算行列。被导入模块的错误（组 1+）
+            // 在这一层拿不到源码路径，退化成不带行列。
+            let 错误组 = crate::semantic::分析编译单元_分组(&programs);
+            let 总数: usize = 错误组.iter().map(|g| g.len()).sum();
+            let 源码 = if 总数 > 0 {
+                std::fs::read_to_string(source_file).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            for (组号, 组) in 错误组.iter().enumerate() {
+                for e in 组 {
+                    // 行内三样都要：
+                    //   变体名 —— 红码断言 grep 的就是它（TypeMismatch/UndefinedVariable…），
+                    //             换成纯人话会让 tests/类型检查红码/断言.sh 整套失效；
+                    //   行列   —— 抬成默认致命之后，报错得能点开；
+                    //   人话   —— Debug 原样（`TypeMismatch { expected: "…", span: Span
+                    //             { start: 336, end: 348 } }`）不是给人读的。
+                    let 类别 = {
+                        let d = format!("{:?}", e);
+                        d.split([' ', '{']).next().unwrap_or("类型检查").to_string()
+                    };
+                    // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
+                    let 文案: String = e.渲染人话().chars().take(500).collect();
+                    let span = e.span();
+                    // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
+                    if 组号 == 0 && !(span.start == 0 && span.end == 0) {
+                        let (行, 列) = crate::parser::位置::偏移转行列(&源码, span.start);
+                        eprintln!(
+                            "[类型检查] 报错: {} {}:{}:{} {}",
+                            类别,
+                            source_file.display(),
+                            行,
+                            列,
+                            文案
+                        );
+                    } else {
+                        eprintln!("[类型检查] 报错: {} {}", 类别, 文案);
+                    }
+                }
             }
-            if !错误.is_empty() {
-                eprintln!("[类型检查] 共 {} 条报错", 错误.len());
+            if 总数 > 0 {
+                eprintln!("[类型检查] 共 {} 条报错", 总数);
                 // warn / 1 / 其它值 = 只打印；strict（含默认）= 致命
                 if 档位 == "strict" {
                     return Err(CompilerError::Codegen(format!(
@@ -222,7 +257,7 @@ impl QiCompiler {
                          确认是检查器误报可以先用 QI_TYPECHECK=warn 只打印、\n\
                          QI_TYPECHECK=off 完全关掉 —— 但请连同复现代码开一个 issue，\n\
                          误报是检查器的 bug，不是写法问题。",
-                        错误.len()
+                        总数
                     )));
                 }
             }
