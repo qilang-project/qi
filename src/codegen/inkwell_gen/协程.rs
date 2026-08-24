@@ -141,8 +141,9 @@ use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;
 use inkwell::context::AsContextRef;
 use inkwell::llvm_sys::core::{
-    LLVMAddFunction, LLVMBuildCall2, LLVMConstNull, LLVMFunctionType, LLVMGetNamedFunction,
-    LLVMTokenTypeInContext,
+    LLVMAddFunction, LLVMBuildCall2, LLVMConstNull, LLVMFunctionType, LLVMGetIntrinsicDeclaration,
+    LLVMGetNamedFunction, LLVMGetReturnType, LLVMIntrinsicGetType, LLVMLookupIntrinsicID,
+    LLVMTokenTypeInContext, LLVMVoidTypeInContext,
 };
 use inkwell::llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
 use inkwell::types::AsTypeRef;
@@ -1000,16 +1001,45 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// coro.end(hdl, false, none)。
+    ///
+    /// **返回类型不能写死**：LLVM 21 是 `i1 (ptr, i1, token)`，LLVM 22 改成了
+    /// `void (ptr, i1, token)`，两边互斥 —— 拿 21 的签名喂 22 的校验器，
+    /// 报的是 `Intrinsic has incorrect return type!`，而且只有真正走协程
+    /// （返回 未来<T> 且含挂起点）的程序才炸，普通程序全绿，很难往这上面想。
+    ///
+    /// 所以不自己拼签名，直接问 LLVM 要它自己那份 intrinsic 原型：
+    /// 查 ID → LLVMIntrinsicGetType 拿类型 → LLVMGetIntrinsicDeclaration 拿函数。
+    /// 这样将来再改签名也不用动这里。查不到 ID 时退回旧的手拼路径（按链接进来的
+    /// LLVM 主版本挑返回类型），保证至少不比原来差。
     unsafe fn 协程end(&mut self, hdl: LLVMValueRef) -> Result<(), String> {
         let ctxref = self.ctx.as_ctx_ref();
         let token_ty = LLVMTokenTypeInContext(ctxref);
         let i1t = self.ctx.bool_type().as_type_ref();
         let ptrt_ref = self.ctx.ptr_type(AddressSpace::default()).as_type_ref();
-        let (end_f, end_ty) =
-            self.声明token原型("llvm.coro.end", i1t, &mut [ptrt_ref, i1t, token_ty]);
+
+        let name = b"llvm.coro.end";
+        let id = LLVMLookupIntrinsicID(name.as_ptr() as *const _, name.len());
+        let (end_f, end_ty) = if id != 0 {
+            // coro.end 不是 overloaded intrinsic，参数表传空即可
+            let ty = LLVMIntrinsicGetType(ctxref, id, std::ptr::null_mut(), 0);
+            let f =
+                LLVMGetIntrinsicDeclaration(self.module.as_mut_ptr(), id, std::ptr::null_mut(), 0);
+            (f, ty)
+        } else {
+            let ret = if super::coro_end_返回void() {
+                LLVMVoidTypeInContext(ctxref)
+            } else {
+                i1t
+            };
+            self.声明token原型("llvm.coro.end", ret, &mut [ptrt_ref, i1t, token_ty])
+        };
+
         let false_v = self.ctx.bool_type().const_zero().as_value_ref();
         let none_tok = LLVMConstNull(token_ty);
-        let _ = self.原始调用(end_f, end_ty, &mut [hdl, false_v, none_tok], "coro.end");
+        // 返回 void 的调用不能带名字，否则 LLVM 会给一个 void 值起名字而报错
+        let 有返回值 = LLVMGetReturnType(end_ty) != LLVMVoidTypeInContext(ctxref);
+        let 调用名 = if 有返回值 { "coro.end" } else { "" };
+        let _ = self.原始调用(end_f, end_ty, &mut [hdl, false_v, none_tok], 调用名);
         Ok(())
     }
 

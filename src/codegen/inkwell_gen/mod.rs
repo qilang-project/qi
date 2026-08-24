@@ -1020,15 +1020,19 @@ pub fn compile_to_object_multi(
     // debug info」，而那时元数据还只是占位节点，报错信息完全指不到真问题。
     后端值.调试_收尾();
 
+    // 调试：QI_EMIT_LL=路径 时把类型化 IR 落盘（人工检查字面量 header / ARC 插入等）。
+    //
+    // **落盘要在 verify 之前**：校验失败时最想看的就是那份 IR，可原来是先 verify
+    // 再落盘，一失败就直接 return 了，QI_EMIT_LL 一个字都不写 —— 于是「校验失败」
+    // 这类问题偏偏是唯一拿不到现场的。verify 通过时行为不变。
+    if let Ok(p) = std::env::var("QI_EMIT_LL") {
+        let _ = 后端值.module.print_to_file(Path::new(&p));
+    }
+
     后端值
         .module
         .verify()
         .map_err(|e| format!("LLVM 模块校验失败: {}", e.to_string()))?;
-
-    // 调试：QI_EMIT_LL=路径 时把类型化 IR 落盘（人工检查字面量 header / ARC 插入等）。
-    if let Ok(p) = std::env::var("QI_EMIT_LL") {
-        let _ = 后端值.module.print_to_file(Path::new(&p));
-    }
 
     // 优化管线串（目标机档位已在建目标机时定好）。
     let pass_pipeline: Option<String> = match opt {
@@ -1077,4 +1081,29 @@ pub fn compile_to_object_multi(
         })
         .collect();
     Ok(exports)
+}
+
+/// 链接进来的 LLVM 主版本 >= 22 时，`llvm.coro.end` 返回 void 而不是 i1。
+///
+/// 只在 LLVMLookupIntrinsicID 查不到 ID 的兜底路径上用（正常路径直接问 LLVM 要原型）。
+/// 注意这里问的是**运行时真正链接进来的**那个 LLVM，不是 Cargo.toml 里写的
+/// inkwell feature —— 这俩会不一致：llvm-sys 在没设 LLVM_SYS_211_STRICT_VERSIONING 时
+/// 会接受 PATH 上更新的 llvm-config，于是编出来的编译器声称 21 实则链的 22。
+pub(super) fn coro_end_返回void() -> bool {
+    llvm版本().0 >= 22
+}
+
+/// 运行时真正链接进来的 LLVM 版本 (major, minor, patch)。
+///
+/// `qi 信息` 会打它。**跟 Cargo.toml 里的 inkwell feature 不是一回事** ——
+/// llvm-sys 没设 LLVM_SYS_211_STRICT_VERSIONING 时会接受 PATH 上更新的
+/// llvm-config，两者能不一致，而且平时毫无症状。
+pub fn llvm版本() -> (u32, u32, u32) {
+    let mut major: std::ffi::c_uint = 0;
+    let mut minor: std::ffi::c_uint = 0;
+    let mut patch: std::ffi::c_uint = 0;
+    unsafe {
+        inkwell::llvm_sys::core::LLVMGetVersion(&mut major, &mut minor, &mut patch);
+    }
+    (major as u32, minor as u32, patch as u32)
 }

@@ -1476,6 +1476,14 @@ impl Cli {
     ) -> Result<(), CliError> {
         if version || (!language && !targets) {
             println!("Qi 编译器 v{}", env!("CARGO_PKG_VERSION"));
+            // 把**实际链接进来的** LLVM 打出来。llvm-sys 在没设
+            // LLVM_SYS_211_STRICT_VERSIONING 时会接受 PATH 上更新的 llvm-config，
+            // 于是 Cargo.toml 写着 llvm21-1、编出来的却链着 LLVM 22 —— 这种漂移
+            // 平时毫无症状，只在某些 intrinsic 签名跨版本改了时才炸（踩过
+            // llvm.coro.end：21 返回 i1、22 返回 void），排查时第一件想知道的
+            // 就是这一行。
+            let (major, minor, patch) = crate::codegen::inkwell_gen::llvm版本();
+            println!("LLVM: {}.{}.{}", major, minor, patch);
             println!("作者: Qi Language Team <team@qilang.org>");
             println!();
         }
