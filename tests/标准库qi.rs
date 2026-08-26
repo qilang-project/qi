@@ -78,7 +78,14 @@ fn 跑(源: &Path, 强制ffi: Option<&str>) -> String {
         String::from_utf8_lossy(&出.stdout),
         String::from_utf8_lossy(&出.stderr),
     );
-    String::from_utf8_lossy(&出.stdout).into_owned()
+    // stdout + stderr 都要比。向量 的「维度不匹配」防御警告只走 stderr，
+    // 只比 stdout 的话把警告整个丢掉也照样绿 —— 而那条警告正是这类
+    // 「返回了值但那是防御值」的唯一提示，丢了就等于回到静默给假数据。
+    format!(
+        "{}--- stderr ---\n{}",
+        String::from_utf8_lossy(&出.stdout),
+        String::from_utf8_lossy(&出.stderr)
+    )
 }
 
 fn 对照(模块: &str) {
@@ -118,6 +125,29 @@ fn 时间_qi实现与ffi逐字节一致() {
 /// 加月 / 加年 是**故意**跟 Rust 版不一样的：那边是 `+ 月数*30天` 和
 /// `+ 年数*365天`，压根不是日历运算。这个测试钉住新行为，免得哪天有人
 /// 「修」回去对齐 FFI。
+/// 一个模块只搬一半，两边的函数混在同一个程序里也得都对。
+///
+/// 时间 就是这种状态：日历那 50 个走 qi，取当前时刻 / 格式化 / 睡眠那 11 个
+/// 还在 FFI。这条把两边的函数写进同一个表达式 —— qi 算出来的时间戳直接喂给
+/// FFI 的 格式化，格式化的结果再拿去比。任何一边的调用约定错了都会当场炸。
+#[test]
+fn 时间_半迁移_两边函数混用() {
+    if !运行时就位() {
+        eprintln!("跳过：未找到 qi-runtime 归档");
+        return;
+    }
+    let 源 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_混用.qi");
+    let 出 = 跑(&源, None);
+    for 期望 in [
+        "本月开始 2026-08-01 00:00:00",
+        "本年结束 2026-12-31 23:59:59",
+        "加月跨年 2027-01-15 08:30:00",
+        "往回三年 2023-08-26 14:30:45",
+    ] {
+        assert!(出.contains(期望), "缺少 `{}`，实际输出：\n{}", 期望, 出);
+    }
+}
+
 #[test]
 fn 时间_加月加年_改的是错行为() {
     if !运行时就位() {

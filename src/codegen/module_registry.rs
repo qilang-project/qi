@@ -885,6 +885,24 @@ impl ModuleRegistry {
             "i32", // qi_runtime_println returns i32
         ));
 
+        // 往 stderr 写。以前整张表里一个 stderr 出口都没有 —— 程序想把诊断和
+        // 正常输出分开（管道下游只吃 stdout 的场景尤其需要）根本做不到。
+        // 用 qi 写标准库之后这变成硬需求：Rust 版标准库到处用 eprintln! 打
+        // 「返回了 0.0 但那是防御值」这类警告，没有这个口子就只能把警告丢掉。
+        io_module.add_function(ModuleFunction::new(
+            "打印错误行",
+            "qi_io_eprintln",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
+        io_module.add_function(ModuleFunction::new(
+            "打印错误",
+            "qi_io_eprint",
+            vec!["字符串".to_string()],
+            "i32",
+        ));
+
         // 文件操作函数
         io_module.add_function(ModuleFunction::new(
             "读取文件",

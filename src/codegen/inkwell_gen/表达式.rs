@@ -2991,7 +2991,21 @@ impl<'ctx> 后端<'ctx> {
             }
         }
 
-        if call.callee == "长度" && call.arguments.len() == 1 && call.type_arguments.is_empty() {
+        // 写了限定名的不拦：`向量.长度(x)` 要的是模长，不是元素个数。
+        //
+        // 上面那条 数组长度 的拦截一直带着 module_qualifier.is_none() 守卫，这条漏了。
+        // 以前不出事是因为 向量.长度 走的是标准库 FFI 分发，在 生成函数调用 之前就
+        // 返回了，根本到不了这里。向量 的标量函数改成 qi 实现之后，它变成普通的包
+        // 限定调用，于是掉进这个拦截：`向量.长度([3.0,4.0])` 返回 2 而不是 5 ——
+        // 两个都是数字，不报错。
+        //
+        // 包限定解析（分支 3）会把 module_qualifier 挪进 限定包 再重入，所以两个都要看。
+        let 显式限定 = call.module_qualifier.is_some() || 限定包.is_some();
+        if call.callee == "长度"
+            && !显式限定
+            && call.arguments.len() == 1
+            && call.type_arguments.is_empty()
+        {
             let t = 推断表达式类型(&call.arguments[0], &self.符号);
             if t.数组元素().is_some() {
                 if let Some((av, _)) = self.生成表达式(&call.arguments[0])? {
