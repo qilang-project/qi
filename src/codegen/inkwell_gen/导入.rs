@@ -45,12 +45,25 @@ impl<'ctx> 后端<'ctx> {
                 Some(m) => m.clone(),
                 None => continue,
             };
-            if !self.注册表.has_module(&module_name) {
+            // qi 实现的模块（标准库/X.qi）不在 FFI 注册表里 —— 搬完一个模块就会把它
+            // 的 FFI 条目撤掉，那之后 has_module 是 false，但导入完全合法。
+            let 有qi实现 = crate::标准库qi::源码(&module_name).is_some();
+            if !有qi实现 && !self.注册表.has_module(&module_name) {
                 return Err(format!(
                     "标准库里没有模块「{}」{}",
                     module_name,
                     相近模块提示(&self.注册表, &module_name)
                 ));
+            }
+            if 有qi实现 {
+                // 别名要按**用户包**登记，`导入 标准库.JSON 作为 J` 之后
+                // `J.编码(x)` 才走得到包限定解析（表达式.rs 分支 3）。
+                let alias = imp.alias.clone().unwrap_or_else(|| module_name.clone());
+                self.包别名.insert(alias.clone(), module_name.clone());
+                self.符号.包别名.insert(alias, module_name.clone());
+                if !self.注册表.has_module(&module_name) {
+                    continue; // 纯 qi 实现，没有 FFI 别名可登记
+                }
             }
             // 别名（作为 X）优先；否则用模块名自身
             let alias = imp.alias.clone().unwrap_or_else(|| module_name.clone());
@@ -216,6 +229,21 @@ impl<'ctx> 后端<'ctx> {
             .get(ident)
             .cloned()
             .unwrap_or_else(|| ident.clone());
+
+        // 有 qi 实现的标准库模块：让路给用户模块解析（表达式.rs 的分支 3），
+        // 不要在这儿命中 FFI 注册表。
+        //
+        // 两份实现会同时存在一段时间 —— 模块是一个一个搬过去的，FFI 表里那份
+        // 还留着当逃生口（QI_STDLIB_FFI）。所以这里必须显式定优先级，否则
+        // `导入 标准库.JSON` 之后 `JSON.编码(x)` 仍然会落到 qi_json_encode，
+        // 搬过去的 qi 代码一行都不会被执行，而且毫无迹象。
+        if self
+            .符号
+            .函数按包
+            .contains_key(&(module_name.clone(), method.to_string()))
+        {
+            return Ok(None);
+        }
 
         // 在注册表里找函数（中文模块名直接是 key）
         let mf = match self.注册表.get_function(&module_name, method) {

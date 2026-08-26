@@ -19,6 +19,8 @@ pub mod targets;
 pub mod utils;
 // rustc 不接受非 ASCII 模块名自动映射文件名（E0754），要显式 #[path]，
 // 跟 codegen/inkwell_gen 下那批中文模块一个写法。
+#[path = "标准库qi.rs"]
+pub mod 标准库qi;
 #[path = "链接.rs"]
 pub mod 链接;
 
@@ -982,7 +984,14 @@ impl QiCompiler {
         // 规范化路径：同一个文件可能经由符号链接（如 qi_packages/Web -> qi-web）
         // 以两种不同路径被解析到。若按原始路径做 key，会把同一模块编译两次，
         // 链接时报数百个 duplicate symbol。canonicalize 后两条路径塌缩成同一 key。
-        let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.clone());
+        // 虚拟路径（<标准库>/X.qi）不落盘，canonicalize 会把它当相对路径解成
+        // cwd 下的实体路径 —— 那样 key 会随**调用编译器时的工作目录**变，同一个
+        // 标准库模块在不同目录下编译得到不同 key，去重失效、重复符号。
+        let canonical = if crate::标准库qi::是虚拟路径(file_path) {
+            file_path.clone()
+        } else {
+            std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.clone())
+        };
         let file_path = &canonical;
 
         // Prevent infinite recursion
@@ -1007,7 +1016,11 @@ impl QiCompiler {
         visited.insert(file_path.clone());
 
         // Read and parse the file
-        let source_code = std::fs::read_to_string(file_path).map_err(CompilerError::Io)?;
+        // 嵌入式标准库模块没有真实文件，源码从二进制里的内置表取（见 标准库qi.rs）。
+        let source_code = match crate::标准库qi::虚拟路径源码(file_path) {
+            Some(源) => 源,
+            None => std::fs::read_to_string(file_path).map_err(CompilerError::Io)?,
+        };
 
         let mut lexer = crate::lexer::Lexer::new(source_code);
         let tokens = lexer
@@ -1062,9 +1075,20 @@ impl QiCompiler {
 
         // Process imports
         for import_stmt in &program.imports {
-            // Skip standard library imports (they are built-in)
+            // 标准库：先看有没有 qi 实现，有就当普通模块编译进来；没有才是纯 FFI
+            // 内建（老行为，不解析任何文件）。见 标准库qi.rs。
             let is_stdlib = import_stmt.module_path.get(0).map(|s| s.as_str()) == Some("标准库");
             if is_stdlib {
+                if let Some(模块名) = import_stmt.module_path.get(1) {
+                    if crate::标准库qi::源码(模块名).is_some() {
+                        self.parse_and_collect_modules_internal(
+                            &crate::标准库qi::虚拟路径(模块名),
+                            module_registry,
+                            compiled_modules,
+                            visited,
+                        )?;
+                    }
+                }
                 continue;
             }
 
@@ -1597,6 +1621,13 @@ impl QiCompiler {
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
         visited: &mut std::collections::HashSet<PathBuf>,
     ) -> Result<(), CompilerError> {
+        // 嵌入式标准库模块没有真实目录，同包自动发现无从谈起（也不需要 ——
+        // 一个标准库模块就是一个文件）。不早退的话这里会去 read_dir 一个
+        // 叫 `<标准库>` 的目录，报 os error 2，而错误信息里连文件名都没有。
+        if crate::标准库qi::是虚拟路径(entry_file) {
+            return Ok(());
+        }
+
         // Only auto-discover files that don't have imports to avoid conflicts
         // This is a conservative approach to prevent external function declaration issues
         let dir = entry_file

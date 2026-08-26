@@ -34,7 +34,7 @@
 //! 元素类型和第一个值。**整个数组的逐元素展开做不了**，别期待。
 
 use super::super::后端;
-use super::super::类型::{Qi类型, 元素类型};
+use super::super::类型::{元素类型, Qi类型};
 use super::DW_ATE_SIGNED_CHAR;
 use inkwell::debug_info::{AsDIScope, DIFlagsConstants, DIType};
 

@@ -18,7 +18,7 @@
 
 use super::后端;
 use super::导入::注册表类型转qi;
-use super::类型::{Qi类型, 元素类型};
+use super::类型::{元素类型, Qi类型};
 use super::类型检查::推断表达式类型;
 use crate::parser::ast::{AstNode, BinaryOperator};
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};

@@ -135,7 +135,7 @@
 //! - 死锁时 parked 协程 frame 不主动回收（死锁是程序 bug，告警为主）。
 
 use super::后端;
-use super::类型::{Qi类型, 元素类型};
+use super::类型::{元素类型, Qi类型};
 use crate::parser::ast::{AstNode, FunctionDeclaration, Program};
 use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;

@@ -350,10 +350,15 @@ impl<'ctx> 后端<'ctx> {
                         // 在 包 Web 里 `查.查询参数(库,SQL,参数)` 会解析到 Web 自己
                         // 那个两参的 查询参数(上下文,名)，实参个数对不上，直接 LLVM
                         // 模块校验失败。所以全名之外还要试末段。
+                        // `模块::函数()` 的方法名带着 `::` 前缀进来（词法层的写法差异，
+                        // 不是名字的一部分）。以前只有标准库分发那条路 trim 了它，
+                        // 用户包解析拿的是原样带前缀的名字 —— 于是 `包::函数()` 永远
+                        // 查不到，只有 `包.函数()` 能用。两种写法在语言里是等价的。
+                        let 方法名 = mc.method_name.trim_start_matches(':').to_string();
                         let 有此函数 = |包: &str| {
                             self.符号
                                 .函数按包
-                                .contains_key(&(包.to_string(), mc.method_name.clone()))
+                                .contains_key(&(包.to_string(), 方法名.clone()))
                         };
                         let 别名指向 = self.包别名.get(&id.name).cloned();
                         let 包名 = 别名指向
@@ -374,7 +379,7 @@ impl<'ctx> 后端<'ctx> {
                         if let Some(包) = 包名 {
                             let call = crate::parser::ast::FunctionCallExpression {
                                 module_qualifier: None,
-                                callee: mc.method_name.clone(),
+                                callee: 方法名.clone(),
                                 type_arguments: vec![],
                                 arguments: mc.arguments.clone(),
                                 span: mc.span.clone(),
@@ -385,14 +390,15 @@ impl<'ctx> 后端<'ctx> {
                     }
                 }
                 if let AstNode::标识符表达式(id) = mc.object.as_ref() {
+                    let 方法名 = mc.method_name.trim_start_matches(':');
                     if !self.变量表.contains_key(&id.name)
                         && !self.全局变量表.contains_key(&id.name)
-                        && (self.符号.解析函数(&mc.method_name).is_some()
-                            || super::类型检查::内建返回类型(&mc.method_name).is_some())
+                        && (self.符号.解析函数(方法名).is_some()
+                            || super::类型检查::内建返回类型(方法名).is_some())
                     {
                         let call = crate::parser::ast::FunctionCallExpression {
                             module_qualifier: None,
-                            callee: mc.method_name.clone(),
+                            callee: 方法名.to_string(),
                             type_arguments: vec![],
                             arguments: mc.arguments.clone(),
                             span: mc.span.clone(),

@@ -6,7 +6,7 @@
 //! 仅支持同构标量元素（整数/浮点/布尔/指针）；嵌套/结构体元素按指针存。
 
 use super::后端;
-use super::类型::{Qi类型, 元素类型};
+use super::类型::{元素类型, Qi类型};
 use super::类型检查::推断表达式类型;
 use crate::parser::ast::{ArrayAccessExpression, ArrayLiteralExpression, AstNode};
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
