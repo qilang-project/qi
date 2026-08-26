@@ -36,8 +36,27 @@ fn 运行时就位() -> bool {
     })
 }
 
+/// 每次调用给源码一份独占的临时拷贝。
+///
+/// 不这么做会踩并发：`qi run` 的产物路径是按源文件名定的，两个测试用同一份
+/// 语料并行跑，就会同时往同一个可执行文件上写 —— 一个正在链接，另一个已经
+/// 开始执行那个写了一半的文件。表现是随机一条测试报「跑 X 失败」而 stderr
+/// 是空的，单独重跑又必过。cargo test 默认多线程，所以这条只在跑全量时炸。
+fn 独占拷贝(源: &Path, 标记: &str) -> (tempfile::TempDir, PathBuf) {
+    let 临时 = tempfile::tempdir().expect("建不了临时目录");
+    let 目标 = 临时.path().join(format!(
+        "{}_{}.qi",
+        源.file_stem().unwrap().to_string_lossy(),
+        标记
+    ));
+    std::fs::copy(源, &目标).expect("拷不过去");
+    (临时, 目标)
+}
+
 /// 跑一份源码，返回 stdout。走 FFI 时置 QI_STDLIB_FFI。
 fn 跑(源: &Path, 强制ffi: Option<&str>) -> String {
+    let (_临时, 源) = 独占拷贝(源, if 强制ffi.is_some() { "ffi" } else { "qi" });
+    let 源 = &源;
     let mut cmd = Command::new(编译器());
     cmd.arg("run").arg(源);
     match 强制ffi {
