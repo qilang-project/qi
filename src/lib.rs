@@ -14,7 +14,6 @@ pub mod error;
 pub mod lexer;
 pub mod package;
 pub mod parser;
-pub mod runtime;
 pub mod semantic;
 pub mod targets;
 pub mod utils;
@@ -22,52 +21,6 @@ pub mod utils;
 // 跟 codegen/inkwell_gen 下那批中文模块一个写法。
 #[path = "链接.rs"]
 pub mod 链接;
-
-// Force export of async runtime FFI functions to ensure they're included in the static library
-pub use runtime::async_runtime::ffi::{
-    qi_runtime_await, qi_runtime_create_task, qi_runtime_spawn_task,
-};
-
-// Dummy function to ensure async runtime functions are not optimized out
-#[doc(hidden)]
-#[no_mangle]
-pub extern "C" fn _qi_force_link_async_runtime() {
-    // These functions need to be referenced to prevent optimization
-    unsafe {
-        std::ptr::read_volatile(&qi_runtime_create_task as *const _);
-        std::ptr::read_volatile(&qi_runtime_await as *const _);
-        std::ptr::read_volatile(&qi_runtime_spawn_task as *const _);
-    }
-}
-
-// Declare external sync runtime functions to force linking
-extern "C" {
-    fn qi_runtime_mutex_create() -> *mut std::ffi::c_void;
-    fn qi_runtime_mutex_lock(mutex: *mut std::ffi::c_void) -> i32;
-    fn qi_runtime_mutex_unlock(mutex: *mut std::ffi::c_void) -> i32;
-    fn qi_runtime_mutex_trylock(mutex: *mut std::ffi::c_void) -> i32;
-    fn qi_runtime_waitgroup_create() -> *mut std::ffi::c_void;
-    fn qi_runtime_waitgroup_add(wg: *mut std::ffi::c_void, delta: i32) -> i32;
-    fn qi_runtime_waitgroup_wait(wg: *mut std::ffi::c_void) -> i32;
-    fn qi_runtime_waitgroup_done(wg: *mut std::ffi::c_void) -> i32;
-}
-
-// Dummy function to ensure sync runtime functions are not optimized out
-#[doc(hidden)]
-#[no_mangle]
-pub extern "C" fn _qi_force_link_sync_runtime() {
-    // These functions need to be referenced to prevent optimization
-    unsafe {
-        std::ptr::read_volatile(&qi_runtime_mutex_create as *const _);
-        std::ptr::read_volatile(&qi_runtime_mutex_lock as *const _);
-        std::ptr::read_volatile(&qi_runtime_mutex_unlock as *const _);
-        std::ptr::read_volatile(&qi_runtime_mutex_trylock as *const _);
-        std::ptr::read_volatile(&qi_runtime_waitgroup_create as *const _);
-        std::ptr::read_volatile(&qi_runtime_waitgroup_add as *const _);
-        std::ptr::read_volatile(&qi_runtime_waitgroup_wait as *const _);
-        std::ptr::read_volatile(&qi_runtime_waitgroup_done as *const _);
-    }
-}
 
 use std::path::PathBuf;
 

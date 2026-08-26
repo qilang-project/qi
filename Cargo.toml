@@ -29,13 +29,6 @@ lalrpop-util = { version = "0.22.2", features = ["lexer"] }
 # LLVM bindings for code generation —— inkwell 是唯一后端，强制依赖（需 LLVM 21 / LLVM_SYS_211_PREFIX）
 inkwell = { version = "0.8", features = ["llvm21-1"] }
 
-
-# Unicode support for Chinese characters
-unicode-xid = "0.2.4"
-
-# Error reporting and diagnostics
-ariadne = "0.4.0"
-
 # Command line argument parsing
 clap = { version = "4.5.50", features = ["derive"] }
 
@@ -46,23 +39,20 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.107"
 toml = "0.8.8"
 
-# HTTP client for LLM API calls.
+# 包管理客户端要联网取包（`qi 装`）。运行时的 HTTP 在 qi-runtime，跟这个无关。
 # rustls-tls（而非默认 native-tls）：去掉 mac 的 Security.framework / linux 的系统 openssl，
 # 全栈纯 Rust（rustls+ring），是 zig 单机交叉编译的前提（无系统 C TLS 依赖）。
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "charset", "http2"] }
-
-# TLS server support (pure-Rust, used by 标准库.TLS)
-rustls = { version = "0.23", features = ["ring", "std", "tls12"] }
-rustls-pemfile = "2"
-
-# HTTP/2 server (used by 标准库.HTTP2)
-h2 = "0.4"
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-bytes = "1"
-http = "1"
+# 中文包名进 URL 要 percent-encode（reqwest 依赖树里本来就有这个 crate，不新增编译量）
+percent-encoding = "2"
+# 包管理客户端：tar.gz 打包/解包
+flate2 = "1.0"
+tar = "0.4"
+# 包完整性校验
+sha2 = "0.10.8"
+base64 = "0.22.0"
 
 # File handling and path management
-glob = "0.3.1"
 walkdir = "2.4.0"
 dirs = "5.0.1"
 
@@ -74,63 +64,21 @@ tempfile = { version = "3.23.0", optional = true }
 
 # Error handling
 thiserror = "1.0.69"
-anyhow = "1.0.86"
 
 # Global state
 once_cell = "1.21.3"
 
-# Async runtime
+# `qi 装` 的并发下载用得到
 tokio = { version = "1.48.0", features = ["full"] }
-
-# UUID generation
-uuid = { version = "1.10.0", features = ["v4", "serde"] }
-
-# Property-based testing
-proptest = { version = "1.5.0", optional = true }
-
-# Cross-platform memory management
-crossbeam = "0.8.4"
-
-# Sharded concurrent map — eliminates global mutex on TCP/bytes pools
-dashmap = "6.1"
 
 # System calls for FFI
 libc = "0.2.158"
 
-# CPU core count detection
-num_cpus = "1.16.0"
-
-# Additional serialization support
+# 构建信息里的时间戳
 chrono = { version = "0.4.38", features = ["serde"] }
 
 # Regular expressions for optimization
 regex = "1.10.0"
-
-# Cryptography
-sha2 = "0.10.8"
-sha1 = "0.10.6"
-md-5 = "0.10.6"
-base64 = "0.22.0"
-hmac = "0.12.1"
-
-# Random number generation
-rand = "0.8"
-
-# Configuration file formats
-ini = "1.3"
-configparser = "3.1"
-
-# Compression
-flate2 = "1.0"
-
-# 包管理客户端：tar.gz 打包/解包（flate2 已在上面提供 gzip 层）
-tar = "0.4"
-# 中文包名进 URL 要 percent-encode（reqwest 依赖树里本来就有这个 crate，不新增编译量）
-percent-encoding = "2"
-
-# Database
-rusqlite = { version = "0.32", features = ["bundled"] }
-lazy_static = "1.5"
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }
@@ -138,19 +86,10 @@ tempfile = "3.23.0"
 
 [build-dependencies]
 lalrpop = "0.22.2"
-cc = "1.1"
 
 [features]
 # inkwell 是唯一后端（强制依赖），无需 feature 开关。llvm 保留为空 alias 兼容旧命令行。
 default = []
-runtime-rc-string = []
-# 数据库多后端的开关只在 qi-runtime 里有实体依赖（postgres / mysql crate）。
-# 这里声明成空 feature，是因为 qi/src/runtime/stdlib/database_ffi.rs 被 qi-runtime
-# include! 共享，里面带 `cfg(feature = "db-postgres")`；不声明的话本 crate 编译时
-# 会报 unexpected_cfgs。编译器内嵌的这份遗留 runtime 只需要 SQLite —— 生成程序
-# 链接的是 qi-runtime 那份归档，PG/MySQL 在那边默认开。
-db-postgres = []
-db-mysql = []
 benchmarks = ["criterion"]
 integration-tests = ["tempfile"]
 llvm = []
