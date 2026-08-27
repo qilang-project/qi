@@ -118,7 +118,11 @@ fn 基本分帧与多data行拼接() {
     let 出 = 跑qi(&读全部事件的源码(&端点));
     assert!(出.contains("EV|||hello"), "少了第一条:\n{}", 出);
     // 多个 data 行按换行拼接（规范如此），不是后盖前
-    assert!(出.contains("EV|ping|42|first\nsecond"), "多 data 行没拼对:\n{}", 出);
+    assert!(
+        出.contains("EV|ping|42|first\nsecond"),
+        "多 data 行没拼对:\n{}",
+        出
+    );
     assert!(出.contains("END"), "没读到结束:\n{}", 出);
 }
 
@@ -164,10 +168,7 @@ fn 事件跨块且切在汉字中间() {
     }
     // "中" = E4 B8 AD，故意在第二个字节后切开
     let 端点 = 起SSE(
-        vec![
-            b"data: {\"delta\":\"\xe4\xb8",
-            b"\xad\xe6\x96\x87\"}\n\n",
-        ],
+        vec![b"data: {\"delta\":\"\xe4\xb8", b"\xad\xe6\x96\x87\"}\n\n"],
         Duration::from_millis(40),
     );
     let 出 = 跑qi(&读全部事件的源码(&端点));

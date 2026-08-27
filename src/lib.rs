@@ -1031,9 +1031,11 @@ impl QiCompiler {
         // parse_with_source 而不是 parse：后者把 token 空隙全垫成空格，换行
         // 一并没了，于是**所有被 import 进来的模块**报错都是「第 1 行第 N 列」
         // 加上整个文件糊成的一行。见 parse_with_source 的注释。
-        let mut program = parser.parse_with_source(tokens, &source_code).map_err(|e| {
-            CompilerError::Parse(format!("{}\n  （文件：{}）", e, file_path.display()))
-        })?;
+        let mut program = parser
+            .parse_with_source(tokens, &source_code)
+            .map_err(|e| {
+                CompilerError::Parse(format!("{}\n  （文件：{}）", e, file_path.display()))
+            })?;
         // 解析器只见到字符串，文件名在这儿补 —— 私有函数按文件消歧要用它
         program.source_path = Some(file_path.display().to_string());
 

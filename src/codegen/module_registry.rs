@@ -1871,6 +1871,45 @@ impl ModuleRegistry {
             "整数",                   // 返回状态
         ));
 
+        // ── 给 qi 侧实现用的三件套 ──────────────────────────────
+        //
+        // 对话 / 嵌入 已改成 qi 写（qi/标准库/大模型.qi）。缝划在「qi 管请求
+        // 成形与响应归一化、Rust 管状态密钥 HTTP 磁带」，因为三条约束咬死：
+        // 密钥不能进 qi；会话池只能有一个（流式和工具还在 Rust，共用历史）；
+        // 磁带键必须逐字节一致（键是请求体序列化文本的哈希，且 serde_json
+        // 开了 preserve_order —— 字段顺序错一个就是静默全部回放未命中）。
+        llm_module.add_function(ModuleFunction::new(
+            "会话视图",
+            "qi_llm_session_view",
+            vec!["整数".to_string()],
+            "字符串", // JSON；**不含密钥**
+        ));
+
+        llm_module.add_function(ModuleFunction::new(
+            "交换",
+            "qi_llm_exchange",
+            vec![
+                "整数".to_string(),   // 会话句柄
+                "字符串".to_string(), // 用途 "chat" / "embed"
+                "字符串".to_string(), // 请求体 JSON
+            ],
+            "字符串", // {"ok":true,"body":...} 或 {"ok":false,"error":"..."}
+        ));
+
+        llm_module.add_function(ModuleFunction::new(
+            "落账",
+            "qi_llm_commit",
+            vec![
+                "整数".to_string(),   // 会话句柄
+                "字符串".to_string(), // user 消息 JSON，空串=不入历史
+                "字符串".to_string(), // assistant 消息 JSON，空串=不入历史
+                "整数".to_string(),   // prompt tokens
+                "整数".to_string(),   // completion tokens
+                "整数".to_string(),   // total tokens
+            ],
+            "整数",
+        ));
+
         // 异步对话 (返回 Future<字符串>)
         llm_module.add_function(ModuleFunction::new(
             "异步对话",
