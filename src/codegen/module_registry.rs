@@ -1334,6 +1334,82 @@ impl ModuleRegistry {
         // **字节**落盘，中间不做编码转换。
         //
         // 返回写入的字节数；失败返回负数（见 runtime 侧 qi_http_download_file）。
+        // ── 流式读 ──────────────────────────────────────────────
+        //
+        // 上面那一票（获取/发送/执行请求…）都是「等响应体整个收完再返回」。
+        // SSE、chunked 长响应、大文件在那套接口下根本表达不出来 —— SSE 永远
+        // 不关连接，等于永远不返回。
+        //
+        // 这一组把响应体按到达顺序交出来，**分帧留给 qi 写**（SSE 就是按
+        // \n\n 切、剥 "data: " 前缀，纯文本处理，没理由在 Rust 里）。
+        // 实现见 qi-runtime/src/io/http_stream_ffi.rs。
+        http_module.add_function(ModuleFunction::new(
+            "打开流",
+            "qi_http_stream_open",
+            vec![
+                "字符串".to_string(), // 方法 GET/POST/...
+                "字符串".to_string(), // URL
+                "字符串".to_string(), // 请求头 JSON 对象，可空串
+                "字符串".to_string(), // 请求体，可空串
+                "整数".to_string(),   // 连接超时毫秒，<=0 用默认 30 秒
+                "整数".to_string(),   // 总时限毫秒，<=0 不限（SSE 常态）
+            ],
+            "整数", // 正数句柄；-1 参数无效 / -2 构建失败 / -3 连不上
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "流状态码",
+            "qi_http_stream_status",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "流响应头",
+            "qi_http_stream_headers",
+            vec!["整数".to_string()],
+            "字符串", // JSON 对象，头名小写
+        ));
+
+        // 读一块文本。结尾不完整的多字节字符会留到下次，不会交出半个汉字。
+        http_module.add_function(ModuleFunction::new(
+            "读取流",
+            "qi_http_stream_read",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄, 超时毫秒
+            "字符串",
+        ));
+
+        // 读一块原始字节，不做任何解码（下载文件 / 二进制协议用）。
+        http_module.add_function(ModuleFunction::new(
+            "读取流字节",
+            "qi_http_stream_read_bytes",
+            vec!["整数".to_string(), "整数".to_string()],
+            "整数", // 字节切片句柄；0 表示没读到
+        ));
+
+        // 「读到空串」本身有歧义（超时？结束？真的空块？），所以状态单独问。
+        // 0 有数据 / 1 超时 / 2 结束 / 3 出错 / 4 无此流
+        http_module.add_function(ModuleFunction::new(
+            "流状态",
+            "qi_http_stream_state",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "流错误",
+            "qi_http_stream_error",
+            vec!["整数".to_string()],
+            "字符串",
+        ));
+
+        http_module.add_function(ModuleFunction::new(
+            "关闭流",
+            "qi_http_stream_close",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+
         http_module.add_function(ModuleFunction::new(
             "下载文件",
             "qi_http_download_file",

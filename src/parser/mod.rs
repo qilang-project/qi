@@ -1007,6 +1007,47 @@ impl Parser {
 
         self.parse_source(&source)
     }
+
+    /// 同 parse，但**保留换行**。
+    ///
+    /// parse 把 token 之间的空隙一律垫成空格，换行也不例外 —— 于是重组出来的
+    /// 源码只有一行。@L/@R 的字节偏移仍然是对的，但报错时的「第几行第几列」
+    /// 算出来永远是「第 1 行第 4195 列」，还要把整个文件当成一行打出来。
+    /// 凡是经由 import 进来的模块（多文件编译走的就是这条路）报错都长这样，
+    /// 几千列的一行糊在屏幕上，根本没法看。
+    ///
+    /// 这里改成按**原始源码**填空隙：空白字符原样保留，其余（注释内容）
+    /// 换成空格。字节偏移一个不差，行结构也保住了。
+    pub fn parse_with_source(
+        &self,
+        tokens: Vec<crate::lexer::Token>,
+        原文: &str,
+    ) -> Result<Program, ParseError> {
+        let 原字节 = 原文.as_bytes();
+        let mut source = String::new();
+
+        for token in &tokens {
+            let cur = source.len();
+            if token.span.start > cur {
+                for i in cur..token.span.start {
+                    // 越界只可能是 token 文本被词法归一化改长过（parse 里也
+                    // 有同样的注解），那种情况顺排即可，用空格垫。
+                    match 原字节.get(i) {
+                        // 换行保留（\r\n 两个都留，字节数才对得上）
+                        Some(b'\n') => source.push('\n'),
+                        Some(b'\r') => source.push('\r'),
+                        // 其余一律空格：注释内容在这儿被抹掉，且每个**字节**
+                        // 换一个空格 —— 不能按字符算，中文注释一个字符三字节，
+                        // 按字符垫会让后面所有偏移左移。
+                        _ => source.push(' '),
+                    }
+                }
+            }
+            source.push_str(&token.text);
+        }
+
+        self.parse_source(&source)
+    }
 }
 
 impl Default for Parser {
