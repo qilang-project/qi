@@ -1896,6 +1896,30 @@ impl ModuleRegistry {
             "字符串", // {"ok":true,"body":...} 或 {"ok":false,"error":"..."}
         ));
 
+        // 流式：qi 侧实现 流式对话/读取流/关闭流 用的三件。
+        // Rust 只管「带鉴权发出去」和「流式磁带存取」，SSE 分帧在 qi
+        // （标准库.事件流），增量拼接和历史落账也在 qi。
+        llm_module.add_function(ModuleFunction::new(
+            "打开流传输",
+            "qi_llm_stream_open",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "整数", // HTTP 流句柄（标准库.HTTP 那套）；负数为错误
+        ));
+
+        llm_module.add_function(ModuleFunction::new(
+            "流式磁带查",
+            "qi_llm_stream_tape_get",
+            vec!["字符串".to_string()],
+            "字符串", // {"命中":0/1,"回放":0/1,"要录":0/1,"键":"...","块":[...]}
+        ));
+
+        llm_module.add_function(ModuleFunction::new(
+            "流式磁带存",
+            "qi_llm_stream_tape_put",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+
         llm_module.add_function(ModuleFunction::new(
             "合并额外参数",
             "qi_llm_merge_extra",

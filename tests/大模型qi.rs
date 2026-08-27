@@ -94,6 +94,31 @@ fn 起假服务() -> String {
                         11 + 7 * 候选数
                     )
                 };
+                // 流式：按 SSE 逐帧写出（chunked）。这里必须真的分块 + 有心跳 +
+                // 有「只有 role 没有内容」的首帧，那三种正是分帧最容易写错的地方。
+                if 请求.contains("\"stream\":true") {
+                    let 头 = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                    let _ = 连.write_all(头.as_bytes());
+                    let _ = 连.flush();
+                    for 帧 in [
+                        "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n",
+                        ": keep-alive\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"好，\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"世界\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    ] {
+                        let b = 帧.as_bytes();
+                        let _ = 连.write_all(format!("{:X}\r\n", b.len()).as_bytes());
+                        let _ = 连.write_all(b);
+                        let _ = 连.write_all(b"\r\n");
+                        let _ = 连.flush();
+                        std::thread::sleep(std::time::Duration::from_millis(15));
+                    }
+                    let _ = 连.write_all(b"0\r\n\r\n");
+                    let _ = 连.flush();
+                    return;
+                }
                 let 体 = if 首行.contains("generateContent") {
                     r#"{"candidates":[{"content":{"parts":[{"text":"gemini答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
                 } else if 首行.contains("/messages") {
@@ -186,6 +211,68 @@ fn 多候选_qi与ffi逐字节一致() {
 #[test]
 fn 图像_qi与ffi逐字节一致() {
     对照("图像.qi");
+}
+
+/// 流式：SSE 分帧交给 标准库.事件流，增量拼接和历史落账在 qi。
+/// 语料覆盖多轮流式、流式之后接非流式（历史要接得上）、半途关流、坏句柄。
+#[test]
+fn 流式_qi与ffi逐字节一致() {
+    对照("流式.qi");
+}
+
+/// 半途关流**不录磁带** —— 否则磁带里存下的是截断的回答，之后每次回放都
+/// 拿到半句话，而且完全看不出是磁带的问题。
+/// 语料里最后那次「开了不读就关」正是这种，回放时必须报未命中而不是给半句。
+#[test]
+fn 流式磁带_双向互放且半途不录() {
+    if !运行时就位() {
+        return;
+    }
+    for (录走ffi, 名) in [(true, "rust录qi放"), (false, "qi录rust放")] {
+        let 端点 = 起假服务();
+        let 临时 = tempfile::tempdir().unwrap();
+        let 磁带 = 临时.path().join("tape.json");
+        let 路径 = 磁带.to_string_lossy().to_string();
+
+        跑(
+            "流式.qi",
+            &端点,
+            &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &路径)],
+            录走ffi,
+        );
+        let 内容 = std::fs::read_to_string(&磁带).expect("没录出磁带");
+        let 表: serde_json::Value = serde_json::from_str(&内容).unwrap();
+        let 流条数 = 表
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| k.starts_with("stream:"))
+            .count();
+        // 三次流式调用，但「半途关流」那次不录 → 只应有 2 条
+        assert_eq!(流条数, 2, "{}: 流式磁带条数不对（半途关流不该被录）", 名);
+
+        // 端点换成连不上的：键没命中而偷偷联网会当场失败，不会蒙混过关
+        let (出, 错) = 跑(
+            "流式.qi",
+            "http://127.0.0.1:1",
+            &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &路径)],
+            !录走ffi,
+        );
+        assert!(
+            出.contains("你好，世界"),
+            "{}: 回放不出内容:\n{}\n{}",
+            名,
+            出,
+            错
+        );
+        // 恰好一条未命中 = 半途那次；多了就是键不匹配
+        let 未命中 = 错.matches("未命中").count() + 出.matches("未命中").count();
+        assert_eq!(
+            未命中, 1,
+            "{}: 未命中次数应恰为 1（半途那次）。多了说明键不匹配。\n{}\n{}",
+            名, 出, 错
+        );
+    }
 }
 
 /// Rust 录、qi 放。键错一位就在 REPLAY 下硬报未命中。
