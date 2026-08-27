@@ -63,6 +63,37 @@ fn 起假服务() -> String {
                 };
                 let 请求 = String::from_utf8_lossy(&缓冲[..n]).into_owned();
                 let 首行 = 请求.lines().next().unwrap_or("");
+                // OpenAI 的多候选要按请求里的 n 回相应条数，否则 对话多候选
+                // 测不出「候选个数」这一维
+                let 候选数 = 请求
+                    .split("\"n\":")
+                    .nth(1)
+                    .and_then(|尾| {
+                        尾.trim_start()
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect::<String>()
+                            .parse::<usize>()
+                            .ok()
+                    })
+                    .unwrap_or(1)
+                    .max(1);
+                let 多候选体 = {
+                    let 各条: Vec<String> = (0..候选数)
+                        .map(|i| {
+                            format!(
+                                r#"{{"message":{{"role":"assistant","content":"候选{}"}}}}"#,
+                                i
+                            )
+                        })
+                        .collect();
+                    format!(
+                        r#"{{"choices":[{}],"usage":{{"prompt_tokens":11,"completion_tokens":{},"total_tokens":{}}}}}"#,
+                        各条.join(","),
+                        7 * 候选数,
+                        11 + 7 * 候选数
+                    )
+                };
                 let 体 = if 首行.contains("generateContent") {
                     r#"{"candidates":[{"content":{"parts":[{"text":"gemini答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
                 } else if 首行.contains("/messages") {
@@ -70,7 +101,7 @@ fn 起假服务() -> String {
                 } else if 首行.contains("/embeddings") {
                     r#"{"data":[{"embedding":[0.25,0.5,0.75,1.0]}],"usage":{"prompt_tokens":3,"total_tokens":3}}"#
                 } else {
-                    r#"{"choices":[{"message":{"role":"assistant","content":"openai答"}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}"#
+                    多候选体.as_str()
                 };
                 let 响应 = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -141,6 +172,22 @@ fn 三家provider_qi与ffi逐字节一致() {
     对照("三家对话.qi");
 }
 
+/// 多候选：openai 走请求体里的 n，anthropic/gemini 没有 n 语义 → **串行 n 次**。
+/// 串行那条最容易写错的是历史：n 次请求都不能写历史，最后只写一次、且只写
+/// 第一个候选，否则后续对话的上下文里多出 n-1 组重复问答。
+#[test]
+fn 多候选_qi与ffi逐字节一致() {
+    对照("多候选.qi");
+}
+
+/// 图像：user content 是**块数组**，三家形状都不同（openai 原样 /
+/// anthropic image+source / gemini file_data）。语料里带一次「看过图之后追问」——
+/// 那一轮的历史里躺着数组 content，成形代码要能继续处理。
+#[test]
+fn 图像_qi与ffi逐字节一致() {
+    对照("图像.qi");
+}
+
 /// Rust 录、qi 放。键错一位就在 REPLAY 下硬报未命中。
 #[test]
 fn 磁带_rust录qi放() {
@@ -180,7 +227,12 @@ fn 磁带_rust录qi放() {
         出,
         错
     );
-    assert!(出.contains("claude答") && 出.contains("gemini答") && 出.contains("openai答"));
+    // openai 分支的假响应是「候选0…」（多候选共用同一个 fixture）
+    assert!(
+        出.contains("claude答") && 出.contains("gemini答") && 出.contains("候选0"),
+        "回放出来的内容不对：\n{}",
+        出
+    );
 }
 
 /// 反方向：qi 录、Rust 放。两个方向都过才说明键真的相同，

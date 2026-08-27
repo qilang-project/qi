@@ -1897,6 +1897,13 @@ impl ModuleRegistry {
         ));
 
         llm_module.add_function(ModuleFunction::new(
+            "合并额外参数",
+            "qi_llm_merge_extra",
+            vec!["整数".to_string(), "字符串".to_string()],
+            "字符串", // 合并后的请求体 JSON
+        ));
+
+        llm_module.add_function(ModuleFunction::new(
             "落账",
             "qi_llm_commit",
             vec![
