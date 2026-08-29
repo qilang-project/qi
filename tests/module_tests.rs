@@ -1,7 +1,7 @@
 //! Tests for package and module system with import/export visibility
 
 use qi_compiler::parser::ast::{AstNode, Visibility};
-use qi_compiler::{lexer::Lexer, parser::Parser};
+use qi_compiler::parser::Parser;
 
 #[test]
 fn test_package_declaration() {
@@ -13,10 +13,8 @@ fn test_package_declaration() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.package_name, Some("测试包".to_string()));
 }
@@ -33,10 +31,8 @@ fn test_import_statement() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.package_name, Some("主程序".to_string()));
     assert_eq!(program.imports.len(), 1);
@@ -55,10 +51,8 @@ fn test_import_with_alias() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.imports[0].alias, Some("IO".to_string()));
 }
@@ -73,10 +67,8 @@ fn test_public_function() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.statements.len(), 1);
     match &program.statements[0] {
@@ -98,10 +90,8 @@ fn test_private_function_default() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.statements.len(), 1);
     match &program.statements[0] {
@@ -124,10 +114,8 @@ fn test_public_struct() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     match &program.statements[0] {
         AstNode::结构体声明(struct_decl) => {
@@ -155,10 +143,8 @@ fn test_multiple_imports() {
 }
 "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     assert_eq!(program.imports.len(), 3);
     assert_eq!(program.imports[0].module_path, vec!["标准库", "输入输出"]);

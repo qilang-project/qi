@@ -7,11 +7,8 @@ use qi_compiler::parser::*;
 #[test]
 fn test_parse_empty_program() {
     let source = "";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source.to_string());
 
     assert!(result.is_ok());
     let program = result.unwrap();
@@ -32,11 +29,8 @@ fn test_parse_direct_source() {
 #[test]
 fn test_parse_simple_variable_declaration() {
     let source = "变量 x = 10;";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source.to_string());
 
     assert!(result.is_ok());
     let program = result.unwrap();
@@ -46,11 +40,8 @@ fn test_parse_simple_variable_declaration() {
 #[test]
 fn test_parse_multiple_statements() {
     let source = "变量 x = 10; 变量 y = 20;";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source.to_string());
 
     assert!(result.is_ok());
     let program = result.unwrap();

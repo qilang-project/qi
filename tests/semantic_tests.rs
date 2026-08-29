@@ -47,11 +47,8 @@ fn test_semantic_analyzer_creation() {
 #[test]
 fn test_simple_variable_analysis() {
     let source = "变量 x = 42;";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -63,11 +60,8 @@ fn test_simple_variable_analysis() {
 #[test]
 fn test_function_declaration_analysis() {
     let source = "函数 test() { 返回 42; }";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -79,11 +73,8 @@ fn test_function_declaration_analysis() {
 #[test]
 fn test_if_statement_analysis() {
     let source = "如果 x > 5 { 变量 y = 10; }";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -95,11 +86,8 @@ fn test_if_statement_analysis() {
 #[test]
 fn test_while_statement_analysis() {
     let source = "当 i < 10 { i = i + 1; }";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -125,11 +113,8 @@ fn test_complex_program_analysis() {
     }
     "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -209,11 +194,8 @@ fn test_nested_scope_analysis() {
     }
     "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -253,11 +235,8 @@ fn test_symbol_table_error_handling() {
 #[test]
 fn test_analyzer_with_empty_program() {
     let source = "";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&AstNode::程序(program));
@@ -324,11 +303,8 @@ fn test_multiple_error_accumulation() {
     }
     "#;
 
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.tokenize().unwrap();
-
     let parser = Parser::new();
-    let program = parser.parse(tokens).unwrap();
+    let program = parser.parse_source(&source.to_string()).unwrap();
 
     let mut analyzer = SemanticAnalyzer::new();
     let _result = analyzer.analyze(&AstNode::程序(program));

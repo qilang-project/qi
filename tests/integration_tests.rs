@@ -1,7 +1,7 @@
 // Integration tests for the Qi compiler
 // These tests cover the full compilation pipeline from lexing to code generation
 
-use qi_compiler::lexer::{Lexer, TokenKind};
+use qi_compiler::lexer::TokenKind;
 use qi_compiler::parser::Parser;
 use qi_compiler::semantic::TypeChecker;
 
@@ -12,44 +12,11 @@ fn test_compiler_creation() {
 }
 
 #[test]
-fn test_lexer_chinese_keywords() {
-    let source = "如果 否则 当 对于 函数 返回 变量 常量 整数 字符串 布尔 浮点数".to_string();
-    let mut lexer = Lexer::new(source);
-
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    let expected_keywords = vec![
-        TokenKind::如果,
-        TokenKind::否则,
-        TokenKind::当,
-        TokenKind::对于,
-        TokenKind::函数,
-        TokenKind::返回,
-        TokenKind::变量,
-        TokenKind::常量,
-        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::整数),
-        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::字符串),
-        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::布尔),
-        TokenKind::类型关键词(qi_compiler::parser::ast::BasicType::浮点数),
-        TokenKind::文件结束,
-    ];
-
-    assert_eq!(tokens.len(), expected_keywords.len());
-
-    for (token, expected) in tokens.iter().zip(expected_keywords.iter()) {
-        assert_eq!(token.kind, *expected);
-    }
-}
-
-#[test]
 fn test_parser_basic_statements() {
     // Test variable declaration
     let source = "变量 x = 42;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -60,15 +27,7 @@ fn test_parser_basic_statements() {
 fn test_parser_chinese_keywords() {
     // Test Chinese variable declaration
     let source = "变量 数字 = 42; 常量 PI = 3.14;".to_string();
-    let mut lexer = Lexer::new(source.clone());
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
 
-    println!("Tokens for Chinese keywords test:");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("  {}: {:?}", i, token);
-    }
-
-    // Try parsing directly from source string
     let parser = Parser::new();
     let result = parser.parse_source(&source);
 
@@ -88,32 +47,14 @@ fn test_parser_chinese_keywords() {
             );
         }
     }
-
-    // Also test the token-based parsing method
-    let token_result = parser.parse(tokens);
-    match token_result {
-        Ok(program) => {
-            println!(
-                "Token parsing succeeded! Statements: {}",
-                program.statements.len()
-            );
-        }
-        Err(e) => {
-            println!("Token parsing failed: {}", e);
-            // Don't panic here - we know this method has issues
-        }
-    }
 }
 
 #[test]
 fn test_simple_expression() {
     // Test expression parsing
     let source = "42;".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -227,32 +168,6 @@ fn test_future_struct_compilation_pipeline() {
 }
 
 #[test]
-fn test_control_flow_chinese_keywords() {
-    let source = "如果 否则 当 对于 与 或".to_string();
-    let mut lexer = Lexer::new(source);
-
-    let tokens = lexer
-        .tokenize()
-        .expect("Should tokenize control flow keywords");
-
-    let expected_keywords = vec![
-        TokenKind::如果,
-        TokenKind::否则,
-        TokenKind::当,
-        TokenKind::对于,
-        TokenKind::与,
-        TokenKind::或,
-        TokenKind::文件结束,
-    ];
-
-    assert_eq!(tokens.len(), expected_keywords.len());
-
-    for (token, expected) in tokens.iter().zip(expected_keywords.iter()) {
-        assert_eq!(token.kind, *expected);
-    }
-}
-
-#[test]
 fn test_parse_control_flow_statements() {
     // Test if statement parsing
     let source = r#"
@@ -262,11 +177,8 @@ fn test_parse_control_flow_statements() {
         "#
     .to_string();
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -278,11 +190,10 @@ fn test_control_flow_type_checking() {
     // Test that type checking infrastructure exists and can be created
     let source = "42;".to_string();
 
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
     let parser = Parser::new();
-    let ast = parser.parse(tokens).expect("Should parse successfully");
+    let ast = parser
+        .parse_source(&source)
+        .expect("Should parse successfully");
 
     let mut type_checker = TypeChecker::new();
 
@@ -311,42 +222,10 @@ fn test_control_flow_type_checking() {
 }
 
 #[test]
-fn test_character_literal_tokenization() {
-    let source = "'A' '5' '!';".to_string();
-    let mut lexer = Lexer::new(source);
-
-    let tokens = lexer
-        .tokenize()
-        .expect("Should tokenize character literals successfully");
-
-    let expected_tokens = vec![
-        TokenKind::字符字面量('A'),
-        TokenKind::字符字面量('5'),
-        TokenKind::字符字面量('!'),
-        TokenKind::分号,
-        TokenKind::文件结束,
-    ];
-
-    assert_eq!(tokens.len(), expected_tokens.len());
-
-    for (token, expected) in tokens.iter().zip(expected_tokens.iter()) {
-        assert_eq!(token.kind, *expected);
-    }
-}
-
-#[test]
 fn test_character_literal_parsing() {
     let source = "变量 c = 'A';".to_string();
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize().expect("Should tokenize successfully");
-
-    println!("Tokens generated:");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("  {}: {:?}", i, token);
-    }
-
     let parser = Parser::new();
-    let result = parser.parse(tokens);
+    let result = parser.parse_source(&source);
 
     match result {
         Ok(program) => {
@@ -945,58 +824,13 @@ fn test_boolean_expressions_in_while() {
 
 // Error message tests
 #[test]
-fn test_invalid_character_error_message() {
-    use qi_compiler::lexer::{Lexer, LexicalError};
-
-    let source = "变量 x = 5 @ 3;";
-    let mut lexer = Lexer::new(source.to_string());
-    let result = lexer.tokenize();
-
-    assert!(result.is_err());
-
-    if let Err(LexicalError::InvalidCharacter(c, line, col)) = result {
-        assert_eq!(c, '@');
-        assert_eq!(line, 1);
-        assert_eq!(col, 12);
-
-        // Test that the error displays correctly in Chinese
-        let error_str = format!("{}", LexicalError::InvalidCharacter(c, line, col));
-        assert!(error_str.contains("无效字符"));
-        assert!(error_str.contains("@"));
-        assert!(error_str.contains("第 1 行第 12 列"));
-    } else {
-        panic!("Expected InvalidCharacter error");
-    }
-}
-
-#[test]
-fn test_unterminated_string_error_message() {
-    use qi_compiler::lexer::{Lexer, LexicalError};
-
-    let source = "变量 message = \"hello world;";
-    let mut lexer = Lexer::new(source.to_string());
-    let result = lexer.tokenize();
-
-    assert!(result.is_err());
-
-    if let Err(LexicalError::UnterminatedString(line, col)) = result {
-        assert_eq!(line, 1);
-        assert_eq!(col, 16);
-
-        // Test that the error displays correctly in Chinese
-        let error_str = format!("{}", LexicalError::UnterminatedString(line, col));
-        assert!(error_str.contains("未终止的字符串字面量"));
-        assert!(error_str.contains("第 1 行第 16 列"));
-    } else {
-        panic!("Expected UnterminatedString error");
-    }
-}
-
-#[test]
 fn test_compilation_error_chinese_display() {
     use std::path::PathBuf;
 
-    let source_with_error = "变量 x = 5 @ 3;"; // Invalid character
+    // 非法字符现在由 LALRPOP 报（src/lexer 的词法器已删，见 lexer/mod.rs）。
+    // 报的是「语法错误：无法识别的标记」外加源码片段和插入符，
+    // 而且**列号是对的** —— 老 lexer 按显示宽度算列，含中文的行一律偏。
+    let source_with_error = "变量 x = 5 @ 3;";
 
     let compiler = qi_compiler::QiCompiler::new();
     let temp_file = PathBuf::from("test_temp.qi");
@@ -1008,8 +842,14 @@ fn test_compilation_error_chinese_display() {
 
     if let Err(compiler_error) = result {
         let error_str = format!("{}", compiler_error);
-        assert!(error_str.contains("词法错误"));
-        assert!(error_str.contains("无效字符"));
+        assert!(
+            error_str.contains("无法识别的标记") || error_str.contains("语法错误"),
+            "报错该指出这是个认不出来的标记，实际：{error_str}"
+        );
+        assert!(
+            error_str.contains("@"),
+            "报错该把出问题的字符显示出来：{error_str}"
+        );
         assert!(error_str.contains("@"));
     }
 

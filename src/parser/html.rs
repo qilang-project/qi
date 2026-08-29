@@ -216,6 +216,23 @@ fn html_open_at(source: &str, i: usize) -> Option<usize> {
     (source.as_bytes().get(p) == Some(&b'{')).then_some(p)
 }
 
+/// 字节偏移 → (行, 列)，两者都从 1 起，列按**字符**算。
+///
+/// 报错要带位置。以前这两处只有一句「HTML 模板附近存在未闭合的字符串」——
+/// 没有行号、没有列号，而且源码里一个 HTML 块都没有时也会这么说，
+/// 把人往完全错误的方向引（这个预扫描对每份源码都跑）。
+fn 行列(source: &str, offset: usize) -> (usize, usize) {
+    let 前 = &source[..offset.min(source.len())];
+    let 行 = 前.matches('\n').count() + 1;
+    let 列 = 前
+        .rsplit('\n')
+        .next()
+        .map(|l| l.chars().count())
+        .unwrap_or(0)
+        + 1;
+    (行, 列)
+}
+
 fn skip_quoted(source: &str, start: usize, quote: char) -> Result<usize, String> {
     let mut i = start + quote.len_utf8();
     while i < source.len() {
@@ -232,7 +249,11 @@ fn skip_quoted(source: &str, start: usize, quote: char) -> Result<usize, String>
             return Ok(i);
         }
     }
-    Err("HTML 模板附近存在未闭合的字符串".to_string())
+    let (行, 列) = 行列(source, start);
+    Err(format!(
+        "未闭合的字符串字面量（第 {} 行第 {} 列起）",
+        行, 列
+    ))
 }
 
 fn skip_block_comment(source: &str, start: usize) -> Result<usize, String> {
@@ -252,7 +273,8 @@ fn skip_block_comment(source: &str, start: usize) -> Result<usize, String> {
             i += source[i..].chars().next().unwrap().len_utf8();
         }
     }
-    Err("HTML 模板附近存在未闭合的块注释".to_string())
+    let (行, 列) = 行列(source, start);
+    Err(format!("未闭合的块注释（第 {} 行第 {} 列起）", 行, 列))
 }
 
 struct Parser<'a> {
