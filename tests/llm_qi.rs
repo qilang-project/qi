@@ -119,7 +119,35 @@ fn start_fake_llm() -> String {
                     let _ = conn.flush();
                     return;
                 }
-                let body = if first_line.contains("generateContent") {
+                // 工具轮：历史里已经有工具结果就答最终文本，否则要求调工具。
+                // 三家的「工具结果」形状完全不同，这正是最容易拼错的地方：
+                // openai 是 role:"tool"，anthropic 是 user 消息里的 tool_result 块，
+                // gemini 是 functionResponse 部件。哪一家拼错了，模型就看不到结果、
+                // 于是把同一个工具再调一遍 —— 看着像「模型不听话」而不是形状错。
+                let wants_tools = req.contains("\"tools\"");
+                let has_tool_result = req.contains("\"role\":\"tool\"")
+                    || req.contains("tool_result")
+                    || req.contains("functionResponse");
+                let tool_body = if first_line.contains("generateContent") {
+                    if has_tool_result {
+                        r#"{"candidates":[{"content":{"parts":[{"text":"gemini最终答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
+                    } else {
+                        r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"qi_tool_e69fa5e5a4a9e6b094","args":{"城市":"北京"}}}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
+                    }
+                } else if first_line.contains("/messages") {
+                    if has_tool_result {
+                        r#"{"content":[{"type":"text","text":"claude最终答"}],"usage":{"input_tokens":6,"output_tokens":4}}"#
+                    } else {
+                        r#"{"content":[{"type":"tool_use","id":"toolu_1","name":"qi_tool_e69fa5e5a4a9e6b094","input":{"城市":"北京"}}],"usage":{"input_tokens":6,"output_tokens":4}}"#
+                    }
+                } else if has_tool_result {
+                    r#"{"choices":[{"message":{"role":"assistant","content":"openai最终答"}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}"#
+                } else {
+                    r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"qi_tool_e69fa5e5a4a9e6b094","arguments":"{\"城市\":\"北京\"}"}}]}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}"#
+                };
+                let body = if wants_tools || has_tool_result {
+                    tool_body
+                } else if first_line.contains("generateContent") {
                     r#"{"candidates":[{"content":{"parts":[{"text":"gemini答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
                 } else if first_line.contains("/messages") {
                     r#"{"content":[{"type":"text","text":"claude答"}],"usage":{"input_tokens":6,"output_tokens":4}}"#
@@ -218,6 +246,56 @@ fn image_chat_matches_ffi() {
 #[test]
 fn streaming_matches_ffi() {
     compare("流式.qi");
+}
+
+/// 工具调用：带工具的请求成形（三家形状全不同）、tool_calls 读取、
+/// 工具结果回填历史、续传。语料跑完整一轮 调用→执行→回填→续传。
+///
+/// 最容易错的是**工具结果的形状**：openai 是 role:"tool"，anthropic 要翻成
+/// user 消息里的 tool_result 块，gemini 要翻成 functionResponse 部件。
+/// 拼错了模型看不到结果，会把同一个工具再调一遍 —— 表现像「模型不听话」。
+/// 第一版 qi 实现就漏了 anthropic / gemini 这两条，被这条语料当场比出来。
+#[test]
+fn tool_calling_matches_ffi() {
+    compare("工具调用.qi");
+}
+
+/// 取不到工具调用时（越界 / 消息里压根没有 tool_calls / 坏 JSON），
+/// qi 版返回**空串**，Rust 版返回**空指针**。这是故意不一致，且是修 bug：
+///
+/// 空指针进到 qi 的字符串拼接里，整条 `打印行(...)` 会**静默消失** ——
+/// 没有输出、没有报错、没有崩溃。qi-harness 的 对话.qi 就在用这两个索引
+/// 访问器（工具调用ID索引 / 工具调用名称索引），一旦模型少返一个调用，
+/// 上层某行日志就凭空不见了，完全无从察觉。
+///
+/// 所以这条不进 compare 语料，单独钉住 qi 的行为。
+#[test]
+fn tool_accessors_return_empty_string_not_null() {
+    if !runtime_ready() {
+        return;
+    }
+    let endpoint = start_fake_llm();
+    let (out, _) = run_qi("工具越界.qi", &endpoint, &[], false);
+    for expected in [
+        "越界ID=[]",
+        "越界参数=[]",
+        "无调用ID=[]",
+        "无调用参数=[]",
+        "坏JSON_ID=[]",
+        "数量=0",
+        "收尾",
+    ] {
+        assert!(out.contains(expected), "缺少 `{}`：\n{}", expected, out);
+    }
+
+    // 对照：走 FFI 时那几行确实是**整行消失**（不是内容不同）
+    let (ffi_out, _) = run_qi("工具越界.qi", &endpoint, &[], true);
+    assert!(
+        !ffi_out.contains("越界ID="),
+        "Rust 版居然打出来了？那这条测试的前提变了，重新确认：\n{}",
+        ffi_out
+    );
+    assert!(ffi_out.contains("收尾"), "程序应当照常跑完：\n{}", ffi_out);
 }
 
 /// 半途关流**不录磁带** —— 否则磁带里存下的是截断的回答，之后每次回放都
