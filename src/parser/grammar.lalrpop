@@ -2091,8 +2091,14 @@ MatchPattern: MatchPattern = {
 
 MatchPatternAtom: MatchPattern = {
     "_" => MatchPattern::通配符,
-    <n:r"[0-9]+"> => MatchPattern::字面量(LiteralValue::整数(n.parse().unwrap())),
-    <n:r"[0-9]+\.[0-9]+"> => MatchPattern::字面量(LiteralValue::浮点数(n.parse().unwrap())),
+    <n:r"[0-9]+"> =>? Ok(MatchPattern::字面量(LiteralValue::整数(
+        n.parse().map_err(|_| lalrpop_util::ParseError::User {
+            error: "匹配模式里的整数字面量超出范围（整数 是 64 位有符号）",
+        })?))),
+    <n:r"[0-9]+\.[0-9]+"> =>? Ok(MatchPattern::字面量(LiteralValue::浮点数(
+        n.parse().map_err(|_| lalrpop_util::ParseError::User {
+            error: "匹配模式里的浮点数字面量无法解析",
+        })?))),
     <s:r#""([^"\\]|\\.)*""#> => MatchPattern::字面量(LiteralValue::字符串(unescape_string(&s[1..s.len()-1]))),
     "真" => MatchPattern::字面量(LiteralValue::布尔(true)),
     "假" => MatchPattern::字面量(LiteralValue::布尔(false)),
@@ -2127,17 +2133,25 @@ BooleanLiteral: AstNode = {
 };
 
 IntegerLiteral: AstNode = {
-    <sp_l:@L> <n:r"[0-9]+"> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::整数(n.parse().unwrap()),
+    // `=>?` 而不是 `.unwrap()`：整数字面量超出 i64 时 unwrap 是**硬崩**
+    // （workspace 设了 panic = "abort"，不是可捕获的 unwind）。
+    // `qi check 99999999999999999999` 今天就会 abort，用户看到的是一段
+    // Rust backtrace 而不是错误信息。
+    <sp_l:@L> <n:r"[0-9]+"> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::整数(n.parse().map_err(|_| lalrpop_util::ParseError::User {
+            error: "整数字面量超出范围（整数 是 64 位有符号，最大 9223372036854775807）",
+        })?),
         span: Span::new(sp_l, sp_r),
-    }),
+    })),
 };
 
 FloatLiteral: AstNode = {
-    <sp_l:@L> <n:r"[0-9]+\.[0-9]+"> <sp_r:@R> => AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::浮点数(n.parse().unwrap()),
+    <sp_l:@L> <n:r"[0-9]+\.[0-9]+"> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::浮点数(n.parse().map_err(|_| lalrpop_util::ParseError::User {
+            error: "浮点数字面量无法解析为 64 位浮点",
+        })?),
         span: Span::new(sp_l, sp_r),
-    }),
+    })),
 };
 
 StringLiteral: AstNode = {
