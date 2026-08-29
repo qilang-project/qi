@@ -1916,7 +1916,11 @@ impl ModuleRegistry {
         llm_module.add_function(ModuleFunction::new(
             "流式磁带存",
             "qi_llm_stream_tape_put",
-            vec!["字符串".to_string(), "字符串".to_string()],
+            vec![
+                "字符串".to_string(), // 请求体 JSON
+                "字符串".to_string(), // 内容块字符串数组
+                "字符串".to_string(), // tool_calls 数组；空串/空数组 = 纯文本流
+            ],
             "整数",
         ));
 

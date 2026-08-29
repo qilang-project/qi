@@ -63,6 +63,10 @@ fn start_fake_llm() -> String {
                 };
                 let req = String::from_utf8_lossy(&buf[..n]).into_owned();
                 let first_line = req.lines().next().unwrap_or("");
+                let wants_tools = req.contains("\"tools\"");
+                let has_tool_result = req.contains("\"role\":\"tool\"")
+                    || req.contains("tool_result")
+                    || req.contains("functionResponse");
                 // OpenAI 的多候选要按请求里的 n 回相应条数，否则 对话多候选
                 // 测不出「候选个数」这一维
                 let n_choices = req
@@ -96,6 +100,40 @@ fn start_fake_llm() -> String {
                 };
                 // 流式：按 SSE 逐帧写出（chunked）。这里必须真的分块 + 有心跳 +
                 // 有「只有 role 没有内容」的首帧，那三种正是分帧最容易写错的地方。
+                if req.contains("\"stream\":true") && (wants_tools || has_tool_result) {
+                    // 带工具的流：tool_calls **分三块**到达（id/name 一块，
+                    // arguments 拆两块）。增量拼接写错的话 arguments 只会剩最后
+                    // 一片碎 JSON，解析成空对象 —— 工具照常被调，参数全丢，不报错。
+                    let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                    let _ = conn.write_all(header.as_bytes());
+                    let _ = conn.flush();
+                    let frames: Vec<&str> = if has_tool_result {
+                        vec![
+                            "data: {\"choices\":[{\"delta\":{\"content\":\"最终\"}}]}\n\n",
+                            "data: {\"choices\":[{\"delta\":{\"content\":\"答案\"}}]}\n\n",
+                            "data: [DONE]\n\n",
+                        ]
+                    } else {
+                        vec![
+                            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+                            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"function\":{\"name\":\"qi_tool_e69fa5e5a4a9e6b094\",\"arguments\":\"\"}}]}}]}\n\n",
+                            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"城市\\\":\"}}]}}]}\n\n",
+                            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"北京\\\"}\"}}]}}]}\n\n",
+                            "data: [DONE]\n\n",
+                        ]
+                    };
+                    for frame in frames {
+                        let b = frame.as_bytes();
+                        let _ = conn.write_all(format!("{:X}\r\n", b.len()).as_bytes());
+                        let _ = conn.write_all(b);
+                        let _ = conn.write_all(b"\r\n");
+                        let _ = conn.flush();
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    let _ = conn.write_all(b"0\r\n\r\n");
+                    let _ = conn.flush();
+                    return;
+                }
                 if req.contains("\"stream\":true") {
                     let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
                     let _ = conn.write_all(sse_header.as_bytes());
@@ -124,10 +162,6 @@ fn start_fake_llm() -> String {
                 // openai 是 role:"tool"，anthropic 是 user 消息里的 tool_result 块，
                 // gemini 是 functionResponse 部件。哪一家拼错了，模型就看不到结果、
                 // 于是把同一个工具再调一遍 —— 看着像「模型不听话」而不是形状错。
-                let wants_tools = req.contains("\"tools\"");
-                let has_tool_result = req.contains("\"role\":\"tool\"")
-                    || req.contains("tool_result")
-                    || req.contains("functionResponse");
                 let tool_body = if first_line.contains("generateContent") {
                     if has_tool_result {
                         r#"{"candidates":[{"content":{"parts":[{"text":"gemini最终答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
@@ -255,6 +289,19 @@ fn streaming_matches_ffi() {
 /// user 消息里的 tool_result 块，gemini 要翻成 functionResponse 部件。
 /// 拼错了模型看不到结果，会把同一个工具再调一遍 —— 表现像「模型不听话」。
 /// 第一版 qi 实现就漏了 anthropic / gemini 这两条，被这条语料当场比出来。
+/// 流式 + 工具：tool_calls 增量拼接、完整 assistant 消息还原、
+/// 工具结果回填后**流式续传**。
+///
+/// 这条同时钉住一个不显眼的东西：stream 字段在请求体里的**位置**。
+/// Rust 自己两条路就不一致（流式工具对话 放在 tools 之前，流式继续工具对话
+/// 是建完再补、落在末尾），而 IndexMap 的 remove 是 swap_remove —— 删掉
+/// stream 之后剩下的键序取决于它原来在哪儿，于是**磁带键跟着变**。
+/// qi 侧只能一处一处照搬，靠这条测试守住。
+#[test]
+fn streaming_tools_matches_ffi() {
+    compare("流式工具.qi");
+}
+
 #[test]
 fn tool_calling_matches_ffi() {
     compare("工具调用.qi");
