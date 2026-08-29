@@ -6,7 +6,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=src/parser/");
-    生成标准库qi内置表();
+    emit_qi_stdlib_table();
 
     // Process LALRPOP grammar
     // Note: This may report shift/reduce conflicts which are benign
@@ -37,47 +37,49 @@ fn main() {
 /// 都进 rerun-if-changed，改了就重编，不会拿着上一次的源码继续跑。
 ///
 /// 为什么不装到磁盘上再运行时读：见 src/标准库qi.rs 的模块文档。
-fn 生成标准库qi内置表() {
+fn emit_qi_stdlib_table() {
     use std::fmt::Write as _;
 
-    let 根 = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("标准库");
-    println!("cargo:rerun-if-changed={}", 根.display());
+    let root = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("标准库");
+    println!("cargo:rerun-if-changed={}", root.display());
     // 覆盖目录只在运行时读，但它一变就该重跑（否则 unset 之后还用着旧的内置表）
     println!("cargo:rerun-if-env-changed=QI_STDLIB_QI");
 
-    let mut 条目: Vec<(String, std::path::PathBuf)> = Vec::new();
-    if 根.is_dir() {
-        let mut 项: Vec<_> = std::fs::read_dir(&根)
-            .unwrap_or_else(|e| panic!("读不了 {}: {e}", 根.display()))
+    let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if root.is_dir() {
+        let mut items: Vec<_> = std::fs::read_dir(&root)
+            .unwrap_or_else(|e| panic!("读不了 {}: {e}", root.display()))
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("qi"))
             .collect();
         // 排序：生成文件的内容必须只由目录内容决定，不能随 read_dir 的返回序变，
         // 否则同一份源码两次构建产出不同的二进制。
-        项.sort();
-        for p in 项 {
-            let 名 = p.file_stem().unwrap().to_str().unwrap().to_string();
+        items.sort();
+        for p in items {
+            let name = p.file_stem().unwrap().to_str().unwrap().to_string();
             println!("cargo:rerun-if-changed={}", p.display());
-            条目.push((名, p));
+            entries.push((name, p));
         }
     }
 
-    let mut 代码 = String::from(
-        "// 由 build.rs 生成，勿手改。源在 qi/标准库/*.qi。\npub static 内置源码: &[(&str, &str)] = &[\n",
+    let mut code = String::from(
+        "// 由 build.rs 生成，勿手改。源在 qi/标准库/*.qi。\npub static BUILTIN_SOURCES: &[(&str, &str)] = &[\n",
     );
-    for (名, p) in &条目 {
+    for (name, p) in &entries {
         writeln!(
-            代码,
+            code,
             "    ({:?}, include_str!({:?})),",
-            名,
+            name,
             p.display().to_string()
         )
         .unwrap();
     }
-    代码.push_str("];\n");
+    code.push_str("];\n");
 
-    let 出 = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("标准库qi内置.rs");
-    std::fs::write(&出, 代码).unwrap_or_else(|e| panic!("写不了 {}: {e}", 出.display()));
-    eprintln!("✓ 标准库 qi 实现 {} 个模块已嵌入", 条目.len());
+    let out_path =
+        std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("qi_stdlib_builtin.rs");
+    std::fs::write(&out_path, code)
+        .unwrap_or_else(|e| panic!("写不了 {}: {e}", out_path.display()));
+    eprintln!("✓ 标准库 qi 实现 {} 个模块已嵌入", entries.len());
 }

@@ -47,7 +47,7 @@ impl<'ctx> 后端<'ctx> {
             };
             // qi 实现的模块（标准库/X.qi）不在 FFI 注册表里 —— 搬完一个模块就会把它
             // 的 FFI 条目撤掉，那之后 has_module 是 false，但导入完全合法。
-            let 有qi实现 = crate::标准库qi::源码(&module_name).is_some();
+            let 有qi实现 = crate::qi_stdlib::source(&module_name).is_some();
             if !有qi实现 && !self.注册表.has_module(&module_name) {
                 return Err(format!(
                     "标准库里没有模块「{}」{}",

@@ -25,7 +25,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn 编译器() -> PathBuf {
+fn qi_binary() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     ["release", "debug"]
         .iter()
@@ -34,7 +34,7 @@ fn 编译器() -> PathBuf {
         .expect("找不到 qi 二进制（先 cargo build --release）")
 }
 
-fn 运行时就位() -> bool {
+fn runtime_ready() -> bool {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     ["release", "debug"].iter().any(|c| {
         manifest
@@ -49,27 +49,27 @@ fn 运行时就位() -> bool {
 ///
 /// 固定响应是**故意**的：这些测试要证明的是「两条实现发出的请求一样、
 /// 对响应的处理一样」，不是模型答得对不对。响应一变，比对就失去意义。
-fn 起假服务() -> String {
-    let 监听 = TcpListener::bind("127.0.0.1:0").unwrap();
-    let 端口 = 监听.local_addr().unwrap().port();
+fn start_fake_llm() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
-        for 连 in 监听.incoming() {
-            let Ok(mut 连) = 连 else { continue };
+        for conn in listener.incoming() {
+            let Ok(mut conn) = conn else { continue };
             std::thread::spawn(move || {
-                let mut 缓冲 = vec![0u8; 65536];
-                let n = match 连.read(&mut 缓冲) {
+                let mut buf = vec![0u8; 65536];
+                let n = match conn.read(&mut buf) {
                     Ok(n) if n > 0 => n,
                     _ => return,
                 };
-                let 请求 = String::from_utf8_lossy(&缓冲[..n]).into_owned();
-                let 首行 = 请求.lines().next().unwrap_or("");
+                let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let first_line = req.lines().next().unwrap_or("");
                 // OpenAI 的多候选要按请求里的 n 回相应条数，否则 对话多候选
                 // 测不出「候选个数」这一维
-                let 候选数 = 请求
+                let n_choices = req
                     .split("\"n\":")
                     .nth(1)
-                    .and_then(|尾| {
-                        尾.trim_start()
+                    .and_then(|rest| {
+                        rest.trim_start()
                             .chars()
                             .take_while(|c| c.is_ascii_digit())
                             .collect::<String>()
@@ -78,8 +78,8 @@ fn 起假服务() -> String {
                     })
                     .unwrap_or(1)
                     .max(1);
-                let 多候选体 = {
-                    let 各条: Vec<String> = (0..候选数)
+                let multi_body = {
+                    let items: Vec<String> = (0..n_choices)
                         .map(|i| {
                             format!(
                                 r#"{{"message":{{"role":"assistant","content":"候选{}"}}}}"#,
@@ -89,18 +89,18 @@ fn 起假服务() -> String {
                         .collect();
                     format!(
                         r#"{{"choices":[{}],"usage":{{"prompt_tokens":11,"completion_tokens":{},"total_tokens":{}}}}}"#,
-                        各条.join(","),
-                        7 * 候选数,
-                        11 + 7 * 候选数
+                        items.join(","),
+                        7 * n_choices,
+                        11 + 7 * n_choices
                     )
                 };
                 // 流式：按 SSE 逐帧写出（chunked）。这里必须真的分块 + 有心跳 +
                 // 有「只有 role 没有内容」的首帧，那三种正是分帧最容易写错的地方。
-                if 请求.contains("\"stream\":true") {
-                    let 头 = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
-                    let _ = 连.write_all(头.as_bytes());
-                    let _ = 连.flush();
-                    for 帧 in [
+                if req.contains("\"stream\":true") {
+                    let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                    let _ = conn.write_all(sse_header.as_bytes());
+                    let _ = conn.flush();
+                    for frame in [
                         "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
                         "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n",
                         ": keep-alive\n\n",
@@ -108,250 +108,254 @@ fn 起假服务() -> String {
                         "data: {\"choices\":[{\"delta\":{\"content\":\"世界\"}}]}\n\n",
                         "data: [DONE]\n\n",
                     ] {
-                        let b = 帧.as_bytes();
-                        let _ = 连.write_all(format!("{:X}\r\n", b.len()).as_bytes());
-                        let _ = 连.write_all(b);
-                        let _ = 连.write_all(b"\r\n");
-                        let _ = 连.flush();
+                        let b = frame.as_bytes();
+                        let _ = conn.write_all(format!("{:X}\r\n", b.len()).as_bytes());
+                        let _ = conn.write_all(b);
+                        let _ = conn.write_all(b"\r\n");
+                        let _ = conn.flush();
                         std::thread::sleep(std::time::Duration::from_millis(15));
                     }
-                    let _ = 连.write_all(b"0\r\n\r\n");
-                    let _ = 连.flush();
+                    let _ = conn.write_all(b"0\r\n\r\n");
+                    let _ = conn.flush();
                     return;
                 }
-                let 体 = if 首行.contains("generateContent") {
+                let body = if first_line.contains("generateContent") {
                     r#"{"candidates":[{"content":{"parts":[{"text":"gemini答"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#
-                } else if 首行.contains("/messages") {
+                } else if first_line.contains("/messages") {
                     r#"{"content":[{"type":"text","text":"claude答"}],"usage":{"input_tokens":6,"output_tokens":4}}"#
-                } else if 首行.contains("/embeddings") {
+                } else if first_line.contains("/embeddings") {
                     r#"{"data":[{"embedding":[0.25,0.5,0.75,1.0]}],"usage":{"prompt_tokens":3,"total_tokens":3}}"#
                 } else {
-                    多候选体.as_str()
+                    multi_body.as_str()
                 };
-                let 响应 = format!(
+                let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    体.len(),
-                    体
+                    body.len(),
+                    body
                 );
-                let _ = 连.write_all(响应.as_bytes());
-                let _ = 连.flush();
+                let _ = conn.write_all(resp.as_bytes());
+                let _ = conn.flush();
             });
         }
     });
-    format!("http://127.0.0.1:{}", 端口)
+    format!("http://127.0.0.1:{}", port)
 }
 
 /// 把语料里的 __端点__ 换成真端点，写进独占临时目录后跑。
 /// 返回 (stdout, stderr)。
-fn 跑(语料: &str, 端点: &str, 环境: &[(&str, &str)], 走ffi: bool) -> (String, String) {
-    let 源文本 = std::fs::read_to_string(
+fn run_qi(fixture: &str, endpoint: &str, env: &[(&str, &str)], use_ffi: bool) -> (String, String) {
+    let src_text = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/大模型语料")
-            .join(语料),
+            .join(fixture),
     )
     .unwrap()
-    .replace("__端点__", 端点);
-    let 临时 = tempfile::tempdir().unwrap();
-    let 文件 = 临时.path().join(语料);
-    std::fs::write(&文件, 源文本).unwrap();
+    .replace("__端点__", endpoint);
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join(fixture);
+    std::fs::write(&file, src_text).unwrap();
 
-    let mut cmd = Command::new(编译器());
-    cmd.arg("run").arg(&文件);
-    for (k, v) in 环境 {
+    let mut cmd = Command::new(qi_binary());
+    cmd.arg("run").arg(&file);
+    for (k, v) in env {
         cmd.env(k, v);
     }
-    if 走ffi {
+    if use_ffi {
         cmd.env("QI_STDLIB_FFI", "大模型");
     } else {
         cmd.env_remove("QI_STDLIB_FFI");
     }
-    let 出 = cmd.output().expect("起不来 qi");
+    let out = cmd.output().expect("起不来 qi");
     (
-        String::from_utf8_lossy(&出.stdout).into_owned(),
-        String::from_utf8_lossy(&出.stderr).into_owned(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
     )
 }
 
-fn 对照(语料: &str) {
-    if !运行时就位() {
+fn compare(fixture: &str) {
+    if !runtime_ready() {
         eprintln!("跳过：未找到 qi-runtime 归档");
         return;
     }
-    let 端点 = 起假服务();
-    let (qi出, qi错) = 跑(语料, &端点, &[], false);
-    let (rust出, rust错) = 跑(语料, &端点, &[], true);
-    assert!(!qi出.trim().is_empty(), "{} 没有输出", 语料);
-    assert_eq!(qi出, rust出, "{} 的 stdout 不一致", 语料);
+    let endpoint = start_fake_llm();
+    let (qi_out, qi_err) = run_qi(fixture, &endpoint, &[], false);
+    let (ffi_out, ffi_err) = run_qi(fixture, &endpoint, &[], true);
+    assert!(!qi_out.trim().is_empty(), "{} 没有输出", fixture);
+    assert_eq!(qi_out, ffi_out, "{} 的 stdout 不一致", fixture);
     // stderr 也要比：嵌入失败只走 stderr，只比 stdout 的话丢掉整条诊断也照样绿
-    assert_eq!(qi出.is_empty(), rust出.is_empty());
-    assert_eq!(qi错, rust错, "{} 的 stderr 不一致", 语料);
+    assert_eq!(qi_out.is_empty(), ffi_out.is_empty());
+    assert_eq!(qi_err, ffi_err, "{} 的 stderr 不一致", fixture);
 }
 
 #[test]
-fn 会话状态_qi与ffi逐字节一致() {
-    对照("会话状态.qi");
+fn session_state_matches_ffi() {
+    compare("会话状态.qi");
 }
 
 #[test]
-fn 三家provider_qi与ffi逐字节一致() {
-    对照("三家对话.qi");
+fn three_providers_match_ffi() {
+    compare("三家对话.qi");
 }
 
 /// 多候选：openai 走请求体里的 n，anthropic/gemini 没有 n 语义 → **串行 n 次**。
 /// 串行那条最容易写错的是历史：n 次请求都不能写历史，最后只写一次、且只写
 /// 第一个候选，否则后续对话的上下文里多出 n-1 组重复问答。
 #[test]
-fn 多候选_qi与ffi逐字节一致() {
-    对照("多候选.qi");
+fn multi_choice_matches_ffi() {
+    compare("多候选.qi");
 }
 
 /// 图像：user content 是**块数组**，三家形状都不同（openai 原样 /
 /// anthropic image+source / gemini file_data）。语料里带一次「看过图之后追问」——
 /// 那一轮的历史里躺着数组 content，成形代码要能继续处理。
 #[test]
-fn 图像_qi与ffi逐字节一致() {
-    对照("图像.qi");
+fn image_chat_matches_ffi() {
+    compare("图像.qi");
 }
 
 /// 流式：SSE 分帧交给 标准库.事件流，增量拼接和历史落账在 qi。
 /// 语料覆盖多轮流式、流式之后接非流式（历史要接得上）、半途关流、坏句柄。
 #[test]
-fn 流式_qi与ffi逐字节一致() {
-    对照("流式.qi");
+fn streaming_matches_ffi() {
+    compare("流式.qi");
 }
 
 /// 半途关流**不录磁带** —— 否则磁带里存下的是截断的回答，之后每次回放都
 /// 拿到半句话，而且完全看不出是磁带的问题。
 /// 语料里最后那次「开了不读就关」正是这种，回放时必须报未命中而不是给半句。
 #[test]
-fn 流式磁带_双向互放且半途不录() {
-    if !运行时就位() {
+fn stream_tape_both_ways_and_partial_not_recorded() {
+    if !runtime_ready() {
         return;
     }
-    for (录走ffi, 名) in [(true, "rust录qi放"), (false, "qi录rust放")] {
-        let 端点 = 起假服务();
-        let 临时 = tempfile::tempdir().unwrap();
-        let 磁带 = 临时.path().join("tape.json");
-        let 路径 = 磁带.to_string_lossy().to_string();
+    for (record_via_ffi, label) in [(true, "rust录qi放"), (false, "qi录rust放")] {
+        let endpoint = start_fake_llm();
+        let tmp = tempfile::tempdir().unwrap();
+        let tape = tmp.path().join("tape.json");
+        let tape_path = tape.to_string_lossy().to_string();
 
-        跑(
+        run_qi(
             "流式.qi",
-            &端点,
-            &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &路径)],
-            录走ffi,
+            &endpoint,
+            &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &tape_path)],
+            record_via_ffi,
         );
-        let 内容 = std::fs::read_to_string(&磁带).expect("没录出磁带");
-        let 表: serde_json::Value = serde_json::from_str(&内容).unwrap();
-        let 流条数 = 表
+        let content = std::fs::read_to_string(&tape).expect("没录出磁带");
+        let map: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let n_stream_tapes = map
             .as_object()
             .unwrap()
             .keys()
             .filter(|k| k.starts_with("stream:"))
             .count();
         // 三次流式调用，但「半途关流」那次不录 → 只应有 2 条
-        assert_eq!(流条数, 2, "{}: 流式磁带条数不对（半途关流不该被录）", 名);
+        assert_eq!(
+            n_stream_tapes, 2,
+            "{}: 流式磁带条数不对（半途关流不该被录）",
+            label
+        );
 
         // 端点换成连不上的：键没命中而偷偷联网会当场失败，不会蒙混过关
-        let (出, 错) = 跑(
+        let (out, 错) = run_qi(
             "流式.qi",
             "http://127.0.0.1:1",
-            &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &路径)],
-            !录走ffi,
+            &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &tape_path)],
+            !record_via_ffi,
         );
         assert!(
-            出.contains("你好，世界"),
+            out.contains("你好，世界"),
             "{}: 回放不出内容:\n{}\n{}",
-            名,
-            出,
+            label,
+            out,
             错
         );
         // 恰好一条未命中 = 半途那次；多了就是键不匹配
-        let 未命中 = 错.matches("未命中").count() + 出.matches("未命中").count();
+        let n_miss = 错.matches("未命中").count() + out.matches("未命中").count();
         assert_eq!(
-            未命中, 1,
+            n_miss, 1,
             "{}: 未命中次数应恰为 1（半途那次）。多了说明键不匹配。\n{}\n{}",
-            名, 出, 错
+            label, out, 错
         );
     }
 }
 
 /// Rust 录、qi 放。键错一位就在 REPLAY 下硬报未命中。
 #[test]
-fn 磁带_rust录qi放() {
-    if !运行时就位() {
+fn tape_recorded_by_ffi_replays_in_qi() {
+    if !runtime_ready() {
         return;
     }
-    let 端点 = 起假服务();
-    let 临时 = tempfile::tempdir().unwrap();
-    let 磁带 = 临时.path().join("tape.json");
-    let 磁带路径 = 磁带.to_string_lossy().to_string();
+    let endpoint = start_fake_llm();
+    let tmp = tempfile::tempdir().unwrap();
+    let tape = tmp.path().join("tape.json");
+    let tape_path = tape.to_string_lossy().to_string();
 
-    let (_, _) = 跑(
+    let (_, _) = run_qi(
         "三家对话.qi",
-        &端点,
-        &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &磁带路径)],
+        &endpoint,
+        &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &tape_path)],
         true,
     );
-    let 录了 = std::fs::read_to_string(&磁带).expect("没录出磁带");
-    let 键数 = serde_json::from_str::<serde_json::Value>(&录了)
+    let recorded = std::fs::read_to_string(&tape).expect("没录出磁带");
+    let n_keys = serde_json::from_str::<serde_json::Value>(&recorded)
         .unwrap()
         .as_object()
         .unwrap()
         .len();
-    assert!(键数 >= 6, "录到的磁带条数不对：{}", 键数);
+    assert!(n_keys >= 6, "录到的磁带条数不对：{}", n_keys);
 
     // 回放时把端点换成一个**连不上**的地址：万一键没命中而代码悄悄去联网，
     // 这里会直接失败，而不是偷偷真调一次 API 让测试蒙混过关。
-    let (出, 错) = 跑(
+    let (out, 错) = run_qi(
         "三家对话.qi",
         "http://127.0.0.1:1",
-        &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &磁带路径)],
+        &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &tape_path)],
         false,
     );
     assert!(
-        !出.contains("未命中") && !错.contains("未命中"),
+        !out.contains("未命中") && !错.contains("未命中"),
         "qi 实现拼出的请求体跟 Rust 版不同 —— 磁带键变了，所有历史录制都会静默失配。\n{}\n{}",
-        出,
+        out,
         错
     );
     // openai 分支的假响应是「候选0…」（多候选共用同一个 fixture）
     assert!(
-        出.contains("claude答") && 出.contains("gemini答") && 出.contains("候选0"),
+        out.contains("claude答") && out.contains("gemini答") && out.contains("候选0"),
         "回放出来的内容不对：\n{}",
-        出
+        out
     );
 }
 
 /// 反方向：qi 录、Rust 放。两个方向都过才说明键真的相同，
 /// 而不是「qi 自己跟自己一致」。
 #[test]
-fn 磁带_qi录rust放() {
-    if !运行时就位() {
+fn tape_recorded_by_qi_replays_in_ffi() {
+    if !runtime_ready() {
         return;
     }
-    let 端点 = 起假服务();
-    let 临时 = tempfile::tempdir().unwrap();
-    let 磁带 = 临时.path().join("tape.json");
-    let 磁带路径 = 磁带.to_string_lossy().to_string();
+    let endpoint = start_fake_llm();
+    let tmp = tempfile::tempdir().unwrap();
+    let tape = tmp.path().join("tape.json");
+    let tape_path = tape.to_string_lossy().to_string();
 
-    跑(
+    run_qi(
         "三家对话.qi",
-        &端点,
-        &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &磁带路径)],
+        &endpoint,
+        &[("QI_LLM_RECORD", "1"), ("QI_LLM_TAPE", &tape_path)],
         false,
     );
-    assert!(磁带.exists(), "qi 实现没录出磁带");
+    assert!(tape.exists(), "qi 实现没录出磁带");
 
-    let (出, 错) = 跑(
+    let (out, 错) = run_qi(
         "三家对话.qi",
         "http://127.0.0.1:1",
-        &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &磁带路径)],
+        &[("QI_LLM_REPLAY", "1"), ("QI_LLM_TAPE", &tape_path)],
         true,
     );
     assert!(
-        !出.contains("未命中") && !错.contains("未命中"),
+        !out.contains("未命中") && !错.contains("未命中"),
         "Rust 实现放不了 qi 录的磁带：\n{}\n{}",
-        出,
+        out,
         错
     );
 }
@@ -362,11 +366,11 @@ fn 磁带_qi录rust放() {
 /// 才认识的行为不好找，所以退一步：确认设了这个变量之后程序仍然跑得通，
 /// 且磁带互放（上面两条）成立，即两条实现确实都被执行过。
 #[test]
-fn 逃生口能跑通() {
-    if !运行时就位() {
+fn escape_hatch_runs() {
+    if !runtime_ready() {
         return;
     }
-    let 端点 = 起假服务();
-    let (出, _) = 跑("会话状态.qi", &端点, &[], true);
-    assert!(出.contains("答1="), "走 FFI 时程序没跑通:\n{}", 出);
+    let endpoint = start_fake_llm();
+    let (out, _) = run_qi("会话状态.qi", &endpoint, &[], true);
+    assert!(out.contains("答1="), "走 FFI 时程序没跑通:\n{}", out);
 }

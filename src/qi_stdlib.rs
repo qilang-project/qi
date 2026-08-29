@@ -27,43 +27,46 @@ use std::path::{Path, PathBuf};
 
 // build.rs 扫 `标准库/` 目录生成，内容形如：
 // `pub static 内置源码: &[(&str, &str)] = &[("JSON", include_str!(...)), ...];`
-include!(concat!(env!("OUT_DIR"), "/标准库qi内置.rs"));
+include!(concat!(env!("OUT_DIR"), "/qi_stdlib_builtin.rs"));
 
 /// 虚拟路径前缀。嵌进二进制的模块没有真实文件，但整条模块收集流程都以
 /// PathBuf 为 key（visited / compiled_modules / 私有函数按文件消歧），
 /// 所以给它们编一个稳定且不可能与真实文件相撞的路径。
-pub const 虚拟前缀: &str = "<标准库>";
+pub const VIRTUAL_PREFIX: &str = "<标准库>";
 
 /// 这个路径是不是嵌入式标准库模块。
-pub fn 是虚拟路径(p: &Path) -> bool {
-    p.components().next().map(|c| c.as_os_str() == 虚拟前缀) == Some(true)
+pub fn is_virtual_path(p: &Path) -> bool {
+    p.components()
+        .next()
+        .map(|c| c.as_os_str() == VIRTUAL_PREFIX)
+        == Some(true)
 }
 
 /// 模块名 → 虚拟路径（`<标准库>/JSON.qi`）。
-pub fn 虚拟路径(模块名: &str) -> PathBuf {
-    PathBuf::from(虚拟前缀).join(format!("{}.qi", 模块名))
+pub fn virtual_path(name: &str) -> PathBuf {
+    PathBuf::from(VIRTUAL_PREFIX).join(format!("{}.qi", name))
 }
 
-fn 强制走ffi(模块名: &str) -> bool {
+fn forced_to_ffi(name: &str) -> bool {
     match std::env::var("QI_STDLIB_FFI") {
-        Ok(s) => s.split(',').any(|x| x.trim() == 模块名),
+        Ok(s) => s.split(',').any(|x| x.trim() == name),
         Err(_) => false,
     }
 }
 
 /// 开发覆盖目录：`QI_STDLIB_QI=/path/to/标准库`。
-fn 覆盖目录() -> Option<PathBuf> {
+fn override_dir() -> Option<PathBuf> {
     std::env::var("QI_STDLIB_QI").ok().map(PathBuf::from)
 }
 
 /// 取模块的 qi 源码。没有 qi 实现（或被 QI_STDLIB_FFI 挡下）返回 None，
 /// 调用方据此落回 FFI 注册表。
-pub fn 源码(模块名: &str) -> Option<String> {
-    if 强制走ffi(模块名) {
+pub fn source(name: &str) -> Option<String> {
+    if forced_to_ffi(name) {
         return None;
     }
-    if let Some(目录) = 覆盖目录() {
-        let p = 目录.join(format!("{}.qi", 模块名));
+    if let Some(dir) = override_dir() {
+        let p = dir.join(format!("{}.qi", name));
         if p.is_file() {
             // 覆盖目录读不出来是配置错误，不该静默退回内置版本装作没事 ——
             // 那会让人对着改过的源码百思不得其解。
@@ -75,34 +78,34 @@ pub fn 源码(模块名: &str) -> Option<String> {
         }
         // 覆盖目录里没有这个模块 → 照常用内置的，允许只覆盖一部分。
     }
-    内置源码
+    BUILTIN_SOURCES
         .iter()
-        .find(|(名, _)| *名 == 模块名)
-        .map(|(_, 源)| (*源).to_string())
+        .find(|(n, _)| *n == name)
+        .map(|(_, src)| (*src).to_string())
 }
 
 /// 从虚拟路径反查源码。
-pub fn 虚拟路径源码(p: &Path) -> Option<String> {
-    if !是虚拟路径(p) {
+pub fn virtual_path_source(p: &Path) -> Option<String> {
+    if !is_virtual_path(p) {
         return None;
     }
-    let 名 = p.file_stem()?.to_str()?;
-    源码(名)
+    let n = p.file_stem()?.to_str()?;
+    source(n)
 }
 
 /// 有 qi 实现的模块名（已扣掉 QI_STDLIB_FFI 挡下的）。
-pub fn 有qi实现的模块() -> Vec<String> {
-    内置源码
+pub fn modules_with_qi_impl() -> Vec<String> {
+    BUILTIN_SOURCES
         .iter()
-        .map(|(名, _)| (*名).to_string())
-        .filter(|名| 源码(名).is_some())
+        .map(|(n, _)| (*n).to_string())
+        .filter(|n| source(n).is_some())
         .collect()
 }
 
 /// 模块名 → 源码，给需要一次拿全的调用方（如 doctor / 测试）。
-pub fn 全部() -> HashMap<String, String> {
-    有qi实现的模块()
+pub fn all_sources() -> HashMap<String, String> {
+    modules_with_qi_impl()
         .into_iter()
-        .filter_map(|名| 源码(&名).map(|源| (名, 源)))
+        .filter_map(|n| source(&n).map(|src| (n, src)))
         .collect()
 }

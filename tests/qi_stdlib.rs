@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn 编译器() -> PathBuf {
+fn qi_binary() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     ["release", "debug"]
         .iter()
@@ -25,7 +25,7 @@ fn 编译器() -> PathBuf {
         .expect("找不到 qi 二进制（先 cargo build --release）")
 }
 
-fn 运行时就位() -> bool {
+fn runtime_ready() -> bool {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     ["release", "debug"].iter().any(|c| {
         manifest
@@ -42,26 +42,27 @@ fn 运行时就位() -> bool {
 /// 语料并行跑，就会同时往同一个可执行文件上写 —— 一个正在链接，另一个已经
 /// 开始执行那个写了一半的文件。表现是随机一条测试报「跑 X 失败」而 stderr
 /// 是空的，单独重跑又必过。cargo test 默认多线程，所以这条只在跑全量时炸。
-fn 独占拷贝(源: &Path, 标记: &str) -> (tempfile::TempDir, PathBuf) {
-    let 临时 = tempfile::tempdir().expect("建不了临时目录");
-    let 目标 = 临时.path().join(format!(
+fn exclusive_copy(src_path: &Path, tag: &str) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().expect("建不了临时目录");
+    let dest = tmp.path().join(format!(
         "{}_{}.qi",
-        源.file_stem().unwrap().to_string_lossy(),
-        标记
+        src_path.file_stem().unwrap().to_string_lossy(),
+        tag
     ));
-    std::fs::copy(源, &目标).expect("拷不过去");
-    (临时, 目标)
+    std::fs::copy(src_path, &dest).expect("拷不过去");
+    (tmp, dest)
 }
 
 /// 跑一份源码，返回 stdout。走 FFI 时置 QI_STDLIB_FFI。
-fn 跑(源: &Path, 强制ffi: Option<&str>) -> String {
-    let (_临时, 源) = 独占拷贝(源, if 强制ffi.is_some() { "ffi" } else { "qi" });
-    let 源 = &源;
-    let mut cmd = Command::new(编译器());
-    cmd.arg("run").arg(源);
-    match 强制ffi {
-        Some(模块) => {
-            cmd.env("QI_STDLIB_FFI", 模块);
+fn run_qi(src_path: &Path, force_ffi: Option<&str>) -> String {
+    let (_临时, src_path) =
+        exclusive_copy(src_path, if force_ffi.is_some() { "ffi" } else { "qi" });
+    let src_path = &src_path;
+    let mut cmd = Command::new(qi_binary());
+    cmd.arg("run").arg(src_path);
+    match force_ffi {
+        Some(module) => {
+            cmd.env("QI_STDLIB_FFI", module);
         }
         // 显式清掉：外面设了这个变量会让「qi 版」那一趟其实也跑 FFI，
         // 两边一致于是测试绿 —— 一个什么都没验证的绿。
@@ -69,41 +70,41 @@ fn 跑(源: &Path, 强制ffi: Option<&str>) -> String {
             cmd.env_remove("QI_STDLIB_FFI");
         }
     }
-    let 出 = cmd.output().expect("起不来 qi");
+    let out = cmd.output().expect("起不来 qi");
     assert!(
-        出.status.success(),
-        "跑 {} 失败（QI_STDLIB_FFI={:?}）:\n{}\n{}",
-        源.display(),
-        强制ffi,
-        String::from_utf8_lossy(&出.stdout),
-        String::from_utf8_lossy(&出.stderr),
+        out.status.success(),
+        "run_qi {} 失败（QI_STDLIB_FFI={:?}）:\n{}\n{}",
+        src_path.display(),
+        force_ffi,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
     );
     // stdout + stderr 都要比。向量 的「维度不匹配」防御警告只走 stderr，
     // 只比 stdout 的话把警告整个丢掉也照样绿 —— 而那条警告正是这类
     // 「返回了值但那是防御值」的唯一提示，丢了就等于回到静默给假数据。
     format!(
         "{}--- stderr ---\n{}",
-        String::from_utf8_lossy(&出.stdout),
-        String::from_utf8_lossy(&出.stderr)
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     )
 }
 
-fn 对照(模块: &str) {
-    if !运行时就位() {
-        eprintln!("跳过：未找到 qi-runtime 归档（先在 qi-runtime/ 跑 cargo build --release）");
+fn compare(module: &str) {
+    if !runtime_ready() {
+        eprintln!("跳过：未找到 qi-runtime 归档（先在 qi-runtime/ run_qi cargo build --release）");
         return;
     }
-    let 源 = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/标准库qi语料")
-        .join(format!("{}.qi", 模块));
-    let qi版 = 跑(&源, None);
-    let rust版 = 跑(&源, Some(模块));
+        .join(format!("{}.qi", module));
+    let qi_out = run_qi(&src_path, None);
+    let ffi_out = run_qi(&src_path, Some(module));
 
-    assert!(!qi版.trim().is_empty(), "{} 语料没有任何输出", 模块);
-    if qi版 != rust版 {
-        let 差: Vec<String> = qi版
+    assert!(!qi_out.trim().is_empty(), "{} 语料没有任何输出", module);
+    if qi_out != ffi_out {
+        let diffs: Vec<String> = qi_out
             .lines()
-            .zip(rust版.lines())
+            .zip(ffi_out.lines())
             .enumerate()
             .filter(|(_, (a, b))| a != b)
             .take(20)
@@ -111,15 +112,15 @@ fn 对照(模块: &str) {
             .collect();
         panic!(
             "标准库.{} 的 qi 实现与 Rust FFI 输出不一致（前 20 处）：\n{}",
-            模块,
-            差.join("\n")
+            module,
+            diffs.join("\n")
         );
     }
 }
 
 #[test]
-fn 时间_qi实现与ffi逐字节一致() {
-    对照("时间");
+fn time_qi_matches_ffi_byte_for_byte() {
+    compare("时间");
 }
 
 /// 加月 / 加年 是**故意**跟 Rust 版不一样的：那边是 `+ 月数*30天` 和
@@ -131,32 +132,39 @@ fn 时间_qi实现与ffi逐字节一致() {
 /// 还在 FFI。这条把两边的函数写进同一个表达式 —— qi 算出来的时间戳直接喂给
 /// FFI 的 格式化，格式化的结果再拿去比。任何一边的调用约定错了都会当场炸。
 #[test]
-fn 时间_半迁移_两边函数混用() {
-    if !运行时就位() {
+fn time_partial_migration_mixes_both_sides() {
+    if !runtime_ready() {
         eprintln!("跳过：未找到 qi-runtime 归档");
         return;
     }
-    let 源 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_混用.qi");
-    let 出 = 跑(&源, None);
-    for 期望 in [
+    let src_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_混用.qi");
+    let out = run_qi(&src_path, None);
+    for expected in [
         "本月开始 2026-08-01 00:00:00",
         "本年结束 2026-12-31 23:59:59",
         "加月跨年 2027-01-15 08:30:00",
         "往回三年 2023-08-26 14:30:45",
     ] {
-        assert!(出.contains(期望), "缺少 `{}`，实际输出：\n{}", 期望, 出);
+        assert!(
+            out.contains(expected),
+            "缺少 `{}`，实际输出：\n{}",
+            expected,
+            out
+        );
     }
 }
 
 #[test]
-fn 时间_加月加年_改的是错行为() {
-    if !运行时就位() {
+fn time_add_month_year_fixes_wrong_behavior() {
+    if !runtime_ready() {
         eprintln!("跳过：未找到 qi-runtime 归档");
         return;
     }
-    let 源 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_加月加年.qi");
-    let 出 = 跑(&源, None);
-    for 期望 in [
+    let src_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_加月加年.qi");
+    let out = run_qi(&src_path, None);
+    for expected in [
         "1月31日 +1月 -> 2026-2-28", // 截到月末，不是溢出到 3 月 2 日
         "3月31日 +1月 -> 2026-4-30",
         "12月15日 +1月 -> 2027-1-15", // 跨年不掉一天
@@ -165,22 +173,28 @@ fn 时间_加月加年_改的是错行为() {
         "2月29日 +1年 -> 2025-2-28", // 闰日落到平年的 2 月 28
         "8月26日 -3年 -> 2023-8-26", // 跨闰年往回不掉一天
     ] {
-        assert!(出.contains(期望), "缺少 `{}`，实际输出：\n{}", 期望, 出);
+        assert!(
+            out.contains(expected),
+            "缺少 `{}`，实际输出：\n{}",
+            expected,
+            out
+        );
     }
 }
 
 /// QI_STDLIB_FFI 是逃生口，必须真的能把整个模块切回 FFI。
 /// 它坏了的话上面那条对照测试会变成「自己跟自己比」，永远绿。
 #[test]
-fn 逃生口真的切回ffi() {
-    if !运行时就位() {
+fn escape_hatch_really_switches_to_ffi() {
+    if !runtime_ready() {
         eprintln!("跳过：未找到 qi-runtime 归档");
         return;
     }
-    let 源 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_加月加年.qi");
+    let src_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/标准库qi语料/时间_加月加年.qi");
     assert_ne!(
-        跑(&源, None),
-        跑(&源, Some("时间")),
+        run_qi(&src_path, None),
+        run_qi(&src_path, Some("时间")),
         "QI_STDLIB_FFI=时间 没有切回 FFI —— 两条实现在 加月 上行为不同，输出不该一样"
     );
 }

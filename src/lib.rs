@@ -19,8 +19,8 @@ pub mod targets;
 pub mod utils;
 // rustc 不接受非 ASCII 模块名自动映射文件名（E0754），要显式 #[path]，
 // 跟 codegen/inkwell_gen 下那批中文模块一个写法。
-#[path = "标准库qi.rs"]
-pub mod 标准库qi;
+#[path = "qi_stdlib.rs"]
+pub mod qi_stdlib;
 #[path = "链接.rs"]
 pub mod 链接;
 
@@ -987,7 +987,7 @@ impl QiCompiler {
         // 虚拟路径（<标准库>/X.qi）不落盘，canonicalize 会把它当相对路径解成
         // cwd 下的实体路径 —— 那样 key 会随**调用编译器时的工作目录**变，同一个
         // 标准库模块在不同目录下编译得到不同 key，去重失效、重复符号。
-        let canonical = if crate::标准库qi::是虚拟路径(file_path) {
+        let canonical = if crate::qi_stdlib::is_virtual_path(file_path) {
             file_path.clone()
         } else {
             std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.clone())
@@ -1017,7 +1017,7 @@ impl QiCompiler {
 
         // Read and parse the file
         // 嵌入式标准库模块没有真实文件，源码从二进制里的内置表取（见 标准库qi.rs）。
-        let source_code = match crate::标准库qi::虚拟路径源码(file_path) {
+        let source_code = match crate::qi_stdlib::virtual_path_source(file_path) {
             Some(源) => 源,
             None => std::fs::read_to_string(file_path).map_err(CompilerError::Io)?,
         };
@@ -1085,9 +1085,9 @@ impl QiCompiler {
             let is_stdlib = import_stmt.module_path.get(0).map(|s| s.as_str()) == Some("标准库");
             if is_stdlib {
                 if let Some(模块名) = import_stmt.module_path.get(1) {
-                    if crate::标准库qi::源码(模块名).is_some() {
+                    if crate::qi_stdlib::source(模块名).is_some() {
                         self.parse_and_collect_modules_internal(
-                            &crate::标准库qi::虚拟路径(模块名),
+                            &crate::qi_stdlib::virtual_path(模块名),
                             module_registry,
                             compiled_modules,
                             visited,
@@ -1629,7 +1629,7 @@ impl QiCompiler {
         // 嵌入式标准库模块没有真实目录，同包自动发现无从谈起（也不需要 ——
         // 一个标准库模块就是一个文件）。不早退的话这里会去 read_dir 一个
         // 叫 `<标准库>` 的目录，报 os error 2，而错误信息里连文件名都没有。
-        if crate::标准库qi::是虚拟路径(entry_file) {
+        if crate::qi_stdlib::is_virtual_path(entry_file) {
             return Ok(());
         }
 
