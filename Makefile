@@ -214,9 +214,13 @@ lint-strict:
 	cargo clippy --release -- -D warnings
 
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
-# **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
+#
+# **不含 fmt-check，别加** —— 格式归 CI 里钉死 1.92.0 的那个独立 job。
+# 2026-09-03 试着加进来过，当场把 ubuntu/macOS 两个 Build+Test 干红：
+# 那两个 job 用浮动 @stable，装不到 1.92.0，fmt-check 的守卫直接 exit 1。
+# 发布路径由 `make release` 单独带一道 fmt-check（那是本机跑，有 1.92.0）。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm fmt-check check test regress ffi-link bindgen examples debuginfo fuzz grpc
+ci: check-llvm check test regress ffi-link bindgen examples debuginfo fuzz grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建
@@ -251,6 +255,8 @@ ifndef V
 endif
 	@echo "==> 运行时 tag"
 	$(MAKE) check-runtime-pin
+	@echo "==> 格式（用 CI 钉的 rustfmt —— 本机 stable 版本不同，直接 cargo fmt 查不出来）"
+	$(MAKE) fmt-check
 	@echo "==> 门禁"
 	$(MAKE) ci
 	@echo "==> 改版本号 $(V)"
