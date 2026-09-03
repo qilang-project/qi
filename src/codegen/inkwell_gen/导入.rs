@@ -237,10 +237,18 @@ impl<'ctx> 后端<'ctx> {
         // 还留着当逃生口（QI_STDLIB_FFI）。所以这里必须显式定优先级，否则
         // `导入 标准库.JSON` 之后 `JSON.编码(x)` 仍然会落到 qi_json_encode，
         // 搬过去的 qi 代码一行都不会被执行，而且毫无迹象。
-        if self
-            .符号
-            .函数按包
-            .contains_key(&(module_name.clone(), method.to_string()))
+        //
+        // **必须同时满足「这个模块真有 qi 实现」**。只看 函数按包 里有没有同名
+        // 函数是不够的：用户包完全可以跟标准库模块**重名**。qi-grpc 就是
+        // `包 gRPC;` 外加 `导入 标准库.gRPC 作为 运行时`，两边还都有
+        // `调用带元数据` / `开流`。只按名字让路的话，`运行时.调用带元数据(五个参数)`
+        // 会被解析到本包那个签名不同的同名函数上，LLVM 模块校验当场报
+        // 「Incorrect number of arguments」。
+        if crate::qi_stdlib::source(&module_name).is_some()
+            && self
+                .符号
+                .函数按包
+                .contains_key(&(module_name.clone(), method.to_string()))
         {
             return Ok(None);
         }
