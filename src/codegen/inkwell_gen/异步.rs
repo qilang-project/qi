@@ -11,7 +11,7 @@
 //!   qi_future_failed(ptr,len)->ptr
 
 use super::后端;
-use super::类型::{元素类型, Qi类型};
+use super::类型::{Qi类型, 元素类型};
 use crate::parser::ast::AstNode;
 use inkwell::values::BasicValueEnum;
 use inkwell::AddressSpace;

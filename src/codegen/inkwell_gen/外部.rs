@@ -31,7 +31,7 @@
 
 use super::后端;
 use super::类型::Qi类型;
-use super::类型检查::{函数签名, C整数宽};
+use super::类型检查::{C整数宽, 函数签名};
 use crate::parser::ast::{ExternBlock, ExternFn, Program, TypeNode};
 use inkwell::types::BasicType;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};

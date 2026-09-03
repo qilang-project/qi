@@ -189,8 +189,26 @@ check:
 # 还留着一份 fmt --check，而 CI 的 Build + Test 用的是浮动 @stable ——
 # 于是那个钉子被绕开，stable 一升级，2026.07.29-2 那次发版的 CI 当场变红
 # (Format Check 绿、Build + Test 红，看着莫名其妙)。
+# 格式检查必须用**跟 CI 一样的 rustfmt 版本**。
+#
+# CI 的 fmt job 钉在 dtolnay/rust-toolchain@1.92.0（ci.yml 的注释写着「钉死版本，
+# 且要与开发机一致」）。可开发机的 stable 会自己往前跑 —— 2026-09-03 本机已经是
+# 1.97.1，它的 rustfmt 跟 1.92.0 的排版不一样。后果是**本地 cargo fmt 一跑就把
+# CI 弄红**，而且本地 `cargo fmt --all -- --check` 还是绿的，完全看不出来。
+# 那次是发版之后才发现：Release 绿、CI 红，8 个我根本没碰过的文件被重排了。
+FMT_TOOLCHAIN ?= 1.92.0
+
 fmt-check:
-	cargo fmt --all -- --check
+	@rustup toolchain list | grep -q '^$(FMT_TOOLCHAIN)' || { \
+	    echo "缺 rustfmt $(FMT_TOOLCHAIN)（CI 钉的就是它）："; \
+	    echo "  rustup toolchain install $(FMT_TOOLCHAIN) --component rustfmt --profile minimal"; \
+	    exit 1; \
+	}
+	cargo +$(FMT_TOOLCHAIN) fmt --all -- --check
+
+# 按 CI 那版 rustfmt 格式化。别直接跑 `cargo fmt`，见上面。
+fmt:
+	cargo +$(FMT_TOOLCHAIN) fmt --all
 
 lint-strict:
 	cargo clippy --release -- -D warnings
@@ -198,7 +216,7 @@ lint-strict:
 # CI 的 Build + Test job 跑的就是这条(浮动 @stable 工具链)。
 # **不含 fmt-check** —— 格式归钉死 1.92.0 的那个 job，理由见 fmt-check。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm check test regress ffi-link bindgen examples debuginfo fuzz grpc
+ci: check-llvm fmt-check check test regress ffi-link bindgen examples debuginfo fuzz grpc
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建
