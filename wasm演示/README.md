@@ -14,7 +14,7 @@ wasmtime run 程序.wasm
 |---|---|---|
 | wasm-ld | `rustup target add wasm32-wasip1`（自带 rust-lld）；或 `brew install lld` / `apt install lld` | 链接 |
 | wasi sysroot | 同上 rustup 目标（crt1-command.o + libc.a）；或 `apt install wasi-libc` | libc |
-| wasm 运行时归档 | `cd qi-runtime/wasm && cargo build --release --target wasm32-wasip1` | qi 运行时 |
+| wasm 运行时归档 | **发布包自带**（`lib/qi/libqi_runtime_wasm.a`，2026.09.06-1 起）；源码构建：`cd qi-runtime/wasm && cargo build --release --target wasm32-wasip1` | qi 运行时 |
 | wasmtime | `brew install wasmtime` | 命令行里跑 |
 
 编译器按上面的顺序自己找，找不到就报中文提示。也能用环境变量钉死：

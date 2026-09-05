@@ -102,9 +102,19 @@ jobs:
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
           git clone --depth 1 --branch 2026.08.16-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.09.03-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 --branch 2026.09.06-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
+
+      # wasm 版运行时归档：纯 Rust，任何宿主都能编 wasm32-wasip1 目标。装进 lib/qi/ 之后
+      # `qi --target wasm compile` 开箱即用（编译器第一个候选就是 <prefix>/lib/qi/）。
+      # 一份归档所有平台通用，但每个 job 自己编一份最省事 —— 不用跨 job 传 artifact。
+      - name: Build qi-runtime (wasm32-wasip1)
+        shell: bash
+        run: |
+          rustup target add wasm32-wasip1
+          (cd ../qi-runtime/wasm && cargo build --release --target wasm32-wasip1)
+          test -s ../qi-runtime/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a
 
       # 布局 bin/ + lib/qi/ —— 与 installer 安装布局同构,解压即用
       # (find_host_runtime_library 按 <prefix>/lib/qi/<归档> 查找)
@@ -114,6 +124,7 @@ jobs:
           mkdir -p pkg/bin pkg/lib/qi
           cp target/${{ matrix.target }}/release/${{ matrix.artifact }} pkg/bin/qi
           cp ../qi-runtime/target/release/libqi_runtime.a pkg/lib/qi/
+          cp ../qi-runtime/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a pkg/lib/qi/
           if [ "$RUNNER_OS" = "macOS" ]; then
             # 捆绑 homebrew 动态库(z3/zstd 等 LLVM 连带依赖)+ rpath 化,
             # 无 homebrew 的 mac 也能跑(与 qi-installer 同法)
@@ -138,6 +149,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path pkg\bin, pkg\lib\qi | Out-Null
           Copy-Item target\${{ matrix.target }}\release\${{ matrix.artifact }} pkg\bin\qi.exe
           Copy-Item ..\qi-runtime\target\release\qi_runtime.lib pkg\lib\qi\
+          Copy-Item ..\qi-runtime\wasm\target\wasm32-wasip1\release\libqi_runtime_wasm.a pkg\lib\qi\
           Compress-Archive -Path pkg\bin, pkg\lib -DestinationPath ${{ matrix.archive }}
           Remove-Item -Recurse -Force pkg
 
