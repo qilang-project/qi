@@ -1539,6 +1539,23 @@ TCP/UDP 网络通信。
 变量 是目录 = 操作系统.是否为目录("/path");
 ```
 
+### 标准库.进程统计
+
+进程自身的资源快照（qi-web 的 `process_*` 指标和 `/stats` 端点就是它喂的）：
+
+```qi
+导入 标准库.进程统计;
+
+变量 rss = 进程统计.常驻内存字节();          // 常驻内存；峰值内存字节() 是生命周期峰值
+变量 cpu = 进程统计.CPU用户毫秒() + 进程统计.CPU系统毫秒();
+变量 线程 = 进程统计.线程数();
+变量 fd = 进程统计.打开文件数();             // Windows 上是内核句柄数
+变量 已跑 = 进程统计.运行毫秒();
+打印行(进程统计.统计JSON());                 // 一次拿全，键全英文：rss_bytes / cpu_user_ms / goroutines / json_handles …
+```
+
+各平台都实现了（macOS mach/proc_pidinfo，Linux /proc，Windows psapi/toolhelp）；拿不到返回 0，不抛异常。
+
 ### 标准库.进程
 
 ```qi

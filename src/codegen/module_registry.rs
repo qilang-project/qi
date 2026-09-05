@@ -139,6 +139,7 @@ impl ModuleRegistry {
         self.register_random_module();
         self.register_env_module();
         self.register_process_module();
+        self.register_process_stats_module();
         self.register_subprocess_module();
         self.register_config_module();
         self.register_compress_module();
@@ -5023,6 +5024,68 @@ impl ModuleRegistry {
             .insert("标准库.进程".to_string(), process_module);
     }
 
+    /// 注册进程运行统计模块（`进程统计` / `标准库.进程统计`）
+    ///
+    /// 进程自身的资源快照：常驻内存 / 峰值内存 / CPU 时间 / 线程数 / 打开文件数 /
+    /// 运行时长，以及一次性拼好的 JSON。运行时实现在 qi-runtime
+    /// `stdlib/process_stats_ffi.rs`，三平台各有各的取法（拿不到返回 0，不崩）。
+    /// 名字叫「进程统计」而不是「进程」：「进程」已经是上面那个执行/退出模块了。
+    fn register_process_stats_module(&mut self) {
+        let mut m = Module::new("进程统计");
+
+        m.add_function(ModuleFunction::new(
+            "常驻内存字节",
+            "qi_proc_rss_bytes",
+            vec![],
+            "整数", // RSS 字节数，拿不到为 0
+        ));
+        m.add_function(ModuleFunction::new(
+            "峰值内存字节",
+            "qi_proc_peak_rss_bytes",
+            vec![],
+            "整数", // 进程生命周期峰值 RSS（各平台已统一成字节）
+        ));
+        m.add_function(ModuleFunction::new(
+            "CPU用户毫秒",
+            "qi_proc_cpu_user_ms",
+            vec![],
+            "整数", // 用户态 CPU 累计毫秒
+        ));
+        m.add_function(ModuleFunction::new(
+            "CPU系统毫秒",
+            "qi_proc_cpu_sys_ms",
+            vec![],
+            "整数", // 内核态 CPU 累计毫秒
+        ));
+        m.add_function(ModuleFunction::new(
+            "线程数",
+            "qi_proc_thread_count",
+            vec![],
+            "整数", // 当前线程数
+        ));
+        m.add_function(ModuleFunction::new(
+            "打开文件数",
+            "qi_proc_open_fd_count",
+            vec![],
+            "整数", // 打开的 fd 数（Windows 为句柄数）
+        ));
+        m.add_function(ModuleFunction::new(
+            "运行毫秒",
+            "qi_proc_uptime_ms",
+            vec![],
+            "整数", // 进程已运行毫秒
+        ));
+        m.add_function(ModuleFunction::new(
+            "统计JSON",
+            "qi_proc_stats_json",
+            vec![],
+            "字符串", // {"rss_bytes":…,"cpu_user_ms":…,"goroutines":…,…}
+        ));
+
+        self.modules.insert("进程统计".to_string(), m.clone());
+        self.modules.insert("标准库.进程统计".to_string(), m);
+    }
+
     /// 注册子进程模块
     fn register_subprocess_module(&mut self) {
         let mut m = Module::new("子进程");
@@ -6320,5 +6383,29 @@ mod tests {
         assert_eq!(set_string.runtime_name, "qi_json_set_string");
         assert_eq!(set_string.param_types.len(), 3);
         assert_eq!(set_string.return_type, "整数");
+    }
+
+    #[test]
+    fn test_process_stats_module_registered() {
+        let registry = ModuleRegistry::new();
+        assert!(registry.has_module("进程统计"));
+        assert!(registry.has_module("标准库.进程统计"));
+        for f in [
+            "常驻内存字节",
+            "峰值内存字节",
+            "CPU用户毫秒",
+            "CPU系统毫秒",
+            "线程数",
+            "打开文件数",
+            "运行毫秒",
+        ] {
+            assert!(registry.has_function("进程统计", f), "missing {f}");
+            let func = registry.get_function("进程统计", f).unwrap();
+            assert_eq!(func.return_type, "整数", "{f} should return 整数");
+            assert!(func.param_types.is_empty(), "{f} takes no params");
+        }
+        let json = registry.get_function("进程统计", "统计JSON").unwrap();
+        assert_eq!(json.return_type, "字符串");
+        assert_eq!(json.runtime_name, "qi_proc_stats_json");
     }
 }
