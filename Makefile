@@ -30,6 +30,9 @@ SHELL := /bin/bash
 # 相对 qi/ 都是 ../qi-runtime，所以一个变量两边通用。
 RUNTIME_DIR ?= ../qi-runtime
 RUNTIME_LIB := $(abspath $(RUNTIME_DIR)/target/release/libqi_runtime.a)
+# wasm 版归档也跟着 RUNTIME_DIR 走：CI 里 qi-runtime 克隆在 qi 检出目录**旁边**，
+# 编译器按自己所在仓库根去猜是猜不到的，必须像 QI_RUNTIME_LIB 一样显式传
+WASM_RUNTIME_LIB := $(abspath $(RUNTIME_DIR)/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a)
 
 # target 目录问 cargo 要：本地 qi/ 是 qilang workspace 的成员，产物在
 # 上一级的共享 target/；CI 里 qi 是独立 checkout，产物在 ./target/。
@@ -160,7 +163,7 @@ fuzz: build $(RUNTIME_LIB)
 # 时脚本自己 SKIP —— 这三样不是每台机器都有，别把主干门禁拖红。CI 的 Linux job 装齐了它们。
 # wasm 运行时归档：cd ../qi-runtime/wasm && cargo build --release --target wasm32-wasip1
 wasm: build $(RUNTIME_LIB)
-	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/wasm/断言.sh $(QI)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_WASM_RUNTIME_LIB=$(WASM_RUNTIME_LIB) bash tests/wasm/断言.sh $(QI)
 
 GRPC_DIR ?= $(CURDIR)/../qi-grpc
 grpc: build $(RUNTIME_LIB)

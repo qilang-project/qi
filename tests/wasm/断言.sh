@@ -15,7 +15,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 QI="${1:-$ROOT/target/release/qi}"
 export QI_RUNTIME_LIB="${QI_RUNTIME_LIB:-$ROOT/qi-runtime/target/release/libqi_runtime.a}"
-RT="$ROOT/qi-runtime/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a"
+# 归档路径：Makefile 传 QI_WASM_RUNTIME_LIB（跟着 RUNTIME_DIR 走）；直接跑脚本时按 monorepo 布局猜。
+# 判 SKIP 用的和喂给编译器的必须是同一个路径 —— 不然就会出现「脚本觉得有、编译器找不到」。
+RT="${QI_WASM_RUNTIME_LIB:-$ROOT/qi-runtime/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a}"
+export QI_WASM_RUNTIME_LIB="$RT"
 
 if ! command -v wasmtime >/dev/null 2>&1; then echo "wasm回归: 跳过（没有 wasmtime）"; exit 0; fi
 if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-wasip1$'; then echo "wasm回归: 跳过（没有 wasm32-wasip1 目标）"; exit 0; fi

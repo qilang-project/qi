@@ -2281,12 +2281,20 @@ fn 找wasm运行时() -> Result<std::path::PathBuf, CliError> {
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())
     {
-        for profile in ["release", "debug"] {
-            candidates.push(
-                ws.join("qi-runtime/wasm/target/wasm32-wasip1")
-                    .join(profile)
-                    .join("libqi_runtime_wasm.a"),
-            );
+        // 两种布局都猜：monorepo（qilang/qi-runtime）和多仓平铺（qi 旁边的 ../qi-runtime，
+        // CI 与 Makefile 的 RUNTIME_DIR 默认就是这个）
+        let mut roots = vec![ws.to_path_buf()];
+        if let Some(sib) = ws.parent() {
+            roots.push(sib.to_path_buf());
+        }
+        for root in roots {
+            for profile in ["release", "debug"] {
+                candidates.push(
+                    root.join("qi-runtime/wasm/target/wasm32-wasip1")
+                        .join(profile)
+                        .join("libqi_runtime_wasm.a"),
+                );
+            }
         }
     }
     for c in &candidates {
