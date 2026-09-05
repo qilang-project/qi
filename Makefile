@@ -155,6 +155,13 @@ fuzz: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_FUZZ_COUNT=$(FUZZ_COUNT) QI_FUZZ_SEED=$(FUZZ_SEED) \
 	  cargo test --release --test 差分模糊 -- --ignored --nocapture
 
+# WebAssembly 目标回归：同一个 .qi 原生跑一遍、wasm（wasmtime）跑一遍，stdout 逐字节比。
+# 期望就是原生的输出，不维护期望文件。缺 wasmtime / wasm32-wasip1 目标 / wasm 运行时归档
+# 时脚本自己 SKIP —— 这三样不是每台机器都有，别把主干门禁拖红。CI 的 Linux job 装齐了它们。
+# wasm 运行时归档：cd ../qi-runtime/wasm && cargo build --release --target wasm32-wasip1
+wasm: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/wasm/断言.sh $(QI)
+
 GRPC_DIR ?= $(CURDIR)/../qi-grpc
 grpc: build $(RUNTIME_LIB)
 	@if [ -x "$(GRPC_DIR)/跑验收.sh" ]; then \
@@ -220,7 +227,7 @@ lint-strict:
 # 那两个 job 用浮动 @stable，装不到 1.92.0，fmt-check 的守卫直接 exit 1。
 # 发布路径由 `make release` 单独带一道 fmt-check（那是本机跑，有 1.92.0）。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm check test regress ffi-link bindgen examples debuginfo fuzz grpc
+ci: check-llvm check test regress ffi-link bindgen examples debuginfo fuzz grpc wasm
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

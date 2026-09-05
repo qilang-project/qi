@@ -54,78 +54,24 @@
 
 <script type="module">
 // 面向用户的文本用中文；标识符一律英文（见仓库 CLAUDE.md 的「中文只写在 qi 里」）
+import { runQiWasm } from './wasi-shim.js';
+
 const out = document.getElementById('out');
 const status = document.getElementById('status');
 const runBtn = document.getElementById('run');
-
-const decoder = new TextDecoder('utf-8');
-
-function append(text) {
-  out.textContent += text;
-}
-
-// 最小 WASI shim —— 这个 .wasm 一共只 import 四个 wasi 函数：
-//   fd_write / environ_get / environ_sizes_get / proc_exit
-// 纯计算程序不碰文件系统、时钟、随机数，所以四十行 JS 就够了。
-function makeWasi(getMemory) {
-  const view = () => new DataView(getMemory().buffer);
-  const bytes = () => new Uint8Array(getMemory().buffer);
-
-  return {
-    // 把 iovec 数组里的字节拼起来写到页面（fd 1=stdout, 2=stderr）
-    fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
-      const dv = view();
-      const mem = bytes();
-      let written = 0;
-      const chunks = [];
-      for (let i = 0; i < iovsLen; i++) {
-        const base = dv.getUint32(iovsPtr + i * 8, true);
-        const len = dv.getUint32(iovsPtr + i * 8 + 4, true);
-        chunks.push(mem.subarray(base, base + len));
-        written += len;
-      }
-      const total = chunks.reduce((n, c) => n + c.length, 0);
-      const flat = new Uint8Array(total);
-      let off = 0;
-      for (const c of chunks) { flat.set(c, off); off += c.length; }
-      append(decoder.decode(flat));
-      dv.setUint32(nwrittenPtr, written, true);
-      return 0;
-    },
-    // 没有环境变量：报告 0 条、0 字节即可
-    environ_sizes_get(countPtr, bufSizePtr) {
-      const dv = view();
-      dv.setUint32(countPtr, 0, true);
-      dv.setUint32(bufSizePtr, 0, true);
-      return 0;
-    },
-    environ_get() { return 0; },
-    proc_exit(code) {
-      if (code !== 0) append(`\n[进程退出，代码 ${code}]\n`);
-    },
-  };
-}
 
 async function run() {
   runBtn.disabled = true;
   out.textContent = '';
   status.textContent = '加载中…';
   try {
-    let instance;
-    const wasi = makeWasi(() => instance.exports.memory);
     const response = await fetch('试炼.wasm');
     if (!response.ok) throw new Error(`取不到 试炼.wasm（HTTP ${response.status}）`);
-    const result = await WebAssembly.instantiate(
-      await response.arrayBuffer(),
-      { wasi_snapshot_preview1: wasi }
-    );
-    instance = result.instance;
     status.textContent = '运行中…';
-    instance.exports._start();
-    status.textContent = '完成';
+    const code = await runQiWasm(await response.arrayBuffer(), (text) => { out.textContent += text; });
+    status.textContent = code === 0 ? '完成' : `退出码 ${code}`;
   } catch (err) {
-    // wasi 的 proc_exit(0) 在某些实现里以异常形式结束，属正常收尾
-    append(`\n[错误] ${err.message}\n`);
+    out.textContent += `\n[错误] ${err.message}\n`;
     status.textContent = '出错';
   } finally {
     runBtn.disabled = false;

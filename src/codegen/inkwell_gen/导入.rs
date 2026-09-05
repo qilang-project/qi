@@ -423,9 +423,20 @@ impl<'ctx> 后端<'ctx> {
                     .iter()
                     .map(|t| self.注册表参数llvm类型(t))
                     .collect();
-                let fn_type = match self.注册表llvm返回(返回) {
-                    Some(rt) => rt.fn_type(&参数llvm, false),
-                    None => self.ctx.void_type().fn_type(&参数llvm, false),
+                let fn_type = if mf.return_type == "i32" {
+                    // 同形参：Rust 返回 i32 就按 i32 声明，call 后再 sext 成 整数
+                    self.ctx.i32_type().fn_type(&参数llvm, false)
+                } else if 注册表返回是裸指针句柄(&mf.return_type) {
+                    // 未来<..> 等：Rust 返回裸指针、qi 侧当整数句柄用。wasm32 上指针 4 字节，
+                    // 按 i64 声明是签名不匹配；按 ptr 声明、call 后 ptrtoint 两边都对。
+                    self.ctx
+                        .ptr_type(AddressSpace::default())
+                        .fn_type(&参数llvm, false)
+                } else {
+                    match self.注册表llvm返回(返回) {
+                        Some(rt) => rt.fn_type(&参数llvm, false),
+                        None => self.ctx.void_type().fn_type(&参数llvm, false),
+                    }
                 };
                 self.module.add_function(&mf.runtime_name, fn_type, None)
             }
@@ -472,8 +483,7 @@ impl<'ctx> 后端<'ctx> {
             let 原始 = mf.param_types.get(i).map(|s| s.as_str()).unwrap_or("整数");
             // 指针/ptr/数组 形参：实参统一按 ptr 传（fat obj 指针、句柄、字符串指针、
             // Qi 数组本体指针都可）
-            if 原始 == "指针" || 原始 == "ptr" || 原始 == "数组" || 原始 == "浮点数组"
-            {
+            if 注册表类型是指针形参(原始) {
                 let pv = if v.is_pointer_value() {
                     v.into_pointer_value()
                 } else {
@@ -490,6 +500,18 @@ impl<'ctx> 后端<'ctx> {
             }
             let 期望 = 注册表参数类型转qi(原始);
             let cv = self.适配实参(v, vt, 期望, &mf.name, i)?;
+            if 原始 == "i32" {
+                if let BasicMetadataValueEnum::IntValue(iv) = cv {
+                    if iv.get_type().get_bit_width() != 32 {
+                        let t = self
+                            .builder
+                            .build_int_cast(iv, self.ctx.i32_type(), "i64toi32")
+                            .map_err(|e| e.to_string())?;
+                        args.push(t.into());
+                        continue;
+                    }
+                }
+            }
             args.push(cv);
         }
 
@@ -504,7 +526,23 @@ impl<'ctx> 后端<'ctx> {
             self.弧release任意(v, t);
         }
         match cs.try_as_basic_value().basic() {
-            Some(v) => Ok(Some((v, 返回))),
+            Some(v) => {
+                if mf.return_type == "i32" && v.is_int_value() {
+                    let w = self
+                        .builder
+                        .build_int_s_extend(v.into_int_value(), self.ctx.i64_type(), "i32toi64")
+                        .map_err(|e| e.to_string())?;
+                    return Ok(Some((w.into(), 返回)));
+                }
+                if 注册表返回是裸指针句柄(&mf.return_type) && v.is_pointer_value() {
+                    let iv = self
+                        .builder
+                        .build_ptr_to_int(v.into_pointer_value(), self.ctx.i64_type(), "p2i")
+                        .map_err(|e| e.to_string())?;
+                    return Ok(Some((iv.into(), 返回)));
+                }
+                Ok(Some((v, 返回)))
+            }
             None => Ok(None),
         }
     }
@@ -567,8 +605,14 @@ impl<'ctx> 后端<'ctx> {
     /// 注册表参数类型字符串 → LLVM 元参数类型。
     fn 注册表参数llvm类型(&self, t: &str) -> BasicMetadataTypeEnum<'ctx> {
         // 指针/ptr/数组 形参声明为 ptr（吃 fat obj 指针 / 字符串指针 / 句柄 / Qi 数组本体）
-        if t == "指针" || t == "ptr" || t == "数组" || t == "浮点数组" {
+        if 注册表类型是指针形参(t) {
             return self.ctx.ptr_type(AddressSpace::default()).into();
+        }
+        // 注册表写 i32 的形参：Rust 侧真的是 i32。以前一律按 i64 声明 —— x86_64 上
+        // 被调方只读低 32 位所以看不出来，wasm 严格校验签名，i64 vs i32 直接被
+        // wasm-ld 换成 unreachable 桩，一调用就 trap。call 前把 i64 实参 trunc 成 i32。
+        if t == "i32" {
+            return self.ctx.i32_type().into();
         }
         match 注册表参数类型转qi(t) {
             Qi类型::浮点数 => self.ctx.f64_type().into(),
@@ -589,6 +633,20 @@ impl<'ctx> 后端<'ctx> {
             _ => Some(self.ctx.i64_type().into()),
         }
     }
+}
+
+/// 注册表里按 ptr 收的形参：指针 / ptr / 各种 Qi 数组本体（都是 Rust 侧的裸指针）。
+/// wasm32 上指针 4 字节、i64 8 字节，这些位置按 i64 声明就是签名不匹配。
+pub(super) fn 注册表类型是指针形参(t: &str) -> bool {
+    matches!(
+        t,
+        "指针" | "ptr" | "数组" | "浮点数组" | "整数数组" | "字符串数组"
+    )
+}
+
+/// 注册表写成 未来<..> 的返回：Rust 返回 `*mut Future`，qi 侧当整数句柄。
+pub(super) fn 注册表返回是裸指针句柄(t: &str) -> bool {
+    t.starts_with("未来<")
 }
 
 /// 注册表返回类型字符串 → Qi 类型。

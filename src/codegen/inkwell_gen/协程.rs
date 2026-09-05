@@ -944,16 +944,30 @@ impl<'ctx> 后端<'ctx> {
             .basic()
             .ok_or_else(|| "coro.size 无返回".to_string())?;
 
-        // malloc(size) -> ptr
+        // malloc(size_t) -> ptr —— size_t 按**目标**指针宽度声明，不是写死 i64。
+        // wasm32 上 size_t 是 32 位：按 i64 声明会被 wasm-ld 判「签名不匹配」换成
+        // unreachable 桩，每个协程程序一启动就 trap，还没有任何报错信息。
+        let size_ty = match self.目标数据.as_ref() {
+            Some(td) => self.ctx.ptr_sized_int_type(td, None),
+            None => self.ctx.i64_type(),
+        };
         let malloc = self.取或声明(
             "malloc",
             self.ctx
                 .ptr_type(AddressSpace::default())
-                .fn_type(&[self.ctx.i64_type().into()], false),
+                .fn_type(&[size_ty.into()], false),
         );
+        let size_v = size.into_int_value();
+        let size_arg = if size_v.get_type() == size_ty {
+            size_v
+        } else {
+            self.builder
+                .build_int_cast(size_v, size_ty, "coro.size.cast")
+                .map_err(|e| e.to_string())?
+        };
         let mem = self
             .builder
-            .build_call(malloc, &[size.into()], "coro.mem")
+            .build_call(malloc, &[size_arg.into()], "coro.mem")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()

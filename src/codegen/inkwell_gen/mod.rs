@@ -620,6 +620,15 @@ impl<'ctx> 后端<'ctx> {
         self.声明反射运行时();
     }
 
+    /// 当前模块的目标三元组是不是 wasm32（决定入口符号名等）
+    fn 目标是Wasm(&self) -> bool {
+        self.module
+            .get_triple()
+            .as_str()
+            .to_string_lossy()
+            .starts_with("wasm")
+    }
+
     /// 生成 入口() → LLVM main。
     fn 生成入口(&mut self, programs: &[Program]) -> Result<(), String> {
         let 入口 = programs[0]
@@ -632,9 +641,22 @@ impl<'ctx> 后端<'ctx> {
             .ok_or_else(|| "未找到 入口() 函数".to_string())?;
 
         let i32t = self.ctx.i32_type();
-        let main_fn = self
-            .module
-            .add_function("main", i32t.fn_type(&[], false), None);
+        // wasm32-wasi：新版 wasi-libc 的 `__main_void` 只**弱引用** `__main_argc_argv`，
+        // 不再回退到 `main`（rustup 自带的 sysroot 2026-08 后换到了这个版本）。
+        // 弱引用解析不到时 wasm-ld 会插一个 unreachable 桩，程序一启动就 trap。
+        // 所以 wasm 目标下入口直接叫 `__main_argc_argv(i32, ptr) -> i32`，跟 clang
+        // 给 C 的 `int main(int, char**)` 做的一样；参数不用，照旧 ret 0。
+        let main_fn = if self.目标是Wasm() {
+            let ptr = self.ctx.ptr_type(inkwell::AddressSpace::default());
+            self.module.add_function(
+                "__main_argc_argv",
+                i32t.fn_type(&[i32t.into(), ptr.into()], false),
+                None,
+            )
+        } else {
+            self.module
+                .add_function("main", i32t.fn_type(&[], false), None)
+        };
         let bb = self.ctx.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(bb);
 

@@ -650,6 +650,14 @@ impl Cli {
                             "无法将多个输入文件编译到单个输出文件".to_string(),
                         )));
                     }
+                    // `-o 程序.wasm`：编译器自己把链接做掉（wasm-ld + wasi sysroot +
+                    // wasm 运行时归档）；`-o 程序.o` 或不给 -o 则只出目标文件。
+                    if output_path.extension().and_then(|e| e.to_str()) == Some("wasm") {
+                        链接wasm(obj, output_path, config.verbose)?;
+                        let _ = std::fs::remove_file(obj);
+                        println!("生成 WebAssembly 模块: {:?}", output_path);
+                        continue;
+                    }
                     移动产物(obj, output_path)?;
                     output_path.clone()
                 } else {
@@ -704,7 +712,7 @@ impl Cli {
                 config.target_platform,
                 crate::config::CompilationTarget::Wasm
             ) {
-                println!("成功编译 {} 个 WebAssembly 目标文件", count);
+                println!("成功编译 {} 个 WebAssembly 产物", count);
                 return Ok(());
             }
             let target = match config.target_platform {
@@ -2155,4 +2163,199 @@ pub enum CliError {
     /// 包管理错误（qi get 等）
     #[error("{0}")]
     Package(String),
+}
+
+// ── WebAssembly 链接 ──────────────────────────────────────────────────
+//
+// 三样东西：wasm-ld、wasi sysroot（crt1-command.o + libc.a）、wasm 版运行时归档。
+// 前两样 rustup 的 wasm32-wasip1 目标自带（不需要 wasi-sdk、不需要 brew 装 lld），
+// 第三样在 qi-runtime/wasm 里 `cargo build --release --target wasm32-wasip1` 出来。
+// 每一样都能用环境变量指定：QI_WASM_LD / QI_WASM_SYSROOT / QI_WASM_RUNTIME_LIB。
+
+fn 运行取输出(cmd: &str, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new(cmd).args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn 找wasm_sysroot() -> Result<std::path::PathBuf, CliError> {
+    if let Ok(p) = std::env::var("QI_WASM_SYSROOT") {
+        let p = std::path::PathBuf::from(p);
+        if p.join("libc.a").exists() {
+            return Ok(p);
+        }
+    }
+    if let Some(root) = 运行取输出("rustc", &["--print", "sysroot"]) {
+        let p = std::path::PathBuf::from(root).join("lib/rustlib/wasm32-wasip1/lib/self-contained");
+        if p.join("libc.a").exists() && p.join("crt1-command.o").exists() {
+            return Ok(p);
+        }
+    }
+    // 没装 Rust 的机器（部署服务器）：Debian/Ubuntu 的 wasi-libc 包、wasi-sdk 的布局
+    for p in [
+        "/usr/lib/wasm32-wasi",
+        "/usr/lib/wasm32-wasip1",
+        "/usr/share/wasi-sysroot/lib/wasm32-wasi",
+        "/usr/share/wasi-sysroot/lib/wasm32-wasip1",
+        "/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1",
+        "/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasi",
+    ] {
+        let p = std::path::PathBuf::from(p);
+        if p.join("libc.a").exists() && p.join("crt1-command.o").exists() {
+            return Ok(p);
+        }
+    }
+    Err(CliError::Compilation(crate::CompilerError::Codegen(
+        "找不到 wasi sysroot（crt1-command.o + libc.a）。\n  \
+         有 Rust 的机器：rustup target add wasm32-wasip1\n  \
+         Debian/Ubuntu：apt install wasi-libc\n  \
+         或设 QI_WASM_SYSROOT 指向含 libc.a 的目录。"
+            .to_string(),
+    )))
+}
+
+fn 找wasm_ld() -> Result<std::path::PathBuf, CliError> {
+    if let Ok(p) = std::env::var("QI_WASM_LD") {
+        let p = std::path::PathBuf::from(p);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+    // rustup 自带的 rust-lld（gcc-ld/wasm-ld 是它的一个别名）
+    if let (Some(root), Some(vv)) = (
+        运行取输出("rustc", &["--print", "sysroot"]),
+        运行取输出("rustc", &["-vV"]),
+    ) {
+        if let Some(host) = vv
+            .lines()
+            .find_map(|l| l.strip_prefix("host: ").map(|h| h.trim().to_string()))
+        {
+            let p = std::path::PathBuf::from(root)
+                .join("lib/rustlib")
+                .join(host)
+                .join("bin/gcc-ld/wasm-ld");
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+    }
+    // PATH 上的 wasm-ld（brew lld / apt lld 装的可能带版本后缀）
+    for name in [
+        "wasm-ld",
+        "wasm-ld-21",
+        "wasm-ld-20",
+        "wasm-ld-19",
+        "wasm-ld-18",
+    ] {
+        if 运行取输出(name, &["--version"]).is_some() {
+            return Ok(std::path::PathBuf::from(name));
+        }
+    }
+    Err(CliError::Compilation(crate::CompilerError::Codegen(
+        "找不到 wasm-ld。\n  \
+         有 Rust 的机器：rustup target add wasm32-wasip1（自带 rust-lld）\n  \
+         macOS：brew install lld；Debian/Ubuntu：apt install lld\n  \
+         或设 QI_WASM_LD 指向它。"
+            .to_string(),
+    )))
+}
+
+fn 找wasm运行时() -> Result<std::path::PathBuf, CliError> {
+    if let Ok(p) = std::env::var("QI_WASM_RUNTIME_LIB") {
+        let p = std::path::PathBuf::from(p);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+    let exe = std::env::current_exe().unwrap_or_default();
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    // 安装布局：<prefix>/bin/qi → <prefix>/lib/qi/libqi_runtime_wasm.a
+    if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+        candidates.push(prefix.join("lib/qi/libqi_runtime_wasm.a"));
+    }
+    // workspace 布局：qilang/target/release/qi → qilang/qi-runtime/wasm/target/…
+    if let Some(ws) = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
+        for profile in ["release", "debug"] {
+            candidates.push(
+                ws.join("qi-runtime/wasm/target/wasm32-wasip1")
+                    .join(profile)
+                    .join("libqi_runtime_wasm.a"),
+            );
+        }
+    }
+    for c in &candidates {
+        if c.exists() {
+            return Ok(c.clone());
+        }
+    }
+    Err(CliError::Compilation(crate::CompilerError::Codegen(
+        format!(
+            "找不到 wasm 运行时归档 libqi_runtime_wasm.a。先在 qi-runtime/wasm 跑：\n  \
+         cargo build --release --target wasm32-wasip1\n\
+         或设 QI_WASM_RUNTIME_LIB 指向它。找过：\n{}",
+            candidates
+                .iter()
+                .map(|c| format!("  {}", c.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )))
+}
+
+fn 链接wasm(obj: &std::path::Path, out: &std::path::Path, verbose: bool) -> Result<(), CliError> {
+    let sysroot = 找wasm_sysroot()?;
+    let ld = 找wasm_ld()?;
+    let rt = 找wasm运行时()?;
+    let mut cmd = std::process::Command::new(&ld);
+    cmd.arg(sysroot.join("crt1-command.o"))
+        .arg(obj)
+        .arg(&rt)
+        .arg(format!("-L{}", sysroot.display()))
+        .arg("-lc")
+        .arg("--strip-debug")
+        .arg("-o")
+        .arg(out);
+    if verbose {
+        eprintln!("  wasm 链接: {:?}", cmd);
+    }
+    let output = cmd.output().map_err(|e| {
+        CliError::Compilation(crate::CompilerError::Codegen(format!(
+            "无法启动 wasm-ld（{}）: {}",
+            ld.display(),
+            e
+        )))
+    })?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if output.status.success() {
+        // 成功也要把警告透出来：wasm-ld 的「function signature mismatch」不是警告，
+        // 是它在那个调用点插了一条 unreachable —— 程序一跑到就 trap，且没有任何
+        // 错误信息。吞掉这行等于把唯一的线索吞掉。
+        for line in stderr.lines() {
+            if line.contains("signature mismatch") || line.contains("warning") {
+                eprintln!("wasm 链接警告: {}", line.trim());
+            }
+        }
+        return Ok(());
+    }
+    let mut msg = format!("wasm 链接失败:\n{}", stderr.trim_end());
+    if stderr.contains("undefined symbol: setjmp") {
+        msg.push_str(
+            "\n\n提示：wasm 目标暂不支持 尝试/捕获（wasi libc 没有 setjmp）。\
+             去掉 尝试 块，或改在原生目标上跑。",
+        );
+    } else if stderr.contains("undefined symbol: qi_") {
+        msg.push_str(
+            "\n\n提示：上面这些 qi_ 符号所属的标准库模块在 wasm 里不可用\
+             （网络 / HTTP / 数据库 / Redis / 大模型 / MCP / 图形化 / 子进程 / gRPC 属于此类）。\
+             wasm 里可用的是纯计算、字符串、JSON、列表、哈希表、字节切片、时间、正则、\
+             加密、随机、文件（wasmtime 需 --dir）。",
+        );
+    }
+    Err(CliError::Compilation(crate::CompilerError::Codegen(msg)))
 }

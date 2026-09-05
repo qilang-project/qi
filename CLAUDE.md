@@ -149,6 +149,31 @@ Qi uses the `未来<T>` (Future) type for asynchronous operations:
 非协程上下文（顶层、tokio handler）里裸用带缓冲通道做信号量按非阻塞轮询正常工作。
 `QI_CORO=0` 退回 eager future（调试用）。
 
+
+### WebAssembly 目标（2026-09-05 起可用）
+
+```bash
+qi --target wasm compile 程序.qi -o 程序.wasm   # 一步到位：编译 + wasm-ld 链接
+wasmtime run 程序.wasm
+```
+
+- 产物是 **wasm32-wasip1** 模块。`-o 程序.o` 或不给 `-o` 只出目标文件不链接。
+- 编译器自己找 wasm-ld / wasi sysroot / wasm 运行时归档（rustup 的 wasm32-wasip1 目标自带前两样；
+  归档在 `qi-runtime/wasm` 里 `cargo build --release --target wasm32-wasip1`），找不到报中文提示；
+  可用 `QI_WASM_LD` / `QI_WASM_SYSROOT` / `QI_WASM_RUNTIME_LIB` 钉死。
+- wasm 运行时 `qi-runtime/wasm` 用 `#[path]` **复用主运行时源文件**（一份源码两个目标），只手写了
+  打印 / 分配 / goroutine（就地同步跑）/ Future（同步）/ 异常（只能 abort）。
+- **不可用**：网络 / HTTP / 数据库 / Redis / 大模型 / MCP / gRPC / 图形化 / 子进程 / `尝试/捕获`
+  （wasi libc 没有 setjmp）。链接期报 `undefined symbol: qi_xxx`，编译器附提示。
+- 入口符号：wasm 目标下 main 叫 `__main_argc_argv(i32, ptr) -> i32`（新版 wasi-libc 的
+  `__main_void` 只弱引用它，不再回退到 `main`；见 mod.rs 生成入口）。
+- **32 位指针暴露的老 bug**：数组/结构体/枚举都是「每槽 8 字节」布局，`槽指针` 以前按元素类型做
+  GEP，x86_64 上指针也 8 字节所以没事，wasm32 上 `数组<字符串>` 第 1 个元素压在长度头上。
+  注册表里写 `i32` 的返回值以前一律按 i64 声明，Rust 返回 i32，wasm-ld 直接判签名不匹配插
+  unreachable。这两类在 wasm 上是必崩，在 x86_64 上是靠寄存器高位碰巧为 0 —— 改 FFI 签名时
+  用 `tests/wasm/断言.sh`（原生 vs wasm 差分）兜底，`make wasm`。
+- 详见 `wasm演示/README.md`。
+
 ## Important Implementation Details
 
 ### Chinese Name Handling

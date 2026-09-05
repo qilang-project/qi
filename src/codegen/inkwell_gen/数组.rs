@@ -266,16 +266,23 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 常量槽号的指针（inbounds GEP）。
+    /// 第 idx 个槽的地址。**每槽固定 8 字节**，步长跟元素类型无关。
+    ///
+    /// 以前按 `elem_ty` 做 GEP：x86_64/aarch64 上指针也是 8 字节，看不出区别；
+    /// wasm32 上指针 4 字节，`数组<字符串>` 的第 1 个元素就压在长度头的高 32 位上
+    /// （`长度(k)` 读出 `(指针<<32)|2`，释放时按这个「长度」越界读 → 崩）。
+    /// `elem_ty` 参数保留给调用方随后的 load/store 用，这里不再拿它算地址。
     pub(super) fn 槽指针(
         &self,
         base: PointerValue<'ctx>,
-        elem_ty: inkwell::types::BasicTypeEnum<'ctx>,
+        _elem_ty: inkwell::types::BasicTypeEnum<'ctx>,
         idx: u64,
     ) -> Result<PointerValue<'ctx>, String> {
-        let i = self.ctx.i64_type().const_int(idx, false);
+        let i64t = self.ctx.i64_type();
+        let i = i64t.const_int(idx, false);
         unsafe {
             self.builder
-                .build_in_bounds_gep(elem_ty, base, &[i], "arrslot")
+                .build_in_bounds_gep(i64t, base, &[i], "arrslot")
                 .map_err(|e| e.to_string())
         }
     }
@@ -284,12 +291,13 @@ impl<'ctx> 后端<'ctx> {
     pub(super) fn 槽指针动态(
         &self,
         base: PointerValue<'ctx>,
-        elem_ty: inkwell::types::BasicTypeEnum<'ctx>,
+        _elem_ty: inkwell::types::BasicTypeEnum<'ctx>,
         idx: IntValue<'ctx>,
     ) -> Result<PointerValue<'ctx>, String> {
+        // 同 槽指针：固定 8 字节步长
         unsafe {
             self.builder
-                .build_in_bounds_gep(elem_ty, base, &[idx], "arrslot")
+                .build_in_bounds_gep(self.ctx.i64_type(), base, &[idx], "arrslot")
                 .map_err(|e| e.to_string())
         }
     }

@@ -75,6 +75,17 @@ jobs:
         with:
           go-version: '1.24'
 
+      # WebAssembly 目标回归的三样前置（只在 Linux 装：省 macOS 的 brew 时间；
+      # 没装的机器上 tests/wasm/断言.sh 自己 SKIP）。wasm 运行时归档由 qi-runtime/wasm
+      # 用 #[path] 复用主运行时源码编出来，所以要在克隆完 qi-runtime 之后建。
+      - name: WebAssembly 前置（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add wasm32-wasip1
+          curl -sSf https://wasmtime.dev/install.sh | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+          (cd ../qi-runtime/wasm && cargo build --release --target wasm32-wasip1)
+
       # 构建 + 单测 + codegen 回归 + 示例冒烟，全部走 Makefile ——
       # 和本地 make ci 是同一条路径，避免两边各写一份逐渐漂移
       # （之前示例冒烟一直挂在「找不到 qi-runtime 归档」，就是 CI 这边把
