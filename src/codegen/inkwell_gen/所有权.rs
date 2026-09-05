@@ -351,7 +351,8 @@ impl<'ctx> 后端<'ctx> {
                 // 1) 结构体方法（返回约定 +1）；函数值字段以方法语法调用（fat call）同约定
                 let recv = 推断表达式类型(&mc.object, &self.符号);
                 if let Some(idx) = recv.结构体索引() {
-                    if let Some(sig) = self.符号.方法.get(&(idx, mc.method_name.clone())) {
+                    if let Some(sig) = self.符号.方法查(idx, &mc.method_name, mc.arguments.len())
+                    {
                         return sig.返回 == Qi类型::字符串;
                     }
                     if let Some((_, Qi类型::函数值(fi))) = self
@@ -606,7 +607,8 @@ impl<'ctx> 后端<'ctx> {
                 // 结构体方法（返回约定 +1）；函数值字段以方法语法调用（fat call）同约定
                 let recv = 推断表达式类型(&mc.object, &self.符号);
                 if let Some(idx) = recv.结构体索引() {
-                    if let Some(sig) = self.符号.方法.get(&(idx, mc.method_name.clone())) {
+                    if let Some(sig) = self.符号.方法查(idx, &mc.method_name, mc.arguments.len())
+                    {
                         return 是对象类型(sig.返回);
                     }
                     if let Some((_, Qi类型::函数值(fi))) = self

@@ -161,9 +161,11 @@ pub struct 符号表 {
     符号导入: HashMap<(Option<String>, String), String>,
     /// 同一使用方对同名符号 destructure 导入了多个来源 → 歧义，禁用导入映射。
     符号导入歧义: HashSet<(Option<String>, String)>,
-    /// 方法签名：(结构体索引, 方法名) → 签名（参数不含接收者）。
+    /// 方法签名：(结构体索引, 方法名, 元数) → 签名（参数不含接收者）。
     /// 按索引（而非名字）挂 —— 跨包同名结构体的方法互不串位。
-    pub 方法: HashMap<(u32, String), 函数签名>,
+    /// 键带元数 —— 同一接收器上同名方法按参数个数重载（与自由函数一致）；
+    /// 不带的话第二个同名方法会把第一个的签名覆盖，调用报「缺少第 N 个形参」。
+    pub 方法: HashMap<(u32, String, usize), 函数签名>,
     /// 函数默认参数值 AST：函数名 → 每个形参的可选默认值表达式（供调用少传时补齐）。
     pub 函数默认值: HashMap<String, Vec<Option<crate::parser::ast::AstNode>>>,
     /// 函数形参名：函数名 → 形参名列表（签名只存类型，`工具模式` 生成 schema 需要名字）。
@@ -452,6 +454,24 @@ impl 符号表 {
     }
 
     /// 按索引拿函数值签名。
+    /// 查方法签名：先按元数精确匹配；没有精确匹配但该名字只有一个元数时退回那一个
+    /// （让「少传/多传参数」仍报形参缺失，而不是报「无此方法」）。
+    pub fn 方法查(&self, idx: u32, 名: &str, 实参数: usize) -> Option<&函数签名> {
+        if let Some(s) = self.方法.get(&(idx, 名.to_string(), 实参数)) {
+            return Some(s);
+        }
+        let mut 候选 = self
+            .方法
+            .iter()
+            .filter(|((i, n, _), _)| *i == idx && n == 名)
+            .map(|(_, s)| s);
+        let 首 = 候选.next()?;
+        if 候选.next().is_some() {
+            return None;
+        }
+        Some(首)
+    }
+
     pub fn 函数值签名(&self, idx: u32) -> Option<&函数签名> {
         self.函数值签名.get(idx as usize)
     }
@@ -1232,7 +1252,7 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             // 接收者是任意表达式（链式关键）：先定其类型，再查方法返回。
             let recv = 推断表达式类型(&mc.object, 表);
             if let Some(idx) = recv.结构体索引() {
-                if let Some(sig) = 表.方法.get(&(idx, mc.method_name.clone())) {
+                if let Some(sig) = 表.方法查(idx, &mc.method_name, mc.arguments.len()) {
                     return sig.返回;
                 }
                 // 函数值字段以方法语法调用：`命令值.执行函数(ctx)` → 字段签名的返回类型
