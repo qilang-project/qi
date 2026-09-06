@@ -1864,6 +1864,25 @@ impl ModuleRegistry {
             "整数",                   // 累计已用 token
         ));
 
+        // ── 提示缓存（prompt cache）计数 ──────────────────────
+        //
+        // 跟 用量/已用预算 并列，**不**并进它们：累计用量 的语义（各家 usage 的
+        // total 之和）保持原样，缓存量单列。Anthropic 的 input_tokens 不含
+        // cache_read、DeepSeek 的 prompt_tokens 含 —— 两家口径不同，混在一个
+        // 数里就再也拆不开了。
+        llm_module.add_function(ModuleFunction::new(
+            "缓存用量",
+            "qi_llm_cache_usage",
+            vec!["整数".to_string()], // 会话句柄
+            "字符串",                 // {"read":..,"write":..,"read_total":..,"write_total":..}
+        ));
+        llm_module.add_function(ModuleFunction::new(
+            "上次缓存命中率",
+            "qi_llm_cache_hit_rate",
+            vec!["整数".to_string()], // 会话句柄
+            "整数",                   // 百分比整数 0-100
+        ));
+
         // 关闭会话
         llm_module.add_function(ModuleFunction::new(
             "关闭会话",
@@ -1942,6 +1961,20 @@ impl ModuleRegistry {
                 "整数".to_string(),   // prompt tokens
                 "整数".to_string(),   // completion tokens
                 "整数".to_string(),   // total tokens
+            ],
+            "整数",
+        ));
+
+        // 落账的缓存版：只记 cache read / cache write 两个数，不碰历史。
+        // **没有**把这两个参数加到 落账 上 —— 那个六参签名是 ABI，已经编出去的
+        // .qi 按六参调它，加参数就是让它们全崩。理由详见 qi_llm_record_cache。
+        llm_module.add_function(ModuleFunction::new(
+            "落账缓存",
+            "qi_llm_record_cache",
+            vec![
+                "整数".to_string(), // 会话句柄
+                "整数".to_string(), // cache read tokens
+                "整数".to_string(), // cache write / creation tokens
             ],
             "整数",
         ));

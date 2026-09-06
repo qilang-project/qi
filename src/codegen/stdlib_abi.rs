@@ -159,6 +159,30 @@ pub const LLM_ABI: &[StdlibAbiFunction] = &[
         "i64"
     ),
     llm_abi!(
+        "缓存用量",
+        "qi_llm_cache_usage",
+        ["整数"],
+        "字符串",
+        ["i64"],
+        "*mut c_char"
+    ),
+    llm_abi!(
+        "上次缓存命中率",
+        "qi_llm_cache_hit_rate",
+        ["整数"],
+        "整数",
+        ["i64"],
+        "i64"
+    ),
+    llm_abi!(
+        "落账缓存",
+        "qi_llm_record_cache",
+        ["整数", "整数", "整数"],
+        "整数",
+        ["i64", "i64", "i64"],
+        "i64"
+    ),
+    llm_abi!(
         "关闭会话",
         "qi_llm_close_session",
         ["整数"],
