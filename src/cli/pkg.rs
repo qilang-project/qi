@@ -7,7 +7,8 @@
 //!
 //! 协议合同见 `docs/包管理设计.md`。
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use crate::cli::commands::CliError;
 use crate::package::registry::{注册中心, TOKEN_ENV};
@@ -36,6 +37,116 @@ pub fn 安装(verbose: bool) -> Result<(), CliError> {
     安装到(&项目, verbose)
 }
 
+/// 依赖树的最大层数。真实依赖链两三层就到头，超过多半是清单写错或环没断干净，
+/// 与其一路装到磁盘满，不如在这里停住报清楚。
+const 依赖最大层数: usize = 16;
+
+/// 装一层依赖，装完每个包再进它自己的 qi.toml 接着装 —— **传递依赖**。
+///
+/// 装到哪儿：顶层依赖进 `<项目>/qi_packages/<别名>`，某个包的依赖进
+/// `<那个包>/qi_packages/<别名>` —— 与编译期解析器找依赖的位置一致（嵌套，
+/// 不是平铺）。平铺过一次不行：解析器只认包自己目录下的 qi_packages。
+///
+/// qi.lock 只钉顶层（深度 0）。深层包的完整性靠注册中心元数据里的 sha256 逐个校验
+/// （安装一个包 内部一定会比对），所以不锁也不会装到被换掉的包体。
+#[allow(clippy::too_many_arguments)]
+fn 装一层(
+    中心: &注册中心,
+    依赖表: &[(String, String)],
+    父目录: &Path,
+    查锁: &dyn Fn(&str) -> Option<(String, String)>,
+    verbose: bool,
+    深度: usize,
+    已见: &mut HashSet<String>,
+    装了: &mut usize,
+    跳过: &mut usize,
+) -> Result<(), CliError> {
+    if 深度 > 依赖最大层数 {
+        return Err(包错(format!(
+            "依赖层数超过 {}，可能是清单里有环。停在 {}",
+            依赖最大层数,
+            父目录.display()
+        )));
+    }
+
+    for (别名, 版本) in 依赖表 {
+        if !is_exact_version(版本) {
+            return Err(包错(format!(
+                "依赖 `{}` 的版本 \"{}\" 不是「主.次.补」三段数字。\n  v1 只支持精确版本（不做 ^1.2 这类范围解析），请写成如 0.1.0",
+                别名, 版本
+            )));
+        }
+
+        let 包目录: PathBuf = 父目录.join("qi_packages").join(别名);
+        // 同名同版本在树里出现多次（菱形依赖）只装一次，但每个需要它的父包底下
+        // 都得有一份 —— 所以「已见」只用来剪掉**递归**，不跳过落地。
+        let 键 = format!("{}@{}", 别名, 版本);
+        let 见过 = 已见.contains(&键);
+
+        let 锁定 = if 深度 == 0 {
+            查锁(别名).filter(|(v, _)| v == 版本).map(|(_, s)| s)
+        } else {
+            None
+        };
+        let 结果 = install::安装一个包(中心, 别名, 版本, &包目录, 锁定.as_deref())
+            .map_err(|e| 包错(format!("安装 {} {} 失败: {}", 别名, 版本, e)))?;
+
+        match 结果 {
+            install::安装结果::已是(v) => {
+                println!("{}{} 已是 {}", 缩进(深度), 别名, v);
+                *跳过 += 1;
+            }
+            install::安装结果::已装 {
+                版本: v,
+                sha256,
+                文件数,
+            } => {
+                println!(
+                    "{}已安装 {} {} ({} 个文件) → {}",
+                    缩进(深度),
+                    别名,
+                    v,
+                    文件数,
+                    包目录.display()
+                );
+                if verbose {
+                    println!("{}  sha256 {}", 缩进(深度), sha256);
+                }
+                *装了 += 1;
+            }
+        }
+
+        if 见过 {
+            continue;
+        }
+        已见.insert(键);
+
+        // 装好的包自己带 qi.toml —— 里面声明的注册中心依赖接着装进它的 qi_packages
+        let 子依赖 = match ResolvedPackageManifest::load_dir(&包目录).map_err(包错)? {
+            Some(清单) => 清单.registry_dependencies(),
+            None => Vec::new(),
+        };
+        if !子依赖.is_empty() {
+            装一层(
+                中心,
+                &子依赖,
+                &包目录,
+                查锁,
+                verbose,
+                深度 + 1,
+                已见,
+                装了,
+                跳过,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn 缩进(深度: usize) -> String {
+    "  ".repeat(深度)
+}
+
 /// 把项目清单里全部注册中心依赖装齐，并刷新 qi.lock。
 fn 安装到(项目: &ResolvedPackageManifest, verbose: bool) -> Result<(), CliError> {
     let 依赖表 = 项目.registry_dependencies();
@@ -59,48 +170,23 @@ fn 安装到(项目: &ResolvedPackageManifest, verbose: bool) -> Result<(), CliE
 
     let mut 装了 = 0usize;
     let mut 跳过 = 0usize;
-    for (别名, 版本) in &依赖表 {
-        if !is_exact_version(版本) {
-            return Err(包错(format!(
-                "依赖 `{}` 的版本 \"{}\" 不是「主.次.补」三段数字。\n  v1 只支持精确版本（不做 ^1.2 这类范围解析），请写成如 0.1.0",
-                别名, 版本
-            )));
-        }
-
-        // lock 里同名同版本才用它的 sha256；版本不一样说明 qi.toml 刚被改过，lock 已过期
-        let 锁定sha256 = 锁定表
-            .get(别名)
-            .filter(|锁| &锁.版本 == 版本)
-            .map(|锁| 锁.sha256.as_str());
-
-        let 包目录 = 项目.registry_package_dir(别名);
-        let 结果 = install::安装一个包(&中心, 别名, 版本, &包目录, 锁定sha256)
-            .map_err(|e| 包错(format!("安装 {} {} 失败: {}", 别名, 版本, e)))?;
-
-        match 结果 {
-            install::安装结果::已是(v) => {
-                println!("{} 已是 {}", 别名, v);
-                跳过 += 1;
-            }
-            install::安装结果::已装 {
-                版本: v,
-                sha256,
-                文件数,
-            } => {
-                println!(
-                    "已安装 {} {} ({} 个文件) → {}",
-                    别名,
-                    v,
-                    文件数,
-                    包目录.display()
-                );
-                if verbose {
-                    println!("  sha256 {}", sha256);
-                }
-                装了 += 1;
-            }
-        }
-    }
+    let mut 已见: HashSet<String> = HashSet::new();
+    装一层(
+        &中心,
+        &依赖表,
+        &项目.root_dir,
+        &|别名| {
+            // lock 里同名同版本才用它的 sha256；版本不一样说明 qi.toml 刚被改过，lock 已过期
+            锁定表
+                .get(别名)
+                .map(|锁| (锁.版本.clone(), 锁.sha256.clone()))
+        },
+        verbose,
+        0,
+        &mut 已见,
+        &mut 装了,
+        &mut 跳过,
+    )?;
 
     // 重新加载清单：装好的包各自带 qi.toml，lock 要把它们的元信息写全
     let 刷新后 = ResolvedPackageManifest::load_dir(&项目.root_dir)
