@@ -1447,6 +1447,22 @@ impl QiCompiler {
         module_path: &[String],
     ) -> Option<Result<PathBuf, CompilerError>> {
         let alias = module_path.first()?;
+
+        // 工作区覆盖压过声明的依赖 —— 「覆盖」的语义就是「别用声明的那个版本，
+        // 用我指的这份本地源码」（同 Cargo 的 [patch] / Go 的 replace）。这里
+        // 让路，交给后面的 5.0 去解析。
+        //
+        // 覆盖**不能**直接提到这里做：它得排在包内子模块与相对路径之后，否则
+        // 会劫持包自己的模块（`Pkg.qi` 里的 `公开 导入 注册中心` 撞上覆盖表里
+        // 的 qi-registry）。所以是「这里让路 + 那边解析」两步。
+        //
+        // 不这么做的话：qi-pkg 声明了 `[开发依赖] CLI = "版本"`，即便工作区
+        // 覆盖指着隔壁的 qi-cli 源码，也会先撞上「注册中心依赖尚未安装」——
+        // 2026.09.12-1 的发布流程就是这么红的。
+        if crate::package::workspace_override(current_file, alias).is_some() {
+            return None;
+        }
+
         let manifest = crate::package::ResolvedPackageManifest::discover(current_file)
             .ok()
             .flatten()?;

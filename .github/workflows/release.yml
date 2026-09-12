@@ -127,6 +127,11 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/qilang-project/qi-pkg.git ../qi-pkg
           git clone --depth 1 https://github.com/qilang-project/qi-cli.git ../qi-cli
+          # qi-pkg 的 qi.toml 声明的是**注册中心**依赖 CLI（那才是发布出去给
+          # 别人用的形状）。这里两个仓是并排 clone 的，不联网装包，所以拿工作区
+          # 覆盖把 CLI 指到隔壁源码 —— 跟在自己机器上开发同一个机制。
+          # 2.0 之前靠编译器的祖先目录扫描白捡，那套已经删了。
+          printf '[覆盖]\nCLI = "./qi-cli"\n' > ../qi工作区.toml
           QI_RUNTIME_LIB=$(pwd)/../qi-runtime/target/release/libqi_runtime.a \
             ./target/${{ matrix.target }}/release/${{ matrix.artifact }} \
             compile ../qi-pkg/命令行/主程序.qi -o qipkg-build
