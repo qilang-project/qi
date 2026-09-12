@@ -17,7 +17,19 @@ use sha2::{Digest, Sha256};
 /// `tests/` 在列表里是**发布减肥**：测试只对开发者有意义，装到别人的
 /// qi_packages 里既占体积又会被编译器的模块扫描看见。本地开发完全不受影响
 /// —— 只有 `qi 包 发布` 这一条路径走这个排除表。
-pub const 排除目录: &[&str] = &[".git", "target", "target-wt", "qi_packages", "tests"];
+pub const 排除目录: &[&str] = &[
+    ".git",
+    "target",
+    "target-wt",
+    "qi_packages",
+    "tests",
+    // 依赖装出来的东西一律不进包。qi-web 带一个 esbuild/vitest 的前端，
+    // node_modules 在磁盘上 109 MB，压出来 39 MB —— 整个发布包 99.9% 是它。
+    // 它在 .gitignore 里，但打包器不看 .gitignore。
+    "node_modules",
+    ".venv",
+    "__pycache__",
+];
 
 /// 打包时排除的文件扩展名。
 pub const 排除扩展名: &[&str] = &["o"];
