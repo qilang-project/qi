@@ -2358,11 +2358,35 @@ fn 链接wasm(obj: &std::path::Path, out: &std::path::Path, verbose: bool) -> Re
              去掉 尝试 块，或改在原生目标上跑。",
         );
     } else if stderr.contains("undefined symbol: qi_") {
+        // 链接器只会吐符号名。反查它属于哪个标准库模块，直接把模块名说出来 ——
+        // 让用户从 `qi_http_get` 自己猜到「哦是 标准库.HTTP」是没必要的一步。
+        let 注册表 = crate::codegen::module_registry::ModuleRegistry::new();
+        let mut 模块名: Vec<String> = Vec::new();
+        for line in stderr.lines() {
+            if let Some(rest) = line.split("undefined symbol: ").nth(1) {
+                let sym = rest.trim();
+                if let Some(m) = 注册表.module_of_runtime_symbol(sym) {
+                    if !模块名.iter().any(|x| x == m) {
+                        模块名.push(m.to_string());
+                    }
+                }
+            }
+        }
+        if 模块名.is_empty() {
+            msg.push_str(
+                "\n\n提示：上面这些 qi_ 符号所属的标准库模块在 wasm 里不可用\
+                 （网络 / HTTP / 数据库 / Redis / 大模型 / MCP / 图形化 / 子进程 / gRPC 属于此类）。",
+            );
+        } else {
+            msg.push_str(&format!(
+                "\n\n提示：这些标准库模块在 wasm 里不可用 —— {}",
+                模块名.join(" / ")
+            ));
+        }
         msg.push_str(
-            "\n\n提示：上面这些 qi_ 符号所属的标准库模块在 wasm 里不可用\
-             （网络 / HTTP / 数据库 / Redis / 大模型 / MCP / 图形化 / 子进程 / gRPC 属于此类）。\
-             wasm 里可用的是纯计算、字符串、JSON、列表、哈希表、字节切片、时间、正则、\
-             加密、随机、文件（wasmtime 需 --dir）。",
+            "\n      wasm 里可用的是：字符串 / 列表 / 哈希表 / 字节切片 / 向量 / JSON / 数学 /\
+             \n      随机 / 正则 / 加密 / 压缩 / 时间 / 路径 / 输入输出 / 操作系统 / 环境 /\
+             \n      词法索引 / 邮箱 / 反射 / 同步 / 协程（文件相关的 wasmtime 要 --dir）。",
         );
     }
     Err(CliError::Compilation(crate::CompilerError::Codegen(msg)))

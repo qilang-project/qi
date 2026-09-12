@@ -4537,6 +4537,30 @@ impl ModuleRegistry {
     }
 
     /// Get a module by path
+    /// 运行时符号（qi_xxx）→ 它属于哪个标准库模块。
+    ///
+    /// 给 wasm 链接失败的报错用：链接器只会吐 `undefined symbol: qi_http_get`，
+    /// 用户还得自己猜这是哪个模块。有了这张反查，报错能直接说
+    /// 「`标准库.HTTP` 在 wasm 里不可用」。
+    pub fn module_of_runtime_symbol(&self, symbol: &str) -> Option<&str> {
+        // 同一个模块在注册表里既有裸名（"HTTP"）又有全名（"标准库.HTTP"）。
+        // HashMap 迭代无序，不挑的话同一条报错里会一会儿一种写法 —— 统一取全名。
+        let mut 命中: Option<&str> = None;
+        for (path, module) in &self.modules {
+            for name in module.function_names() {
+                if let Some(f) = module.get_function(name) {
+                    if f.runtime_name == symbol {
+                        if path.starts_with("标准库.") {
+                            return Some(path.as_str());
+                        }
+                        命中 = Some(path.as_str());
+                    }
+                }
+            }
+        }
+        命中
+    }
+
     pub fn get_module(&self, path: &str) -> Option<&Module> {
         self.modules.get(path)
     }
