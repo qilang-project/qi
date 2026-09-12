@@ -35,6 +35,42 @@ pub struct QiCompiler {
     config: config::CompilerConfig,
 }
 
+/// macOS：把 `SDKROOT` 转成 `-isysroot`。
+///
+/// Homebrew 的 clang **不认** `SDKROOT` 环境变量（Apple 自带的认），所以想换
+/// SDK 只能显式传参。2026-09-11 那次 Command Line Tools 更新把
+/// `SDKs/MacOSX.sdk` 指到了 MacOSX27.0.sdk，而它的 tbd 里写着
+/// `arm64e.x1` —— Apple clang 21 和 Homebrew clang 22 都解析不了，报
+/// 「tapi error: malformed file」，于是**任何** qi 程序都链接不出来，
+/// 连两行的 hello world 也不行。`SDKROOT=<旧 SDK>` 是不用 sudo 的绕法。
+#[cfg(target_os = "macos")]
+fn apply_sdkroot(cmd: &mut std::process::Command) {
+    if let Ok(sdk) = std::env::var("SDKROOT") {
+        if !sdk.is_empty() {
+            cmd.arg("-isysroot").arg(sdk);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_sdkroot(_cmd: &mut std::process::Command) {}
+
+/// `QI_STRICT_RESOLVE=1`：关掉祖先目录扫描式包解析（qi 2.0 的默认行为）。
+fn strict_resolve() -> bool {
+    matches!(
+        std::env::var("QI_STRICT_RESOLVE").as_deref(),
+        Ok("1") | Ok("true") | Ok("on")
+    )
+}
+
+/// `QI_RESOLVE_TRACE=1`：打印每个包导入最终读了哪个文件。
+fn resolve_trace() -> bool {
+    matches!(
+        std::env::var("QI_RESOLVE_TRACE").as_deref(),
+        Ok("1") | Ok("true") | Ok("on")
+    )
+}
+
 impl QiCompiler {
     /// Create a new compiler instance with default configuration
     pub fn new() -> Self {
@@ -364,6 +400,7 @@ impl QiCompiler {
         let mut cmd = std::process::Command::new("clang");
         // 同 link_objects：debug map 里的 .o 时间戳会破坏产物可复现性。
         cmd.env("ZERO_AR_DATE", "1");
+        apply_sdkroot(&mut cmd);
         #[cfg(target_os = "macos")]
         {
             // 装载名用输出文件名，@rpath 让使用者可 -rpath 定位。
@@ -677,6 +714,7 @@ impl QiCompiler {
         // 一致」的确定性回归当场变红。ZERO_AR_DATE 让链接器把时间戳写 0
         // （lldb 见 0 就跳过 .o 新旧校验，断点照常）。
         command.env("ZERO_AR_DATE", "1");
+        apply_sdkroot(&mut command);
         command.arg("-o").arg(executable_path);
 
         // Add all object files
@@ -1256,9 +1294,38 @@ impl QiCompiler {
 
         // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
-            if let Some(local_package_path) =
+            // 祖先目录扫描：从当前文件往上每一级，把每一级的所有子目录都翻一遍，
+            // 找 qi.toml 里 名称 == 首段 的包。它排在 QI_PACKAGES_PATH 之前，
+            // 所以祖先路径上任何一份残留副本都会**悄悄**盖掉显式指定的依赖。
+            //
+            // 这是 qi 2.0 要删掉的行为。删之前先让它出声：
+            //   QI_STRICT_RESOLVE=1  完全关掉这一步（2.0 的默认）
+            //   QI_RESOLVE_TRACE=1   命中时打印用了哪一份
+            // 并且在存在竞争来源（QI_PACKAGES_PATH / 默认位置也有同名包）时无条件告警。
+            if strict_resolve() {
+                if let Some(hit) = self.resolve_local_manifest_package_path(current_file, module_path)
+                {
+                    eprintln!(
+                        "[包解析] 严格模式拒绝祖先目录扫描：`{}` 本可以解析到 {}",
+                        module_path[0],
+                        hit.display()
+                    );
+                    eprintln!(
+                        "　　　　　在 qi.toml 的 [依赖] 里显式声明它：`{} = {{ 路径 = \"...\" }}`",
+                        module_path[0]
+                    );
+                }
+            } else if let Some(local_package_path) =
                 self.resolve_local_manifest_package_path(current_file, module_path)
             {
+                self.warn_shadowed_package(module_path, &local_package_path);
+                if resolve_trace() {
+                    eprintln!(
+                        "[包解析] `{}` ← 祖先目录扫描 {}",
+                        module_path[0],
+                        local_package_path.display()
+                    );
+                }
                 return Ok(local_package_path);
             }
 
@@ -1474,6 +1541,54 @@ impl QiCompiler {
                 ),
             )))),
         }
+    }
+
+    /// 祖先目录扫描命中后，检查有没有**竞争来源** —— QI_PACKAGES_PATH 或默认
+    /// 位置里也有同名包。有就无条件告警：这正是「改了库却没生效」那类问题的
+    /// 现场，用户显式指了一份，编译器却读了祖先路径上的另一份。
+    fn warn_shadowed_package(&self, module_path: &[String], chosen: &std::path::Path) {
+        let mut competitors: Vec<PathBuf> = Vec::new();
+
+        if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
+            for packages_root in std::env::split_paths(&package_root) {
+                if packages_root.as_os_str().is_empty() {
+                    continue;
+                }
+                if let Some(path) = self.resolve_package_path_from_root(&packages_root, module_path)
+                {
+                    competitors.push(path);
+                }
+            }
+        }
+        for root in [
+            std::env::current_dir().ok().map(|d| d.join("qi_packages")),
+            dirs::home_dir().map(|d| d.join(".qi").join("packages")),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(path) = self.resolve_package_path_from_root(&root, module_path) {
+                competitors.push(path);
+            }
+        }
+
+        let chosen_real = chosen.canonicalize().unwrap_or_else(|_| chosen.to_path_buf());
+        competitors.retain(|c| c.canonicalize().unwrap_or_else(|_| c.clone()) != chosen_real);
+        if competitors.is_empty() {
+            return;
+        }
+
+        eprintln!(
+            "[包解析] 警告：`{}` 有多份，用的是祖先目录扫描找到的那份",
+            module_path[0]
+        );
+        eprintln!("　　　　　用了   {}", chosen.display());
+        for c in &competitors {
+            eprintln!("　　　　　盖掉了 {}", c.display());
+        }
+        eprintln!(
+            "　　　　　在 qi.toml 的 [依赖] 里显式声明可以消除歧义；QI_STRICT_RESOLVE=1 直接禁用扫描"
+        );
     }
 
     fn resolve_local_manifest_package_path(
