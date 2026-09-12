@@ -55,18 +55,6 @@ fn apply_sdkroot(cmd: &mut std::process::Command) {
 #[cfg(not(target_os = "macos"))]
 fn apply_sdkroot(_cmd: &mut std::process::Command) {}
 
-/// `QI_LEGACY_RESOLVE=1`：把 2.0 之前的祖先目录扫描放回来。
-///
-/// 默认关。它排在 QI_PACKAGES_PATH 之前又完全静默，是「显式声明的依赖被祖先
-/// 路径上一份残留副本悄悄顶替」这类问题的根源。现在这件事由仓库根的
-/// `qi工作区.toml` 的 `[覆盖]` 显式做。这个开关只为旧工程过渡，下个版本删。
-fn legacy_resolve() -> bool {
-    matches!(
-        std::env::var("QI_LEGACY_RESOLVE").as_deref(),
-        Ok("1") | Ok("true") | Ok("on")
-    )
-}
-
 /// `QI_RESOLVE_TRACE=1`：打印每个包导入最终读了哪个文件。
 fn resolve_trace() -> bool {
     matches!(
@@ -1322,33 +1310,11 @@ impl QiCompiler {
                 }
             }
 
-            // 祖先目录扫描：从当前文件往上每一级，把每一级的**所有子目录**都
-            // read_dir 一遍，挨个读 qi.toml 比包名。它曾经排在 QI_PACKAGES_PATH
-            // 之前，于是祖先路径上任何一份残留副本都会**悄悄**盖掉显式指定的
-            // 依赖 —— 「改了库却没生效」那一整类问题的根。
-            //
-            // **qi 2.0 起默认关闭**，位置被上面的工作区覆盖接替。留一个开关
-            // 是给还没来得及写 qi工作区.toml 的旧工程过渡用的，下一个版本删。
-            if legacy_resolve() {
-                if let Some(local_package_path) =
-                    self.resolve_local_manifest_package_path(current_file, module_path)
-                {
-                    self.warn_shadowed_package(module_path, &local_package_path);
-                    eprintln!(
-                        "[包解析] 弃用：`{}` 是靠祖先目录扫描找到的（QI_LEGACY_RESOLVE=1）。\
-下个版本会删掉这条路，改用仓库根的 qi工作区.toml 的 [覆盖]。",
-                        module_path[0]
-                    );
-                    if resolve_trace() {
-                        eprintln!(
-                            "[包解析] `{}` ← 祖先目录扫描 {}",
-                            module_path[0],
-                            local_package_path.display()
-                        );
-                    }
-                    return Ok(local_package_path);
-                }
-            }
+            // 祖先目录扫描（从当前文件往上每一级、把每一级所有子目录都翻一遍
+            // 找同名包）在 2026.09.12-2 里默认关闭、留了 QI_LEGACY_RESOLVE 过渡，
+            // 现在整个删掉。它排在 QI_PACKAGES_PATH 之前又完全静默，是「改了库
+            // 却没生效」那一整类问题的根。要在 monorepo 里让包互相引用，用仓库根
+            // 的 qi工作区.toml 的 [覆盖]。
 
             // QI_PACKAGES_PATH 支持 PATH 式多路径（Unix `:`、Windows `;`），按序
             // 先到先得。以前整串被当**一个目录名**：拼了 "a:b" 的调用方所有包
@@ -1429,7 +1395,7 @@ impl QiCompiler {
             "\n         来自注册中心 → qi.toml 里 `[依赖] {} = \"版本\"` 再 `qi 包 安装`。",
             alias
         ));
-        提示.push_str("\n         （2026.09 起祖先目录扫描默认关闭，旧工程可临时 QI_LEGACY_RESOLVE=1；QI_RESOLVE_TRACE=1 看解析过程）");
+        提示.push_str("\n         （QI_RESOLVE_TRACE=1 可以看到每个导入实际读了哪个文件）");
         Err(CompilerError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             提示,
@@ -1476,16 +1442,16 @@ impl QiCompiler {
             // 才报路径级别的具体原因，而不是笼统的「哪儿都没找到」。
             Ok(crate::package::DependencySource::LocalPath(declared)) => {
                 return Some(
+                    // 路径写歪了就直接报原因。以前这里会**偷偷回退到祖先目录扫描**，
+                    // 于是一个指错地方的 [依赖] 路径照样能编过 —— 你以为在用声明的
+                    // 那份，其实读的是祖先路径上某个同名副本。
                     manifest
                         .resolve_local_dependency_module(alias, &declared, module_path)
-                        .or_else(|reason| {
-                            self.resolve_local_manifest_package_path(current_file, module_path)
-                                .ok_or_else(|| {
-                                    CompilerError::Io(std::io::Error::new(
-                                        std::io::ErrorKind::NotFound,
-                                        reason.message(alias, &manifest.manifest_path, module_path),
-                                    ))
-                                })
+                        .map_err(|reason| {
+                            CompilerError::Io(std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                reason.message(alias, &manifest.manifest_path, module_path),
+                            ))
                         }),
                 );
             }
@@ -1605,103 +1571,6 @@ impl QiCompiler {
                 ),
             )))),
         }
-    }
-
-    /// 祖先目录扫描命中后，检查有没有**竞争来源** —— QI_PACKAGES_PATH 或默认
-    /// 位置里也有同名包。有就无条件告警：这正是「改了库却没生效」那类问题的
-    /// 现场，用户显式指了一份，编译器却读了祖先路径上的另一份。
-    fn warn_shadowed_package(&self, module_path: &[String], chosen: &std::path::Path) {
-        let mut competitors: Vec<PathBuf> = Vec::new();
-
-        if let Ok(package_root) = std::env::var("QI_PACKAGES_PATH") {
-            for packages_root in std::env::split_paths(&package_root) {
-                if packages_root.as_os_str().is_empty() {
-                    continue;
-                }
-                if let Some(path) = self.resolve_package_path_from_root(&packages_root, module_path)
-                {
-                    competitors.push(path);
-                }
-            }
-        }
-        for root in [
-            std::env::current_dir().ok().map(|d| d.join("qi_packages")),
-            dirs::home_dir().map(|d| d.join(".qi").join("packages")),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(path) = self.resolve_package_path_from_root(&root, module_path) {
-                competitors.push(path);
-            }
-        }
-
-        let chosen_real = chosen
-            .canonicalize()
-            .unwrap_or_else(|_| chosen.to_path_buf());
-        competitors.retain(|c| c.canonicalize().unwrap_or_else(|_| c.clone()) != chosen_real);
-        if competitors.is_empty() {
-            return;
-        }
-
-        eprintln!(
-            "[包解析] 警告：`{}` 有多份，用的是祖先目录扫描找到的那份",
-            module_path[0]
-        );
-        eprintln!("　　　　　用了   {}", chosen.display());
-        for c in &competitors {
-            eprintln!("　　　　　盖掉了 {}", c.display());
-        }
-        eprintln!(
-            "　　　　　在 qi.toml 的 [依赖] 里显式声明可以消除歧义；QI_STRICT_RESOLVE=1 直接禁用扫描"
-        );
-    }
-
-    fn resolve_local_manifest_package_path(
-        &self,
-        current_file: &PathBuf,
-        module_path: &[String],
-    ) -> Option<PathBuf> {
-        let package_name = module_path.first()?;
-        let mut ancestor = current_file.parent()?.to_path_buf();
-
-        loop {
-            if let Ok(entries) = std::fs::read_dir(&ancestor) {
-                for entry in entries.flatten() {
-                    let package_dir = entry.path();
-                    if !package_dir.is_dir() {
-                        continue;
-                    }
-
-                    let manifest =
-                        match crate::package::ResolvedPackageManifest::discover(&package_dir) {
-                            Ok(Some(manifest))
-                                if manifest.root_dir
-                                    == package_dir
-                                        .canonicalize()
-                                        .unwrap_or(package_dir.clone()) =>
-                            {
-                                manifest
-                            }
-                            _ => continue,
-                        };
-
-                    if manifest.package_name() == Some(package_name.as_str()) {
-                        if let Some(package_path) =
-                            manifest.resolve_module_path(package_name, module_path)
-                        {
-                            return Some(package_path);
-                        }
-                    }
-                }
-            }
-
-            if !ancestor.pop() {
-                break;
-            }
-        }
-
-        None
     }
 
     fn resolve_package_internal_module_path(

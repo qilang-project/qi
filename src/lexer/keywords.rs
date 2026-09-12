@@ -10,7 +10,6 @@
 //! 往语法里加保留字前先想清楚 —— 每个保留字都从用户手里偷走一个标识符。
 
 use crate::lexer::tokens::TokenKind;
-use crate::parser::ast::BasicType;
 use std::collections::HashMap;
 
 /// Chinese keyword lookup table

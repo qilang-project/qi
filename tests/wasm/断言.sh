@@ -22,7 +22,7 @@ export QI_WASM_RUNTIME_LIB="$RT"
 
 if ! command -v wasmtime >/dev/null 2>&1; then echo "wasm回归: 跳过（没有 wasmtime）"; exit 0; fi
 if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-wasip1$'; then echo "wasm回归: 跳过（没有 wasm32-wasip1 目标）"; exit 0; fi
-if [ ! -f "$RT" ]; then echo "wasm回归: 跳过（没有 $RT，先 cd qi-runtime/wasm && cargo build --release --target wasm32-wasip1）"; exit 0; fi
+if [ ! -f "$RT" ]; then echo "wasm回归: 跳过（没有 ${RT}，先 cd qi-runtime/wasm && cargo build --release --target wasm32-wasip1）"; exit 0; fi
 [ -x "$QI" ] || { echo "找不到 qi：$QI" >&2; exit 1; }
 
 TMP="$(mktemp -d)"

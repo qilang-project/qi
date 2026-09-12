@@ -109,7 +109,7 @@ echo "   两次 /Brepro 产物一致? $(md5sum "$W/hello3.exe" "$W/hello4.exe" |
 echo
 echo "=============== 6. qi 编译一个 .qi ==============="
 if [ ! -x "$QI" ]; then
-  echo "找不到 $QI，跳过"
+  echo "找不到 ${QI}，跳过"
 else
   "$QI" --version 2>&1 | head -2
   D="$W/qi试"

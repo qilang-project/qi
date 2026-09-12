@@ -38,7 +38,7 @@ for arg in "$@"; do
         --检查|--check)     CHECK_ONLY=1 ;;
         --跳过构建|--no-build) NO_BUILD=1 ;;
         -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
-        *) die "不认识的参数：$arg（用 --help 看用法）" ;;
+        *) die "不认识的参数：${arg}（用 --help 看用法）" ;;
     esac
 done
 
@@ -71,7 +71,7 @@ if [ "$CHECK_ONLY" = 0 ] && [ "$NO_BUILD" = 0 ]; then
     echo ""
 fi
 
-[ -f "$SRC_LIB" ] || die "找不到 $SRC_LIB（先在 qi-runtime/ 跑 cargo build --release）"
+[ -f "$SRC_LIB" ] || die "找不到 ${SRC_LIB}（先在 qi-runtime/ 跑 cargo build --release）"
 
 # ── 比新旧 ────────────────────────────────────────────────────
 # 也比一次「源码 vs 归档」：源码改了但没重新构建，同样是过期的。

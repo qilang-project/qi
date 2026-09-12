@@ -150,12 +150,12 @@ main() {
     SUDO_LIB=$(need_sudo_for "$lib_dst")
 
     $SUDO_BIN install -m 0755 "$src_bin" "$install_dir/qi" \
-        || err "写不进 $install_dir。换个目录：curl … | INSTALL_DIR=\$HOME/.local/bin bash"
+        || err "写不进 ${install_dir}。换个目录：curl … | INSTALL_DIR=\$HOME/.local/bin bash"
     ok "已安装 → $install_dir/qi"
 
     if [ -d "$tmp/lib/qi" ]; then
         if ! ($SUDO_LIB mkdir -p "$lib_dst" && $SUDO_LIB cp -R "$tmp/lib/qi/." "$lib_dst/"); then
-            err "写不进 $lib_dst（多半是上次 sudo 安装留下的 root 目录）。二选一：
+            err "写不进 ${lib_dst}（多半是上次 sudo 安装留下的 root 目录）。二选一：
      sudo rm -rf $lib_dst   然后重跑本脚本
      或整个装到自己目录：curl … | INSTALL_DIR=\$HOME/.local/bin bash"
         fi

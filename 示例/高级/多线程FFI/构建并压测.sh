@@ -40,7 +40,7 @@ case "$MODE" in
         DEFS=(-D线程数=200 -D同步次数=500 -D异步次数=50)
         echo "==> ThreadSanitizer 模式（线程/循环收敛）" ;;
   normal) echo "==> 普通模式" ;;
-  *) echo "未知模式: $MODE（用 normal|asan|tsan）"; exit 2 ;;
+  *) echo "未知模式: ${MODE}（用 normal|asan|tsan）"; exit 2 ;;
 esac
 
 echo "==> 链接 C 压测驱动"

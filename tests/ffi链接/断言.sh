@@ -314,7 +314,7 @@ else
     if [ $rc -ne 0 ] && echo "$out" | grep -q "macOS 专有"; then
         pass "07 负例：非 macOS 上 framework 写法必须报错"
     else
-        fail "07 负例：非 macOS 上 framework 写法必须报错 (rc=$rc，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
+        fail "07 负例：非 macOS 上 framework 写法必须报错 (rc=${rc}，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
     fi
 fi
 
@@ -338,7 +338,7 @@ rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q "不存在"; then
     pass "08 负例：--库路径 目录不存在"
 else
-    fail "08 负例：--库路径 目录不存在 (rc=$rc，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
+    fail "08 负例：--库路径 目录不存在 (rc=${rc}，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
 fi
 
 total=$((total+1))
@@ -347,7 +347,7 @@ rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q "找不到这个库文件"; then
     pass "09 负例：直链文件不存在"
 else
-    fail "09 负例：直链文件不存在 (rc=$rc，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
+    fail "09 负例：直链文件不存在 (rc=${rc}，输出: $(echo "$out" | head -2 | tr '\n' ' '))"
 fi
 
 # ── 10-12：C 的 32 位整数（`C整数` / `C无符号整数`）──
