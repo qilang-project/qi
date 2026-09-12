@@ -154,8 +154,8 @@ debuginfo: build $(RUNTIME_LIB)
 #   QI_FUZZ_COUNT=300 QI_FUZZ_SEED=777000 make fuzz
 FUZZ_COUNT ?= 12
 FUZZ_SEED ?= 20260822
-shell-quote:
-	@bash tests/shell全角变量.sh
+naming:
+	@bash tests/命名规范.sh
 
 fuzz: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_FUZZ_COUNT=$(FUZZ_COUNT) QI_FUZZ_SEED=$(FUZZ_SEED) \
@@ -233,7 +233,7 @@ lint-strict:
 # 那两个 job 用浮动 @stable，装不到 1.92.0，fmt-check 的守卫直接 exit 1。
 # 发布路径由 `make release` 单独带一道 fmt-check（那是本机跑，有 1.92.0）。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm check shell-quote test regress ffi-link bindgen examples debuginfo fuzz grpc wasm
+ci: check-llvm check naming test regress ffi-link bindgen examples debuginfo fuzz grpc wasm
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

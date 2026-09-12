@@ -183,10 +183,64 @@ export function makeWasi(getMemory, onWrite, onExit) {
   };
 
   return {
-    imports: { wasi_snapshot_preview1: wasi },
+    imports: { wasi_snapshot_preview1: wasi, qi_host: makeQiHost(getMemory) },
     /** 程序正常从 _start 返回时调用，把没带换行的尾巴吐出来 */
     flush() { flushFd(1, true); flushFd(2, true); },
     ExitSignal,
+  };
+}
+
+
+/**
+ * qi_host —— wasm 侧声明的宿主导入。
+ *
+ * 目前只有 HTTP。原生的 HTTP 走 reqwest，那棵依赖树在 wasm32 上编不过，
+ * 所以 qi-runtime/wasm 不实现协议，只把请求递给宿主。浏览器自己就有网络。
+ *
+ * **同步的坑**：qi 的 HTTP 调用是同步的，而 fetch 是异步的。Worker 里同步
+ * XMLHttpRequest 是允许的（只在主线程上被废弃），所以这里用它。主线程上
+ * 没有 XHR 或不让同步时，返回 -2 让 wasm 侧报一句人话，而不是假装成功。
+ *
+ * 缓冲区协议（与 qi-runtime/wasm/src/http_host.rs 对齐）：
+ *   返回 0..=cap  已写入这么多字节
+ *   返回 > cap    没写，响应就这么长，调用方扩容重来
+ *   返回 -1       网络错   返回 -2  宿主不支持同步请求
+ */
+function makeQiHost(getMemory) {
+  let lastStatus = 0;
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  const str = (ptr, len) => dec.decode(new Uint8Array(getMemory().buffer, ptr, len));
+
+  return {
+    qi_host_http_call(mPtr, mLen, uPtr, uLen, bPtr, bLen, hPtr, hLen, outPtr, outCap) {
+      lastStatus = 0;
+      if (typeof XMLHttpRequest === 'undefined') return -2;
+      const method = str(mPtr, mLen) || 'GET';
+      const url = str(uPtr, uLen);
+      const body = bLen > 0 ? str(bPtr, bLen) : null;
+      const headers = hLen > 0 ? str(hPtr, hLen) : '';
+      let text;
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, url, false);   // false = 同步，Worker 里合法
+        for (const line of headers.split('\n')) {
+          const i = line.indexOf(':');
+          if (i > 0) xhr.setRequestHeader(line.slice(0, i).trim(), line.slice(i + 1).trim());
+        }
+        xhr.send(body);
+        lastStatus = xhr.status;
+        text = xhr.responseText || '';
+      } catch (e) {
+        // 同步 XHR 在主线程上会抛 InvalidAccessError，跟网络错分开报
+        return (e && e.name === 'InvalidAccessError') ? -2 : -1;
+      }
+      const bytes = enc.encode(text);
+      if (bytes.length > outCap) return bytes.length;   // 让 wasm 侧扩容重来
+      new Uint8Array(getMemory().buffer, outPtr, bytes.length).set(bytes);
+      return bytes.length;
+    },
+    qi_host_http_status() { return lastStatus; },
   };
 }
 
