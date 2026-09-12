@@ -205,16 +205,53 @@ export function makeWasi(getMemory, onWrite, onExit) {
  *   返回 0..=cap  已写入这么多字节
  *   返回 > cap    没写，响应就这么长，调用方扩容重来
  *   返回 -1       网络错   返回 -2  宿主不支持同步请求
+ *
+ * 请求头两种写法都认：原生 HTTP.请求 那样的 JSON 对象 {"X-Trace":"abc"}，
+ * 或者一行一条的 `名: 值`。响应头以小写键的 JSON 对象经 qi_host_http_last_headers
+ * 取回（同一套缓冲区协议），wasm 侧拿它拼出跟原生一致的 {"status","headers","body"}。
  */
 function makeQiHost(getMemory) {
   let lastStatus = 0;
+  let lastHeadersJson = '{}';
   const dec = new TextDecoder();
   const enc = new TextEncoder();
   const str = (ptr, len) => dec.decode(new Uint8Array(getMemory().buffer, ptr, len));
+  const writeOut = (text, outPtr, outCap) => {
+    const bytes = enc.encode(text);
+    if (bytes.length > outCap) return bytes.length;   // 让 wasm 侧扩容重来
+    new Uint8Array(getMemory().buffer, outPtr, bytes.length).set(bytes);
+    return bytes.length;
+  };
+  const parseHeaders = (raw) => {
+    const out = [];
+    if (!raw) return out;
+    const t = raw.trim();
+    if (t.startsWith('{')) {
+      try {
+        for (const [k, v] of Object.entries(JSON.parse(t))) if (typeof v === 'string') out.push([k, v]);
+        return out;
+      } catch { /* 不是 JSON，按行解析 */ }
+    }
+    for (const line of raw.split('\n')) {
+      const i = line.indexOf(':');
+      if (i > 0) out.push([line.slice(0, i).trim(), line.slice(i + 1).trim()]);
+    }
+    return out;
+  };
+  const responseHeadersJson = (xhr) => {
+    const obj = {};
+    const all = typeof xhr.getAllResponseHeaders === 'function' ? xhr.getAllResponseHeaders() : '';
+    for (const line of (all || '').split(/\r?\n/)) {
+      const i = line.indexOf(':');
+      if (i > 0) obj[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+    }
+    return JSON.stringify(obj);
+  };
 
   return {
     qi_host_http_call(mPtr, mLen, uPtr, uLen, bPtr, bLen, hPtr, hLen, outPtr, outCap) {
       lastStatus = 0;
+      lastHeadersJson = '{}';
       if (typeof XMLHttpRequest === 'undefined') return -2;
       const method = str(mPtr, mLen) || 'GET';
       const url = str(uPtr, uLen);
@@ -224,23 +261,19 @@ function makeQiHost(getMemory) {
       try {
         const xhr = new XMLHttpRequest();
         xhr.open(method, url, false);   // false = 同步，Worker 里合法
-        for (const line of headers.split('\n')) {
-          const i = line.indexOf(':');
-          if (i > 0) xhr.setRequestHeader(line.slice(0, i).trim(), line.slice(i + 1).trim());
-        }
+        for (const [k, v] of parseHeaders(headers)) xhr.setRequestHeader(k, v);
         xhr.send(body);
         lastStatus = xhr.status;
+        lastHeadersJson = responseHeadersJson(xhr);
         text = xhr.responseText || '';
       } catch (e) {
         // 同步 XHR 在主线程上会抛 InvalidAccessError，跟网络错分开报
         return (e && e.name === 'InvalidAccessError') ? -2 : -1;
       }
-      const bytes = enc.encode(text);
-      if (bytes.length > outCap) return bytes.length;   // 让 wasm 侧扩容重来
-      new Uint8Array(getMemory().buffer, outPtr, bytes.length).set(bytes);
-      return bytes.length;
+      return writeOut(text, outPtr, outCap);
     },
     qi_host_http_status() { return lastStatus; },
+    qi_host_http_last_headers(outPtr, outCap) { return writeOut(lastHeadersJson, outPtr, outCap); },
   };
 }
 

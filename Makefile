@@ -167,6 +167,7 @@ fuzz: build $(RUNTIME_LIB)
 # wasm 运行时归档：cd ../qi-runtime/wasm && cargo build --release --target wasm32-wasip1
 wasm: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_WASM_RUNTIME_LIB=$(WASM_RUNTIME_LIB) bash tests/wasm/断言.sh $(QI)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) QI_WASM_RUNTIME_LIB=$(WASM_RUNTIME_LIB) bash tests/wasm/http断言.sh $(QI)
 
 GRPC_DIR ?= $(CURDIR)/../qi-grpc
 grpc: build $(RUNTIME_LIB)
