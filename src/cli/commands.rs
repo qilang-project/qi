@@ -1407,32 +1407,48 @@ impl Cli {
                 let Ok(programs) = compiler.collect_programs_带检查(file, false) else {
                     continue;
                 };
-                let 是主程序入口 = programs
-                    .first()
-                    .and_then(|p| p.package_name.as_deref())
-                    .map(|n| n == "主程序")
-                    .unwrap_or(false);
-                if !是主程序入口 {
-                    continue;
-                }
-                // 按 Program 分组：span 是相对各自文件的字节偏移，只有 entry
-                // （programs[0]，即 file 本身）的错误能用 file 的源码换算行列；
-                // 被导入模块的错误（组 1+）不带行列（源码路径在此层不可得）。
+                // 库文件（包名不是「主程序」）以前整个跳过类型检查，于是库作者
+                // 永远只看到「语法检查通过」—— 类型错误要等到别人写个主程序导入
+                // 它才暴露。2026-09-12 就这么放跑过一个：文件工具.qi 的
+                // 工具_列目录 声明回字符串却返回了列表句柄，check Harness.qi 报
+                // 全过，直到真跑 agent 时段错误才现形。现在库也查。
+                //
+                // 按 Program 分组：span 是相对各自文件的字节偏移，所以下面每组
+                // 各读各的源码换算行列。
                 let 错误组 = crate::semantic::分析编译单元_分组(&programs);
                 let 总数: usize = 错误组.iter().map(|g| g.len()).sum();
                 if 总数 > 0 {
-                    let 源码 = std::fs::read_to_string(file).unwrap_or_default();
+                    // 每组一个编译单元，各读各的源码。以前只读主文件、且只给第 0 组
+                    // 行列，于是导入模块里的报错既没有真实文件名也没有行号 ——
+                    // 报的还是主文件的路径，等于把人往错的地方指。
+                    let 各组源码: Vec<(String, String)> = programs
+                        .iter()
+                        .map(|p| {
+                            let 路径 = p
+                                .source_path
+                                .clone()
+                                .unwrap_or_else(|| file.display().to_string());
+                            let 文本 = std::fs::read_to_string(&路径).unwrap_or_default();
+                            (路径, 文本)
+                        })
+                        .collect();
                     for (组号, 组) in 错误组.iter().enumerate() {
                         for e in 组 {
                             let span = e.span();
                             let 文案: String = e.渲染人话().chars().take(500).collect();
                             // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
-                            if 组号 == 0 && !(span.start == 0 && span.end == 0) {
-                                let (行, 列) =
-                                    crate::parser::位置::偏移转行列(&源码, span.start);
-                                eprintln!("{}:{}:{} 类型警告: {}", file.display(), 行, 列, 文案);
-                            } else {
-                                eprintln!("{} 类型警告: {}", file.display(), 文案);
+                            match 各组源码.get(组号) {
+                                Some((路径, 源码)) if !(span.start == 0 && span.end == 0) => {
+                                    let (行, 列) =
+                                        crate::parser::位置::偏移转行列(源码, span.start);
+                                    eprintln!("{}:{}:{} 类型警告: {}", 路径, 行, 列, 文案);
+                                }
+                                Some((路径, _)) => {
+                                    eprintln!("{} 类型警告: {}", 路径, 文案);
+                                }
+                                None => {
+                                    eprintln!("{} 类型警告: {}", file.display(), 文案);
+                                }
                             }
                         }
                     }

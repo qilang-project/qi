@@ -195,10 +195,25 @@ impl QiCompiler {
             // 在这一层拿不到源码路径，退化成不带行列。
             let 错误组 = crate::semantic::分析编译单元_分组(&programs);
             let 总数: usize = 错误组.iter().map(|g| g.len()).sum();
-            let 源码 = if 总数 > 0 {
-                std::fs::read_to_string(source_file).unwrap_or_default()
+            // 每组对应一个编译单元（分析编译单元_分组 与 programs 一一对应），
+            // 各读各的源码 —— 以前只读主文件，于是**导入模块里的报错全都不带
+            // 文件行列**，只剩一句「TypeMismatch 函数返回类型声明为 字符串，
+            // 返回值却是 整数」。一个几十个文件的包里出这么一条，等于让人肉眼
+            // 全库找。2026-09-12 我自己就被它坑到误判成「本来就有的问题」。
+            let 各组源码: Vec<(String, String)> = if 总数 > 0 {
+                programs
+                    .iter()
+                    .map(|p| {
+                        let 路径 = p
+                            .source_path
+                            .clone()
+                            .unwrap_or_else(|| source_file.display().to_string());
+                        let 文本 = std::fs::read_to_string(&路径).unwrap_or_default();
+                        (路径, 文本)
+                    })
+                    .collect()
             } else {
-                String::new()
+                Vec::new()
             };
             for (组号, 组) in 错误组.iter().enumerate() {
                 for e in 组 {
@@ -216,16 +231,11 @@ impl QiCompiler {
                     let 文案: String = e.渲染人话().chars().take(500).collect();
                     let span = e.span();
                     // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
-                    if 组号 == 0 && !(span.start == 0 && span.end == 0) {
-                        let (行, 列) = crate::parser::位置::偏移转行列(&源码, span.start);
-                        eprintln!(
-                            "[类型检查] 报错: {} {}:{}:{} {}",
-                            类别,
-                            source_file.display(),
-                            行,
-                            列,
-                            文案
-                        );
+                    let 本组 = 各组源码.get(组号);
+                    if 本组.is_some() && !(span.start == 0 && span.end == 0) {
+                        let (路径, 源码) = 本组.unwrap();
+                        let (行, 列) = crate::parser::位置::偏移转行列(源码, span.start);
+                        eprintln!("[类型检查] 报错: {} {}:{}:{} {}", 类别, 路径, 行, 列, 文案);
                     } else {
                         eprintln!("[类型检查] 报错: {} {}", 类别, 文案);
                     }
