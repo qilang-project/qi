@@ -1,6 +1,7 @@
 //! Chinese grammar parsing for Qi language using LALRPOP
 
 pub mod ast;
+pub mod reserved;
 pub mod error;
 mod html;
 #[path = "位置.rs"]
@@ -207,12 +208,26 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
 /// 报出来的提示指着一个根本没缺的括号，真正的原因一个字不提。踩过一次，
 /// 排查花了好几分钟，而正确提示一眼就能看出来。
 fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) -> String {
-    if let Some(hint) = 保留字提示(tok) {
-        return hint;
-    }
-
     let expected_strs: Vec<String> = expected.iter().map(|e| e.to_string()).collect();
     let expects = |needle: &str| expected_strs.iter().any(|s| s == needle);
+
+    // 保留字提示只在 parser **确实想要一个标识符**时才给。
+    //
+    // 以前这里靠一份手抄的「地雷词」清单（故意不含 `变量` / `函数` 这类语句
+    // 开头的词）来近似同一件事。清单在 2.0 放开十三个词之后立刻过期，而且它
+    // 一开始就是在猜；`期望` 集本来就带着准确答案：`变量 x: 整数 = 1` 后面漏
+    // 分号时，下一行的 `变量` 是意外标记，但期望集里只有 `;` 之类，没有标识符
+    // —— 那就该报漏分号，不是报「`变量` 是保留字」。
+    // expected 里的标识符是 LALRPOP 的原始正则（`r#"[\u4e00-\u9fff]..."#`），
+    // 不是渲染后的 `<标识符>` —— 按 u4e00 认，跟上面渲染函数同一个判据。
+    let 想要标识符 = expected_strs
+        .iter()
+        .any(|s| s.contains("u4e00") || s.contains("\\u4e00"));
+    if 想要标识符 {
+        if let Some(hint) = 保留字提示(tok) {
+            return hint;
+        }
+    }
 
     if expects("\";\"") || expects("\"；\"") {
         return "\n  提示：上一行可能漏写了 `;`，或本行多写了 `变量` / `函数` 关键字".to_string();
@@ -228,36 +243,16 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
 }
 
 fn 保留字提示(tok: &str) -> Option<String> {
-    const RESERVED_LANDMINES: &[&str] = &[
-        "结果",
-        "类型",
-        "尝试",
-        "捕获",
-        "抛出",
-        "最终",
-        "继续",
-        "跳出",
-        "返回",
-        "等待",
-        "异步",
-        "异步块",
-        "新建",
-        "解引用",
-        "取地址",
-        "在",
-        "到",
-        "作为",
-        "选择",
-        "情况",
-        "枚举",
-        "弱",
-    ];
-    if RESERVED_LANDMINES.contains(&tok) {
-        return Some(format!(
-            "\n  提示：`{tok}` 是 qi 的保留字，不能作为标识符名。常被误用的保留字：结果 / 类型 / 尝试 / 继续 / 返回。换个别名（如 `{tok}值`）"
-        ));
+    // 词表只有一份：parser/reserved.rs，与 grammar.lalrpop 的终结符由
+    // tests/关键字表一致性.rs 双向对齐。这里以前是第三份手抄清单，2.0 放开
+    // 十三个词之后它立刻过期 —— 会对 `结果`、`列表` 这些已经合法的名字继续
+    // 报「是保留字」。
+    if !crate::parser::reserved::is_reserved(tok) {
+        return None;
     }
-    None
+    Some(format!(
+        "\n  提示：`{tok}` 是 qi 的保留字，不能作为标识符名。换个别名（如 `{tok}值`）"
+    ))
 }
 
 #[cfg(test)]
@@ -266,7 +261,9 @@ mod error_format_tests {
 
     #[test]
     fn reports_reserved_word_as_variable_name() {
-        let src = "包 主程序;\n函数 入口() {\n    变量 结果: 整数 = 1;\n}\n";
+        // 2.0 放开了 结果 / 列表 / 字节 这些只在类型位置特殊的词，这里得用一个
+        // **仍然**保留的词。`类型` 是类型别名声明的关键字，跑不掉。
+        let src = "包 主程序;\n函数 入口() {\n    变量 类型: 整数 = 1;\n}\n";
         let p = Parser::new();
         let err = p.parse_source(src).unwrap_err();
         let msg = format!("{}", err);

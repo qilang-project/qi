@@ -3,8 +3,10 @@
 //! ⚠ **这张表不是语法事实源。** 真正的保留字是 `parser/grammar.lalrpop` 里的
 //! 字面量终结符 —— 解析走 `Parser::parse_source`（LALRPOP 内建词法器），
 //! 本表的分类结果只影响手写 lexer 的 TokenKind（报错提示、工具链）。
-//! 2026-08 精简时两表曾漂移出十几个词（本表有而语法没有、反之亦然），
-//! 现在由 `tests/关键字表一致性.rs` 强制：本表词集 ⊆ 语法字面量集。
+//! 唯一事实源是 `parser/reserved.rs`（它又与 grammar.lalrpop 的终结符双向对齐），
+//! 本表必须是它的子集，由 `tests/关键字表一致性.rs` 强制。
+//! 2026-09 的 2.0 放开了 整数 / 字符串 / 字节 / 空 / 指针 / 列表 / 结果 / 选项 /
+//! 未来 / 浮点数 / 布尔 / 字符 / 模块 —— 它们只在类型位置特殊，现在是普通名字。
 //! 往语法里加保留字前先想清楚 —— 每个保留字都从用户手里偷走一个标识符。
 
 use crate::lexer::tokens::TokenKind;
@@ -44,7 +46,6 @@ impl KeywordTable {
 
         // 模块
         keywords.insert("包".to_string(), TokenKind::包);
-        keywords.insert("模块".to_string(), TokenKind::模块);
         keywords.insert("导入".to_string(), TokenKind::导入);
         keywords.insert("导出".to_string(), TokenKind::导出);
         keywords.insert("作为".to_string(), TokenKind::作为);
@@ -60,23 +61,8 @@ impl KeywordTable {
         keywords.insert("假".to_string(), TokenKind::布尔字面量(false));
 
         // 基础类型
-        keywords.insert("整数".to_string(), TokenKind::类型关键词(BasicType::整数));
-        keywords.insert(
-            "字符串".to_string(),
-            TokenKind::类型关键词(BasicType::字符串),
-        );
-        keywords.insert("布尔".to_string(), TokenKind::类型关键词(BasicType::布尔));
-        keywords.insert(
-            "浮点数".to_string(),
-            TokenKind::类型关键词(BasicType::浮点数),
-        );
-        keywords.insert("字符".to_string(), TokenKind::类型关键词(BasicType::字符));
-        keywords.insert("字节".to_string(), TokenKind::类型关键词(BasicType::字节));
-        keywords.insert("空".to_string(), TokenKind::类型关键词(BasicType::空));
-        keywords.insert("指针".to_string(), TokenKind::类型关键词(BasicType::指针));
 
         // 容器 / 泛型类型
-        keywords.insert("列表".to_string(), TokenKind::类型关键词(BasicType::列表));
         keywords.insert("数组".to_string(), TokenKind::数组);
 
         // 并发
@@ -84,7 +70,6 @@ impl KeywordTable {
         keywords.insert("通道".to_string(), TokenKind::通道);
         keywords.insert("选择".to_string(), TokenKind::选择);
         keywords.insert("情况".to_string(), TokenKind::情况);
-        keywords.insert("未来".to_string(), TokenKind::未来);
         keywords.insert("异步".to_string(), TokenKind::异步);
         keywords.insert("超时".to_string(), TokenKind::超时);
 

@@ -130,16 +130,8 @@ PathComponent: String = {
 ModuleIdentifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
     <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
-    "字符串" => "字符串".to_string(),
-    "整数" => "整数".to_string(),
-    "字节" => "字节".to_string(),
-    "浮点数" => "浮点数".to_string(),
-    "布尔" => "布尔".to_string(),
-    "字符" => "字符".to_string(),
-    "空" => "空".to_string(),
     "数组" => "数组".to_string(),
-    "列表" => "列表".to_string(),
-    "指针" => "指针".to_string(),
+    "通道" => "通道".to_string(),
 };
 
 Statement: AstNode = {
@@ -1448,7 +1440,7 @@ Precedence5: AstNode = {
     <sp_l:@L> // 转换目标只允许基础类型关键字：TypeKeyworded 里的 函数(...):Type 尾随
     // 完整 Type，`x 作为 函数():T < y` 会让 `<`（比较）与 `T<整数>`（泛型）
     // 真歧义（Local ambiguity）。语义上 作为 也只支持标量转换。
-    <expr:Precedence5_5> "作为" <target_type:BasicTypeKeyword> <sp_r:@R> => AstNode::类型转换表达式(TypeCastExpression {
+    <expr:Precedence5_5> "作为" <target_type:CastTargetType> <sp_r:@R> => AstNode::类型转换表达式(TypeCastExpression {
         expression: Box::new(expr),
         target_type,
         span: Span::new(sp_l, sp_r),
@@ -1587,60 +1579,10 @@ Precedence7: AstNode = {
 };
 
 // Level 8: Postfix operators (field access, array subscript, function call)
+//
+// 2.0 起这里没有 "字符串"::/"未来":: 的特判了 —— 那两条只因为它们曾是保留字
+// 才需要。现在它们是普通标识符，走下面通用的 `Precedence8 "::" 方法名`。
 Precedence8: AstNode = {
-    <sp_l:@L> // Special handling for String module static methods since "字符串" is a reserved keyword
-    "字符串" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" <sp_r:@R> => {
-        let module_ident = AstNode::标识符表达式(IdentifierExpression {
-            name: "字符串".to_string(),
-            span: Span::new(sp_l, sp_r),
-        });
-        AstNode::方法调用表达式(MethodCallExpression {
-            object: Box::new(module_ident),
-            method_name: format!("::{}", method),
-            arguments: args,
-            span: Span::new(sp_l, sp_r),
-        })
-    },
-    <sp_l:@L> "字符串" "::" <method:MethodIdentifier> "(" ")" <sp_r:@R> => {
-        let module_ident = AstNode::标识符表达式(IdentifierExpression {
-            name: "字符串".to_string(),
-            span: Span::new(sp_l, sp_r),
-        });
-        AstNode::方法调用表达式(MethodCallExpression {
-            object: Box::new(module_ident),
-            method_name: format!("::{}", method),
-            arguments: vec![],
-            span: Span::new(sp_l, sp_r),
-        })
-    },
-    <sp_l:@L> // Special handling for Future static methods since "未来" is a reserved keyword
-    "未来" "::" <method:MethodIdentifier> "(" <args:ExprList> ")" <sp_r:@R> => {
-        // Future static method call: 未来::就绪(42)
-        // Create a fake identifier for "未来" and treat as method call
-        let type_ident = AstNode::标识符表达式(IdentifierExpression {
-            name: "未来".to_string(),
-            span: Span::new(sp_l, sp_r),
-        });
-        AstNode::方法调用表达式(MethodCallExpression {
-            object: Box::new(type_ident),
-            method_name: format!("::{}", method),
-            arguments: args,
-            span: Span::new(sp_l, sp_r),
-        })
-    },
-    <sp_l:@L> "未来" "::" <method:MethodIdentifier> "(" ")" <sp_r:@R> => {
-        // Future static method call with no args
-        let type_ident = AstNode::标识符表达式(IdentifierExpression {
-            name: "未来".to_string(),
-            span: Span::new(sp_l, sp_r),
-        });
-        AstNode::方法调用表达式(MethodCallExpression {
-            object: Box::new(type_ident),
-            method_name: format!("::{}", method),
-            arguments: vec![],
-            span: Span::new(sp_l, sp_r),
-        })
-    },
     // 显式泛型调用（turbofish）：最大::<整数>(3, 5) / 嵌套 最大::<盒装<整数> >(...)
     // 纯 LR(1) 下 `最大<整数>(3,5)` 与比较 `a<b` 单 token 前瞻不可判定（Rust 同因取舍）。
     <sp_l:@L> <callee:Precedence8> "::" "<" <targs:Comma<Type>> ">" "(" <args:ExprList> ")" <sp_r:@R> =>? 泛型调用动作3(callee, targs, args, sp_l, sp_r),
@@ -2336,22 +2278,19 @@ ExprList: Vec<AstNode> = {
 // （编译器本就只支持基础类型转换；自定义类型 cast 无语义。）
 Type: TypeNode = {
     TypeKeyworded,
-    <name:TypeName> => TypeNode::自定义类型(name),
+    <name:TypeName> => type_node_from_name(name),
     // 模块限定类型名：`别名.类型` / `包.类型`。
     // 函数调用早就支持 `别名.函数()`，类型注解却不认，写 `会话存储.持久会话配置`
     // 只报「期望：< / { / 【」，完全看不出是限定名不支持。
     // 限定段只用于书写可读性：类型仍按裸名解析（与显式 `导入 包::{类型}` 等价），
     // 跨包同名的消歧仍靠 导入来源 / 当前包。
-    <_m:TypeName> "." <name:TypeName> => TypeNode::自定义类型(name),
+    <_m:TypeName> "." <name:TypeName> => type_node_from_name(name),
     GenericUserType,
 };
 
 // 泛型用户类型：名字<类型实参, ...>（嵌套请写 `盒装<对<整数> >`，`>>` 是右移记号）
 GenericUserType: TypeNode = {
-    <name:TypeName> "<" <args:Comma<Type>> ">" => TypeNode::泛型类型(GenericType {
-        base_type: name,
-        type_arguments: args,
-    }),
+    <name:TypeName> "<" <args:Comma<Type>> ">" => generic_type_node_from_name(name, args),
 };
 
 // 关键字开头的类型（函数/容器/基础/内建泛型），供 Type 与 `作为` 共用
@@ -2382,45 +2321,16 @@ TypeKeyworded: TypeNode = {
         parameters: params,
         return_type: Box::new(TypeNode::基础类型(BasicType::空)),
     }),
-    // 容器类型 - 使用特殊语法避免冲突
-    "数组" "<" <element_type:Type> ">" => TypeNode::数组类型(ArrayType {
-        element_type: Box::new(element_type),
-        size: None,
-    }),
-    "列表" "<" <element_type:Type> ">" => TypeNode::列表类型(ListType {
-        element_type: Box::new(element_type),
-    }),
-    "通道" "<" <element_type:Type> ">" => TypeNode::通道类型(ChannelType {
-        element_type: Box::new(element_type),
-    }),
-    // 未来类型 (Future type for async operations)
-    "未来" "<" <inner_type:Type> ">" => TypeNode::未来类型(Box::new(inner_type)),
-
-    // 结果类型 (Result type for error handling)
-    "结果" "<" <ok_type:Type> "," <err_type:Type> ">" => TypeNode::结果类型(ResultType {
-        ok_type: Box::new(ok_type),
-        err_type: Box::new(err_type),
-    }),
-
-    // 结果<T> 单参形式（错误类型固定为字符串，v1 务实）
-    "结果" "<" <ok_type:Type> ">" => TypeNode::结果类型(ResultType {
-        ok_type: Box::new(ok_type),
-        err_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
-    }),
-
-    // 选项类型 (Option type for nullable values)
-    "选项" "<" <inner_type:Type> ">" => TypeNode::选项类型(OptionType {
-        inner_type: Box::new(inner_type),
-    }),
-
-    // 指针和引用类型
-    // 裸 `指针` = 不透明 C void*（C FFI 句柄：malloc/free/上下文指针）。
-    "指针" => TypeNode::基础类型(BasicType::指针),
-    "指针" "<" <target_type:Type> ">" => TypeNode::指针类型(PointerType {
-        target_type: Box::new(target_type),
-    }),
-    // 基础类型 - 使用关键字而不是标识符
-    BasicTypeKeyword,
+    // 2.0 起 列表/未来/结果/选项/指针 与基础类型都不再是语法关键字：裸名走
+    // TypeName，带参走 GenericUserType，映射在 ast.rs 的 type_node_from_name /
+    // generic_type_node_from_name 里。
+    //
+    // 只有 数组 和 通道 仍是终结符 —— 它们在**表达式**位置也承重
+    // （`数组<整数>(3)` 建数组、`通道<整数>()` 建通道，见 ArrayTypeConstructor /
+    // ChannelTypeConstructor），放开要改表达式文法，冲突风险不值当。
+    // 既然还是终结符，类型位置就得为它们保留这两条。
+    ArrayTypeConstructor,
+    ChannelTypeConstructor,
 };
 
 FunctionTypeParameterList: Vec<TypeNode> = {
@@ -2430,59 +2340,22 @@ FunctionTypeParameterList: Vec<TypeNode> = {
 // 用于类型名称的标识符，避免与其他Identifier冲突
 TypeName: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
-    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> =>? {
-        // Simplified check - use individual checks to avoid long match patterns
-        if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
-           id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
-           id == "等待" || id == "包" || id == "导入" || id == "导出" || id == "作为" ||
-           id == "公开" || id == "模块" || id == "自己" ||
-           id == "结构体" || id == "枚举" || id == "实现" || id == "特性" || id == "弱" {
-            return Err(lalrpop_util::ParseError::User {
-                error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作类型名。请换一个名字。").into_boxed_str()),
-            });
-        }
-        Ok(id.to_string())
-    }
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
 };
 
-// 基础类型关键字解析
-BasicTypeKeyword: TypeNode = {
-    "整数" => TypeNode::基础类型(BasicType::整数),
-    "字节" => TypeNode::基础类型(BasicType::字节),
-    "浮点数" => TypeNode::基础类型(BasicType::浮点数),
-    "布尔" => TypeNode::基础类型(BasicType::布尔),
-    "字符" => TypeNode::基础类型(BasicType::字符),
-    "字符串" => TypeNode::基础类型(BasicType::字符串),
-    "空" => TypeNode::基础类型(BasicType::空),
+// 保留字由**语法终结符**独占：LALRPOP 内建词法器里字面量优先于下面这条正则，
+// 所以真正的关键字根本走不到这儿。以前这里手写了一份拒绝名单，对终结符永远
+// 不触发（死代码），对**非**终结符却会误伤 —— `模块` 就是这么被白白占掉的，
+// 语法里压根没有它。名单删掉，词表见 parser/reserved.rs，由一致性测试双向对齐。
+// 类型转换目标：2.0 起基础类型名不是关键字了，按名字映射。
+CastTargetType: TypeNode = {
+    <name:TypeName> => type_node_from_name(name),
 };
 
 Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
+    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
     "长度" => "长度".to_string(),
-    <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> =>? {
-        // Check if it's a forbidden keyword using individual checks
-        // Note: 自身, 自己, 自我 are allowed as they are used for method receivers
-        if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
-           id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
-           id == "等待" || id == "继续" || id == "匹配" ||
-           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
-           id == "新建" || id == "启动" ||
-           id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
-           id == "包" || id == "导入" ||
-           id == "导出" || id == "作为" || id == "公开" || id == "模块" ||
-           id == "结构体" || id == "枚举" || id == "最终" || id == "默认" ||
-           id == "实现" || id == "特性" || id == "弱" ||
-           id == "列表" || id == "数组" ||
-           id == "整数" || id == "字节" || id == "浮点数" ||
-           id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
-           id == "指针" {
-            // 关键字不能当标识符：返回带关键字名的友好解析错误，而不是 panic 崩溃。
-            return Err(lalrpop_util::ParseError::User {
-                error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作标识符（变量名 / 函数名 / 字段名）。请换一个名字，例如加后缀：`任务` → `任务甲`、`数组` → `数列`。").into_boxed_str()),
-            });
-        }
-        Ok(id.to_string())
-    },
 };
 
 // 方法接收者标识符 - 允许使用 "自身"、"自己" 等关键字
@@ -2494,16 +2367,16 @@ ReceiverIdentifier: String = {
         if id == "变量" || id == "常量" || id == "函数" || id == "异步" || id == "返回" ||
            id == "如果" || id == "否则" || id == "当" || id == "对于" || id == "在" || id == "真" || id == "假" ||
            id == "等待" || id == "继续" || id == "匹配" ||
-           id == "抛出" || id == "捕获" || id == "尝试" || id == "选项" || id == "结果" ||
+           id == "抛出" || id == "捕获" || id == "尝试" ||
            id == "新建" || id == "启动" ||
-           id == "通道" || id == "选择" || id == "情况" || id == "未来" ||
+           id == "通道" || id == "选择" || id == "情况" ||
            id == "包" || id == "导入" ||
            id == "导出" || id == "作为" || id == "公开" || id == "模块" ||
            id == "结构体" || id == "枚举" || id == "最终" || id == "默认" ||
            id == "实现" || id == "特性" || id == "弱" ||
-           id == "列表" || id == "数组" ||
-           id == "整数" || id == "字节" || id == "浮点数" ||
-           id == "布尔" || id == "字符" || id == "字符串" || id == "空" ||
+           id == "数组" ||
+           id == "浮点数" ||
+           id == "空" ||
            id == "指针" {
             return Err(lalrpop_util::ParseError::User {
                 error: Box::leak(format!("「{id}」是奇语保留关键字，不能用作方法接收者名。请换一个名字（如 `自身`、`自己`）。").into_boxed_str()),
@@ -2527,13 +2400,10 @@ FieldIdentifier: String = {
     <id:Identifier> => id,
     "类型" => "类型".to_string(),
     "通道" => "通道".to_string(),
-    "结果" => "结果".to_string(),
-    "选项" => "选项".to_string(),
     "继续" => "继续".to_string(),
     "匹配" => "匹配".to_string(),
     // 常用名词类保留字松绑：在字段名 / 形参名等安全位置放行为普通名字，
     // 关键字在类型 / 语句位置的本职用法不受影响（列表<T>、数组<T>、默认分支、最终块）。
-    "列表" => "列表".to_string(),
     "数组" => "数组".to_string(),
     "默认" => "默认".to_string(),
     "最终" => "最终".to_string(),

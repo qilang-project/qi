@@ -1070,3 +1070,76 @@ pub fn parse_format_string(content: &str) -> AstNode {
         span: Default::default(),
     })
 }
+
+// ── 内建类型名 → 类型节点 ────────────────────────────────────────────
+//
+// qi 2.0 起 `整数` / `字符串` / `列表` / `结果` 这些**不再是语法关键字**，
+// 而是普通标识符加一张预定义名字表。
+//
+// 为什么这么改：LALRPOP 内建词法器里字面量优先于标识符正则，只要一个词在
+// 语法里出现过，它就永远当不成名字 —— 用户写 `变量 结果: 整数` 只会收到
+// 「意外的标记 `结果`」。想放行就得在 `Identifier` 里逐个列出来，而实测往
+// `Identifier` 加 29 个候选会让 LR 状态表爆炸（十几分钟没编完）。
+//
+// 反过来做就便宜了：把这些字面量从语法里**删掉**，走已有的 `TypeName` /
+// `GenericUserType` 那条路，在动作里按名字映射。语法规则更少、状态更少，
+// 而且这些词自动在所有位置变回普通标识符。
+
+/// 裸类型名：内建的映射成基础类型节点，其余当自定义类型。
+pub fn type_node_from_name(name: String) -> TypeNode {
+    match name.as_str() {
+        "整数" => TypeNode::基础类型(BasicType::整数),
+        "长整数" => TypeNode::基础类型(BasicType::长整数),
+        "短整数" => TypeNode::基础类型(BasicType::短整数),
+        "字节" => TypeNode::基础类型(BasicType::字节),
+        "浮点数" => TypeNode::基础类型(BasicType::浮点数),
+        "布尔" => TypeNode::基础类型(BasicType::布尔),
+        "字符" => TypeNode::基础类型(BasicType::字符),
+        "字符串" => TypeNode::基础类型(BasicType::字符串),
+        "空" => TypeNode::基础类型(BasicType::空),
+        // 裸 `指针` = 不透明 C void*（C FFI 句柄：malloc/free/上下文指针）
+        "指针" => TypeNode::基础类型(BasicType::指针),
+        _ => TypeNode::自定义类型(name),
+    }
+}
+
+/// 带类型参数的名字：`列表<T>` / `结果<T,E>` / `指针<T>` 这些映射成专用节点，
+/// 其余走泛型自定义类型。参数个数对不上就退回泛型节点，让后面的检查去报错，
+/// 语法层不做数量校验。
+pub fn generic_type_node_from_name(name: String, mut args: Vec<TypeNode>) -> TypeNode {
+    match (name.as_str(), args.len()) {
+        ("数组", 1) => TypeNode::数组类型(ArrayType {
+            element_type: Box::new(args.remove(0)),
+            size: None,
+        }),
+        ("列表", 1) => TypeNode::列表类型(ListType {
+            element_type: Box::new(args.remove(0)),
+        }),
+        ("通道", 1) => TypeNode::通道类型(ChannelType {
+            element_type: Box::new(args.remove(0)),
+        }),
+        ("未来", 1) => TypeNode::未来类型(Box::new(args.remove(0))),
+        ("指针", 1) => TypeNode::指针类型(PointerType {
+            target_type: Box::new(args.remove(0)),
+        }),
+        ("选项", 1) => TypeNode::选项类型(OptionType {
+            inner_type: Box::new(args.remove(0)),
+        }),
+        // `结果<T>` 的错误类型默认字符串 —— 与 2.0 之前的语法规则一致
+        ("结果", 1) => TypeNode::结果类型(ResultType {
+            ok_type: Box::new(args.remove(0)),
+            err_type: Box::new(TypeNode::基础类型(BasicType::字符串)),
+        }),
+        ("结果", 2) => {
+            let err = args.remove(1);
+            TypeNode::结果类型(ResultType {
+                ok_type: Box::new(args.remove(0)),
+                err_type: Box::new(err),
+            })
+        }
+        _ => TypeNode::泛型类型(GenericType {
+            base_type: name,
+            type_arguments: args,
+        }),
+    }
+}
