@@ -20,6 +20,15 @@ pub struct PackageManifest {
     pub source: Option<ManifestSourceInfo>,
     #[serde(default, rename = "依赖", alias = "dependencies")]
     pub dependencies: HashMap<String, ManifestDependency>,
+    /// 只在开发这个包时要的依赖：示例、命令行、测试、附带的服务用得到，
+    /// 库代码本身用不到。**解析时与 `[依赖]` 一视同仁，发布时不带出去** ——
+    /// 装了这个包的人不该被迫再装一遍它的测试框架。
+    ///
+    /// 全仓实测：qi-kv 对 CLI/Web/测试、qi-graph 对 CLI/测试、qi-pkg 对 CLI、
+    /// qi-cli 对 Harness/Web、qi-harness 对 CLI，全都只出现在
+    /// 命令行/服务/示例/测试目录里，一条都不在库文件里。
+    #[serde(default, rename = "开发依赖", alias = "dev-dependencies")]
+    pub dev_dependencies: HashMap<String, ManifestDependency>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -87,6 +96,44 @@ pub enum DependencySource {
 /// 卡得这么死是故意的：v1 只做精确版本相等比较（见 docs/包管理设计.md），
 /// 放宽成「像版本就算」会让 `1.0`、`v2` 这类写法悄悄变成注册中心依赖，
 /// 而它们更可能是用户写歪了的路径。
+/// 工作区覆盖文件名。放在仓库根，**不属于任何包**，所以永远不会被打进
+/// 发布包 —— 这正是它存在的理由。
+pub const WORKSPACE_FILE: &str = "qi工作区.toml";
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct WorkspaceFile {
+    #[serde(default, rename = "覆盖", alias = "overrides", alias = "patch")]
+    overrides: HashMap<String, String>,
+}
+
+/// 从 `current_file` 往上找**唯一一个**文件名 `qi工作区.toml`，读 `[覆盖]`
+/// 里的 别名 → 目录。
+///
+/// 跟被它取代的祖先目录扫描的区别，全在这一句：这里每一级只 stat 一个固定
+/// 文件名，找到就停；祖先扫描是每一级把**所有子目录**都 read_dir 一遍、
+/// 挨个读 qi.toml 比包名。前者你能一眼看出会命中谁，后者不能。
+///
+/// 覆盖优先于 `[依赖]` 声明 —— 就是要用本地这份而不是注册中心那份，
+/// 相当于 Cargo 的 `[patch]` / Go 的 `replace`。`QI_RESOLVE_TRACE=1` 能看到
+/// 每次命中。
+pub fn workspace_override(current_file: &Path, alias: &str) -> Option<PathBuf> {
+    let mut dir = current_file.parent()?.to_path_buf();
+    loop {
+        let candidate = dir.join(WORKSPACE_FILE);
+        if candidate.is_file() {
+            let text = std::fs::read_to_string(&candidate).ok()?;
+            // qi.toml 一族的中文表名/键名不是合法 TOML 裸键，先过一遍规范化
+            let parsed: WorkspaceFile = toml::from_str(&normalize_manifest_text(&text)).ok()?;
+            let rel = parsed.overrides.get(alias)?;
+            let root = dir.join(rel);
+            return root.canonicalize().ok().or(Some(root));
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 pub fn is_exact_version(raw: &str) -> bool {
     let mut 段数 = 0;
     for 段 in raw.split('.') {
@@ -602,8 +649,17 @@ impl ResolvedPackageManifest {
         Err(LocalDependencyError::ModuleNotFound { root_dir })
     }
 
+    /// 按别名找依赖声明：`[依赖]` 优先，然后 `[开发依赖]`。
+    /// 解析模块时两者等价 —— 区别只体现在发布和给消费者装依赖的时候。
+    pub fn dependency_entry(&self, alias: &str) -> Option<&ManifestDependency> {
+        self.manifest
+            .dependencies
+            .get(alias)
+            .or_else(|| self.manifest.dev_dependencies.get(alias))
+    }
+
     pub fn resolve_dependency(&self, alias: &str) -> Option<ResolvedDependency> {
-        let dependency = self.manifest.dependencies.get(alias)?;
+        let dependency = self.dependency_entry(alias)?;
         match dependency.source().ok()? {
             DependencySource::LocalPath(rel_path) => {
                 let root_dir = self
@@ -1206,5 +1262,30 @@ Web = "github.com/liliang-cn/qi-web@v1.0"
         let spec = dep.remote.expect("应为远程依赖");
         assert!(dep.root_dir.ends_with("github.com/liliang-cn/qi-web@v1.0"));
         assert_eq!(spec.repo, "qi-web");
+    }
+}
+
+#[cfg(test)]
+mod 工作区覆盖测试 {
+    use super::*;
+
+    #[test]
+    fn 读得出覆盖() {
+        let dir = std::env::temp_dir().join(format!("qi工作区测试{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("子").join("深")).unwrap();
+        std::fs::create_dir_all(dir.join("qi-web")).unwrap();
+        std::fs::write(
+            dir.join(WORKSPACE_FILE),
+            "# 注释\n[覆盖]\nWeb = \"./qi-web\"\n",
+        )
+        .unwrap();
+        let src = dir.join("子").join("深").join("a.qi");
+        std::fs::write(&src, "").unwrap();
+        let got = workspace_override(&src, "Web");
+        assert!(got.is_some(), "没读出覆盖");
+        assert!(got.unwrap().ends_with("qi-web"));
+        assert!(workspace_override(&src, "不存在").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

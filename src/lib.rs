@@ -1294,6 +1294,30 @@ impl QiCompiler {
 
         // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
+            // 5.0 工作区覆盖（仓库根的 qi工作区.toml 的 [覆盖]）：别名 → 本地目录。
+            // 它就是来顶掉下面那套祖先目录扫描的 —— 一样能让 monorepo 里的包互相
+            // 引用，但命中谁写在文件里，不是编译器翻遍每一级的每个子目录猜的。
+            //
+            // **位置很要紧**：必须排在包内子模块（1.5）和相对路径（2-4）**之后**。
+            // 放前面会闯同一个祸：`Pkg.qi` 里的 `公开 导入 注册中心` 指的是它自己
+            // 包内的 注册中心.qi，一旦覆盖表里也有个叫「注册中心」的包（qi-registry
+            // 就是），包内模块就被劫持，编译器读到另一个包，报一堆「未定义的函数」。
+            // 我第一版就是放在 1.55 才发现的。覆盖是**包**查找，不是模块查找。
+            if let Some(alias) = module_path.first() {
+                if let Some(root) = crate::package::workspace_override(current_file, alias) {
+                    if let Ok(Some(manifest)) =
+                        crate::package::ResolvedPackageManifest::discover(&root)
+                    {
+                        if let Some(path) = manifest.resolve_module_path(alias, module_path) {
+                            if resolve_trace() {
+                                eprintln!("[包解析] `{}` ← 工作区覆盖 {}", alias, path.display());
+                            }
+                            return Ok(path);
+                        }
+                    }
+                }
+            }
+
             // 祖先目录扫描：从当前文件往上每一级，把每一级的所有子目录都翻一遍，
             // 找 qi.toml 里 名称 == 首段 的包。它排在 QI_PACKAGES_PATH 之前，
             // 所以祖先路径上任何一份残留副本都会**悄悄**盖掉显式指定的依赖。
@@ -1402,7 +1426,7 @@ impl QiCompiler {
         let manifest = crate::package::ResolvedPackageManifest::discover(current_file)
             .ok()
             .flatten()?;
-        let dependency = manifest.manifest.dependencies.get(alias)?;
+        let dependency = manifest.dependency_entry(alias)?;
 
         let spec = match dependency.source() {
             Ok(crate::package::DependencySource::Remote(spec)) => spec,
