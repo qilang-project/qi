@@ -55,10 +55,14 @@ fn apply_sdkroot(cmd: &mut std::process::Command) {
 #[cfg(not(target_os = "macos"))]
 fn apply_sdkroot(_cmd: &mut std::process::Command) {}
 
-/// `QI_STRICT_RESOLVE=1`：关掉祖先目录扫描式包解析（qi 2.0 的默认行为）。
-fn strict_resolve() -> bool {
+/// `QI_LEGACY_RESOLVE=1`：把 2.0 之前的祖先目录扫描放回来。
+///
+/// 默认关。它排在 QI_PACKAGES_PATH 之前又完全静默，是「显式声明的依赖被祖先
+/// 路径上一份残留副本悄悄顶替」这类问题的根源。现在这件事由仓库根的
+/// `qi工作区.toml` 的 `[覆盖]` 显式做。这个开关只为旧工程过渡，下个版本删。
+fn legacy_resolve() -> bool {
     matches!(
-        std::env::var("QI_STRICT_RESOLVE").as_deref(),
+        std::env::var("QI_LEGACY_RESOLVE").as_deref(),
         Ok("1") | Ok("true") | Ok("on")
     )
 }
@@ -1318,39 +1322,32 @@ impl QiCompiler {
                 }
             }
 
-            // 祖先目录扫描：从当前文件往上每一级，把每一级的所有子目录都翻一遍，
-            // 找 qi.toml 里 名称 == 首段 的包。它排在 QI_PACKAGES_PATH 之前，
-            // 所以祖先路径上任何一份残留副本都会**悄悄**盖掉显式指定的依赖。
+            // 祖先目录扫描：从当前文件往上每一级，把每一级的**所有子目录**都
+            // read_dir 一遍，挨个读 qi.toml 比包名。它曾经排在 QI_PACKAGES_PATH
+            // 之前，于是祖先路径上任何一份残留副本都会**悄悄**盖掉显式指定的
+            // 依赖 —— 「改了库却没生效」那一整类问题的根。
             //
-            // 这是 qi 2.0 要删掉的行为。删之前先让它出声：
-            //   QI_STRICT_RESOLVE=1  完全关掉这一步（2.0 的默认）
-            //   QI_RESOLVE_TRACE=1   命中时打印用了哪一份
-            // 并且在存在竞争来源（QI_PACKAGES_PATH / 默认位置也有同名包）时无条件告警。
-            if strict_resolve() {
-                if let Some(hit) = self.resolve_local_manifest_package_path(current_file, module_path)
+            // **qi 2.0 起默认关闭**，位置被上面的工作区覆盖接替。留一个开关
+            // 是给还没来得及写 qi工作区.toml 的旧工程过渡用的，下一个版本删。
+            if legacy_resolve() {
+                if let Some(local_package_path) =
+                    self.resolve_local_manifest_package_path(current_file, module_path)
                 {
+                    self.warn_shadowed_package(module_path, &local_package_path);
                     eprintln!(
-                        "[包解析] 严格模式拒绝祖先目录扫描：`{}` 本可以解析到 {}",
-                        module_path[0],
-                        hit.display()
-                    );
-                    eprintln!(
-                        "　　　　　在 qi.toml 的 [依赖] 里显式声明它：`{} = {{ 路径 = \"...\" }}`",
+                        "[包解析] 弃用：`{}` 是靠祖先目录扫描找到的（QI_LEGACY_RESOLVE=1）。\
+下个版本会删掉这条路，改用仓库根的 qi工作区.toml 的 [覆盖]。",
                         module_path[0]
                     );
+                    if resolve_trace() {
+                        eprintln!(
+                            "[包解析] `{}` ← 祖先目录扫描 {}",
+                            module_path[0],
+                            local_package_path.display()
+                        );
+                    }
+                    return Ok(local_package_path);
                 }
-            } else if let Some(local_package_path) =
-                self.resolve_local_manifest_package_path(current_file, module_path)
-            {
-                self.warn_shadowed_package(module_path, &local_package_path);
-                if resolve_trace() {
-                    eprintln!(
-                        "[包解析] `{}` ← 祖先目录扫描 {}",
-                        module_path[0],
-                        local_package_path.display()
-                    );
-                }
-                return Ok(local_package_path);
             }
 
             // QI_PACKAGES_PATH 支持 PATH 式多路径（Unix `:`、Windows `;`），按序
@@ -1403,12 +1400,37 @@ impl QiCompiler {
             }
         }
 
+        // 2.0 起祖先目录扫描没了，「找不到包」会比以前常见，所以这条报错必须
+        // 直接说出下一步该做什么，而不是「尝试了相对路径、包目录结构和第三方包路径」。
+        let alias = module_path.first().cloned().unwrap_or_default();
+        let mut 提示 = format!("无法找到导入模块: {}", module_path.join("."));
+        提示.push_str("\n找过这些地方：");
+        提示.push_str(&format!("\n  · 相对 {}", parent_dir.display()));
+        提示.push_str(&format!(
+            "\n  · 本项目 qi.toml 的 [依赖] / [开发依赖] 里名为 `{}` 的条目",
+            alias
+        ));
+        match crate::package::nearest_workspace_file(current_file) {
+            Some(ws) => 提示.push_str(&format!(
+                "\n  · 工作区 {} 的 [覆盖]（里面没有 `{}`）",
+                ws.display(),
+                alias
+            )),
+            None => 提示.push_str("\n  · 工作区 qi工作区.toml 的 [覆盖]（往上每一级都没有这个文件）"),
+        }
+        提示.push_str("\n  · QI_PACKAGES_PATH、./qi_packages、~/.qi/packages");
+        提示.push_str(&format!(
+            "\n\n怎么办：本地源码就在同一个仓库里 → 在仓库根的 qi工作区.toml 写 `[覆盖]` 下 `{} = \"./目录\"`；",
+            alias
+        ));
+        提示.push_str(&format!(
+            "\n         来自注册中心 → qi.toml 里 `[依赖] {} = \"版本\"` 再 `qi 包 安装`。",
+            alias
+        ));
+        提示.push_str("\n         （2026.09 起祖先目录扫描默认关闭，旧工程可临时 QI_LEGACY_RESOLVE=1；QI_RESOLVE_TRACE=1 看解析过程）");
         Err(CompilerError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!(
-                "无法找到导入模块: {} (尝试了相对路径、包目录结构和第三方包路径)",
-                module_path.join("/")
-            ),
+            提示,
         )))
     }
 

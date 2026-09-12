@@ -116,6 +116,21 @@ struct WorkspaceFile {
 /// 覆盖优先于 `[依赖]` 声明 —— 就是要用本地这份而不是注册中心那份，
 /// 相当于 Cargo 的 `[patch]` / Go 的 `replace`。`QI_RESOLVE_TRACE=1` 能看到
 /// 每次命中。
+/// 往上找到的第一个 `qi工作区.toml`（没有就 None）。报错文案要用它告诉用户
+/// 「我查过哪个工作区文件」。
+pub fn nearest_workspace_file(current_file: &Path) -> Option<PathBuf> {
+    let mut dir = current_file.parent()?.to_path_buf();
+    loop {
+        let candidate = dir.join(WORKSPACE_FILE);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 pub fn workspace_override(current_file: &Path, alias: &str) -> Option<PathBuf> {
     let mut dir = current_file.parent()?.to_path_buf();
     loop {
