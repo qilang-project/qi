@@ -35,19 +35,19 @@ for f in "$HERE"/*.qi; do
     total=$((total+1))
     # 原生
     if ! ( cd "$HERE" && timeout 60 "$QI" run "$name" ) > "$TMP/native" 2>"$TMP/native.err"; then
-        echo "FAIL $name（原生跑失败）"; sed 's/^/    /' "$TMP/native.err" | tail -5; failed=$((failed+1)); continue
+        echo "FAIL ${name}（原生跑失败）"; sed 's/^/    /' "$TMP/native.err" | tail -5; failed=$((failed+1)); continue
     fi
     # wasm：一步编译（含链接）
     if ! ( cd "$HERE" && timeout 120 "$QI" --target wasm compile "$name" -o "$TMP/prog.wasm" ) > "$TMP/build.log" 2>&1; then
-        echo "FAIL $name（wasm 编译/链接失败）"; grep -vE "^警告|归档:|workspace|同步本地" "$TMP/build.log" | tail -8 | sed 's/^/    /'; failed=$((failed+1)); continue
+        echo "FAIL ${name}（wasm 编译/链接失败）"; grep -vE "^警告|归档:|workspace|同步本地" "$TMP/build.log" | tail -8 | sed 's/^/    /'; failed=$((failed+1)); continue
     fi
     if ! ( cd "$HERE" && timeout 60 wasmtime run --dir . "$TMP/prog.wasm" ) > "$TMP/wasm" 2>"$TMP/wasm.err"; then
-        echo "FAIL $name（wasm 运行失败）"; sed 's/^/    /' "$TMP/wasm.err" | tail -5; failed=$((failed+1)); continue
+        echo "FAIL ${name}（wasm 运行失败）"; sed 's/^/    /' "$TMP/wasm.err" | tail -5; failed=$((failed+1)); continue
     fi
     if cmp -s "$TMP/native" "$TMP/wasm"; then
         echo "PASS $name"
     else
-        echo "FAIL $name（输出不一致）"
+        echo "FAIL ${name}（输出不一致）"
         diff "$TMP/native" "$TMP/wasm" | head -10 | sed 's/^/    /'
         failed=$((failed+1))
     fi
