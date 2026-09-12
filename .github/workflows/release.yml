@@ -102,7 +102,7 @@ jobs:
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
           git clone --depth 1 --branch 2026.08.16-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.09.06-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 --branch 2026.09.12-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 
@@ -197,6 +197,54 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## ⚠ 这一版有破坏性变更（qi 2.0 第一轮清算）
+
+            ### 1. 包解析：祖先目录扫描默认关闭
+
+            以前编译器会从当前文件往上每一级、把每一级的**所有子目录**都翻一遍
+            找同名包。它排在 `QI_PACKAGES_PATH` 之前又完全静默，祖先路径上任何
+            一份残留副本都会悄悄顶替你显式指定的依赖。
+
+            **迁移**：monorepo 里包互相引用，在仓库根建 `qi工作区.toml`：
+
+            ```toml
+            [覆盖]
+            Web = "./qi-web"
+            Harness = "./qi-harness"
+            ```
+
+            来自注册中心的依赖照旧写 `[依赖]`。新增 `[开发依赖]`：示例 / 命令行 /
+            测试要而库代码不要的依赖，装你这个包的人不会被迫跟着装。
+
+            临时退路 `QI_LEGACY_RESOLVE=1`（带弃用警告，下个版本删）。
+            `QI_RESOLVE_TRACE=1` 打印每个导入实际读了哪个文件。
+
+            ### 2. 放开 13 个保留字（62 → 49）
+
+            `整数 长整数 短整数 字节 浮点数 布尔 字符 字符串 空 指针 列表 结果
+            选项 未来 模块` 现在都能当变量名 / 函数名 / 字段名。`变量 结果: 整数 = 1`
+            可以写了。只有 `数组` / `通道` 仍保留（它们在表达式位置也承重）。
+
+            这一条只放宽不收紧，现有代码不受影响。
+
+            ### 3. `列出目录` / `所有环境变量` 返回字符串列表句柄
+
+            以前把集合拼成一个大字符串让你按 `\n` 切。文件名里换行是合法的，
+            一个带换行的文件名就能凭空多出几个「文件」；而且空目录和打不开
+            都是空字符串，分不出来。
+
+            **迁移**：接收变量从 `字符串` 改成 `整数`，用 `列表::字符串列表大小` /
+            `获取字符串` 遍历，用完 `删除列表`。`列出目录` 打不开返回 **-1**，
+            空目录返回**空表**。类型检查器会把每个旧调用点都点出来。
+
+            ### 4. 磁带键先按键名递归排序再哈希
+
+            以前键受请求体**字段插入顺序**影响（serde_json 开着 preserve_order），
+            改一行字段先后就让整盘磁带 miss。
+
+            **已录好的磁带不受影响**：读的时候先查新键、miss 再回退旧键，
+            写只写新键。想让老磁带也变成新键，重录一次即可。
           files: artifacts/*
 
       - name: Trigger installer build
