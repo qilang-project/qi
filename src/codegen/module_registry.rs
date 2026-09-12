@@ -2240,8 +2240,10 @@ impl ModuleRegistry {
         os_module.add_function(ModuleFunction::new(
             "所有环境变量",
             "qi_os_environ",
-            vec![],   // 无参数
-            "字符串", // 返回所有环境变量
+            vec![], // 无参数
+            // 2.0 起返回字符串列表句柄，每元素一条 KEY=VALUE。值里带换行的
+            // 环境变量（多行 PEM 之类）以前会把换行拼串撕开。
+            "整数",
         ));
 
         // 目录操作
@@ -2341,11 +2343,13 @@ impl ModuleRegistry {
         ));
 
         // 目录操作
+        // 2.0 起返回**字符串列表句柄**（每元素一个名字），不再是换行拼串。
+        // 打不开目录回 -1，空目录回一个空表 —— 以前两者都是空串。
         os_module.add_function(ModuleFunction::new(
             "列出目录",
             "qi_os_list_dir",
             vec!["字符串".to_string()], // 目录路径
-            "字符串",                   // 返回目录内容列表
+            "整数",                     // 字符串列表句柄，调用方负责 删除列表
         ));
 
         os_module.add_function(ModuleFunction::new(
