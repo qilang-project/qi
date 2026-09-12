@@ -1,9 +1,9 @@
 //! Chinese grammar parsing for Qi language using LALRPOP
 
 pub mod ast;
-pub mod reserved;
 pub mod error;
 mod html;
+pub mod reserved;
 #[path = "位置.rs"]
 pub mod 位置;
 

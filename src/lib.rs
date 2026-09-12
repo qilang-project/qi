@@ -1416,7 +1416,9 @@ impl QiCompiler {
                 ws.display(),
                 alias
             )),
-            None => 提示.push_str("\n  · 工作区 qi工作区.toml 的 [覆盖]（往上每一级都没有这个文件）"),
+            None => {
+                提示.push_str("\n  · 工作区 qi工作区.toml 的 [覆盖]（往上每一级都没有这个文件）")
+            }
         }
         提示.push_str("\n  · QI_PACKAGES_PATH、./qi_packages、~/.qi/packages");
         提示.push_str(&format!(
@@ -1618,7 +1620,9 @@ impl QiCompiler {
             }
         }
 
-        let chosen_real = chosen.canonicalize().unwrap_or_else(|_| chosen.to_path_buf());
+        let chosen_real = chosen
+            .canonicalize()
+            .unwrap_or_else(|_| chosen.to_path_buf());
         competitors.retain(|c| c.canonicalize().unwrap_or_else(|_| c.clone()) != chosen_real);
         if competitors.is_empty() {
             return;
