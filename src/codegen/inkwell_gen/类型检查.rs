@@ -185,7 +185,16 @@ pub struct 符号表 {
     /// 函数值签名注册表：索引即 Qi类型::函数值(idx) 的 idx。
     pub 函数值签名: Vec<函数签名>,
     /// 顶层函数名 → 其函数值签名索引（登记函数时预填，供「函数名当值」）。
+    /// **扁平表，裸名为键** —— 无包程序 / 单文件走它。多包程序靠下面那张按包的表。
     函数值索引表: HashMap<String, u32>,
+    /// (包, 函数名) → 函数值签名索引。
+    ///
+    /// 为什么不能只有扁平那张：它按裸名幂等、先登记的赢，而导入包先于本地模块登记。
+    /// 于是「本模块的 删一条(上下文) 当函数值传出去」会拿到 qi-web 里那个
+    /// 四参数 删一条 的签名，按元数 4 去 mangle，报「trampoline 目标缺失」。
+    /// 名字撞车在跨包场景下是常态（删一条 / 加一条 / 查一下 这种名字谁都会起），
+    /// 所以跟 函数按包、结构体键索引 一样按包建键，解析走同一套优先级阶梯。
+    函数值索引按包: HashMap<(String, String), u32>,
     /// 当前正在生成的函数所属包名（用于跨包同名函数消歧）。
     pub 当前包: Option<String>,
     作用域: Vec<HashMap<String, Qi类型>>,
@@ -244,6 +253,7 @@ impl 符号表 {
             外部c宽度: HashMap::new(),
             函数值签名: Vec::new(),
             函数值索引表: HashMap::new(),
+            函数值索引按包: HashMap::new(),
             当前包: None,
             作用域: vec![HashMap::new()],
             泛型枚举模板: HashMap::new(),
@@ -477,7 +487,27 @@ impl 符号表 {
     }
 
     /// 为一个顶层函数预登记「作为值」的签名索引（登记函数时调用）。
+    ///
+    /// 两张表都登：按包那张认当前包（同名不同包各占一条，互不覆盖），
+    /// 扁平那张保持「先登记的赢」的老行为，只服务无包程序。
     pub fn 预登记函数值(&mut self, name: &str) {
+        if let Some(pkg) = self.当前包.clone() {
+            let key = (pkg.clone(), name.to_string());
+            if !self.函数值索引按包.contains_key(&key) {
+                // 取本包内该名字的签名。重载（同名多元数）在函数值场景本来就是
+                // 歧义，闭包.rs 会明确报错，这里取第一个不影响诊断。
+                let sig = self
+                    .函数按包
+                    .get(&key)
+                    .and_then(|v| v.first())
+                    .cloned()
+                    .or_else(|| self.函数.get(name).cloned());
+                if let Some(sig) = sig {
+                    let idx = self.登记函数值签名(sig);
+                    self.函数值索引按包.insert(key, idx);
+                }
+            }
+        }
         if self.函数值索引表.contains_key(name) {
             return;
         }
@@ -488,8 +518,35 @@ impl 符号表 {
     }
 
     /// 顶层函数名 → 其函数值类型（供「函数名当值」用）。immutable。
+    ///
+    /// 优先级跟 重载集 一模一样：当前包 → destructure 导入来源包 → 全局唯一定义包，
+    /// 都落空才回退扁平表。**本模块自己的定义永远排在导入包前面** —— 这正是
+    /// 只有扁平表时会错的地方。
     pub fn 函数为值(&self, name: &str) -> Option<Qi类型> {
-        self.函数值索引表.get(name).copied().map(Qi类型::函数值)
+        self.函数值索引位置(name)
+            .or_else(|| self.函数值索引表.get(name).copied())
+            .map(Qi类型::函数值)
+    }
+
+    /// 按包解析函数值签名索引；解析不到返回 None（由调用方回退扁平表）。
+    fn 函数值索引位置(&self, name: &str) -> Option<u32> {
+        if let Some(pkg) = &self.当前包 {
+            if let Some(i) = self.函数值索引按包.get(&(pkg.clone(), name.to_string())) {
+                return Some(*i);
+            }
+        }
+        for src in self.导入来源候选(name) {
+            if let Some(i) = self.函数值索引按包.get(&(src, name.to_string())) {
+                return Some(*i);
+            }
+        }
+        match self.函数候选包(name).as_slice() {
+            [唯一] => self
+                .函数值索引按包
+                .get(&(唯一.clone(), name.to_string()))
+                .copied(),
+            _ => None,
+        }
     }
 
     pub fn 进入作用域(&mut self) {
