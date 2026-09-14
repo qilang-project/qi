@@ -102,7 +102,12 @@ jobs:
           # qi-runtime 的 gui feature 声明了 optional path 依赖 ../qi-gui——
           # cargo 即使不启用 feature 也要读 manifest,故必须同级 clone qi-gui
           git clone --depth 1 --branch 2026.08.16-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
-          git clone --depth 1 --branch 2026.09.12-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          # ⚠ 这个 tag 决定发布包里 **两份** 归档：原生 libqi_runtime.a 和下一步的
+          # wasm libqi_runtime_wasm.a。改了 qi-runtime 就必须抬它，否则用户装上
+          # 新编译器、链的却是旧运行时 —— 症状是「符号不存在」这种看不懂的错。
+          # 2026.09.12-2 带 HTTP：钉 -1 的话 wasm 归档里一个 qi_http_* 都没有
+          # （实测 nm 数出来是 0），导入 标准库.HTTP 再 --target wasm 直接链不出来。
+          git clone --depth 1 --branch 2026.09.12-2 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 
