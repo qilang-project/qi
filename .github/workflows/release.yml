@@ -107,7 +107,9 @@ jobs:
           # 新编译器、链的却是旧运行时 —— 症状是「符号不存在」这种看不懂的错。
           # 2026.09.12-2 带 HTTP：钉 -1 的话 wasm 归档里一个 qi_http_* 都没有
           # （实测 nm 数出来是 0），导入 标准库.HTTP 再 --target wasm 直接链不出来。
-          git clone --depth 1 --branch 2026.09.12-2 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          # 2026.09.12-3 修了 查找从位置/子串从位置 起点落在字符中间时的
+          # non-unwinding panic —— 钉旧 tag 的话用户程序是 abort（exit 134），不是报错。
+          git clone --depth 1 --branch 2026.09.12-3 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 
