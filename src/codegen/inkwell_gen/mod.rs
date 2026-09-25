@@ -1062,7 +1062,9 @@ pub fn compile_to_object_multi(
 
     // 可执行模式：只留从 main 可达的函数（见 emit.rs 模块文档）。
     // 放在优化管线**之前** —— 死函数不必先被优化一遍再删。
-    if !库模式 {
+    // wasm 不裁：入口叫 __main_argc_argv，产物还要交给 wasm-ld 和宿主，对外
+    // 可见的符号不止一个。
+    if !库模式 && target != CompilationTarget::Wasm {
         emit::prune_unreachable(&后端值.module, &tm)?;
     }
     let t = crate::phase_timer::mark("裁剪死代码", t);
