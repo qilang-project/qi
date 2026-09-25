@@ -56,11 +56,13 @@ impl<'ctx> 后端<'ctx> {
             parts.push(match p {
                 FormatStringPart::文本(t) => InterpPart::Text(t),
                 FormatStringPart::表达式 { expr, .. } => match &**expr {
-                    AstNode::标识符表达式(id) if needs_reparse(&id.name) => {
-                        InterpPart::Expr(crate::parser::ExprParser::new().parse(&id.name).map_err(
-                            |e| format!("格式字符串插值 `{{{}}}` 不是合法表达式: {:?}", id.name, e),
-                        )?)
-                    }
+                    AstNode::标识符表达式(id) if needs_reparse(&id.name) => InterpPart::Expr(
+                        crate::parser::cached_expr_parser()
+                            .parse(&id.name)
+                            .map_err(|e| {
+                                format!("格式字符串插值 `{{{}}}` 不是合法表达式: {:?}", id.name, e)
+                            })?,
+                    ),
                     other => InterpPart::Expr(other.clone()),
                 },
             });

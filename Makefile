@@ -10,6 +10,7 @@
 #   make runtime          构建 qi-runtime 归档（独立 cargo 项目，容易漏）
 #   make test             库单测
 #   make regress          codegen 回归
+#   make build-cache      构建缓存（命中/失配/QI_NO_CACHE/警告重放）
 #   make ffi-link         FFI 链接控制（--库路径 / 直链 .a / macOS framework）
 #   make bindgen          `qi 绑定` 端到端（zlib/libm/手写头文件 → 真链接真调用）
 #   make examples         示例冒烟
@@ -17,7 +18,7 @@
 #   make fuzz             差分模糊（参考求值器 / 无优化 / 最大优化 三方比对）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
 #   make gui-smoke        GUI 冒烟（要显示环境 + 带 gui feature 的运行时，不进 ci）
-#   make ci               CI 跑的全部（= check test regress ffi-link bindgen examples debuginfo fuzz grpc）
+#   make ci               CI 跑的全部（= check test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
 #   make push-release V=…         推 tag（触发 Release workflow）
@@ -41,6 +42,11 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 	| sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
+
+# 构建缓存（src/build_cache.rs）默认写 ~/Library/Caches/qi / ~/.cache/qi。
+# 测试套件一跑就编上千个一次性程序，别塞进用户自己的缓存（跑一遍 ci 能攒到
+# 上限 2GB）—— 放到 target 里，cargo clean 一并清掉。显式设了就听外面的。
+export QI_CACHE_DIR ?= $(TARGET_DIR)/qi-build-cache
 
 # ── LLVM 版本：必须是 21 ────────────────────────────────────────
 #
@@ -88,7 +94,7 @@ check-llvm:
 	       exit 1 ;; \
 	  esac
 
-.PHONY: help build runtime test regress ffi-link bindgen examples debuginfo fuzz grpc gui-smoke check lint-strict ci install \
+.PHONY: help build runtime test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc gui-smoke check lint-strict ci install \
         release push-release clean version check-llvm
 
 help:
@@ -121,6 +127,9 @@ regress: build $(RUNTIME_LIB)
 # 跟别的测试的失败方式不同：它要现场 cc + ar 造一个静态库，再让 qi 去链 ——
 # 依赖的是机器上的 cc/ar 和链接器行为，不是编译器内部逻辑。混进 regress 里，
 # 一旦某台机器没有 cc，看到的会是「codegen 回归挂了」这种指错方向的报错。
+build-cache: build $(RUNTIME_LIB)
+	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/构建缓存/断言.sh $(QI)
+
 ffi-link: build $(RUNTIME_LIB)
 	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/ffi链接/断言.sh $(QI)
 
@@ -234,7 +243,7 @@ lint-strict:
 # 那两个 job 用浮动 @stable，装不到 1.92.0，fmt-check 的守卫直接 exit 1。
 # 发布路径由 `make release` 单独带一道 fmt-check（那是本机跑，有 1.92.0）。
 # 本地提交前想全查一遍：make fmt-check ci
-ci: check-llvm check naming test regress ffi-link bindgen examples debuginfo fuzz grpc wasm
+ci: check-llvm check naming test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc wasm
 
 install: build $(RUNTIME_LIB)
 	QI_PREFIX=$(PREFIX) bash scripts/同步本地构建.sh --跳过构建

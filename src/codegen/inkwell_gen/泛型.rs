@@ -263,10 +263,7 @@ impl<'ctx> 后端<'ctx> {
         };
         if let Some(pkg) = 模板.包.clone() {
             self.符号
-                .函数按包
-                .entry((pkg, 实例名.clone()))
-                .or_default()
-                .push(sig.clone());
+                .add_package_function(pkg, 实例名.clone(), sig.clone());
         }
         self.符号.函数.entry(实例名.clone()).or_insert(sig);
         // 默认参数值 / 变参标志随实例名复制

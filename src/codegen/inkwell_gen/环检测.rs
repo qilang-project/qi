@@ -342,7 +342,8 @@ pub(super) fn 检测循环引用(符号: &符号表) -> Result<(), String> {
     match 模式 {
         模式::严格 => Err(报告),
         _ => {
-            eprintln!("{}", 报告);
+            // 经构建缓存的录制器打出：命中缓存时这条警告会原样重放
+            crate::build_cache::emit_warning(&报告);
             Ok(())
         }
     }
