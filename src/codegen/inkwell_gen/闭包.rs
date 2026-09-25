@@ -958,6 +958,131 @@ impl<'ctx> 后端<'ctx> {
                     self.收集自由标识符(s, 参数, 本地, out, 已见);
                 }
             }
+            // ── 下面这些原来全落在 `_ => {}` 里被吞掉 ──
+            //
+            // 漏一种节点，那种节点里用到的外层变量就不会被捕获，闭包体生成时
+            // 报「未声明的变量」。最先撞上的是插值串：`"${我号}"` 是
+            // 格式字符串表达式，变量只在 ${} 里出现时就漏捕 —— 而字符串一律写
+            // 模板串是硬规则，写闭包的人必撞。其余几种（数组下标、数组/结构体
+            // 字面量、类型转换、匹配、尝试…）是同一个洞，一并补上。
+            //
+            // 模式 / catch 绑定的名字不单独建模：这里只捕获外层确有的局部变量，
+            // 多捕一个按值拷进来是无害的，漏捕才是 bug。
+            AstNode::格式字符串表达式(f) => {
+                for part in &f.parts {
+                    if let crate::parser::ast::FormatStringPart::表达式 { expr, .. } = part {
+                        self.收集自由标识符(expr, 参数, 本地, out, 已见);
+                    }
+                }
+            }
+            AstNode::类型转换表达式(t) => {
+                self.收集自由标识符(&t.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::数组访问表达式(a) => {
+                self.收集自由标识符(&a.array, 参数, 本地, out, 已见);
+                self.收集自由标识符(&a.index, 参数, 本地, out, 已见);
+            }
+            AstNode::数组字面量表达式(a) => {
+                for e in &a.elements {
+                    self.收集自由标识符(e, 参数, 本地, out, 已见);
+                }
+            }
+            AstNode::结构体实例化表达式(s) => {
+                for f in &s.fields {
+                    self.收集自由标识符(&f.value, 参数, 本地, out, 已见);
+                }
+                if let Some(base) = &s.spread_base {
+                    self.收集自由标识符(base, 参数, 本地, out, 已见);
+                }
+            }
+            AstNode::数组创建表达式(a) => {
+                self.收集自由标识符(&a.length, 参数, 本地, out, 已见)
+            }
+            AstNode::区间表达式(r) => {
+                self.收集自由标识符(&r.start, 参数, 本地, out, 已见);
+                self.收集自由标识符(&r.end, 参数, 本地, out, 已见);
+            }
+            AstNode::循环语句(l) => {
+                for s in &l.body {
+                    self.收集自由标识符(s, 参数, 本地, out, 已见);
+                }
+            }
+            AstNode::尝试语句(t) => {
+                for s in &t.try_body {
+                    self.收集自由标识符(s, 参数, 本地, out, 已见);
+                }
+                for c in &t.catch_clauses {
+                    for s in &c.body {
+                        self.收集自由标识符(s, 参数, 本地, out, 已见);
+                    }
+                }
+                if let Some(fin) = &t.finally_body {
+                    for s in fin {
+                        self.收集自由标识符(s, 参数, 本地, out, 已见);
+                    }
+                }
+            }
+            AstNode::抛出语句(t) => {
+                self.收集自由标识符(&t.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::等待表达式(a) => {
+                self.收集自由标识符(&a.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::协程启动表达式(g) => {
+                self.收集自由标识符(&g.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::异步块表达式(a) => {
+                for s in &a.body {
+                    self.收集自由标识符(s, 参数, 本地, out, 已见);
+                }
+            }
+            AstNode::取地址表达式(a) => {
+                self.收集自由标识符(&a.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::解引用表达式(d) => {
+                self.收集自由标识符(&d.expression, 参数, 本地, out, 已见)
+            }
+            AstNode::通道发送表达式(c) => {
+                self.收集自由标识符(&c.channel, 参数, 本地, out, 已见);
+                self.收集自由标识符(&c.value, 参数, 本地, out, 已见);
+            }
+            AstNode::通道接收表达式(c) => {
+                self.收集自由标识符(&c.channel, 参数, 本地, out, 已见)
+            }
+            AstNode::匹配表达式(m) => {
+                self.收集自由标识符(&m.value, 参数, 本地, out, 已见);
+                for arm in &m.arms {
+                    if let Some(g) = &arm.guard {
+                        self.收集自由标识符(g, 参数, 本地, out, 已见);
+                    }
+                    for s in &arm.body {
+                        self.收集自由标识符(s, 参数, 本地, out, 已见);
+                    }
+                }
+            }
+            AstNode::选择表达式(sel) => {
+                for c in sel
+                    .cases
+                    .iter()
+                    .chain(sel.default_case.iter())
+                    .chain(sel.timeout_case.iter())
+                {
+                    for s in &c.body {
+                        self.收集自由标识符(s, 参数, 本地, out, 已见);
+                    }
+                }
+            }
+            // 嵌套闭包：内层用到的外层局部变量，外层闭包也得先捕获进来，
+            // 内层才有东西可捕。内层自己的形参不算自由变量。
+            AstNode::闭包表达式(c) => {
+                let mut 内参 = 参数.clone();
+                for p in &c.parameters {
+                    内参.insert(p.name.clone());
+                }
+                for s in &c.body {
+                    self.收集自由标识符(s, &内参, 本地, out, 已见);
+                }
+            }
             _ => {}
         }
     }
