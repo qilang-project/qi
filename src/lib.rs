@@ -8,6 +8,7 @@
 #![allow(unused_variables)]
 #![warn(clippy::all)]
 
+pub mod build_cache;
 pub mod cli;
 pub mod codegen;
 pub mod error;
@@ -73,6 +74,16 @@ struct CollectState {
     scanned_package_dirs: std::collections::HashSet<(PathBuf, String)>,
     /// 导入解析结果：(导入方所在目录, 模块路径) → 解析到的文件（None = 解析失败）
     resolved_imports: std::collections::HashMap<(PathBuf, Vec<String>), Option<PathBuf>>,
+    /// 每个模块解析时读到的源码文本的 SHA-256（构建缓存的键）
+    source_digests: std::collections::HashMap<PathBuf, String>,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 impl QiCompiler {
@@ -128,12 +139,31 @@ impl QiCompiler {
         source_file: &PathBuf,
         跑类型检查: bool,
     ) -> Result<Vec<crate::parser::ast::Program>, CompilerError> {
+        self.collect_programs_with_digests(source_file, 跑类型检查)
+            .map(|(programs, _)| programs)
+    }
+
+    /// 同 collect_programs_带检查，另外返回每个 program **解析时读到的源码文本**的
+    /// SHA-256（与 programs 一一对应）—— 构建缓存的键要的正是它，而不是事后
+    /// 重读磁盘（编译途中文件被改就会对不上）。
+    fn collect_programs_with_digests(
+        &self,
+        source_file: &PathBuf,
+        跑类型检查: bool,
+    ) -> Result<(Vec<crate::parser::ast::Program>, Vec<String>), CompilerError> {
         let mut module_registry = crate::semantic::module::ModuleRegistry::new();
         let mut compiled_modules: std::collections::HashMap<PathBuf, crate::parser::ast::AstNode> =
             std::collections::HashMap::new();
         let t = std::time::Instant::now();
-        self.parse_and_collect_modules(source_file, &mut module_registry, &mut compiled_modules)?;
+        let mut state = CollectState::default();
+        self.parse_and_collect_modules_internal(
+            source_file,
+            &mut module_registry,
+            &mut compiled_modules,
+            &mut state,
+        )?;
         let t = crate::phase_timer::mark("解析", t);
+        let mut digests: Vec<String> = Vec::new();
 
         let entry_key = source_file
             .canonicalize()
@@ -141,6 +171,7 @@ impl QiCompiler {
         let mut programs: Vec<crate::parser::ast::Program> = Vec::new();
         if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.remove(&entry_key) {
             programs.push(p);
+            digests.push(state.source_digests.remove(&entry_key).unwrap_or_default());
         } else {
             let content = std::fs::read_to_string(source_file).map_err(CompilerError::Io)?;
             let mut p = crate::parser::Parser::new()
@@ -148,6 +179,7 @@ impl QiCompiler {
                 .map_err(|e| CompilerError::Codegen(format!("解析失败: {:?}", e)))?;
             p.source_path = Some(source_file.display().to_string());
             programs.push(p);
+            digests.push(sha256_hex(content.as_bytes()));
         }
         // 按路径排序保证确定性；entry 已在上面 remove 掉。所有权直接移出，不克隆。
         let mut 其余: Vec<(PathBuf, crate::parser::ast::AstNode)> =
@@ -159,6 +191,7 @@ impl QiCompiler {
             }
             if let crate::parser::ast::AstNode::程序(p) = node {
                 programs.push(p);
+                digests.push(state.source_digests.remove(&path).unwrap_or_default());
             }
         }
 
@@ -274,7 +307,7 @@ impl QiCompiler {
         }
 
         crate::phase_timer::mark("类型检查", t);
-        Ok(programs)
+        Ok((programs, digests))
     }
 
     /// 库模式编译：Qi → .o（含 C ABI 导出包装，不生成 @main）→ 打包成自包含的
@@ -554,20 +587,51 @@ impl QiCompiler {
         // 全部合并进同一次 inkwell 编译 → 单个 .o，跨模块函数/结构体/方法用统一 mangle
         // 天然可见、无需跨对象 extern 声明。
         let t = std::time::Instant::now();
-        let programs = self.collect_programs(&source_file)?;
+        let (programs, digests) = self.collect_programs_with_digests(&source_file, true)?;
         let t = crate::phase_timer::mark("解析+检查", t);
 
         let obj = source_file.with_extension("o");
-        crate::codegen::inkwell_gen::compile_to_object_multi(
-            &programs,
-            &obj,
-            self.config.target_platform,
-            self.config.target_arch.as_deref(),
-            self.config.optimization_level,
-            false, // 可执行模式：生成 @main
-            !self.config.无调试信息,
-        )
-        .map_err(CompilerError::Codegen)?;
+        let exe = if cfg!(windows) {
+            source_file.with_extension("exe")
+        } else {
+            source_file.with_extension("")
+        };
+
+        // 构建缓存（见 build_cache.rs）：只管原生可执行文件。解析和类型检查
+        // 照跑 —— 要靠它们确定参与编译的文件集合，类型检查的报错/警告也照常出。
+        let cache = if self.config.target_platform == config::CompilationTarget::Wasm {
+            None
+        } else {
+            crate::build_cache::BuildCache::open().and_then(|c| {
+                self.build_cache_key(&source_file, &obj, &exe, &programs, &digests)
+                    .map(|k| (c, k))
+            })
+        };
+        if let Some((c, k)) = &cache {
+            if c.restore(k, &exe, &obj) {
+                crate::phase_timer::mark("缓存命中", t);
+                return Ok(CompilationResult {
+                    executable_path: exe,
+                    ir_paths: Vec::new(),
+                    object_paths: vec![obj],
+                    duration_ms: start_time.elapsed().as_millis() as u64,
+                    warnings: Vec::new(),
+                });
+            }
+        }
+
+        let (codegen, codegen_warnings) = crate::build_cache::record_warnings(|| {
+            crate::codegen::inkwell_gen::compile_to_object_multi(
+                &programs,
+                &obj,
+                self.config.target_platform,
+                self.config.target_arch.as_deref(),
+                self.config.optimization_level,
+                false, // 可执行模式：生成 @main
+                !self.config.无调试信息,
+            )
+        });
+        codegen.map_err(CompilerError::Codegen)?;
         // WebAssembly：到目标文件为止。往下的 link_objects 会去找宿主的
         // libqi_runtime.a（里头是 aarch64/x86_64 的原生代码），对 wasm32 目标
         // 毫无意义 —— 早返回，把 .o 交给 wasm-ld（见 wasm演示/构建.sh）。
@@ -581,18 +645,17 @@ impl QiCompiler {
                 warnings: Vec::new(),
             });
         }
-        let exe = if cfg!(windows) {
-            source_file.with_extension("exe")
-        } else {
-            source_file.with_extension("")
-        };
         // 收集所有 外部 "库" 块声明的链接目标（-l / 直链文件 / framework）。
         let 兜底目录 = source_file.parent().unwrap_or(std::path::Path::new("."));
         let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
         let t = std::time::Instant::now();
         self.link_objects(&[obj.clone()], &exe, &extern_libs)?;
-        crate::phase_timer::mark("链接", t);
+        let t = crate::phase_timer::mark("链接", t);
+        if let Some((c, k)) = &cache {
+            c.store(k, &exe, &obj, &codegen_warnings);
+            crate::phase_timer::mark("写缓存", t);
+        }
         Ok(CompilationResult {
             executable_path: exe,
             ir_paths: Vec::new(),
@@ -922,6 +985,12 @@ impl QiCompiler {
         if std::env::var("QI_NO_STALE_WARN").is_ok() {
             return;
         }
+        // 一个进程只查一次：构建缓存算键时要找一遍归档，链接时又找一遍，
+        // 别把同一条警告打两遍（也省一次递归扫 qi-runtime/src）。
+        static CHECKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if CHECKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         // 从当前目录往上找 qi-runtime/src
         let Ok(mut dir) = std::env::current_dir() else {
             return;
@@ -1020,21 +1089,6 @@ impl QiCompiler {
         ))
     }
 
-    /// Parse a file and recursively parse its imports
-    fn parse_and_collect_modules(
-        &self,
-        file_path: &PathBuf,
-        module_registry: &mut crate::semantic::module::ModuleRegistry,
-        compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-    ) -> Result<(), CompilerError> {
-        self.parse_and_collect_modules_internal(
-            file_path,
-            module_registry,
-            compiled_modules,
-            &mut CollectState::default(),
-        )
-    }
-
     /// Internal implementation with visited set to prevent infinite recursion
     fn parse_and_collect_modules_internal(
         &self,
@@ -1077,6 +1131,9 @@ impl QiCompiler {
             Some(源) => 源,
             None => std::fs::read_to_string(file_path).map_err(CompilerError::Io)?,
         };
+        visited
+            .source_digests
+            .insert(file_path.clone(), sha256_hex(source_code.as_bytes()));
 
         // 直接 parse_source。以前这里先跑一遍 src/lexer 产 token、再由
         // parse_with_source 把 token 重组回字符串交给 parse_source ——
