@@ -2,9 +2,10 @@
 //!
 //! ## 缓存什么
 //!
-//! 可执行模式（非库模式、非 wasm）的**最终产物**：链接好的可执行文件 + 旁边那个
-//! `.o`（macOS 的调试信息留在 .o 里，可执行文件只有一张指回它的 debug map，
-//! 所以两个都要）+ codegen 期间打到 stderr 的警告（命中时原样重放）。
+//! 可执行模式（非库模式、非 wasm）的**最终产物**：链接好的可执行文件 + 旁边的
+//! 目标文件（通常一个 `.o`，大模块并行 codegen 时还有几个分片 `.qi-partN.o`；
+//! macOS 的调试信息留在 .o 里，可执行文件只有一张指回它们的 debug map，
+//! 所以都要）+ codegen 期间打到 stderr 的警告（命中时原样重放）。
 //!
 //! ## 键里有什么（缺一样就可能拿到旧产物，所以宁多勿少）
 //!
@@ -33,7 +34,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 /// 键格式版本：键的组成方式一改就加一，旧条目自然失效。
-const KEY_VERSION: &str = "qi-build-cache v1";
+const KEY_VERSION: &str = "qi-build-cache v2";
 
 /// 这些 `QI_*` 变量不影响产物，不进键（进了只会白白失配）。
 const ENV_NOT_IN_KEY: &[&str] = &[
@@ -239,7 +240,10 @@ pub struct BuildCache {
 }
 
 const EXE_FILE: &str = "exe";
-const OBJ_FILE: &str = "obj";
+/// 目标文件依次存成 obj0、obj1…（并行 codegen 时不止一个）
+const OBJ_PREFIX: &str = "obj";
+/// 目标文件的原文件名，一行一个，顺序同 obj0、obj1…
+const OBJECTS_FILE: &str = "objects.txt";
 const WARNINGS_FILE: &str = "warnings.txt";
 const KEY_FILE: &str = "key.txt";
 
@@ -273,20 +277,39 @@ impl BuildCache {
         self.root.join(&key.hex[..2]).join(&key.hex)
     }
 
-    /// 命中就把产物复制到 `exe_dst` / `obj_dst`，重放警告，返回 true。
-    /// 任何一步失败都当未命中（返回 false），调用方照常编译。
-    pub fn restore(&self, key: &CacheKey, exe_dst: &Path, obj_dst: &Path) -> bool {
+    /// 命中就把产物复制回去（可执行文件到 `exe_dst`，目标文件到 `obj_dst` 所在目录，
+    /// 文件名照存进去时的），重放警告，返回还原出的全部目标文件。
+    /// 任何一步失败都当未命中（返回 None），调用方照常编译。
+    pub fn restore(&self, key: &CacheKey, exe_dst: &Path, obj_dst: &Path) -> Option<Vec<PathBuf>> {
         let dir = self.entry_dir(key);
         let exe = dir.join(EXE_FILE);
-        let obj = dir.join(OBJ_FILE);
-        if !exe.is_file() || !obj.is_file() {
-            trace(&format!("未命中 {}", key.hex));
-            return false;
+        let names = match std::fs::read_to_string(dir.join(OBJECTS_FILE)) {
+            Ok(text) if exe.is_file() => text,
+            _ => {
+                trace(&format!("未命中 {}", key.hex));
+                return None;
+            }
+        };
+        let obj_dir = obj_dst.parent().unwrap_or(Path::new("."));
+        let names: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
+        if names.is_empty() || names.iter().any(|n| n.contains('/') || n.contains('\\')) {
+            trace("条目的目标文件清单不对，当未命中");
+            return None;
         }
-        let copied = copy_replace(&obj, obj_dst).and_then(|_| copy_replace(&exe, exe_dst));
-        if let Err(e) = copied {
+        // 这次还原的分片数可能比上次编出来的少：旧分片文件先清掉
+        crate::codegen::inkwell_gen::remove_stale_part_objects(obj_dst);
+        let mut restored = Vec::new();
+        for (i, name) in names.iter().enumerate() {
+            let dst = obj_dir.join(name);
+            if let Err(e) = copy_replace(&dir.join(format!("{}{}", OBJ_PREFIX, i)), &dst) {
+                trace(&format!("命中但复制失败（改为重新编译）: {}", e));
+                return None;
+            }
+            restored.push(dst);
+        }
+        if let Err(e) = copy_replace(&exe, exe_dst) {
             trace(&format!("命中但复制失败（改为重新编译）: {}", e));
-            return false;
+            return None;
         }
         #[cfg(unix)]
         {
@@ -301,13 +324,13 @@ impl BuildCache {
         // 最近使用时间 = 条目目录的修改时间（淘汰按它排）
         touch(&dir);
         trace(&format!("命中 {}", key.hex));
-        true
+        Some(restored)
     }
 
     /// 写入一个条目。先写到临时目录再整体 rename，别的进程看到的要么没有、要么完整。
     /// 失败只打 trace，不影响这次编译。
-    pub fn store(&self, key: &CacheKey, exe: &Path, obj: &Path, warnings: &[String]) {
-        if let Err(e) = self.store_inner(key, exe, obj, warnings) {
+    pub fn store(&self, key: &CacheKey, exe: &Path, objects: &[PathBuf], warnings: &[String]) {
+        if let Err(e) = self.store_inner(key, exe, objects, warnings) {
             trace(&format!("写缓存失败: {}", e));
             return;
         }
@@ -319,12 +342,20 @@ impl BuildCache {
         &self,
         key: &CacheKey,
         exe: &Path,
-        obj: &Path,
+        objects: &[PathBuf],
         warnings: &[String],
     ) -> std::io::Result<()> {
         let final_dir = self.entry_dir(key);
-        if final_dir.join(EXE_FILE).is_file() {
+        if final_dir.join(OBJECTS_FILE).is_file() {
             return Ok(());
+        }
+        let mut names = String::new();
+        for o in objects {
+            let name = o.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名不是 UTF-8")
+            })?;
+            names.push_str(name);
+            names.push('\n');
         }
         let tmp_root = self.root.join("tmp");
         std::fs::create_dir_all(&tmp_root)?;
@@ -340,9 +371,13 @@ impl BuildCache {
         std::fs::create_dir_all(&tmp)?;
         let result = (|| {
             std::fs::copy(exe, tmp.join(EXE_FILE))?;
-            std::fs::copy(obj, tmp.join(OBJ_FILE))?;
+            for (i, o) in objects.iter().enumerate() {
+                std::fs::copy(o, tmp.join(format!("{}{}", OBJ_PREFIX, i)))?;
+            }
             std::fs::write(tmp.join(WARNINGS_FILE), warnings.join("\u{0}"))?;
             std::fs::write(tmp.join(KEY_FILE), &key.manifest)?;
+            // 清单最后写：还原时以它存在为「条目完整」的标志（rename 本身也是原子的）
+            std::fs::write(tmp.join(OBJECTS_FILE), names)?;
             if let Some(parent) = final_dir.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -353,7 +388,7 @@ impl BuildCache {
             let _ = std::fs::remove_dir_all(&tmp);
         }
         match result {
-            Err(_) if final_dir.join(EXE_FILE).is_file() => Ok(()),
+            Err(_) if final_dir.join(OBJECTS_FILE).is_file() => Ok(()),
             other => other,
         }
     }

@@ -24,6 +24,7 @@
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
 mod emit;
+mod parallel_emit;
 #[path = "全局.rs"]
 mod 全局;
 #[path = "剖析.rs"]
@@ -782,12 +783,7 @@ fn 建目标机(
     arch: Option<&str>,
     opt: crate::config::OptimizationLevel,
 ) -> Result<(inkwell::targets::TargetTriple, TargetMachine), String> {
-    let 宿主即目标 = match target {
-        CompilationTarget::Linux => cfg!(target_os = "linux"),
-        CompilationTarget::MacOS => cfg!(target_os = "macos"),
-        CompilationTarget::Windows => cfg!(target_os = "windows"),
-        CompilationTarget::Wasm => false,
-    } && arch.is_none_or(|a| a == std::env::consts::ARCH);
+    let 宿主即目标 = is_host_target(target, arch);
     let triple = if 宿主即目标 {
         Target::initialize_native(&InitializationConfig::default())
             .map_err(|e| format!("初始化目标失败: {}", e))?;
@@ -803,12 +799,7 @@ fn 建目标机(
         };
         inkwell::targets::TargetTriple::create(&t)
     };
-    let tm_opt = match opt {
-        crate::config::OptimizationLevel::None => LlvmOpt::None,
-        crate::config::OptimizationLevel::Basic => LlvmOpt::Less,
-        crate::config::OptimizationLevel::Standard => LlvmOpt::Default,
-        crate::config::OptimizationLevel::Maximum => LlvmOpt::Aggressive,
-    };
+    let tm_opt = llvm_opt_level(opt);
     let t = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let tm = t
         .create_target_machine(
@@ -823,6 +814,32 @@ fn 建目标机(
     Ok((triple, tm))
 }
 
+/// 删掉 `obj` 旁边并行 codegen 留下的分片目标文件（构建缓存还原产物前用）。
+pub fn remove_stale_part_objects(obj: &Path) {
+    parallel_emit::remove_stale_parts(obj);
+}
+
+/// 目标就是宿主本身（原生编译，不是交叉）？
+fn is_host_target(target: CompilationTarget, arch: Option<&str>) -> bool {
+    let os_matches = match target {
+        CompilationTarget::Linux => cfg!(target_os = "linux"),
+        CompilationTarget::MacOS => cfg!(target_os = "macos"),
+        CompilationTarget::Windows => cfg!(target_os = "windows"),
+        CompilationTarget::Wasm => false,
+    };
+    os_matches && arch.is_none_or(|a| a == std::env::consts::ARCH)
+}
+
+/// qi 优化档位 → 目标机（机器码生成）档位。
+fn llvm_opt_level(opt: crate::config::OptimizationLevel) -> LlvmOpt {
+    match opt {
+        crate::config::OptimizationLevel::None => LlvmOpt::None,
+        crate::config::OptimizationLevel::Basic => LlvmOpt::Less,
+        crate::config::OptimizationLevel::Standard => LlvmOpt::Default,
+        crate::config::OptimizationLevel::Maximum => LlvmOpt::Aggressive,
+    }
+}
+
 pub fn compile_to_object_multi(
     programs: &[Program],
     out: &Path,
@@ -832,6 +849,21 @@ pub fn compile_to_object_multi(
     库模式: bool,
     带调试: bool,
 ) -> Result<Vec<CExportInfo>, String> {
+    compile_to_objects(programs, out, target, arch, opt, 库模式, 带调试).map(|(e, _)| e)
+}
+
+/// 同 compile_to_object_multi，另外返回写出的**全部**目标文件：串行时就是 `out`
+/// 一个；大模块并行生成机器码时是 `out` + 旁边的分片文件（见 parallel_emit.rs），
+/// 链接时要全部带上，调试时也都要在。
+pub fn compile_to_objects(
+    programs: &[Program],
+    out: &Path,
+    target: CompilationTarget,
+    arch: Option<&str>,
+    opt: crate::config::OptimizationLevel,
+    库模式: bool,
+    带调试: bool,
+) -> Result<(Vec<CExportInfo>, Vec<std::path::PathBuf>), String> {
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
     }
@@ -1097,8 +1129,38 @@ pub fn compile_to_object_multi(
     if let Ok(p) = std::env::var("QI_EMIT_LL_POST") {
         let _ = 后端值.module.print_to_file(Path::new(&p));
     }
-    tm.write_to_file(&后端值.module, FileType::Object, out)
-        .map_err(|e| e.to_string())?;
+    // 大模块按函数切片、多线程生成机器码（见 parallel_emit.rs）；不适合切就串行。
+    // 上一次并行编译可能在 .o 旁边留下分片文件，先清掉，免得跟这次的混在一起。
+    parallel_emit::remove_stale_parts(out);
+    let 并行 = if 库模式 {
+        Ok(None)
+    } else {
+        parallel_emit::try_emit_parallel(
+            &后端值.module,
+            &tm,
+            llvm_opt_level(opt),
+            is_host_target(target, arch),
+            out,
+        )
+    };
+    let 目标文件 = match 并行 {
+        Ok(Some(paths)) => paths,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            // 切片途中出了意外：主模块此时只是把本地符号改成了 hidden 外部符号，
+            // 串行照样能编。打一行出来 —— 这是该报的 bug，不该静默吞掉。
+            eprintln!("[qi 并行codegen] 退回串行: {}", e);
+            parallel_emit::remove_stale_parts(out);
+            Vec::new()
+        }
+    };
+    let 目标文件 = if 目标文件.is_empty() {
+        tm.write_to_file(&后端值.module, FileType::Object, out)
+            .map_err(|e| e.to_string())?;
+        vec![out.to_path_buf()]
+    } else {
+        目标文件
+    };
     crate::phase_timer::mark("机器码", t);
 
     // 导出头文件信息（供 lib.rs 生成 .h）。
@@ -1117,7 +1179,7 @@ pub fn compile_to_object_multi(
             ret: qi类型转c(r.返回, true).to_string(),
         })
         .collect();
-    Ok(exports)
+    Ok((exports, 目标文件))
 }
 
 /// 链接进来的 LLVM 主版本 >= 22 时，`llvm.coro.end` 返回 void 而不是 i1。

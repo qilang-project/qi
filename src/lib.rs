@@ -608,12 +608,12 @@ impl QiCompiler {
             })
         };
         if let Some((c, k)) = &cache {
-            if c.restore(k, &exe, &obj) {
+            if let Some(objects) = c.restore(k, &exe, &obj) {
                 crate::phase_timer::mark("缓存命中", t);
                 return Ok(CompilationResult {
                     executable_path: exe,
                     ir_paths: Vec::new(),
-                    object_paths: vec![obj],
+                    object_paths: objects,
                     duration_ms: start_time.elapsed().as_millis() as u64,
                     warnings: Vec::new(),
                 });
@@ -621,7 +621,7 @@ impl QiCompiler {
         }
 
         let (codegen, codegen_warnings) = crate::build_cache::record_warnings(|| {
-            crate::codegen::inkwell_gen::compile_to_object_multi(
+            crate::codegen::inkwell_gen::compile_to_objects(
                 &programs,
                 &obj,
                 self.config.target_platform,
@@ -631,7 +631,7 @@ impl QiCompiler {
                 !self.config.无调试信息,
             )
         });
-        codegen.map_err(CompilerError::Codegen)?;
+        let (_, objects) = codegen.map_err(CompilerError::Codegen)?;
         // WebAssembly：到目标文件为止。往下的 link_objects 会去找宿主的
         // libqi_runtime.a（里头是 aarch64/x86_64 的原生代码），对 wasm32 目标
         // 毫无意义 —— 早返回，把 .o 交给 wasm-ld（见 wasm演示/构建.sh）。
@@ -650,16 +650,16 @@ impl QiCompiler {
         let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
         let t = std::time::Instant::now();
-        self.link_objects(&[obj.clone()], &exe, &extern_libs)?;
+        self.link_objects(&objects, &exe, &extern_libs)?;
         let t = crate::phase_timer::mark("链接", t);
         if let Some((c, k)) = &cache {
-            c.store(k, &exe, &obj, &codegen_warnings);
+            c.store(k, &exe, &objects, &codegen_warnings);
             crate::phase_timer::mark("写缓存", t);
         }
         Ok(CompilationResult {
             executable_path: exe,
             ir_paths: Vec::new(),
-            object_paths: vec![obj],
+            object_paths: objects,
             duration_ms: start_time.elapsed().as_millis() as u64,
             warnings: Vec::new(),
         })

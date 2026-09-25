@@ -164,6 +164,9 @@ det_check() {
 }
 det_check "$HERE/04_模块限定分发确定性.qi" "04"
 det_check "$HERE/40_编译确定性_RC局部全局协程.qi" "40"
+# 并行机器码生成（按函数切片、多线程、多个目标文件）也必须确定：分片数固定、
+# 装箱平局按编号。小程序默认不切，这里强制切 4 份。
+QI_CODEGEN_PARTITIONS=4 det_check "$HERE/40_编译确定性_RC局部全局协程.qi" "40并行codegen"
 
 # ── 红码：必须报错的用例 ──
 #
