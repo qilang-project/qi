@@ -281,10 +281,7 @@ impl<'ctx> 后端<'ctx> {
             }
         } else if let Some(pkg) = self.当前包.clone() {
             self.符号
-                .函数按包
-                .entry((pkg, f.name.clone()))
-                .or_default()
-                .push(sig.clone());
+                .add_package_function(pkg, f.name.clone(), sig.clone());
         }
         self.符号.函数.entry(f.name.clone()).or_insert(sig);
         // 记录形参名（`工具模式` 生成 tool schema 时需要参数名）

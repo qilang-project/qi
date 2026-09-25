@@ -139,7 +139,12 @@ pub struct 符号表 {
     pub 函数: HashMap<String, 函数签名>,
     /// 包内函数签名：(包名, 函数名) → 该名字的**重载集**（按元数区分的多签名）。
     /// 绝大多数名字只有一个元素；同名不同元数的多定义构成重载。
+    /// **只经 `add_package_function` 写入**（它顺带维护下面的反向索引）。
     pub 函数按包: HashMap<(String, String), Vec<函数签名>>,
+    /// 反向索引：函数名 → 定义了它的包（升序、去重）。「某名字在哪些包里有」
+    /// 原来每问一次就把 函数按包 整张表扫一遍，而每个调用点都要问 ——
+    /// 调用点数 × 函数总数，大包（qi-web + qi-harness）编译时是 IR 生成的热点。
+    pub packages_by_function: HashMap<String, Vec<String>>,
     /// 文件私有函数的签名：(包, 文件, 名, 元数) → 签名。
     /// 只有「同包同名同元数已被别的文件占了」的那些才进这儿，见 声明.rs。
     pub 私有签名: HashMap<(String, String, String, usize), 函数签名>,
@@ -237,6 +242,7 @@ impl 符号表 {
             私有签名: HashMap::new(),
             函数: HashMap::new(),
             函数按包: HashMap::new(),
+            packages_by_function: HashMap::new(),
             结构体: Vec::new(),
             结构体键索引: HashMap::new(),
             结构体同名: HashMap::new(),
@@ -346,7 +352,7 @@ impl 符号表 {
         if self.函数.contains_key(name) {
             return true;
         }
-        if self.函数按包.keys().any(|(_, n)| n == name) {
+        if self.packages_by_function.contains_key(name) {
             return true;
         }
         if self.结构体.iter().any(|s| s.名字 == name) {
@@ -380,28 +386,31 @@ impl 符号表 {
     /// 只按名字算候选会得出「多包同名 → 歧义」，可实参个数已经能唯一定位了。
     /// 按元数筛完还剩一个就不该报歧义 —— 也让「当前包」串到别处时仍能解析对。
     pub fn 函数候选包按元数(&self, name: &str, 实参数: usize) -> Vec<String> {
-        let mut v: Vec<String> = self
-            .函数按包
-            .iter()
-            .filter(|((_, f), 签名集)| {
-                f == name && 签名集.iter().any(|s| s.参数.len() == 实参数)
+        // 反向索引已按包名升序去重
+        self.函数候选包(name)
+            .into_iter()
+            .filter(|p| {
+                self.函数按包
+                    .get(&(p.clone(), name.to_string()))
+                    .is_some_and(|签名集| 签名集.iter().any(|s| s.参数.len() == 实参数))
             })
-            .map(|((p, _), _)| p.clone())
-            .collect();
-        v.sort();
-        v.dedup();
-        v
+            .collect()
     }
 
     pub fn 函数候选包(&self, name: &str) -> Vec<String> {
-        let mut v: Vec<String> = self
-            .函数按包
-            .keys()
-            .filter(|(_, f)| f == name)
-            .map(|(p, _)| p.clone())
-            .collect();
-        v.sort();
-        v
+        self.packages_by_function
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// 往 函数按包 的重载集里加一个签名，并维护 packages_by_function 反向索引。
+    pub fn add_package_function(&mut self, pkg: String, name: String, sig: 函数签名) {
+        let pkgs = self.packages_by_function.entry(name.clone()).or_default();
+        if let Err(pos) = pkgs.binary_search(&pkg) {
+            pkgs.insert(pos, pkg.clone());
+        }
+        self.函数按包.entry((pkg, name)).or_default().push(sig);
     }
 
     /// 在**指定包**里解析重载集（调用点写了限定名时用，不看当前包）。
