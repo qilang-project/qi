@@ -3,6 +3,11 @@
 pub mod ast;
 pub mod error;
 mod html;
+mod literal_scan;
+pub use literal_scan::{
+    char_literal_end, interpolation_hole_close, interpolation_hole_end, quoted_string_close,
+    quoted_string_end, raw_string_end,
+};
 pub mod reserved;
 #[path = "位置.rs"]
 pub mod 位置;
@@ -417,7 +422,6 @@ impl Parser {
             let mut in_line_comment = false;
             // 块注释可嵌套（与 Rust 语义一致）：用深度计数配对 /* 与 */
             let mut block_comment_depth = 0usize;
-            let mut in_string = false;
             let mut in_char = false;
             // 反引号原始字符串：内部不做转义，也**不认注释**。内嵌 JS/CSS 里
             // 全是 "wss://" 和 "//" 这种，不单独跟踪的话会被当成行注释吃掉，
@@ -470,25 +474,6 @@ impl Parser {
                     continue;
                 }
 
-                if in_string {
-                    // Read next UTF-8 char
-                    let ch = s[i..].chars().next().unwrap();
-                    let len = ch.len_utf8();
-                    out.push(ch);
-                    if !escape {
-                        if ch == '"' {
-                            in_string = false;
-                        } else if ch == '\\' {
-                            escape = true;
-                        }
-                    } else {
-                        // escaped char consumed
-                        escape = false;
-                    }
-                    i += len;
-                    continue;
-                }
-
                 if in_char {
                     // Read next UTF-8 char
                     let ch = s[i..].chars().next().unwrap();
@@ -525,10 +510,11 @@ impl Parser {
                 let ch = s[i..].chars().next().unwrap();
                 let len = ch.len_utf8();
                 if ch == '"' {
-                    in_string = true;
-                    escape = false;
-                    out.push(ch);
-                    i += len;
+                    // 整串原样复制。认得插值洞：`"${取(表, "甲")}"` 是一个串，
+                    // 洞里的 "甲" 不会把它提前截断（见 literal_scan）
+                    let end = quoted_string_end(bytes, i);
+                    out.push_str(&s[i..end]);
+                    i = end;
                     continue;
                 }
                 if ch == '\'' {
@@ -559,42 +545,33 @@ impl Parser {
         // 【保字节偏移】`：` 是 3 字节，替换为 `:` + 2 空格（同 3 字节）；
         // 连写 `：：`（6 字节）替换为 `::` + 4 空格，保住 `::` 的相邻性。
         fn normalize_colons(s: &str) -> String {
+            let chars: Vec<char> = s.chars().collect();
+            let n = chars.len();
             let mut out = String::with_capacity(s.len());
-            let mut in_string = false;
-            // 反引号原始字符串同样原样放行：内嵌的中文文案里出现「：」不该被改写
-            let mut in_raw = false;
-            let mut escape = false;
-            let mut it = s.chars().peekable();
-            while let Some(ch) = it.next() {
-                if in_raw {
-                    if ch == '`' {
-                        in_raw = false;
-                    }
-                    out.push(ch);
-                } else if in_string {
-                    if escape {
-                        escape = false;
-                    } else if ch == '\\' {
-                        escape = true;
-                    } else if ch == '"' {
-                        in_string = false;
-                    }
-                    out.push(ch);
-                } else if ch == '"' {
-                    in_string = true;
-                    out.push(ch);
+            let mut i = 0;
+            while i < n {
+                let ch = chars[i];
+                if ch == '"' {
+                    // 串（含插值洞里的串）整段原样放行 —— 洞里字面量的「：」也不许动
+                    let end = quoted_string_end(&chars, i);
+                    out.extend(&chars[i..end]);
+                    i = end;
                 } else if ch == '`' {
-                    in_raw = true;
-                    out.push(ch);
+                    // 反引号原始字符串同样原样放行：内嵌的中文文案里出现「：」不该被改写
+                    let end = raw_string_end(&chars, i);
+                    out.extend(&chars[i..end]);
+                    i = end;
                 } else if ch == '：' {
-                    if it.peek() == Some(&'：') {
-                        it.next();
+                    if i + 1 < n && chars[i + 1] == '：' {
                         out.push_str("::    ");
+                        i += 2;
                     } else {
                         out.push_str(":  ");
+                        i += 1;
                     }
                 } else {
                     out.push(ch);
+                    i += 1;
                 }
             }
             out
@@ -632,8 +609,10 @@ impl Parser {
                 } else {
                     match c {
                         '"' => {
-                            in_str = true;
-                            out.push(c);
+                            // 整串跳过（认得插值洞）；-1 抵消循环末尾的 i += 1
+                            let end = quoted_string_end(&chars, i);
+                            out.extend(&chars[i..end]);
+                            i = end - 1;
                         }
                         '\'' => {
                             in_char = true;
@@ -650,9 +629,9 @@ impl Parser {
                             // 【保字节偏移】`模板`（6 字节）→ 5 空格 + `f`（6 字节），
                             // `f` 紧贴引号满足 f"..." 词法；串内内容偏移与原文一致。
                             out.push_str("     f");
-                            out.push('"');
-                            in_str = true;
-                            i += 2; // 吃掉 板/版 和引号
+                            let end = quoted_string_end(&chars, i + 2);
+                            out.extend(&chars[i + 2..end]);
+                            i = end - 1; // 抵消循环末尾的 i += 1
                         }
                         _ => out.push(c),
                     }
@@ -696,9 +675,10 @@ impl Parser {
                     }
                     i += 1;
                 } else if c == '"' {
-                    in_str = true;
-                    out.push(c);
-                    i += 1;
+                    // 整串跳过（认得插值洞）
+                    let end = quoted_string_end(&chars, i);
+                    out.extend(&chars[i..end]);
+                    i = end;
                 } else if c == '\'' {
                     in_char = true;
                     out.push(c);
@@ -727,6 +707,51 @@ impl Parser {
         // 把单个双引号串的内容（不含两端引号、转义仍是原始形态）改写成 f-string 体。
         // 返回 Ok(Some(体)) 表示含插值、已改写；Ok(None) 表示无插值、保持原样；
         // Err(消息) 表示空洞/未闭合/嵌套等错误。line 仅用于错误消息定位。
+        // 洞里是代码。字符串字面量照常写 `${取(表, "甲")}`；下面三种写法给出明确报错，
+        // 不让它们悄悄变成别的意思：
+        //   · 洞里用 `\"` 转义引号 —— 洞是代码不是串，原来这样写洞会**静默变成空串**
+        //   · 洞里再套 `${…}` —— 嵌套插值 v1 不支持
+        //   · 洞里的字符串字面量里又有 `${…}` —— 洞会交给 ExprParser 解析，那里的
+        //     字面量不再插值，写了也只会原样输出 `${…}` 几个字，同样按嵌套报错
+        fn 检查洞内容(hole: &[char], line: usize) -> Result<(), String> {
+            let 嵌套错 = || {
+                format!(
+                    "字符串插值暂不支持嵌套：第 {line} 行的 ${{…}} 里又出现了 ${{…}}，请把内层表达式先存到变量再插值"
+                )
+            };
+            let n = hole.len();
+            let mut k = 0;
+            while k < n {
+                match hole[k] {
+                    '\\' => {
+                        return Err(format!(
+                            "插值洞里是代码，字符串直接写引号、不用转义：第 {line} 行的 ${{…}} 里有反斜杠（把 \\\" 改成 \"）"
+                        ));
+                    }
+                    '"' => {
+                        // 洞里的字符串字面量：找它的结尾，顺便查里面有没有 ${
+                        k += 1;
+                        while k < n && hole[k] != '"' {
+                            if hole[k] == '\\' {
+                                k += 2;
+                                continue;
+                            }
+                            if hole[k] == '$' && k + 1 < n && hole[k + 1] == '{' {
+                                return Err(嵌套错());
+                            }
+                            k += 1;
+                        }
+                        k += 1;
+                    }
+                    '`' => k = raw_string_end(hole, k),
+                    '\'' => k = char_literal_end(hole, k),
+                    '$' if k + 1 < n && hole[k + 1] == '{' => return Err(嵌套错()),
+                    _ => k += 1,
+                }
+            }
+            Ok(())
+        }
+
         fn 改写插值体(content: &[char], line: usize) -> Result<Option<String>, String> {
             let n = content.len();
             let mut out = String::with_capacity(n + 8);
@@ -758,43 +783,14 @@ impl Parser {
                     // 扫描配对花括号，定位洞尾。洞内字符串字面量整段跳过（其中的
                     // {}/引号不参与平衡）；洞内再出现 `${` → 嵌套，v1 明确报错。
                     let hole_start = i + 2;
-                    let mut j = hole_start;
-                    let mut depth = 1i32;
-                    while j < n {
-                        let hc = content[j];
-                        if hc == '\\' {
-                            j += 2;
-                            continue;
-                        }
-                        if hc == '"' {
-                            j += 1;
-                            while j < n && content[j] != '"' {
-                                if content[j] == '\\' {
-                                    j += 1;
-                                }
-                                j += 1;
-                            }
-                            if j < n {
-                                j += 1; // 跳过内层闭引号
-                            }
-                            continue;
-                        }
-                        if hc == '$' && j + 1 < n && content[j + 1] == '{' {
-                            return Err(format!(
-                                "字符串插值暂不支持嵌套：第 {line} 行的 ${{…}} 里又出现了 ${{…}}，请把内层表达式先存到变量再插值"
-                            ));
-                        }
-                        if hc == '{' {
-                            depth += 1;
-                        } else if hc == '}' {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        j += 1;
+                    let 配对 = interpolation_hole_close(content, hole_start);
+                    let 闭合 = 配对.is_some();
+                    // j 指向配对的 `}`（下面沿用原来的写法）
+                    let j = 配对.unwrap_or(n);
+                    if 闭合 {
+                        检查洞内容(&content[hole_start..j], line)?;
                     }
-                    if depth != 0 {
+                    if !闭合 {
                         return Err(format!(
                             "字符串插值未闭合：第 {line} 行的 ${{ 缺少配对的 }}"
                         ));
@@ -887,23 +883,18 @@ impl Parser {
                         // 已带 f 前缀（含 模板→f 归一化后的）= 格式串，跳过插值改写，
                         // 整串原样复制交给已有 f-string 机制。
                         let 是格式串 = out.chars().last() == Some('f');
-                        i += 1; // 跳过开引号
-                        let content_start = i;
-                        while i < n && chars[i] != '"' {
-                            if chars[i] == '\\' && i + 1 < n {
-                                i += 2;
-                            } else {
-                                if chars[i] == '\n' {
-                                    line += 1;
-                                }
-                                i += 1;
-                            }
-                        }
-                        let content = &chars[content_start..i.min(n)];
-                        let 有闭引号 = i < n;
-                        if 有闭引号 {
-                            i += 1; // 跳过闭引号
-                        }
+                        // 串尾用共用扫描器找：洞里的字面量（"${取(表, "甲")}"）不截断外层串
+                        let 闭引号 = quoted_string_close(&chars, i);
+                        let 有闭引号 = 闭引号.is_some();
+                        let content_start = i + 1;
+                        let content_end = 闭引号.unwrap_or(n);
+                        let 串尾 = 闭引号.map_or(n, |k| k + 1);
+                        let content = &chars[content_start..content_end];
+                        // 报错行号取串**起始**那一行：洞没闭合时串会一路读到文件尾，
+                        // 按结束行报就指到了文件最后一行，离出错的地方十万八千里
+                        let 起行 = line;
+                        line += content.iter().filter(|&&c| c == '\n').count();
+                        i = 串尾;
                         if 是格式串 {
                             out.push('"');
                             out.extend(content.iter());
@@ -912,7 +903,7 @@ impl Parser {
                             }
                             continue;
                         }
-                        match 改写插值体(content, line)? {
+                        match 改写插值体(content, 起行)? {
                             Some(体) => {
                                 out.push('f');
                                 out.push('"');

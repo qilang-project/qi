@@ -2110,9 +2110,11 @@ StringLiteral: AstNode = {
 };
 
 // Format string literal: f"text {expression} more text"
-// The regex matches f"..." with escape sequences and interpolation expressions
+// The regex matches f"..." with escape sequences and interpolation expressions.
+// 洞里可以有字符串 / 反引号串 / 字符字面量，其中的 `}` 和 `"` 不结束洞也不结束串：
+// f"{取(表, "}")}"、f"{比(`{"a":1}`)}" 都是一个 token（洞里的串原样交给 ExprParser）。
 FormatStringLiteral: AstNode = {
-    <sp_l:@L> <s:r#"f"([^"\\]|\\.|\{[^}]*\})*""#> <sp_r:@R> => {
+    <sp_l:@L> <s:r#"f"([^"\\]|\\.|\{([^}"`'\\]|\\.|"([^"\\]|\\.)*"|`[^`]*`|'([^'\\]|\\.)')*\})*""#> <sp_r:@R> => {
         let mut node = parse_format_string(&s[2..s.len()-1]);
         if let AstNode::格式字符串表达式(ref mut f) = node {
             f.span = Span::new(sp_l, sp_r);

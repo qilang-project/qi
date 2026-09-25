@@ -1014,25 +1014,32 @@ pub fn parse_format_string(content: &str) -> AstNode {
 
             // Find matching closing brace
             let start = i + 1;
-            let mut brace_depth = 1;
-            i += 1;
-            while i < chars.len() && brace_depth > 0 {
-                if chars[i] == '"' {
-                    // 洞内字符串字面量：整串跳过，其中的 {}/｛｝ 不参与平衡
-                    i += 1;
-                    while i < chars.len() && chars[i] != '"' {
-                        if chars[i] == '\\' {
+            if chars[i] == '{' {
+                // 半角洞：共用扫描器找配对的 }。洞里的字符串 / 反引号串 / 字符字面量
+                // 整段跳过，其中的 {、}、" 都不算数 —— f"{取(表, "}")}" 是一个洞
+                i = crate::parser::interpolation_hole_close(&chars, start).unwrap_or(chars.len());
+            } else {
+                // 全角洞 ｛…｝：老扫描法原样保留（全角括号共用扫描器不认）
+                let mut brace_depth = 1;
+                i += 1;
+                while i < chars.len() && brace_depth > 0 {
+                    if chars[i] == '"' {
+                        // 洞内字符串字面量：整串跳过，其中的 {}/｛｝ 不参与平衡
+                        i += 1;
+                        while i < chars.len() && chars[i] != '"' {
+                            if chars[i] == '\\' {
+                                i += 1;
+                            }
                             i += 1;
                         }
+                    } else if chars[i] == '{' || chars[i] == '｛' {
+                        brace_depth += 1;
+                    } else if chars[i] == '}' || chars[i] == '｝' {
+                        brace_depth -= 1;
+                    }
+                    if brace_depth > 0 {
                         i += 1;
                     }
-                } else if chars[i] == '{' || chars[i] == '｛' {
-                    brace_depth += 1;
-                } else if chars[i] == '}' || chars[i] == '｝' {
-                    brace_depth -= 1;
-                }
-                if brace_depth > 0 {
-                    i += 1;
                 }
             }
 
@@ -1040,12 +1047,19 @@ pub fn parse_format_string(content: &str) -> AstNode {
                 let expr_str: String = chars[start..i].iter().collect();
                 let expr_str = expr_str.trim();
 
-                // Parse the expression using a simple identifier for now
-                // In a full implementation, we would recursively parse the expression
-                let expr = AstNode::标识符表达式(IdentifierExpression {
-                    name: expr_str.to_string(),
-                    span: Default::default(),
-                });
+                // 洞在这里就解析成真表达式。以前只造一个「名字是洞原文」的裸标识符，
+                // 让 codegen / 类型检查各自再解析一遍 —— 没再解析的地方就看不见洞里
+                // 的东西：闭包捕获分析碰到 "${号 * 10}" 只看到一个叫「号 * 10」的
+                // 名字，号 于是漏捕，报「未声明的变量」。
+                // 解析失败就退回老的裸标识符：codegen 那边照旧报「不是合法表达式」，
+                // 报错位置和措辞都不变。
+                let expr = match crate::parser::ExprParser::new().parse(expr_str) {
+                    Ok(node) => node,
+                    Err(_) => AstNode::标识符表达式(IdentifierExpression {
+                        name: expr_str.to_string(),
+                        span: Default::default(),
+                    }),
+                };
 
                 parts.push(FormatStringPart::表达式 {
                     expr: Box::new(expr),
