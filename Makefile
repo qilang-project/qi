@@ -43,6 +43,11 @@ TARGET_DIR := $(shell cargo metadata --no-deps --format-version 1 2>/dev/null \
 QI := $(TARGET_DIR)/release/qi
 PREFIX ?= /usr/local
 
+# 构建缓存（src/build_cache.rs）默认写 ~/Library/Caches/qi / ~/.cache/qi。
+# 测试套件一跑就编上千个一次性程序，别塞进用户自己的缓存（跑一遍 ci 能攒到
+# 上限 2GB）—— 放到 target 里，cargo clean 一并清掉。显式设了就听外面的。
+export QI_CACHE_DIR ?= $(TARGET_DIR)/qi-build-cache
+
 # ── LLVM 版本：必须是 21 ────────────────────────────────────────
 #
 # llvm-sys 的 crate 名（llvm-sys 211）钉的是 LLVM 21.1。装了别的大版本时
