@@ -3668,6 +3668,14 @@ impl ModuleRegistry {
             vec!["整数".to_string(), "字符串".to_string()], // 对象句柄, 键
             "整数",                                         // 返回1或0
         ));
+        // 语义相等：对象不看键序，数字按值比（1 与 1.0 相等）。直接比 转字符串
+        // 的结果是错的 —— 运行时开了 preserve_order，同一个对象字段顺序不同就是两个串。
+        json_module.add_function(ModuleFunction::new(
+            "相等",
+            "qi_json_equal",
+            vec!["整数".to_string(), "整数".to_string()], // 句柄甲, 句柄乙
+            "整数",                                       // 返回1或0
+        ));
 
         json_module.add_function(ModuleFunction::new(
             "转字符串",
@@ -6432,6 +6440,7 @@ mod tests {
         assert!(registry.has_function("JSON", "转字符串"));
         assert!(registry.has_function("JSON", "格式化"));
         assert!(registry.has_function("JSON", "是否包含键"));
+        assert!(registry.has_function("JSON", "相等"));
         assert!(registry.has_function("JSON", "删除"));
 
         // Test function details
