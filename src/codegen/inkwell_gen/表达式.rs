@@ -2785,7 +2785,7 @@ impl<'ctx> 后端<'ctx> {
                 FormatStringPart::文本(t) => 询_str(t),
                 FormatStringPart::表达式 { expr, .. } => match &**expr {
                     AstNode::标识符表达式(id) if 需真解析(&id.name) => {
-                        crate::parser::ExprParser::new()
+                        crate::parser::cached_expr_parser()
                             .parse(&id.name)
                             .map_err(|e| {
                                 format!("格式字符串插值 `{{{}}}` 不是合法表达式: {:?}", id.name, e)

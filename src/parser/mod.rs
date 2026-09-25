@@ -26,6 +26,21 @@ pub use ast::{
 };
 pub use error::ParseError;
 
+// LALRPOP 生成的 `XxxParser::new()` 每次都要现编一遍词法用的正则集（语法里
+// 几百条 token 正则）。原先每解析一个文件 new 一个 ProgramParser、每个插值洞
+// `${…}` 再 new 一个 ExprParser —— 家庭待办（带 qi-web + qi-harness）一次编译
+// 要编上千遍同一组正则。解析器本身无状态（parse 取 &self），进程级单例即可。
+fn cached_program_parser() -> &'static ProgramParser {
+    static PARSER: std::sync::OnceLock<ProgramParser> = std::sync::OnceLock::new();
+    PARSER.get_or_init(ProgramParser::new)
+}
+
+/// 插值洞解析用的 ExprParser 单例（见上）。
+pub(crate) fn cached_expr_parser() -> &'static ExprParser {
+    static PARSER: std::sync::OnceLock<ExprParser> = std::sync::OnceLock::new();
+    PARSER.get_or_init(ExprParser::new)
+}
+
 /// Translate LALRPOP's `ParseError` into a rustc-style multi-line message with
 /// a line/column header, a source snippet, a caret pointing at the offending
 /// span, and a list of expected tokens (cleaned up — LALRPOP regex strings
@@ -949,8 +964,7 @@ impl Parser {
         let cleaned = normalize_string_interpolation(&cleaned).map_err(ParseError::General)?;
 
         // Use LALRPOP-generated parser with cleaned string input
-        use crate::parser::__parse__Program::ProgramParser;
-        let mut program = ProgramParser::new()
+        let mut program = cached_program_parser()
             .parse(&cleaned)
             .map_err(|e| ParseError::General(format_lalrpop_error(&cleaned, &e)))?;
         if has_html {

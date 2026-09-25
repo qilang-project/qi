@@ -144,7 +144,7 @@ impl 单元检查器 {
             if let FormatStringPart::表达式 { expr, .. } = part {
                 match expr.as_ref() {
                     AstNode::标识符表达式(id) => {
-                        if let Ok(节) = crate::parser::ExprParser::new().parse(&id.name) {
+                        if let Ok(节) = crate::parser::cached_expr_parser().parse(&id.name) {
                             self.推断表达式(&节);
                         }
                     }

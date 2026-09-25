@@ -1053,7 +1053,7 @@ pub fn parse_format_string(content: &str) -> AstNode {
                 // 名字，号 于是漏捕，报「未声明的变量」。
                 // 解析失败就退回老的裸标识符：codegen 那边照旧报「不是合法表达式」，
                 // 报错位置和措辞都不变。
-                let expr = match crate::parser::ExprParser::new().parse(expr_str) {
+                let expr = match crate::parser::cached_expr_parser().parse(expr_str) {
                     Ok(node) => node,
                     Err(_) => AstNode::标识符表达式(IdentifierExpression {
                         name: expr_str.to_string(),

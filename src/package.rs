@@ -922,10 +922,20 @@ fn collect_lock_package(
     })
 }
 
+/// 正则编一次、进程内复用。normalize_manifest_text 每解析一个导入都要跑
+/// （往上找 qi.toml / 工作区文件），原先每次现编 4 条正则 —— 一次导入解析
+/// 半毫秒，家庭待办编译时这一项累计六十多毫秒。
+macro_rules! cached_regex {
+    ($pattern:expr) => {{
+        static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        RE.get_or_init(|| Regex::new($pattern).unwrap())
+    }};
+}
+
 pub(crate) fn normalize_manifest_text(raw: &str) -> String {
     // 数组表头 `[[包]]` 要先处理：下面那条单表头正则的 `\]\s*$` 匹配不到它，
     // 漏掉的话中文数组表头会以裸键形式留在文本里，TOML 1.0 直接判非法。
-    let array_table_regex = Regex::new(r#"(?m)^\s*\[\[([^\]\n]+)\]\]\s*$"#).unwrap();
+    let array_table_regex = cached_regex!(r#"(?m)^\s*\[\[([^\]\n]+)\]\]\s*$"#);
     let normalized_array_tables = array_table_regex.replace_all(raw, |caps: &regex::Captures| {
         let key = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if needs_quoted_manifest_key(key) {
@@ -935,7 +945,7 @@ pub(crate) fn normalize_manifest_text(raw: &str) -> String {
         }
     });
 
-    let table_regex = Regex::new(r#"(?m)^\s*\[([^\]\n]+)\]\s*$"#).unwrap();
+    let table_regex = cached_regex!(r#"(?m)^\s*\[([^\]\n]+)\]\s*$"#);
     let normalized_tables =
         table_regex.replace_all(&normalized_array_tables, |caps: &regex::Captures| {
             let key = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
@@ -946,7 +956,7 @@ pub(crate) fn normalize_manifest_text(raw: &str) -> String {
             }
         });
 
-    let top_level_key_regex = Regex::new(r#"(?m)^(\s*)([^"\s=\[\]#][^=]*?)(\s*=)"#).unwrap();
+    let top_level_key_regex = cached_regex!(r#"(?m)^(\s*)([^"\s=\[\]#][^=]*?)(\s*=)"#);
     let normalized_keys =
         top_level_key_regex.replace_all(&normalized_tables, |caps: &regex::Captures| {
             let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
@@ -959,7 +969,7 @@ pub(crate) fn normalize_manifest_text(raw: &str) -> String {
             }
         });
 
-    let inline_key_regex = Regex::new(r#"([\{,]\s*)([^"\s=\{\},][^=]*?)(\s*=)"#).unwrap();
+    let inline_key_regex = cached_regex!(r#"([\{,]\s*)([^"\s=\{\},][^=]*?)(\s*=)"#);
     inline_key_regex
         .replace_all(&normalized_keys, |caps: &regex::Captures| {
             let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or_default();

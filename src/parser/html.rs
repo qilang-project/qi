@@ -26,6 +26,20 @@ pub fn rewrite_html_templates(source: &str) -> Result<(String, bool), String> {
     let mut i = 0usize;
     let mut found = false;
     while i < source.len() {
+        // 快进：下面每个分支都只可能从 `H`（HTML{）、`_`（__qi_html 保留名）、
+        // 引号或 `/`（注释）开头，其余字符一律原样照抄。原先是逐字符把 10 个
+        // 保留名挨个 starts_with 一遍，1.5MB 源码光这一步就要几十毫秒。
+        // 这几个都是 ASCII 字节，UTF-8 里不会出现在多字节字符中间，切片安全。
+        let rest = &source.as_bytes()[i..];
+        let skip = rest
+            .iter()
+            .position(|b| matches!(b, b'H' | b'_' | b'"' | b'\'' | b'`' | b'/'))
+            .unwrap_or(rest.len());
+        if skip > 0 {
+            out.push_str(&source[i..i + skip]);
+            i += skip;
+            continue;
+        }
         if let Some(name) = reserved_html_identifier_at(source, i) {
             if !is_html_runtime_source(source) || !is_reserved_html_declaration(source, i) {
                 return Err(format_html_error(
