@@ -23,6 +23,7 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
+mod format_string;
 #[path = "全局.rs"]
 mod 全局;
 #[path = "剖析.rs"]
@@ -428,6 +429,12 @@ impl<'ctx> 后端<'ctx> {
         let 拼接 = ptrt.fn_type(&[ptrt.into(), ptrt.into()], false);
         self.module
             .add_function("qi_runtime_string_concat", 拼接, None);
+        // 字符串插值：段数组（[N x {kind, value}]）+ 段数 → 一次分配拼完（format_string.rs）
+        self.module.add_function(
+            "qi_string_format_parts",
+            ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            None,
+        );
         // 字符串比较（== / != / </ > 等；返回 <0/0/>0）
         let 比较 = i32t.fn_type(&[ptrt.into(), ptrt.into()], false);
         self.module

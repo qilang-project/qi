@@ -459,7 +459,7 @@ impl<'ctx> 后端<'ctx> {
             // 匹配（match）：语句语义的 if-else 链降级（见 匹配.rs），不产生值
             AstNode::匹配表达式(m) => self.生成匹配(m),
 
-            AstNode::格式字符串表达式(fs) => self.生成格式字符串(fs).map(Some),
+            AstNode::格式字符串表达式(fs) => self.gen_format_string(fs).map(Some),
 
             _ => Ok(None),
         }
@@ -1048,7 +1048,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 旧路径的错误分支（结构体/函数值/数组/未来/空 → 报错），供 生成拼接操作数 复用。
-    fn 生成为字符串_旧(
+    pub(super) fn 生成为字符串_旧(
         &mut self,
         _node: &AstNode,
         v: BasicValueEnum<'ctx>,
@@ -2689,7 +2689,6 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         call: &crate::parser::ast::FunctionCallExpression,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        use crate::parser::ast::BinaryExpression;
         let 模板 = match &call.arguments[0] {
             AstNode::字面量表达式(l) => match &l.value {
                 LiteralValue::字符串(s) => s.clone(),
@@ -2739,81 +2738,15 @@ impl<'ctx> 后端<'ctx> {
             ));
         }
 
-        // 脱糖：段0 + 实参1 + 段1 + 实参2 + … + 段n 的左结合加链
-        let mut 表达式 = 询_str(&段[0]);
-        for (i, a) in call.arguments[1..].iter().enumerate() {
-            表达式 = AstNode::二元操作表达式(BinaryExpression {
-                left: Box::new(表达式),
-                operator: BinaryOperator::加,
-                right: Box::new(a.clone()),
-                span: Default::default(),
-            });
-            表达式 = AstNode::二元操作表达式(BinaryExpression {
-                left: Box::new(表达式),
-                operator: BinaryOperator::加,
-                right: Box::new(询_str(&段[i + 1])),
-                span: Default::default(),
-            });
+        // 段0 实参1 段1 实参2 … 段n —— 与格式字符串同一条路：一次 qi_string_format_parts
+        let mut pieces: Vec<super::format_string::InterpPart> = Vec::with_capacity(段.len() * 2);
+        for (i, t) in 段.iter().enumerate() {
+            pieces.push(super::format_string::InterpPart::Text(t));
+            if let Some(a) = call.arguments.get(i + 1) {
+                pieces.push(super::format_string::InterpPart::Expr(a.clone()));
+            }
         }
-        self.生成表达式(&表达式)?
-            .ok_or_else(|| "填充模板：拼接无值".to_string())
-    }
-
-    /// `f"文本{表达式}更多{另一个}"` 格式字符串 —— 脱糖成类型感知的字符串拼接。
-    ///
-    /// 与 `生成填充模板` 同款范式：字面段 → 字符串字面量节点，插值段 → 原表达式，
-    /// 合成左结合 `+` 加链后喂给现成 codegen。`生成拼接操作数` 已按类型自动转字符串
-    /// （整数/布尔 → int_to_string，浮点数 → float_to_string，字符串直用），
-    /// 临时串的释放由 `拼接字符串带释放` 兜底，不泄漏。
-    ///
-    /// 链首保证是字符串字面量：`f"{甲}{乙}"`（甲乙均为整数）若直接拼成 `甲 + 乙`
-    /// 会退化成整数加法，故插值开头时垫一个空串。
-    pub(super) fn 生成格式字符串(
-        &mut self,
-        fs: &crate::parser::ast::FormatStringExpression,
-    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        use crate::parser::ast::{BinaryExpression, FormatStringPart};
-
-        // 各段 → AST 节点（字面段包字符串字面量，插值段用原表达式）。
-        // parse_format_string 对洞只造「裸标识符」节点（洞原文整串当名字）——
-        // 简单变量够用，但 {加一(n)}、{a*2+1} 会变成怪名字。这里补真解析：
-        // 名字含非标识符字符（调用/运算/索引…）时用 LALRPOP 的 pub Expr 入口重解析。
-        let 需真解析 = |名: &str| 名.chars().any(|c| !c.is_alphanumeric() && c != '_');
-        let mut 段: Vec<AstNode> = Vec::with_capacity(fs.parts.len());
-        for p in fs.parts.iter() {
-            let 节 = match p {
-                FormatStringPart::文本(t) => 询_str(t),
-                FormatStringPart::表达式 { expr, .. } => match &**expr {
-                    AstNode::标识符表达式(id) if 需真解析(&id.name) => {
-                        crate::parser::ExprParser::new()
-                            .parse(&id.name)
-                            .map_err(|e| {
-                                format!("格式字符串插值 `{{{}}}` 不是合法表达式: {:?}", id.name, e)
-                            })?
-                    }
-                    other => other.clone(),
-                },
-            };
-            段.push(节);
-        }
-
-        // 链首必须是字符串：首段为字面段则直接用它起链，否则垫空串
-        let 首是文本 = matches!(fs.parts.first(), None | Some(FormatStringPart::文本(_)));
-        let mut 表达式 = if 首是文本 && !段.is_empty() {
-            段.remove(0)
-        } else {
-            询_str("")
-        };
-        for 节 in 段 {
-            表达式 = AstNode::二元操作表达式(BinaryExpression {
-                left: Box::new(表达式),
-                operator: BinaryOperator::加,
-                right: Box::new(节),
-                span: Default::default(),
-            });
-        }
-        self.生成表达式(&表达式)?
-            .ok_or_else(|| "格式字符串：拼接无值".to_string())
+        self.gen_interpolation(&pieces)
     }
 
     /// 生成所有待合成 `尝试询问` 包装函数的函数体（循环到清空；体内的结构体字面量
@@ -3068,7 +3001,7 @@ impl<'ctx> 后端<'ctx> {
         }
 
         // 编译期模板：`填充模板("查{城市}天气", 城市值, ...)` —— 模板须为字符串字面量，
-        // 编译期拆 {洞}，**洞数与实参数不符直接编译错误**（编译期查洞），脱糖成拼接。
+        // 编译期拆 {洞}，**洞数与实参数不符直接编译错误**（编译期查洞），与格式字符串同走 qi_string_format_parts。
         if call.callee == "填充模板" && !call.arguments.is_empty() {
             return self.生成填充模板(call).map(Some);
         }
@@ -3750,11 +3683,11 @@ impl<'ctx> 后端<'ctx> {
 ///
 /// 数值 → int/float_to_string 的新建性不在这里判（在 生成拼接操作数 里直接标 true，
 /// 因为那两个函数的产物一定是新建临时）。
-fn 是新建字符串表达式(node: &AstNode) -> bool {
+pub(super) fn 是新建字符串表达式(node: &AstNode) -> bool {
     match node {
         AstNode::字符串连接表达式(_) => true,
         AstNode::二元操作表达式(b) => b.operator == crate::parser::ast::BinaryOperator::加,
-        // 格式字符串：含插值 → 脱糖后必是拼接产物（新建堆串）；纯文本 → 字面量（immortal）
+        // 格式字符串：含插值 → qi_string_format_parts 的新串；纯文本 → 字面量（immortal）
         AstNode::格式字符串表达式(fs) => fs
             .parts
             .iter()

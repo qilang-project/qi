@@ -37,6 +37,9 @@
 #   ⑯ 插值洞里能直接写字符串字面量（38）：预处理链每个 pass 原来都「碰到 " 就读到
 #     下一个 "」，洞里的 "1" 把外层串截断，报「插值未闭合」。还要保证洞里字面量的
 #     全角冒号不被全角冒号那一 pass 改掉。洞里写 \" 以前静默输出空串，改为报错（39）
+#   ⑰ 字符串插值降成一次 qi_string_format_parts（41）：数值洞直接格式化进结果、
+#     N 段一次分配；输出与老 `+` 链逐字节一致，洞里新建的临时串要释放、变量不许
+#     释放 —— 跑 QI_RC_REPORT=1 查零泄漏（顺带抓到 填充模板 结果每次漏一条串）
 #   ⑨ 无限定内置原语给用户同名函数让路（28）：`完成` / `加锁` / `获取时间` /
 #     `取消协程` 这些短裸名以前排在用户函数**之前**解析，用户定义了同名函数就
 #     静默绑到运行时 FFI 上 —— 有类型标注报「聚合类型 vs 标量」（指错方向），
@@ -71,7 +74,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -95,8 +98,9 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
         failed=$((failed+1))
         continue
     fi
-    # 02：ARC 遮蔽变体 —— QI_RC_REPORT=1 下活跃对象/字符串/闭包必须全 0
-    if [ "$name" = "02_遮蔽_字符串ARC.qi" ]; then
+    # 02：ARC 遮蔽变体 / 41：插值一次分配（洞里临时串的释放）——
+    # QI_RC_REPORT=1 下活跃对象/字符串/闭包必须全 0
+    if [ "$name" = "02_遮蔽_字符串ARC.qi" ] || [ "$name" = "41_插值一次分配.qi" ]; then
         rc_line=$(QI_RC_REPORT=1 run_limited "$QI" run "$f" 2>&1 | grep '\[qi-rc\]')
         if ! echo "$rc_line" | grep -q '活跃对象=0 活跃字符串=0 活跃闭包=0'; then
             echo "FAIL $name (RC 泄漏: $rc_line)"

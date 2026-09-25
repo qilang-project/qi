@@ -349,13 +349,21 @@ impl<'ctx> 后端<'ctx> {
                         || 推断表达式类型(&b.right, &self.符号) == Qi类型::字符串)
             }
 
-            // 格式字符串：含插值 → 脱糖后必是拼接产物（新建堆串 OWNED）；
+            // 格式字符串：含插值 → qi_string_format_parts 的新串（OWNED，见 format_string.rs）；
             // 纯文本 → 字面量（immortal，BORROWED）
             AstNode::格式字符串表达式(fs) => fs
                 .parts
                 .iter()
                 .any(|p| matches!(p, crate::parser::ast::FormatStringPart::表达式 { .. })),
 
+            // 填充模板：内建分发排在用户函数之前（见 生成函数调用），有洞 → 与格式字符串
+            // 同走 qi_string_format_parts，结果是新串（OWNED）；无洞 → 字面量（BORROWED）。
+            // 以前落到 调用拥有字符串 → false，`打印行(填充模板(…))` 每次漏一条串。
+            AstNode::函数调用表达式(call)
+                if call.callee == "填充模板" && call.arguments.len() > 1 =>
+            {
+                true
+            }
             AstNode::函数调用表达式(call) => self.调用拥有字符串(&call.callee),
 
             AstNode::方法调用表达式(mc) => {
