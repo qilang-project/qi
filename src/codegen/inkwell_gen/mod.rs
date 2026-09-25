@@ -23,6 +23,7 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
+mod emit;
 #[path = "全局.rs"]
 mod 全局;
 #[path = "剖析.rs"]
@@ -834,6 +835,7 @@ pub fn compile_to_object_multi(
     if programs.is_empty() {
         return Err("没有可编译的模块".to_string());
     }
+    let t = std::time::Instant::now();
     let ctx = Context::create();
     let mut 后端值 = 后端::new(&ctx, 带调试);
 
@@ -1051,10 +1053,19 @@ pub fn compile_to_object_multi(
         let _ = 后端值.module.print_to_file(Path::new(&p));
     }
 
+    let t = crate::phase_timer::mark("生成IR", t);
     后端值
         .module
         .verify()
         .map_err(|e| format!("LLVM 模块校验失败: {}", e.to_string()))?;
+    let t = crate::phase_timer::mark("校验IR", t);
+
+    // 可执行模式：只留从 main 可达的函数（见 emit.rs 模块文档）。
+    // 放在优化管线**之前** —— 死函数不必先被优化一遍再删。
+    if !库模式 {
+        emit::prune_unreachable(&后端值.module, &tm)?;
+    }
+    let t = crate::phase_timer::mark("裁剪死代码", t);
 
     // 优化管线串（目标机档位已在建目标机时定好）。
     let pass_pipeline: Option<String> = match opt {
@@ -1080,11 +1091,13 @@ pub fn compile_to_object_multi(
             .run_passes(pipeline, &tm, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| format!("优化管线失败({}): {}", pipeline, e))?;
     }
+    let t = crate::phase_timer::mark("优化", t);
     if let Ok(p) = std::env::var("QI_EMIT_LL_POST") {
         let _ = 后端值.module.print_to_file(Path::new(&p));
     }
     tm.write_to_file(&后端值.module, FileType::Object, out)
         .map_err(|e| e.to_string())?;
+    crate::phase_timer::mark("机器码", t);
 
     // 导出头文件信息（供 lib.rs 生成 .h）。
     let exports: Vec<CExportInfo> = 后端值

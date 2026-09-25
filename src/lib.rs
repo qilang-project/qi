@@ -14,6 +14,7 @@ pub mod error;
 pub mod lexer;
 pub mod package;
 pub mod parser;
+pub mod phase_timer;
 pub mod semantic;
 pub mod targets;
 pub mod utils;
@@ -61,6 +62,17 @@ fn resolve_trace() -> bool {
         std::env::var("QI_RESOLVE_TRACE").as_deref(),
         Ok("1") | Ok("true") | Ok("on")
     )
+}
+
+/// 解析收集一次编译单元时的遍历状态（每次 collect 新建，不跨编译复用）。
+#[derive(Default)]
+struct CollectState {
+    /// 已进入过的模块（防循环导入）
+    visited: std::collections::HashSet<PathBuf>,
+    /// 已做过同包自动发现的 (目录, 包名)
+    scanned_package_dirs: std::collections::HashSet<(PathBuf, String)>,
+    /// 导入解析结果：(导入方所在目录, 模块路径) → 解析到的文件（None = 解析失败）
+    resolved_imports: std::collections::HashMap<(PathBuf, Vec<String>), Option<PathBuf>>,
 }
 
 impl QiCompiler {
@@ -119,14 +131,16 @@ impl QiCompiler {
         let mut module_registry = crate::semantic::module::ModuleRegistry::new();
         let mut compiled_modules: std::collections::HashMap<PathBuf, crate::parser::ast::AstNode> =
             std::collections::HashMap::new();
+        let t = std::time::Instant::now();
         self.parse_and_collect_modules(source_file, &mut module_registry, &mut compiled_modules)?;
+        let t = crate::phase_timer::mark("解析", t);
 
         let entry_key = source_file
             .canonicalize()
             .unwrap_or_else(|_| source_file.clone());
         let mut programs: Vec<crate::parser::ast::Program> = Vec::new();
-        if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(&entry_key) {
-            programs.push(p.clone());
+        if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.remove(&entry_key) {
+            programs.push(p);
         } else {
             let content = std::fs::read_to_string(source_file).map_err(CompilerError::Io)?;
             let mut p = crate::parser::Parser::new()
@@ -135,14 +149,16 @@ impl QiCompiler {
             p.source_path = Some(source_file.display().to_string());
             programs.push(p);
         }
-        let mut 其余: Vec<&PathBuf> = compiled_modules
-            .keys()
-            .filter(|path| **path != entry_key)
-            .collect();
-        其余.sort();
-        for path in 其余 {
-            if let Some(crate::parser::ast::AstNode::程序(p)) = compiled_modules.get(path) {
-                programs.push(p.clone());
+        // 按路径排序保证确定性；entry 已在上面 remove 掉。所有权直接移出，不克隆。
+        let mut 其余: Vec<(PathBuf, crate::parser::ast::AstNode)> =
+            compiled_modules.into_iter().collect();
+        其余.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, node) in 其余 {
+            if path == entry_key {
+                continue;
+            }
+            if let crate::parser::ast::AstNode::程序(p) = node {
+                programs.push(p);
             }
         }
 
@@ -173,6 +189,7 @@ impl QiCompiler {
         // 它零误报（只认本单元声明过的结构体名），而放过去的代价是编译通过、
         // 运行时静默返回空值：真事是「保存后『已保存』永远不出现，cookie 却存对了」，
         // 没有任何报错，查了很久。off 档也拦它。
+        let t = crate::phase_timer::mark("整理模块", t);
         if 跑类型检查 && std::env::var("QI_TYPECHECK").as_deref() != Ok("off") {
             let 硬 = crate::semantic::单元检查::硬错检查(&programs);
             if !硬.is_empty() {
@@ -256,6 +273,7 @@ impl QiCompiler {
             }
         }
 
+        crate::phase_timer::mark("类型检查", t);
         Ok(programs)
     }
 
@@ -535,7 +553,9 @@ impl QiCompiler {
         // 多文件：收集 entry + 所有被导入的**用户模块**（标准库导入不解析文件）。
         // 全部合并进同一次 inkwell 编译 → 单个 .o，跨模块函数/结构体/方法用统一 mangle
         // 天然可见、无需跨对象 extern 声明。
+        let t = std::time::Instant::now();
         let programs = self.collect_programs(&source_file)?;
+        let t = crate::phase_timer::mark("解析+检查", t);
 
         let obj = source_file.with_extension("o");
         crate::codegen::inkwell_gen::compile_to_object_multi(
@@ -570,7 +590,9 @@ impl QiCompiler {
         let 兜底目录 = source_file.parent().unwrap_or(std::path::Path::new("."));
         let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
+        let t = std::time::Instant::now();
         self.link_objects(&[obj.clone()], &exe, &extern_libs)?;
+        crate::phase_timer::mark("链接", t);
         Ok(CompilationResult {
             executable_path: exe,
             ir_paths: Vec::new(),
@@ -1004,12 +1026,12 @@ impl QiCompiler {
         file_path: &PathBuf,
         module_registry: &mut crate::semantic::module::ModuleRegistry,
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-    ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+    ) -> Result<(), CompilerError> {
         self.parse_and_collect_modules_internal(
             file_path,
             module_registry,
             compiled_modules,
-            &mut std::collections::HashSet::new(),
+            &mut CollectState::default(),
         )
     }
 
@@ -1019,8 +1041,10 @@ impl QiCompiler {
         file_path: &PathBuf,
         module_registry: &mut crate::semantic::module::ModuleRegistry,
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-        visited: &mut std::collections::HashSet<PathBuf>,
-    ) -> Result<crate::parser::ast::AstNode, CompilerError> {
+        visited: &mut CollectState,
+    ) -> Result<(), CompilerError> {
+        // 结果都进 compiled_modules；不再把整棵 AST 克隆一份返回 —— 原先每次
+        // 碰到已解析过的模块都深拷贝一遍它的 AST 再丢掉，包越大越亏。
         // 规范化路径：同一个文件可能经由符号链接（如 qi_packages/Web -> qi-web）
         // 以两种不同路径被解析到。若按原始路径做 key，会把同一模块编译两次，
         // 链接时报数百个 duplicate symbol。canonicalize 后两条路径塌缩成同一 key。
@@ -1035,25 +1059,17 @@ impl QiCompiler {
         let file_path = &canonical;
 
         // Prevent infinite recursion
-        if visited.contains(file_path) {
-            return Ok(compiled_modules.get(file_path).cloned().unwrap_or_else(|| {
-                crate::parser::ast::AstNode::程序(crate::parser::ast::Program {
-                    package_name: None,
-                    imports: vec![],
-                    statements: vec![],
-                    source_span: Default::default(),
-                    source_path: None,
-                })
-            }));
+        if visited.visited.contains(file_path) {
+            return Ok(());
         }
 
         // Check if already compiled
-        if let Some(ast) = compiled_modules.get(file_path) {
-            return Ok(ast.clone());
+        if compiled_modules.contains_key(file_path) {
+            return Ok(());
         }
 
         // Mark as visited to prevent cycles
-        visited.insert(file_path.clone());
+        visited.visited.insert(file_path.clone());
 
         // Read and parse the file
         // 嵌入式标准库模块没有真实文件，源码从二进制里的内置表取（见 标准库qi.rs）。
@@ -1071,9 +1087,6 @@ impl QiCompiler {
         })?;
         // 解析器只见到字符串，文件名在这儿补 —— 私有函数按文件消歧要用它
         program.source_path = Some(file_path.display().to_string());
-
-        // Convert program to AST node and extract imports
-        let ast = crate::parser::ast::AstNode::程序(program.clone());
 
         // Register current module
         let module_name = file_path
@@ -1130,7 +1143,8 @@ impl QiCompiler {
                 continue;
             }
 
-            let import_path = self.resolve_import_path(file_path, &import_stmt.module_path)?;
+            let import_path =
+                self.resolve_import_path_cached(file_path, &import_stmt.module_path, visited)?;
 
             // Recursively parse imported module
             self.parse_and_collect_modules_internal(
@@ -1150,7 +1164,9 @@ impl QiCompiler {
             let is_relative = matches!(first, Some(".") | Some(".."));
             if !is_relative && import_stmt.module_path.len() >= 2 {
                 if let Some(pkg) = first {
-                    if let Ok(pkg_entry) = self.resolve_import_path(file_path, &[pkg.to_string()]) {
+                    if let Ok(pkg_entry) =
+                        self.resolve_import_path_cached(file_path, &[pkg.to_string()], visited)
+                    {
                         if pkg_entry != import_path {
                             self.parse_and_collect_modules_internal(
                                 &pkg_entry,
@@ -1165,9 +1181,40 @@ impl QiCompiler {
         }
 
         // Store the compiled AST
-        compiled_modules.insert(file_path.clone(), ast.clone());
+        compiled_modules.insert(
+            file_path.clone(),
+            crate::parser::ast::AstNode::程序(program),
+        );
 
-        Ok(ast)
+        Ok(())
+    }
+
+    /// resolve_import_path 的单次编译内缓存。
+    ///
+    /// 解析结果只取决于导入方**所在目录**（往上找 qi.toml / 工作区文件 / qi_packages）
+    /// 和模块路径，编译期间文件系统不变。原先每条导入语句都重新往上走一遍目录、
+    /// 重读重解析 qi.toml 和工作区 toml —— 包里几十个文件各自 `导入 Web.xxx`，
+    /// 家庭待办一次编译光这一项就一百多毫秒，比解析全部源码还慢。
+    fn resolve_import_path_cached(
+        &self,
+        current_file: &PathBuf,
+        module_path: &[String],
+        state: &mut CollectState,
+    ) -> Result<PathBuf, CompilerError> {
+        let dir = current_file
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let key = (dir, module_path.to_vec());
+        if let Some(Some(hit)) = state.resolved_imports.get(&key) {
+            return Ok(hit.clone());
+        }
+        // 失败不走缓存：重新解析一遍拿原样的报错（失败本来就要终止编译）
+        let result = self.resolve_import_path(current_file, module_path);
+        state
+            .resolved_imports
+            .insert(key, result.as_ref().ok().cloned());
+        result
     }
 
     /// Resolve import path with support for third-party packages
@@ -1677,7 +1724,7 @@ impl QiCompiler {
         package_name: &str,
         module_registry: &mut crate::semantic::module::ModuleRegistry,
         compiled_modules: &mut std::collections::HashMap<PathBuf, crate::parser::ast::AstNode>,
-        visited: &mut std::collections::HashSet<PathBuf>,
+        visited: &mut CollectState,
     ) -> Result<(), CompilerError> {
         // 嵌入式标准库模块没有真实目录，同包自动发现无从谈起（也不需要 ——
         // 一个标准库模块就是一个文件）。不早退的话这里会去 read_dir 一个
@@ -1691,6 +1738,17 @@ impl QiCompiler {
         let dir = entry_file
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
+
+        // 同一目录、同一包名只扫一遍。原先包里**每个**带包声明的文件都把整个
+        // 目录的 .qi 读一遍 —— 一个几十个文件的包就是 N² 次读文件（家庭待办
+        // 编译时光这一项就占前端时间的四成）。第二次扫描必然是空操作：第一次
+        // 扫到的合格文件都已进了 visited（出错则整个编译已经失败返回）。
+        if !visited
+            .scanned_package_dirs
+            .insert((dir.to_path_buf(), package_name.to_string()))
+        {
+            return Ok(());
+        }
 
         let entries = std::fs::read_dir(dir).map_err(CompilerError::Io)?;
 
