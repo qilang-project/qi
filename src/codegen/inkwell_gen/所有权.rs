@@ -292,18 +292,7 @@ impl<'ctx> 后端<'ctx> {
         // 弱捕获局部（unowned）不 release —— 填槽/落地时都未 retain。
         // 弧隐藏引用计数槽：内层块遮蔽变量出块后被移出 变量表，但槽仍是 entry 块
         // alloca + null 初始化 —— 出口一并释放（未执行到声明时读 null，安全）。
-        let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = self
-            .变量表
-            .iter()
-            .filter(|(名, (_, t))| 是RC类型(*t) && !self.弱局部.contains(*名))
-            .map(|(_, (p, t))| (*p, *t))
-            .chain(
-                self.弧隐藏引用计数槽
-                    .iter()
-                    .filter(|(名, _, t)| 是RC类型(*t) && !self.弱局部.contains(名))
-                    .map(|(_, p, t)| (*p, *t)),
-            )
-            .collect();
+        let 槽们 = self.RC局部槽();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         for (p, t) in 槽们 {
             let v = self
@@ -313,6 +302,33 @@ impl<'ctx> 后端<'ctx> {
             self.弧release任意(v, t);
         }
         Ok(())
+    }
+
+    /// 当前函数所有要在出口释放的 RC 局部槽：变量表里的 RC 变量（弱捕获除外）
+    /// + 弧隐藏引用计数槽。函数出口（弧释放局部）和协程提前销毁的 cleanup 块
+    /// （协程.rs）都用它 —— 原来两处各抄一份，只修一处就会漂。
+    ///
+    /// **顺序是确定的**：变量表是 HashMap，直接 iter() 的顺序跟着进程的随机哈希
+    /// 种子走，同一个文件连编两次 release 序列就不同，产物不可复现。这里按名字
+    /// 排序；隐藏槽本来就是 Vec，按登记顺序。各槽独立 release，顺序不影响语义。
+    pub(super) fn RC局部槽(&self) -> Vec<(PointerValue<'ctx>, Qi类型)> {
+        let mut 具名: Vec<(&String, PointerValue<'ctx>, Qi类型)> = self
+            .变量表
+            .iter()
+            .filter(|(名, (_, t))| 是RC类型(*t) && !self.弱局部.contains(*名))
+            .map(|(名, (p, t))| (名, *p, *t))
+            .collect();
+        具名.sort_by(|a, b| a.0.cmp(b.0));
+        具名
+            .into_iter()
+            .map(|(_, p, t)| (p, t))
+            .chain(
+                self.弧隐藏引用计数槽
+                    .iter()
+                    .filter(|(名, _, t)| 是RC类型(*t) && !self.弱局部.contains(名))
+                    .map(|(_, p, t)| (*p, *t)),
+            )
+            .collect()
     }
 
     // ───────────────── 所有权判定（纯语法 + 符号表，不产生 IR）─────────────────

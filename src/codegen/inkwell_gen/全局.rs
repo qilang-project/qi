@@ -106,12 +106,17 @@ impl<'ctx> 后端<'ctx> {
         if !self.弧开() {
             return Ok(());
         }
-        let 槽们: Vec<(inkwell::values::PointerValue<'ctx>, Qi类型)> = self
+        // 全局变量表是 HashMap，按名字排序定序 —— 否则 release 序列跟着随机哈希种子走，
+        // 同一个文件连编两次产物不同（同 所有权.rs 弧释放局部）。各槽独立 release，顺序不影响语义。
+        let mut 具名: Vec<(&String, inkwell::values::PointerValue<'ctx>, Qi类型)> = self
             .全局变量表
-            .values()
-            .filter(|(_, t)| 是RC类型(*t))
-            .map(|(g, t)| (g.as_pointer_value(), *t))
+            .iter()
+            .filter(|(_, (_, t))| 是RC类型(*t))
+            .map(|(名, (g, t))| (名, g.as_pointer_value(), *t))
             .collect();
+        具名.sort_by(|a, b| a.0.cmp(b.0));
+        let 槽们: Vec<(inkwell::values::PointerValue<'ctx>, Qi类型)> =
+            具名.into_iter().map(|(_, p, t)| (p, t)).collect();
         let ptrt = self.ctx.ptr_type(inkwell::AddressSpace::default());
         for (p, t) in 槽们 {
             let v = self

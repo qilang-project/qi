@@ -108,48 +108,62 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
     passed=$((passed+1))
 done
 
-# ── 04 附加断言：同一源码编译 5 次，产物 md5 完全一致（分发确定性）──
-total=$((total+1))
-det_src="$HERE/04_模块限定分发确定性.qi"
-det_ok=1
-first_md5=""
-# **每次都编到同一个输出路径**。以前是 det_1..det_5 五个不同文件名 ——
-# 在 Windows 上这本身就会让产物不同：PE 的导出表里存着模块名（= 输出文件名），
-# 名字一换字节就变，跟 codegen 确不确定毫无关系。同名重编照样能测出真问题
-# （5 次编译跨越秒边界，时间戳类的不确定性一样会暴露）。
-out="/tmp/codegen回归_det.bin"
-det_why=""
-det_md5s=""
-for i in 1 2 3 4 5; do
-    det_err=$(run_limited "$QI" compile "$det_src" -o "$out" 2>&1)
-    if [ $? -ne 0 ]; then
-        det_ok=0
-        det_why="第 $i 次编译失败: $(echo "$det_err" | head -3 | tr '\n' ' ')"
-        break
+# ── 编译确定性：同一源码编译 5 次，产物 md5 完全一致 ──
+#   04：模块限定分发（最早的那条）
+#   40：出口释放 RC 局部 / main 出口释放 RC 全局 / 协程 cleanup —— 三处原来都直接
+#       iter() 一张 HashMap，release 顺序跟着随机哈希种子走，全仓 1528 个程序里
+#       385 个连编两次产物不同
+det_check() {
+    total=$((total+1))
+    det_src="$1"
+    det_tag="$2"
+    det_ok=1
+    first_md5=""
+    # **每次都编到同一个输出路径**。以前是 det_1..det_5 五个不同文件名 ——
+    # 在 Windows 上这本身就会让产物不同：PE 的导出表里存着模块名（= 输出文件名），
+    # 名字一换字节就变，跟 codegen 确不确定毫无关系。同名重编照样能测出真问题
+    # （5 次编译跨越秒边界，时间戳类的不确定性一样会暴露）。
+    out="/tmp/codegen回归_det.bin"
+    det_why=""
+    det_md5s=""
+    for i in 1 2 3 4 5; do
+        # 同时比 IR（QI_EMIT_LL）：二进制不同时，IR 能直接指出差在哪个函数。
+        det_err=$(QI_EMIT_LL=/tmp/codegen回归_det.ll run_limited "$QI" compile "$det_src" -o "$out" 2>&1)
+        if [ $? -ne 0 ]; then
+            det_ok=0
+            det_why="第 $i 次编译失败: $(echo "$det_err" | head -3 | tr '\n' ' ')"
+            break
+        fi
+        m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
+        m_ir=$(md5 -q /tmp/codegen回归_det.ll 2>/dev/null || md5sum /tmp/codegen回归_det.ll | cut -d' ' -f1)
+        m="$m/$m_ir"
+        det_md5s="$det_md5s $m"
+        # 留一份副本：不一致时要拿它指出**差在第几个字节**，
+        # 否则只知道「不一致」，得再烧一轮 CI 才知道是时间戳还是别的。
+        cp "$out" "/tmp/codegen回归_det_副本$i.bin" 2>/dev/null
+        if [ -z "$first_md5" ]; then first_md5="$m"
+        # 只记**第一处**不一致：原来没有 break、每次覆盖，永远报「第 5 次」，
+    # 看上去像前四次都一致、只是偶发 —— 实际是每次都不同。
+    elif [ "$m" != "$first_md5" ] && [ $det_ok -eq 1 ]; then det_ok=0; det_why="第 $i 次与第 1 次不同"
+        fi
+    done
+    if [ $det_ok -eq 1 ]; then
+        echo "PASS ${det_tag}(编译5次产物一致)"
+        passed=$((passed+1))
+    else
+        echo "FAIL ${det_tag}(编译5次产物不一致或编译失败: ${det_why})"
+        echo "  各次 md5:${det_md5s}"
+        if [ -f /tmp/codegen回归_det_副本1.bin ] && [ -f /tmp/codegen回归_det_副本2.bin ]; then
+            echo "  头 20 处差异（字节偏移 十进制，1 起）:"
+            cmp -l /tmp/codegen回归_det_副本1.bin /tmp/codegen回归_det_副本2.bin 2>&1 | head -20 | sed 's/^/    /'
+        fi
+        failed=$((failed+1))
     fi
-    m=$(md5 -q "$out" 2>/dev/null || md5sum "$out" | cut -d' ' -f1)
-    det_md5s="$det_md5s $m"
-    # 留一份副本：不一致时要拿它指出**差在第几个字节**，
-    # 否则只知道「不一致」，得再烧一轮 CI 才知道是时间戳还是别的。
-    cp "$out" "/tmp/codegen回归_det_副本$i.bin" 2>/dev/null
-    if [ -z "$first_md5" ]; then first_md5="$m"
-    elif [ "$m" != "$first_md5" ]; then det_ok=0; det_why="第 $i 次与第 1 次不同"
-    fi
-done
-if [ $det_ok -eq 1 ]; then
-    echo "PASS 04(编译5次产物一致)"
-    passed=$((passed+1))
-else
-    echo "FAIL 04(编译5次产物不一致或编译失败: ${det_why})"
-    echo "  各次 md5:${det_md5s}"
-    if [ -f /tmp/codegen回归_det_副本1.bin ] && [ -f /tmp/codegen回归_det_副本2.bin ]; then
-        echo "  头 20 处差异（字节偏移 十进制，1 起）:"
-        cmp -l /tmp/codegen回归_det_副本1.bin /tmp/codegen回归_det_副本2.bin 2>&1 | head -20 | sed 's/^/    /'
-    fi
-    failed=$((failed+1))
-fi
-rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp \
-      /tmp/codegen回归_det_副本*.bin
+    rm -f /tmp/codegen回归_det.bin /tmp/codegen回归_det.ll /tmp/codegen回归_det.lib /tmp/codegen回归_det.exp \
+          /tmp/codegen回归_det_副本*.bin
+}
+det_check "$HERE/04_模块限定分发确定性.qi" "04"
+det_check "$HERE/40_编译确定性_RC局部全局协程.qi" "40"
 
 # ── 红码：必须报错的用例 ──
 #

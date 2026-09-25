@@ -396,19 +396,7 @@ impl<'ctx> 后端<'ctx> {
         // （与普通函数「关 ARC 不释放」一致）。弧隐藏引用计数槽：内层块遮蔽变量
         // 出块后移出 变量表 的槽，cleanup 一并释放（不再「宁泄漏」）。
         let 槽们: Vec<(PointerValue<'ctx>, Qi类型)> = if self.弧开() {
-            self.变量表
-                .iter()
-                .filter(|(名, (_, t))| super::所有权::是RC类型(*t) && !self.弱局部.contains(*名))
-                .map(|(_, (p, t))| (*p, *t))
-                .chain(
-                    self.弧隐藏引用计数槽
-                        .iter()
-                        .filter(|(名, _, t)| {
-                            super::所有权::是RC类型(*t) && !self.弱局部.contains(名)
-                        })
-                        .map(|(_, p, t)| (*p, *t)),
-                )
-                .collect()
+            self.RC局部槽() // 与函数出口共用，顺序确定（见 所有权.rs）
         } else {
             Vec::new()
         };
