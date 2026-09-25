@@ -814,7 +814,12 @@ fn 建目标机(
     Ok((triple, tm))
 }
 
-/// 删掉 `obj` 旁边并行 codegen 留下的分片目标文件（构建缓存还原产物前用）。
+/// 并行 codegen 给 `obj` 放分片目标文件的目录（在源码树外，见 parallel_emit.rs）。
+pub fn part_objects_dir(obj: &Path) -> Option<std::path::PathBuf> {
+    parallel_emit::parts_dir(obj)
+}
+
+/// 删掉并行 codegen 为 `obj` 留下的分片目标文件（构建缓存还原产物前用）。
 pub fn remove_stale_part_objects(obj: &Path) {
     parallel_emit::remove_stale_parts(obj);
 }

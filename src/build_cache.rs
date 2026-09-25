@@ -3,7 +3,8 @@
 //! ## 缓存什么
 //!
 //! 可执行模式（非库模式、非 wasm）的**最终产物**：链接好的可执行文件 + 旁边的
-//! 目标文件（通常一个 `.o`，大模块并行 codegen 时还有几个分片 `.qi-partN.o`；
+//! 目标文件（通常一个 `.o`，大模块并行 codegen 时还有几个放在 `<缓存根>/parts/` 下的
+//! 分片 `.qi-partN.o`；
 //! macOS 的调试信息留在 .o 里，可执行文件只有一张指回它们的 debug map，
 //! 所以都要）+ codegen 期间打到 stderr 的警告（命中时原样重放）。
 //!
@@ -34,7 +35,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 /// 键格式版本：键的组成方式一改就加一，旧条目自然失效。
-const KEY_VERSION: &str = "qi-build-cache v2";
+const KEY_VERSION: &str = "qi-build-cache v3";
 
 /// 这些 `QI_*` 变量不影响产物，不进键（进了只会白白失配）。
 const ENV_NOT_IN_KEY: &[&str] = &[
@@ -242,7 +243,7 @@ pub struct BuildCache {
 const EXE_FILE: &str = "exe";
 /// 目标文件依次存成 obj0、obj1…（并行 codegen 时不止一个）
 const OBJ_PREFIX: &str = "obj";
-/// 目标文件的原文件名，一行一个，顺序同 obj0、obj1…
+/// 目标文件的原绝对路径，一行一个，顺序同 obj0、obj1…
 const OBJECTS_FILE: &str = "objects.txt";
 const WARNINGS_FILE: &str = "warnings.txt";
 const KEY_FILE: &str = "key.txt";
@@ -259,10 +260,7 @@ impl BuildCache {
             trace("QI_EMIT_LL*：要落盘 IR，跳过缓存");
             return None;
         }
-        let root = match std::env::var_os("QI_CACHE_DIR") {
-            Some(d) if !d.is_empty() => PathBuf::from(d),
-            _ => default_cache_root()?,
-        };
+        let root = cache_root()?;
         let max_mb = std::env::var("QI_CACHE_MAX_MB")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
@@ -290,22 +288,32 @@ impl BuildCache {
                 return None;
             }
         };
-        let obj_dir = obj_dst.parent().unwrap_or(Path::new("."));
-        let names: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
-        if names.is_empty() || names.iter().any(|n| n.contains('/') || n.contains('\\')) {
+        // 清单是绝对路径：0 号必须就是这次的 .o（键里有 .o 路径，理应相等），
+        // 其余是分片文件 —— 可执行文件的 debug map 按这些绝对路径找调试信息，
+        // 所以原样还原到原位置。
+        let paths: Vec<PathBuf> = names
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        if paths.first().map(|p| p.as_path()) != Some(obj_dst)
+            || paths.iter().any(|p| !p.is_absolute())
+        {
             trace("条目的目标文件清单不对，当未命中");
             return None;
         }
         // 这次还原的分片数可能比上次编出来的少：旧分片文件先清掉
         crate::codegen::inkwell_gen::remove_stale_part_objects(obj_dst);
         let mut restored = Vec::new();
-        for (i, name) in names.iter().enumerate() {
-            let dst = obj_dir.join(name);
-            if let Err(e) = copy_replace(&dir.join(format!("{}{}", OBJ_PREFIX, i)), &dst) {
+        for (i, dst) in paths.iter().enumerate() {
+            if let Some(parent) = dst.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = copy_replace(&dir.join(format!("{}{}", OBJ_PREFIX, i)), dst) {
                 trace(&format!("命中但复制失败（改为重新编译）: {}", e));
                 return None;
             }
-            restored.push(dst);
+            restored.push(dst.clone());
         }
         if let Err(e) = copy_replace(&exe, exe_dst) {
             trace(&format!("命中但复制失败（改为重新编译）: {}", e));
@@ -351,8 +359,11 @@ impl BuildCache {
         }
         let mut names = String::new();
         for o in objects {
-            let name = o.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名不是 UTF-8")
+            let name = o.to_str().filter(|_| o.is_absolute()).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "目标文件路径不是绝对路径或不是 UTF-8",
+                )
             })?;
             names.push_str(name);
             names.push('\n');
@@ -457,6 +468,15 @@ fn clean_stale_tmp(tmp_root: &Path) {
     }
 }
 
+/// 缓存根目录：`QI_CACHE_DIR`，否则平台缓存目录下的 `qi`。构建缓存条目在
+/// `build/` 下，并行 codegen 的分片目标文件在 `parts/` 下（后者不受 QI_NO_CACHE 影响）。
+pub fn cache_root() -> Option<PathBuf> {
+    match std::env::var_os("QI_CACHE_DIR") {
+        Some(d) if !d.is_empty() => Some(PathBuf::from(d)),
+        _ => default_cache_root(),
+    }
+}
+
 fn default_cache_root() -> Option<PathBuf> {
     // dirs::cache_dir：macOS ~/Library/Caches；Linux $XDG_CACHE_HOME 或 ~/.cache；
     // Windows %LOCALAPPDATA%
@@ -535,6 +555,11 @@ impl crate::QiCompiler {
         k.field("entry", &source_file.display().to_string());
         k.field("obj", &obj.display().to_string());
         k.field("exe", &exe.display().to_string());
+        // 分片目标文件的绝对路径会写进可执行文件的 debug map
+        let parts = crate::codegen::inkwell_gen::part_objects_dir(obj)
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        k.field("parts-dir", &parts);
 
         if programs.len() != digests.len() {
             return Err("源码摘要与模块数对不上".into());

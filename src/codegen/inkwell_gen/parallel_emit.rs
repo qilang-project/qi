@@ -19,12 +19,14 @@
 //! 3. 模块写成 bitcode，每个分片在自己的线程、自己的 Context 里读回来，
 //!    不归自己的函数只留声明（删函数体 + 清元数据），全局变量只有 0 号分片保留定义，
 //!    `llvm.global_ctors` 这类 appending 全局只留在 0 号分片。
-//! 4. 0 号分片写到原来那个 `.o`，其余写成旁边的 `<名>.qi-part<k>.o`，一起交给链接器。
+//! 4. 0 号分片写到原来那个 `.o`，其余写到源码树**之外**的
+//!    `<缓存根>/parts/<.o 绝对路径的摘要>/<名>.qi-part<k>.o`（见 `parts_dir`），一起交给链接器。
 //!
 //! 为什么不 `ld -r` 合成一个：macOS 的 `ld -r` 不合并 DWARF，只在产物里留一张
 //! 指回输入 .o 的 debug map —— 分片文件一删，调试信息就没了（实测）。所以分片
 //! 目标文件跟原来那个 .o 一样留在源文件旁边，可执行文件的 debug map 指向它们，
-//! lldb 照常按源码断点。
+//! lldb 照常按源码断点。分片放在稳定位置（不是临时目录），跨次编译一直在；
+//! 往用户项目目录里放是不行的，那是在别人的源码树里乱丢文件。
 //!
 //! 什么时候不切（直接走原来的串行路径）：模块小（切了反而多花解析 bitcode 的钱）、
 //! 不是宿主原生目标、宿主不是 macOS/Linux、模块里有别名/ifunc/comdat 或
@@ -328,21 +330,74 @@ fn build_partition(
     Ok(obj.as_slice().to_vec())
 }
 
-/// `out` 旁边第 k 个分片的目标文件路径（k ≥ 1；0 号就是 `out` 本身）。
-pub(crate) fn part_object_path(out: &Path, k: usize) -> PathBuf {
+/// 分片目标文件放在源码树之外：`<缓存根>/parts/<out 绝对路径的摘要>/`。
+///
+/// 不能放 `.o` 旁边 —— 那会往用户的项目目录里塞一堆 `.qi-partN.o`。
+/// 也不能放临时目录：macOS 的调试信息留在目标文件里，可执行文件的 debug map
+/// 按**绝对路径**指回它们，删了 lldb 就看不到源码。所以要一个稳定、按输出
+/// 路径区分的位置，跨次编译一直在。拿不到缓存根（没有 HOME 之类）就返回 None，
+/// 调用方退回串行，不切。
+pub(crate) fn parts_dir(out: &Path) -> Option<PathBuf> {
+    use sha2::Digest;
+    let root = crate::build_cache::cache_root()?;
+    let abs = if out.is_absolute() {
+        out.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(out)
+    };
+    let digest = sha2::Sha256::digest(abs.to_string_lossy().as_bytes());
+    let name: String = digest
+        .iter()
+        .take(8)
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    Some(root.join("parts").join(name))
+}
+
+/// 第 k 个分片的目标文件路径（k ≥ 1；0 号就是 `out` 本身）。
+pub(crate) fn part_object_path(out: &Path, k: usize) -> Option<PathBuf> {
     let stem = out
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    out.with_file_name(format!("{}.qi-part{}.o", stem, k))
+    Some(parts_dir(out)?.join(format!("{}.qi-part{}.o", stem, k)))
 }
 
-/// 删掉 `out` 旁边上一次并行编译留下的分片目标文件（这次可能切得更少或不切）。
+/// 删掉上一次并行编译为 `out` 留下的分片目标文件（这次可能切得更少或不切）。
 pub(crate) fn remove_stale_parts(out: &Path) {
+    let Some(dir) = parts_dir(out) else {
+        return;
+    };
+    if !dir.is_dir() {
+        return;
+    }
     for k in 1..=MAX_PARTITIONS {
-        let p = part_object_path(out, k);
-        if p.exists() {
-            let _ = std::fs::remove_file(p);
+        if let Some(p) = part_object_path(out, k) {
+            if p.exists() {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+}
+
+/// 分片目录里记一笔「这是给哪个 .o 的」，人翻缓存目录时看得懂。
+const OWNER_NOTE: &str = "for.txt";
+
+/// 一个月没动过的分片目录（对应的项目多半已删或挪走）顺手清掉，免得无限累积。
+fn sweep_old_parts_dirs(parts_root: &Path) {
+    let Ok(items) = std::fs::read_dir(parts_root) else {
+        return;
+    };
+    let month = std::time::Duration::from_secs(30 * 24 * 3600);
+    for item in items.flatten() {
+        let old = item
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > month);
+        if old {
+            let _ = std::fs::remove_dir_all(item.path());
         }
     }
 }
@@ -361,6 +416,9 @@ pub(super) fn try_emit_parallel(
         return Ok(None);
     }
     let Some(parts) = partition_count(module) else {
+        return Ok(None);
+    };
+    let Some(dir) = parts_dir(out) else {
         return Ok(None);
     };
     if let Some(why) = unsupported(module) {
@@ -398,6 +456,11 @@ pub(super) fn try_emit_parallel(
     });
     crate::phase_timer::mark(&format!("  {}片并行", parts), t);
 
+    if let Some(root) = dir.parent() {
+        sweep_old_parts_dirs(root);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建 {} 失败: {}", dir.display(), e))?;
+    let _ = std::fs::write(dir.join(OWNER_NOTE), out.display().to_string());
     let mut paths: Vec<PathBuf> = Vec::new();
     for (k, slot) in results.into_iter().enumerate() {
         let bytes = match slot.into_inner().unwrap() {
@@ -408,7 +471,11 @@ pub(super) fn try_emit_parallel(
         let p = if k == 0 {
             out.to_path_buf()
         } else {
-            part_object_path(out, k)
+            dir.join(
+                part_object_path(out, k)
+                    .and_then(|p| p.file_name().map(|n| n.to_owned()))
+                    .ok_or("分片文件名")?,
+            )
         };
         std::fs::write(&p, &bytes).map_err(|e| format!("写 {} 失败: {}", p.display(), e))?;
         paths.push(p);
