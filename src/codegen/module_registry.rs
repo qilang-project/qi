@@ -1468,7 +1468,8 @@ impl ModuleRegistry {
     fn register_websocket_module(&mut self) {
         let mut ws_module = Module::new("WebSocket");
 
-        // WebSocket客户端连接。ws:// 明文，wss:// 走 TLS（rustls + 内置根证书）
+        // WebSocket客户端连接。ws:// 明文，wss:// 走 TLS（rustls + 内置根证书；
+        // 内网/自签 CA 用环境变量 QI_TLS_CA_FILE 指一个 PEM 追加信任）
         ws_module.add_function(ModuleFunction::new(
             "连接",
             "qi_websocket_connect",
