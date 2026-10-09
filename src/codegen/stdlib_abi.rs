@@ -554,3 +554,65 @@ pub const TOOL_CONTROL_ABI: &[StdlibAbiFunction] = &[
         "()"
     ),
 ];
+
+/// 张量表一行：`qi名 => 运行时符号(qi参数: C参数, …) -> qi返回: C返回;`
+macro_rules! tensor_abi_table {
+    ($($qi:literal => $runtime:literal ($($param:literal : $c_param:literal),*) -> $ret:literal : $c_ret:literal;)*) => {
+        /// 标准库.张量（qi-runtime/src/stdlib/tensor_ffi.rs）。句柄一律是整数；
+        /// 「数组」入参只借用读（见 所有权.rs 的 借用读对象FFI）。
+        pub const TENSOR_ABI: &[StdlibAbiFunction] = &[$(StdlibAbiFunction {
+            qi_name: $qi,
+            runtime_name: $runtime,
+            param_types: &[$($param),*],
+            return_type: $ret,
+            c_param_types: &[$($c_param),*],
+            c_return_type: $c_ret,
+        }),*];
+    };
+}
+
+tensor_abi_table! {
+    // 创建 / 释放
+    "全零" => "qi_tensor_zeros"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "填充" => "qi_tensor_full"("整数": "i64", "整数": "i64", "浮点数": "f64") -> "整数": "i64";
+    "从数组" => "qi_tensor_from_array"("数组": "*const u8", "整数": "i64", "整数": "i64") -> "整数": "i64";
+    "随机均匀" => "qi_tensor_rand_uniform"("整数": "i64", "整数": "i64", "浮点数": "f64", "浮点数": "f64", "整数": "i64") -> "整数": "i64";
+    "随机正态" => "qi_tensor_rand_normal"("整数": "i64", "整数": "i64", "浮点数": "f64", "浮点数": "f64", "整数": "i64") -> "整数": "i64";
+    "独热" => "qi_tensor_one_hot"("数组": "*const u8", "整数": "i64") -> "整数": "i64";
+    "复制" => "qi_tensor_clone"("整数": "i64") -> "整数": "i64";
+    "释放" => "qi_tensor_free"("整数": "i64") -> "整数": "i64";
+    "存活数" => "qi_tensor_live_count"() -> "整数": "i64";
+    "后端" => "qi_tensor_backend"() -> "字符串": "*mut c_char";
+    // 形状 / 读写
+    "行数" => "qi_tensor_rows"("整数": "i64") -> "整数": "i64";
+    "列数" => "qi_tensor_cols"("整数": "i64") -> "整数": "i64";
+    "取" => "qi_tensor_get"("整数": "i64", "整数": "i64", "整数": "i64") -> "浮点数": "f64";
+    "设" => "qi_tensor_set"("整数": "i64", "整数": "i64", "整数": "i64", "浮点数": "f64") -> "整数": "i64";
+    "转数组" => "qi_tensor_to_array"("整数": "i64") -> "浮点数组": "*mut u8";
+    "切行" => "qi_tensor_slice_rows"("整数": "i64", "整数": "i64", "整数": "i64") -> "整数": "i64";
+    "选行" => "qi_tensor_gather_rows"("整数": "i64", "数组": "*const u8") -> "整数": "i64";
+    // 线性代数
+    "矩阵乘" => "qi_tensor_matmul"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "转置乘" => "qi_tensor_matmul_tn"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "乘转置" => "qi_tensor_matmul_nt"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "转置" => "qi_tensor_transpose"("整数": "i64") -> "整数": "i64";
+    // 逐元素
+    "加" => "qi_tensor_add"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "减" => "qi_tensor_sub"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "乘" => "qi_tensor_mul"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "数乘" => "qi_tensor_scale"("整数": "i64", "浮点数": "f64") -> "整数": "i64";
+    "加偏置" => "qi_tensor_add_bias"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "加缩放" => "qi_tensor_axpy"("整数": "i64", "整数": "i64", "浮点数": "f64") -> "整数": "i64";
+    // 神经网络
+    "ReLU" => "qi_tensor_relu"("整数": "i64") -> "整数": "i64";
+    "ReLU掩码" => "qi_tensor_relu_mask"("整数": "i64") -> "整数": "i64";
+    "ReLU反传" => "qi_tensor_relu_backward"("整数": "i64", "整数": "i64") -> "整数": "i64";
+    "按行softmax" => "qi_tensor_softmax_rows"("整数": "i64") -> "整数": "i64";
+    "交叉熵" => "qi_tensor_cross_entropy"("整数": "i64", "数组": "*const u8") -> "浮点数": "f64";
+    "交叉熵梯度" => "qi_tensor_cross_entropy_grad"("整数": "i64", "数组": "*const u8") -> "整数": "i64";
+    // 归约
+    "求和" => "qi_tensor_sum"("整数": "i64") -> "浮点数": "f64";
+    "按列求和" => "qi_tensor_sum_cols"("整数": "i64") -> "整数": "i64";
+    "按行求和" => "qi_tensor_sum_rows"("整数": "i64") -> "整数": "i64";
+    "按行最大下标" => "qi_tensor_argmax_rows"("整数": "i64") -> "整数数组": "*mut u8";
+}

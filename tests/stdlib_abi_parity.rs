@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use qi_compiler::codegen::module_registry::ModuleRegistry;
-use qi_compiler::codegen::stdlib_abi::{LLM_ABI, TOOL_CONTROL_ABI, WEB_RUNTIME_ABI};
+use qi_compiler::codegen::stdlib_abi::{LLM_ABI, TENSOR_ABI, TOOL_CONTROL_ABI, WEB_RUNTIME_ABI};
 
 fn canonical_runtime_source(relative_path: &str) -> PathBuf {
     std::env::var_os("QI_RUNTIME_DIR")
@@ -20,11 +20,14 @@ fn normalize_type(ty: &str) -> String {
 }
 
 fn runtime_export(source: &str, symbol: &str) -> Option<(Vec<String>, String)> {
-    let marker = format!(r#"pub extern "C" fn {symbol}"#);
-    let declaration = source
-        .match_indices(&marker)
-        .map(|(index, _)| &source[index + marker.len()..])
-        .find(|suffix| suffix.trim_start().starts_with('('))?;
+    // `C-unwind`：会抛 qi 异常的入口（协程里异常转 panic 要能穿过 FFI 边界）
+    let declaration = ["C", "C-unwind"].iter().find_map(|abi| {
+        let marker = format!(r#"pub extern "{abi}" fn {symbol}"#);
+        source
+            .match_indices(&marker)
+            .map(|(index, _)| &source[index + marker.len()..])
+            .find(|suffix| suffix.trim_start().starts_with('('))
+    })?;
     let params_start = declaration.find('(')? + 1;
     let params_end = declaration[params_start..].find(')')? + params_start;
     let params = declaration[params_start..params_end]
@@ -136,4 +139,23 @@ fn web_runtime_registry_matches_compiler_abi_manifest() {
 #[test]
 fn web_runtime_compiler_abi_matches_canonical_qi_runtime_source() {
     assert_runtime_abi("src/stdlib/web_ffi.rs", WEB_RUNTIME_ABI);
+}
+
+#[test]
+fn tensor_registry_matches_compiler_abi_manifest() {
+    let registry = ModuleRegistry::new();
+
+    for declaration in TENSOR_ABI {
+        let function = registry
+            .get_function("标准库.张量", declaration.qi_name)
+            .unwrap_or_else(|| panic!("标准库.张量 missing {}", declaration.qi_name));
+        assert_eq!(function.runtime_name, declaration.runtime_name);
+        assert_eq!(function.param_types, declaration.param_types);
+        assert_eq!(function.return_type, declaration.return_type);
+    }
+}
+
+#[test]
+fn tensor_compiler_abi_matches_canonical_qi_runtime_source() {
+    assert_runtime_abi("src/stdlib/tensor_ffi.rs", TENSOR_ABI);
 }
