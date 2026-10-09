@@ -27,6 +27,8 @@ use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
 const PART_STR: u64 = 0;
 const PART_INT: u64 = 1;
 const PART_FLOAT: u64 = 2;
+/// 字符段：值是 Unicode 码点，运行时编码成 UTF-8（见 char_display.rs）
+const PART_CHAR: u64 = 3;
 
 /// 插值的一段：字面文本或洞里的表达式。
 pub(super) enum InterpPart<'a> {
@@ -152,6 +154,7 @@ impl<'ctx> 后端<'ctx> {
         &mut self,
         node: &AstNode,
     ) -> Result<(u64, IntValue<'ctx>, Option<PointerValue<'ctx>>), String> {
+        let is_char = self.is_char_expr(node);
         let owned = if self.弧开() {
             self.表达式拥有字符串(node)
         } else {
@@ -170,7 +173,7 @@ impl<'ctx> 后端<'ctx> {
                     return Err("字符串插值：洞的值类型无法确定，无法转成字符串".to_string());
                 }
                 let iv = self.整数加宽到i64(v.into_int_value())?;
-                Ok((PART_INT, iv, None))
+                Ok((if is_char { PART_CHAR } else { PART_INT }, iv, None))
             }
             Qi类型::浮点数 => {
                 let bits = self
@@ -186,6 +189,29 @@ impl<'ctx> 后端<'ctx> {
                 Err("字符串插值：不支持的洞类型".to_string())
             }
         }
+    }
+
+    /// 码点 → 新建的单字符串（rc=1，调用方负责释放）。打印 / `+` 拼接字符时用。
+    pub(super) fn char_to_string(
+        &mut self,
+        code: IntValue<'ctx>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let i64t = self.ctx.i64_type();
+        let code = self.整数加宽到i64(code)?;
+        let array_type = i64t.array_type(2);
+        let array = self.入口块alloca(array_type.into(), "char.part")?;
+        let kind_slot = self.i64_slot(array, array_type, 0)?;
+        self.builder
+            .build_store(kind_slot, i64t.const_int(PART_CHAR, false))
+            .map_err(|e| e.to_string())?;
+        let value_slot = self.i64_slot(array, array_type, 1)?;
+        self.builder
+            .build_store(value_slot, code)
+            .map_err(|e| e.to_string())?;
+        self.调用返回指针(
+            "qi_string_format_parts",
+            &[array.into(), i64t.const_int(1, false).into()],
+        )
     }
 
     fn ptr_as_i64(&mut self, p: PointerValue<'ctx>) -> Result<IntValue<'ctx>, String> {

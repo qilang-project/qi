@@ -23,6 +23,7 @@
 //!   导入.rs      —— 标准库分发（模块.方法 → qi_runtime_*）+ 导入别名
 //!   闭包.rs      —— 函数值 / 函数指针 / 间接调用
 
+mod char_display;
 mod emit;
 mod format_string;
 mod parallel_emit;
@@ -251,6 +252,11 @@ struct 后端<'ctx> {
     /// 当前正在生成的 coroutine 上下文（frame handle / promise / 公共块）。
     /// 仅在协程体生成期间为 Some：`等待 让出/睡眠` 与 `返回` 据此发挂起点 / 存返回值。
     协程当前: Option<协程::协程上下文<'ctx>>,
+    /// 存着字符值的局部槽（字符在类型格里就是 整数，只有显示时要区分，见 char_display.rs）。
+    char_slots: std::collections::HashSet<PointerValue<'ctx>>,
+    /// 声明返回 字符 的函数名 / 返回别的类型的函数名（同名两边都有 → 不当字符）。
+    char_returning_fns: std::collections::HashSet<String>,
+    non_char_returning_fns: std::collections::HashSet<String>,
 }
 
 impl<'ctx> 后端<'ctx> {
@@ -310,6 +316,9 @@ impl<'ctx> 后端<'ctx> {
                 .unwrap_or(true),
             协程函数集: std::collections::HashSet::new(),
             协程当前: None,
+            char_slots: std::collections::HashSet::new(),
+            char_returning_fns: std::collections::HashSet::new(),
+            non_char_returning_fns: std::collections::HashSet::new(),
         }
     }
 

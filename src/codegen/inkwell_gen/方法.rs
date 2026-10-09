@@ -193,6 +193,9 @@ impl<'ctx> 后端<'ctx> {
             self.弧retain任意(arg, t);
             // 形参序号从 2 起：1 号是接收者 自身
             self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 2));
+            if super::char_display::is_char_annotation(p.type_annotation.as_ref()) {
+                self.mark_char_slot(ptr);
+            }
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }

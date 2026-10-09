@@ -1015,11 +1015,16 @@ impl<'ctx> 后端<'ctx> {
         } else {
             是新建字符串表达式(node)
         };
+        let is_char = self.is_char_expr(node);
         let (v, t) = self
             .生成表达式(node)?
             .ok_or_else(|| "字符串拼接操作数无值".to_string())?;
         match t {
             Qi类型::字符串 => Ok((v.into_pointer_value(), 结构上新建)),
+            // 字符拼进字符串是那个字符，不是码点数字（见 char_display.rs）
+            Qi类型::整数 | Qi类型::未知 if is_char && v.is_int_value() => {
+                Ok((self.char_to_string(v.into_int_value())?, true))
+            }
             Qi类型::整数 | Qi类型::布尔 | Qi类型::未知 => {
                 let iv = v.into_int_value();
                 // 布尔/未知先扩展到 i64
@@ -3579,9 +3584,28 @@ impl<'ctx> 后端<'ctx> {
         };
 
         for a in arguments {
+            let is_char = self.is_char_expr(a);
             let (v, t) = self
                 .生成表达式(a)?
                 .ok_or_else(|| "打印实参无值".to_string())?;
+            // 字符按字符打印（类型格里它就是 整数，见 char_display.rs）
+            if is_char && v.is_int_value() && matches!(t, Qi类型::整数 | Qi类型::未知) {
+                let s = self.char_to_string(v.into_int_value())?;
+                let rtname = if 换行 {
+                    "qi_runtime_println"
+                } else {
+                    "qi_runtime_print"
+                };
+                let f = self
+                    .module
+                    .get_function(rtname)
+                    .ok_or_else(|| format!("运行时函数未声明: {}", rtname))?;
+                self.builder
+                    .build_call(f, &[s.into()], "call")
+                    .map_err(|e| e.to_string())?;
+                self.释放临时串(s);
+                continue;
+            }
             let (rtname, arg): (&str, BasicMetadataValueEnum) = match t {
                 Qi类型::整数 | Qi类型::未知 => (
                     if 换行 {
