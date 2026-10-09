@@ -61,10 +61,11 @@ const 借用串FFI: &[&str] = &[
 /// 「借用读对象」的 runtime FFI：RC 对象（数组/结构体）入参只**借用读**
 /// （内部拷贝数据、不私藏指针、不释放）。调用点不做「发送即转移」retain，
 /// OWNED 临时实参在调用结束后释放（与 借用串FFI 的字符串语义对称）。
-/// 目前：向量模块全家（qi_vector_dot/add/magnitude/normalize/scale/cosine_similarity）。
+/// 目前：向量模块全家（qi_vector_dot/add/magnitude/normalize/scale/cosine_similarity）、
+/// 张量模块全家（qi_tensor_from_array/one_hot/gather_rows/cross_entropy… 只读数组）。
 #[allow(non_snake_case)]
 pub(super) fn 借用读对象FFI(runtime_name: &str) -> bool {
-    runtime_name.starts_with("qi_vector_")
+    runtime_name.starts_with("qi_vector_") || runtime_name.starts_with("qi_tensor_")
 }
 
 impl<'ctx> 后端<'ctx> {

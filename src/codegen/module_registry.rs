@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::stdlib_abi::{TOOL_CONTROL_ABI, WEB_RUNTIME_ABI};
+use super::stdlib_abi::{TENSOR_ABI, TOOL_CONTROL_ABI, WEB_RUNTIME_ABI};
 
 /// Represents a single function in a module
 #[derive(Debug, Clone)]
@@ -113,6 +113,9 @@ impl ModuleRegistry {
 
         // Register vector module (向量模块)
         self.register_vector_module();
+
+        // Register tensor module (张量模块：f32 二维张量 + 矩阵乘，训练小模型用)
+        self.register_tensor_module();
 
         // Register data structure modules (数据结构模块)
         self.register_list_module();
@@ -611,6 +614,27 @@ impl ModuleRegistry {
         ));
         self.modules.insert("多部分".to_string(), mp_module.clone());
         self.modules.insert("标准库.多部分".to_string(), mp_module);
+    }
+
+    /// 标准库.张量 —— 签名全在 stdlib_abi::TENSOR_ABI（ABI 一致性测试读同一张表）
+    fn register_tensor_module(&mut self) {
+        let mut tensor_module = Module::new("张量");
+        for declaration in TENSOR_ABI {
+            tensor_module.add_function(ModuleFunction::new(
+                declaration.qi_name,
+                declaration.runtime_name,
+                declaration
+                    .param_types
+                    .iter()
+                    .map(|ty| (*ty).to_string())
+                    .collect(),
+                declaration.return_type,
+            ));
+        }
+        self.modules
+            .insert("张量".to_string(), tensor_module.clone());
+        self.modules
+            .insert("标准库.张量".to_string(), tensor_module);
     }
 
     fn register_web_runtime_module(&mut self) {
