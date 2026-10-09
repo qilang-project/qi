@@ -633,6 +633,27 @@ impl<'ctx> 后端<'ctx> {
         let base = av.into_pointer_value();
         let i64t = self.ctx.i64_type();
 
+        // ARC：遍历期间**钉住**数组本体（隐藏槽里持一份引用，循环结束放掉）。
+        // 循环体里对同一个数组 添加/弹出（直接写，或经由某个方法改了 自己.列表）
+        // 时，运行时看到引用计数 > 1 就写时复制，不会原地 realloc 把这里手上的
+        // base 搬成野指针；遍历的是进循环那一刻的快照。
+        // range 是 OWNED 临时（`对于 x 在 造数组()`、字面量）时不 retain，直接
+        // 把那份引用交给隐藏槽 —— 以前这种临时数组遍历完没人放，每次漏一个。
+        // 中途 `返回` / `抛出` 时隐藏槽由函数出口统一释放（跟其它局部一样）。
+        let 钉槽 = if self.弧开() {
+            let 槽 = self.弧字符串槽(func, "each.pin")?;
+            if !self.表达式拥有RC(&f.range, at) {
+                self.弧retain任意(base.into(), at);
+            }
+            self.builder
+                .build_store(槽, base)
+                .map_err(|e| e.to_string())?;
+            self.弧隐藏引用计数槽.push(("each.pin".to_string(), 槽, at));
+            Some(槽)
+        } else {
+            None
+        };
+
         // 数组长度（头槽）
         let head = self.槽指针(base, i64t.into(), 0)?;
         let len = self
@@ -731,6 +752,18 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(end_bb);
+        if let Some(槽) = 钉槽 {
+            // 正常走完 / 跳出：放掉钉住的那份，槽清空（出口再放读到 null，no-op）
+            self.弧释放槽旧值2(槽, at)?;
+            self.builder
+                .build_store(
+                    槽,
+                    self.ctx
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .const_null(),
+                )
+                .map_err(|e| e.to_string())?;
+        }
         self.弹作用域帧(); // 元素变量出作用域，恢复被遮蔽的外层同名变量
         Ok(())
     }

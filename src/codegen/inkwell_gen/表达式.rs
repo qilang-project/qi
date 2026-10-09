@@ -305,6 +305,12 @@ impl<'ctx> 后端<'ctx> {
                         return Ok(Some(v));
                     }
                 }
+                // 0.5) 可增长数组：`甲.添加(x)` / `甲.弹出()`
+                if let Some(v) =
+                    self.尝试数组方法(&mc.object, &mc.method_name, &mc.arguments)?
+                {
+                    return Ok(v);
+                }
                 // 1) 结构体方法（接收者是结构体，含链式）
                 if let Some(v) =
                     self.生成方法调用(&mc.object, &mc.method_name, &mc.arguments)?

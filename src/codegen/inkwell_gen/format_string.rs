@@ -50,7 +50,12 @@ impl<'ctx> 后端<'ctx> {
         // parse_format_string 解析失败的洞会退回「名字是洞原文」的裸标识符 ——
         // 名字含非标识符字符（调用/运算/索引…）时用 LALRPOP 的 pub Expr 入口重解析，
         // 解析不了就在这里报「不是合法表达式」。
-        let needs_reparse = |name: &str| name.chars().any(|c| !c.is_alphanumeric() && c != '_');
+        // 数字打头的也不是名字（`${0x1_0000_0000_0000_0000}` 这种超界字面量），
+        // 不重解析就会报一句离谱的「未声明的变量」。
+        let needs_reparse = |name: &str| {
+            name.chars().any(|c| !c.is_alphanumeric() && c != '_')
+                || name.chars().next().is_some_and(|c| c.is_ascii_digit())
+        };
         let mut parts: Vec<InterpPart> = Vec::with_capacity(fs.parts.len());
         for p in fs.parts.iter() {
             parts.push(match p {

@@ -3405,6 +3405,12 @@ impl ModuleRegistry {
             vec!["整数".to_string()],
             "整数",
         ));
+        list_module.add_function(ModuleFunction::new(
+            "清空浮点列表",
+            "qi_list_float_clear",
+            vec!["整数".to_string()],
+            "整数",
+        ));
 
         // 字符串列表
         list_module.add_function(ModuleFunction::new(
@@ -3428,6 +3434,12 @@ impl ModuleRegistry {
         list_module.add_function(ModuleFunction::new(
             "字符串列表大小",
             "qi_list_string_size",
+            vec!["整数".to_string()],
+            "整数",
+        ));
+        list_module.add_function(ModuleFunction::new(
+            "清空字符串列表",
+            "qi_list_string_clear",
             vec!["整数".to_string()],
             "整数",
         ));
@@ -4857,6 +4869,14 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // 按字节取：0..=255，越界（含负下标）返回 -1。写解析器 / 判 ASCII 用。
+        string_module.add_function(ModuleFunction::new(
+            "字节",
+            "qi_string_byte_at",
+            vec!["字符串".to_string(), "整数".to_string()],
+            "整数",
+        ));
+
         // 获取字符串字符数量 (UTF-8)
         string_module.add_function(ModuleFunction::new(
             "字符数量",
@@ -5254,6 +5274,14 @@ impl ModuleRegistry {
             "qi_process_current_pid",
             vec![],
             "i64",
+        ));
+
+        // 原始命令行参数，**含程序名**：[0] 是程序路径，用户参数从 [1] 开始
+        process_module.add_function(ModuleFunction::new(
+            "参数",
+            "qi_process_args",
+            vec![],
+            "字符串数组",
         ));
 
         process_module.add_function(ModuleFunction::new(

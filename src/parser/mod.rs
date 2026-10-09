@@ -202,6 +202,9 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
         friendly.insert(0, "<英文标识符>".to_string());
     }
     if saw_cjk_ident {
+        // 上下文关键字（新建 / 长度）在这里就是标识符的一种写法，单列出来像是
+        // 「这儿只能写 新建」，反而误导
+        friendly.retain(|w| !crate::parser::reserved::is_contextual(w));
         friendly.insert(0, "<标识符>".to_string());
     }
     if friendly.is_empty() {

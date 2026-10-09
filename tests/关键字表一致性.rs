@@ -87,3 +87,27 @@ fn keywords_rs_是保留字的子集() {
         stale
     );
 }
+
+/// 上下文关键字必须**同时**是语法终结符（在 RESERVED_WORDS 里）且被 `Identifier`
+/// 规则收回（语法里有 `"词" => "词".to_string()` 这一臂）。只在表里登记、语法没收回，
+/// 报错提示会说「能当名字」，实际却解析失败；反过来则提示说它是保留字。
+#[test]
+fn 上下文关键字被标识符规则收回() {
+    let src = include_str!("../src/parser/grammar.lalrpop");
+    let reserved: HashSet<&str> = qi_compiler::parser::reserved::RESERVED_WORDS
+        .iter()
+        .copied()
+        .collect();
+    for w in qi_compiler::parser::reserved::CONTEXTUAL_WORDS {
+        assert!(reserved.contains(w), "上下文关键字 `{w}` 不是语法终结符");
+        let arm = format!("\"{w}\" => \"{w}\".to_string()");
+        assert!(
+            src.contains(&arm),
+            "上下文关键字 `{w}` 没有被 Identifier 规则收回（缺 `{arm}`）"
+        );
+        assert!(
+            !qi_compiler::parser::reserved::is_reserved(w),
+            "上下文关键字 `{w}` 不该被报成保留字"
+        );
+    }
+}

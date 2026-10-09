@@ -66,7 +66,23 @@ pub const RESERVED_WORDS: &[&str] = &[
     "默认",
 ];
 
+/// 上下文关键字：语法里是终结符（所以也在上表里），但 `Identifier` 规则把它们
+/// 收了回来 —— 只在特定搭配里有特殊含义，其余位置就是普通名字：
+/// - `长度`：`甲.长度` / `长度(甲)` 是内建，变量、字段照样能叫这个名字；
+/// - `新建`：只有「新建 类型名 {」是结构体字面量，函数名 `新建()`、方法名
+///   `计数器.新建()`、变量名都行。工厂函数最自然的名字就是它。
+///
+/// 能这么做的前提是 LALRPOP 不报冲突：`新建` 后面跟标识符走结构体字面量，
+/// 跟 `(` / `.` / `=` / `;` 等走标识符，一个记号的前瞻就分得开。
+pub const CONTEXTUAL_WORDS: &[&str] = &["长度", "新建"];
+
 /// 这个名字是不是保留字（不能当变量名 / 函数名 / 字段名 / 类型名）。
+/// 上下文关键字不算 —— 它们能当名字用。
 pub fn is_reserved(name: &str) -> bool {
-    RESERVED_WORDS.contains(&name)
+    RESERVED_WORDS.contains(&name) && !is_contextual(name)
+}
+
+/// 是不是上下文关键字（见 [`CONTEXTUAL_WORDS`]）。
+pub fn is_contextual(name: &str) -> bool {
+    CONTEXTUAL_WORDS.contains(&name)
 }

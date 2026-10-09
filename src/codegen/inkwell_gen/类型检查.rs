@@ -1317,6 +1317,14 @@ pub fn 推断表达式类型(node: &AstNode, 表: &符号表) -> Qi类型 {
             }
             // 接收者是任意表达式（链式关键）：先定其类型，再查方法返回。
             let recv = 推断表达式类型(&mc.object, 表);
+            // 可增长数组的内建方法：`甲.弹出()` → 元素类型；`甲.添加(x)` → 空
+            if let Some(元素) = recv.数组元素() {
+                match mc.method_name.as_str() {
+                    "弹出" => return 元素.标量(),
+                    "添加" => return Qi类型::空,
+                    _ => {}
+                }
+            }
             if let Some(idx) = recv.结构体索引() {
                 if let Some(sig) = 表.方法查(idx, &mc.method_name, mc.arguments.len()) {
                     return sig.返回;

@@ -954,6 +954,34 @@ pub fn 泛型调用动作3(
     }
 }
 
+/// 整数字面量文本 → i64。词法层已保证形状（见 grammar 的三条正则），这里只做换算。
+///
+/// - 十进制 `1_000_000`：下划线只是分组，去掉后按 i64 解析，超出 i64 报错。
+/// - 十六进制 `0xFF_FF` / 二进制 `0b1010_0101`：按 **64 位位模式** 解析
+///   （上限 u64::MAX，再按补码当 i64）。`0xFFFF_FFFF_FFFF_FFFF` 就是 -1 ——
+///   写位掩码的人要的正是这些位，而不是「超出范围」。
+pub fn parse_int_literal(text: &str) -> Result<i64, &'static str> {
+    let digits: String = text.chars().filter(|c| *c != '_').collect();
+    let (radix, body) = if let Some(rest) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else if let Some(rest) = digits
+        .strip_prefix("0b")
+        .or_else(|| digits.strip_prefix("0B"))
+    {
+        (2, rest)
+    } else {
+        return digits
+            .parse::<i64>()
+            .map_err(|_| "整数字面量超出范围（整数 是 64 位有符号，最大 9223372036854775807）");
+    };
+    u64::from_str_radix(body, radix)
+        .map(|v| v as i64)
+        .map_err(|_| "十六进制 / 二进制整数字面量超出 64 位")
+}
+
 /// Helper function to unescape string literals
 pub fn unescape_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

@@ -372,6 +372,13 @@ impl<'ctx> 后端<'ctx> {
                 {
                     return false;
                 }
+                // `甲.弹出()`：槽里那份引用随值移交（槽已清空）→ OWNED
+                if let Some(元素) = 推断表达式类型(&mc.object, &self.符号).数组元素()
+                {
+                    if mc.method_name == "弹出" {
+                        return 元素.标量() == Qi类型::字符串;
+                    }
+                }
                 // 1) 结构体方法（返回约定 +1）；函数值字段以方法语法调用（fat call）同约定
                 let recv = 推断表达式类型(&mc.object, &self.符号);
                 if let Some(idx) = recv.结构体索引() {
@@ -596,6 +603,8 @@ impl<'ctx> 后端<'ctx> {
         match node {
             AstNode::结构体实例化表达式(_) => true,
             AstNode::数组字面量表达式(_) => true,
+            // `数组<T>(n)` / `数组<T>()`：qi_obj_alloc rc=1 新本体 → OWNED
+            AstNode::数组创建表达式(_) => true,
             // 闭包字面量：qi_closure_create rc=1 交出
             AstNode::闭包表达式(_) => true,
             // `等待 fut`：take 语义，future 内那份 +1 移交（见 表达式拥有字符串 同款注释）
@@ -622,6 +631,13 @@ impl<'ctx> 后端<'ctx> {
                 // 装箱枚举方法式构造 `形状.圆(x)` → OWNED
                 if self.枚举构造是装箱(&mc.object, &mc.method_name) {
                     return true;
+                }
+                // `甲.弹出()`：槽里那份引用随值移交（槽已清空）→ OWNED
+                if let Some(元素) = 推断表达式类型(&mc.object, &self.符号).数组元素()
+                {
+                    if mc.method_name == "弹出" {
+                        return 是对象类型(元素.标量());
+                    }
                 }
                 // 未来:: 静态方法 → future 指针，非对象
                 if matches!(mc.object.as_ref(), AstNode::标识符表达式(id) if id.name == "未来")

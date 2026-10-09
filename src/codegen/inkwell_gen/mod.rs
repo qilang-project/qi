@@ -54,6 +54,8 @@ mod 异步;
 mod 所有权;
 #[path = "数组.rs"]
 mod 数组;
+#[path = "数组增长.rs"]
+mod 数组增长;
 #[path = "方法.rs"]
 mod 方法;
 #[path = "枚举.rs"]

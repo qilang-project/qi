@@ -1624,6 +1624,23 @@ Precedence8: AstNode = {
         length: Box::new(length),
         span: Span::new(sp_l, sp_r),
     }),
+    <sp_l:@L> // 空数组：数组<类型>() —— 长度 0，配 `.添加(x)` / `.弹出()` 当动态序列用。
+    <arr_type:ArrayTypeConstructor> <lp:@L> "(" ")" <sp_r:@R> => AstNode::数组创建表达式(ArrayCreateExpression {
+        element_type: arr_type,
+        length: Box::new(AstNode::字面量表达式(LiteralExpression {
+            value: LiteralValue::整数(0),
+            span: Span::new(lp, sp_r),
+        })),
+        span: Span::new(sp_l, sp_r),
+    }),
+    <sp_l:@L> <arr_type:ArrayTypeConstructor> <lp:@L> "（" "）" <sp_r:@R> => AstNode::数组创建表达式(ArrayCreateExpression {
+        element_type: arr_type,
+        length: Box::new(AstNode::字面量表达式(LiteralExpression {
+            value: LiteralValue::整数(0),
+            span: Span::new(lp, sp_r),
+        })),
+        span: Span::new(sp_l, sp_r),
+    }),
     <sp_l:@L> // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
     <channel_type:ChannelTypeConstructor> "(" ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
         element_type: channel_type,
@@ -2033,12 +2050,10 @@ MatchPattern: MatchPattern = {
 
 MatchPatternAtom: MatchPattern = {
     "_" => MatchPattern::通配符,
-    <n:r"[0-9]+"> =>? Ok(MatchPattern::字面量(LiteralValue::整数(
-        n.parse().map_err(|_| lalrpop_util::ParseError::User {
-            error: "匹配模式里的整数字面量超出范围（整数 是 64 位有符号）",
-        })?))),
-    <n:r"[0-9]+\.[0-9]+"> =>? Ok(MatchPattern::字面量(LiteralValue::浮点数(
-        n.parse().map_err(|_| lalrpop_util::ParseError::User {
+    <n:IntegerText> =>? Ok(MatchPattern::字面量(LiteralValue::整数(
+        parse_int_literal(n).map_err(|error| lalrpop_util::ParseError::User { error })?))),
+    <n:FloatText> =>? Ok(MatchPattern::字面量(LiteralValue::浮点数(
+        n.replace('_', "").parse().map_err(|_| lalrpop_util::ParseError::User {
             error: "匹配模式里的浮点数字面量无法解析",
         })?))),
     <s:r#""([^"\\]|\\.)*""#> => MatchPattern::字面量(LiteralValue::字符串(unescape_string(&s[1..s.len()-1]))),
@@ -2079,17 +2094,31 @@ IntegerLiteral: AstNode = {
     // （workspace 设了 panic = "abort"，不是可捕获的 unwind）。
     // `qi check 99999999999999999999` 今天就会 abort，用户看到的是一段
     // Rust backtrace 而不是错误信息。
-    <sp_l:@L> <n:r"[0-9]+"> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::整数(n.parse().map_err(|_| lalrpop_util::ParseError::User {
-            error: "整数字面量超出范围（整数 是 64 位有符号，最大 9223372036854775807）",
-        })?),
+    <sp_l:@L> <n:IntegerText> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::整数(
+            parse_int_literal(n).map_err(|error| lalrpop_util::ParseError::User { error })?,
+        ),
         span: Span::new(sp_l, sp_r),
     })),
 };
 
+// 整数字面量的三种写法。下划线只能夹在两个数字之间（`1_000`），不能打头结尾、
+// 不能连写 —— `_1` 是标识符，`1_` / `1__0` 在这里不是数字。
+// 以前 `0xFF` 会被切成 `0` 加标识符 `xFF`、`1_000` 切成 `1` 加 `_000`，
+// 两个都只能得到一条莫名其妙的「意外的标记」，所以加这三条不改变任何合法程序。
+IntegerText: &'input str = {
+    <n:r"[0-9]+(_[0-9]+)*"> => n,
+    <n:r"0[xX][0-9a-fA-F]+(_[0-9a-fA-F]+)*"> => n,
+    <n:r"0[bB][01]+(_[01]+)*"> => n,
+};
+
+FloatText: &'input str = {
+    <n:r"[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*"> => n,
+};
+
 FloatLiteral: AstNode = {
-    <sp_l:@L> <n:r"[0-9]+\.[0-9]+"> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
-        value: LiteralValue::浮点数(n.parse().map_err(|_| lalrpop_util::ParseError::User {
+    <sp_l:@L> <n:FloatText> <sp_r:@R> =>? Ok(AstNode::字面量表达式(LiteralExpression {
+        value: LiteralValue::浮点数(n.replace('_', "").parse().map_err(|_| lalrpop_util::ParseError::User {
             error: "浮点数字面量无法解析为 64 位浮点",
         })?),
         span: Span::new(sp_l, sp_r),
@@ -2358,6 +2387,9 @@ Identifier: String = {
     <id:r"[a-zA-Z_][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
     <id:r"[\u4e00-\u9fff][a-zA-Z0-9_\u4e00-\u9fff]*"> => id.to_string(),
     "长度" => "长度".to_string(),
+    // 上下文关键字：`新建` 只有紧跟「类型名 {」才是结构体字面量，其余位置
+    // （函数名 `新建()`、方法名 `点.新建()`、变量名）都是普通名字。
+    "新建" => "新建".to_string(),
 };
 
 // 方法接收者标识符 - 允许使用 "自身"、"自己" 等关键字

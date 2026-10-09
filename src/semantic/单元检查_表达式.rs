@@ -633,6 +633,10 @@ impl 单元检查器 {
                     None => None, // 特性方法/嵌入方法/内建通用方法 → 沉默
                 }
             }
+            // 可增长数组：`甲.弹出()` → 元素类型（`添加` 无返回值，沉默即可）
+            Some(TypeNode::数组类型(at)) if method == "弹出" && mc.arguments.is_empty() => {
+                Some(*at.element_type)
+            }
             _ => None, // 字符串/数组/句柄上的内建方法（s.长度() 等）→ 沉默
         }
     }
