@@ -234,14 +234,16 @@ jobs:
           key: ${{ runner.os }}-gui-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-gui-cargo-
 
-      # 比 Build + Test 多三样：libasound2-dev（编 GUI 版运行时，alsa-sys 走
-      # pkg-config）、xvfb（虚拟显示）、一款小的 CJK 字体（不装也能画，只是字是方块）
+      # 比 Build + Test 多几样：libasound2-dev（编 GUI 版运行时，alsa-sys 走
+      # pkg-config）、xvfb（虚拟显示）、libxkbcommon-x11-0（winit 在 X11 上运行时
+      # dlopen 它，桌面系统都有，精简的 runner 上没有 —— 缺了是 panic 不是报错）、
+      # 一款小的 CJK 字体（不装也能画，只是字是方块）
       - name: Install LLVM 21 + GUI 依赖 (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config \
-            libasound2-dev xvfb fonts-wqy-microhei
+            libasound2-dev xvfb libxkbcommon-x11-0 fonts-wqy-microhei
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21

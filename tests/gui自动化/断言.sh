@@ -63,7 +63,9 @@ fi
 probe_log=$(mktemp "$TMP_ROOT/qi_gui_probe.XXXXXX")
 QI_GUI_AUTOCLOSE_MS=300 "$QI" run "$DEMO_DIR/键盘演示.qi" >"$probe_log" 2>&1
 probe_rc=$?
-if grep -qE "创建事件循环失败|窗口未能创建|应用创建失败|softbuffer|GUI 库未安装" "$probe_log"; then
+# 「could not be loaded」：winit 在 Linux 上运行时 dlopen libxkbcommon-x11 等，
+# 机器上没有就 panic —— 也是环境缺东西，不是代码坏了。
+if grep -qE "创建事件循环失败|窗口未能创建|应用创建失败|softbuffer|GUI 库未安装|could not be loaded" "$probe_log"; then
     if [ "$REQUIRE" = "1" ]; then
         echo "FAIL: QI_GUI_REQUIRE=1 但窗口起不来（没有显示环境，或链到了不带 GUI 的运行时）"
     else
