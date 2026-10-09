@@ -173,6 +173,7 @@ impl<'ctx> 后端<'ctx> {
             .as_ref()
             .map(|t| self.符号.解析类型(t))
             .unwrap_or(Qi类型::空);
+        self.note_return_type(&f.name, f.return_type.as_ref());
 
         // 构造 LLVM 函数类型
         let 参数llvm: Vec<inkwell::types::BasicMetadataTypeEnum> = 参数类型
@@ -384,6 +385,9 @@ impl<'ctx> 后端<'ctx> {
             self.弧retain任意(arg, t);
             // 调试信息：形参序号 1-based，lldb `frame variable` 据此列参数。
             self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 1));
+            if super::char_display::is_char_annotation(p.type_annotation.as_ref()) {
+                self.mark_char_slot(ptr);
+            }
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }

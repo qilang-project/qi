@@ -334,6 +334,9 @@ impl<'ctx> 后端<'ctx> {
             // 调试信息：形参序号 1-based，与普通函数同款。CoroSplit 会把跨挂起
             // 存活的槽搬进 coro frame，dbg.declare 跟着走，`frame variable` 仍读得到。
             self.调试_局部变量(&p.name, t, ptr, p.span, Some(i as u32 + 1));
+            if super::char_display::is_char_annotation(p.type_annotation.as_ref()) {
+                self.mark_char_slot(ptr);
+            }
             self.变量表.insert(p.name.clone(), (ptr, t));
             self.符号.声明变量(&p.name, t);
         }

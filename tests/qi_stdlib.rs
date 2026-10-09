@@ -60,6 +60,9 @@ fn run_qi(src_path: &Path, force_ffi: Option<&str>) -> String {
     let src_path = &src_path;
     let mut cmd = Command::new(qi_binary());
     cmd.arg("run").arg(src_path);
+    // 本地时区一族要在非零偏移、且有夏令时的时区里比才有意义（UTC 下本地=UTC，
+    // 两边都恒等于 UTC 版也照样一致）。Windows 不认 TZ，那边退化成机器时区。
+    cmd.env("TZ", "America/New_York");
     match force_ffi {
         Some(module) => {
             cmd.env("QI_STDLIB_FFI", module);

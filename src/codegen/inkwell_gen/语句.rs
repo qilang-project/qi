@@ -30,6 +30,16 @@ impl<'ctx> 后端<'ctx> {
                     .map(|ann| self.符号.解析类型(ann))
                     .filter(|t| *t != Qi类型::未知);
 
+                // 字符只在显示时区分（见 char_display.rs）：注解为 字符，
+                // 或无注解而初值本身是字符表达式。要在生成初值之前判 ——
+                // 初值里不会引用到本变量的新槽，但判定要看外层同名变量的旧槽。
+                let 是字符 = super::char_display::is_char_annotation(vd.type_annotation.as_ref())
+                    || (vd.type_annotation.is_none()
+                        && vd
+                            .initializer
+                            .as_ref()
+                            .is_some_and(|i| self.is_char_expr(i)));
+
                 // 构造子初值（有/无/成/败）与泛型定型表达式（泛型函数调用/泛型枚举
                 // 构造/泛型结构体字面量）：先据注解期望生成，用其真实类型定槽 ——
                 // 覆盖规则②（有注解）与规则④（无注解，按参数反推实例）。
@@ -117,6 +127,9 @@ impl<'ctx> 后端<'ctx> {
                 // 调试信息：让 lldb `frame variable` 认得出变量名。挂在声明处，
                 // 块作用域遮蔽的同名变量各自登记一条（DWARF 允许同名不同 scope）。
                 self.调试_局部变量(&vd.name, 类型, ptr, vd.span, None);
+                if 是字符 {
+                    self.mark_char_slot(ptr);
+                }
                 self.声明局部槽(&vd.name, ptr, 类型);
                 self.符号.声明变量(&vd.name, 类型);
                 Ok(())
