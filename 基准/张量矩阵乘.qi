@@ -5,7 +5,7 @@
 
 // 标准库.张量 的 f32 矩阵乘吞吐：n×n · n×n，报每次耗时与 GFLOP/s（2n³ 次浮点运算）。
 // 后端看第一行；QI_TENSOR_BACKEND=rust 强制纯 Rust（matrixmultiply）。
-// 对照：同目录 矩阵乘.qi（手写 i-k-j 三重循环，f64）、matmul_np.py（NumPy）。
+// 对照：矩阵乘_np对照.py（NumPy f64/f32）；手写 i-k-j 三重循环见主检出未入库的 基准/矩阵乘.qi。
 
 函数 测(n: 整数, 次数: 整数) {
     变量 甲: 整数 = 张量.随机均匀(n, n, 0.0 - 1.0, 1.0, 1);
