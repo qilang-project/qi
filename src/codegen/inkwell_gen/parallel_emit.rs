@@ -28,17 +28,18 @@
 //! lldb 照常按源码断点。分片放在稳定位置（不是临时目录），跨次编译一直在；
 //! 往用户项目目录里放是不行的，那是在别人的源码树里乱丢文件。
 //!
-//! 要求切了也不切（直接走原来的串行路径）的情形：不是宿主原生目标、宿主不是 macOS/Linux、模块里有别名/ifunc/comdat 或
+//! 什么时候不切（直接走原来的串行路径）：模块小（切了反而多花解析 bitcode 的钱）、
+//! 不是宿主原生目标、宿主不是 macOS/Linux、模块里有别名/ifunc/comdat 或
 //! 我们不认识的链接类型。
 //!
-//! **默认不切**，只有 `QI_CODEGEN_PARTITIONS=N` 才切成 N 份。
+//! `QI_CODEGEN_PARTITIONS=N` 强制切成 N 份（测试用），`=1` 关掉。
 //!
-//! 原来优化后指令数过 6000 就自动切 8 份，2026.10.08-1 发版时 macOS arm64
-//! 的 Release 编 qipkg 段错误，本机冷编也约 15% 复现：崩在分片线程的
-//! `DwarfDebug::endModule → DwarfCompileUnit::finishEntityDefinition`（实体没有
-//! DIE）。各分片 bitcode 过得了 verifier，单独 `llc` 48 次不崩，同进程单线程跑
-//! 8 片也不崩 —— 只在多线程同时发射时出现，根因还在 LLVM 里没找到。
-//! 并行只省 0.3–0.5 秒（约 20%），不值得拿编译器偶发段错误换。
+//! ## 2026.10.08-1 的段错误
+//!
+//! 那一版自动切分后，macOS arm64 的 Release 编 qipkg 段错误（本机冷编约 15%），
+//! 崩在 `DwarfDebug::endModule → DwarfCompileUnit::finishEntityDefinition`
+//! （实体没有 DIE）。10.09-1 先把自动切分关了。根因在我们裁函数体的方式，
+//! 不在多线程：见 `replace_with_declaration` 的注释。修好之后自动切分恢复。
 
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
@@ -49,8 +50,12 @@ use inkwell::GlobalVisibility;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
+/// 自动模式下的分片数。固定常数（不看核数），保证同一输入的产物处处相同。
+const AUTO_PARTITIONS: usize = 8;
 /// 强制分片数的上限（也是清理旧分片文件时扫的范围）。
 const MAX_PARTITIONS: usize = 64;
+/// 自动模式下，优化后指令数低于这个就不切（小程序切了只会更慢）。
+const AUTO_MIN_INSTRUCTIONS: usize = 6000;
 
 // inkwell 没包的几个 C API。它们和 inkwell 用到的函数在同一个目标文件
 // （LLVM Core.cpp）里，静态链接时一并进来。
@@ -58,37 +63,31 @@ extern "C" {
     fn LLVMSetInitializer(global: *mut c_void, value: *mut c_void);
     fn LLVMGlobalClearMetadata(global: *mut c_void);
     fn LLVMDeleteGlobal(global: *mut c_void);
+    fn LLVMSetValueName2(value: *mut c_void, name: *const std::ffi::c_char, len: usize);
     fn LLVMGetFirstGlobalAlias(module: *mut c_void) -> *mut c_void;
     fn LLVMGetFirstGlobalIFunc(module: *mut c_void) -> *mut c_void;
-    fn LLVMHasPersonalityFn(func: *mut c_void) -> i32;
-    fn LLVMSetPersonalityFn(func: *mut c_void, personality: *mut c_void);
-    fn LLVMGetFirstBasicBlock(func: *mut c_void) -> *mut c_void;
-    fn LLVMGetNextBasicBlock(block: *mut c_void) -> *mut c_void;
-    fn LLVMGetFirstInstruction(block: *mut c_void) -> *mut c_void;
-    fn LLVMGetNextInstruction(inst: *mut c_void) -> *mut c_void;
-    fn LLVMGetFirstUse(value: *mut c_void) -> *mut c_void;
-    fn LLVMTypeOf(value: *mut c_void) -> *mut c_void;
-    fn LLVMGetTypeKind(ty: *mut c_void) -> u32;
-    fn LLVMGetPoison(ty: *mut c_void) -> *mut c_void;
-    fn LLVMReplaceAllUsesWith(old: *mut c_void, new: *mut c_void);
-    fn LLVMInstructionEraseFromParent(inst: *mut c_void);
-    fn LLVMDeleteBasicBlock(block: *mut c_void);
 }
-
-/// LLVMTypeKind::LLVMTokenTypeKind
-const TOKEN_TYPE_KIND: u32 = 16;
 
 fn raw(v: impl AsValueRef) -> *mut c_void {
     v.as_value_ref() as *mut c_void
 }
 
-/// 这次要切几份；None = 走串行。只认显式的 `QI_CODEGEN_PARTITIONS`（见模块注释）。
-fn partition_count() -> Option<usize> {
-    std::env::var("QI_CODEGEN_PARTITIONS")
+/// 这次要切几份；None = 走串行。
+fn partition_count(module: &Module<'_>) -> Option<usize> {
+    let forced = std::env::var("QI_CODEGEN_PARTITIONS")
         .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n > 1)
-        .map(|n| n.min(MAX_PARTITIONS))
+        .and_then(|v| v.trim().parse::<usize>().ok());
+    match forced {
+        Some(n) if n <= 1 => None,
+        Some(n) => Some(n.min(MAX_PARTITIONS)),
+        None => {
+            let total: usize = functions(module)
+                .iter()
+                .map(|f| instruction_count(*f))
+                .sum();
+            (total >= AUTO_MIN_INSTRUCTIONS).then_some(AUTO_PARTITIONS)
+        }
+    }
 }
 
 fn functions<'ctx>(module: &Module<'ctx>) -> Vec<FunctionValue<'ctx>> {
@@ -228,41 +227,45 @@ fn externalize(module: &Module<'_>) {
     }
 }
 
-/// 把函数变成声明：先把体内每条有使用者的指令替换成 poison（使用者都在同一函数里），
-/// 再逐条删指令、删基本块 —— 直接删块会留下悬空的 Use。
-unsafe fn strip_body(func: *mut c_void) -> Result<(), String> {
-    let mut insts = Vec::new();
-    let mut bb = LLVMGetFirstBasicBlock(func);
-    let mut blocks = Vec::new();
-    while !bb.is_null() {
-        blocks.push(bb);
-        let mut i = LLVMGetFirstInstruction(bb);
-        while !i.is_null() {
-            insts.push(i);
-            i = LLVMGetNextInstruction(i);
+/// 把不归本分片的函数换成同名声明。
+///
+/// ## 为什么不能「逐条删指令再删块」（2026.10.08-1 的段错误就是它）
+///
+/// LLVM 21 起调试信息是挂在指令上的 DbgRecord。`Instruction::eraseFromParent`
+/// 会**保住**这些记录：挪到下一条指令上；删的是块里最后一条时，挪进这个块的
+/// 「尾随记录」—— 而尾随记录存在 `LLVMContextImpl` 里一张以 `BasicBlock*` 为键的
+/// 表上。随后删块，`~BasicBlock` 并不清这张表（它只清还挂在指令上的记录），
+/// 于是表里留下一个指向已释放块的键。后面的 pass（CodeGenPrepare 拆块之类）
+/// 新建的块如果恰好分到同一个地址，就「继承」了别的函数的调试记录：
+/// 被裁掉函数里的局部变量出现在保留函数里，作用域没有 DIE，
+/// `DwarfCompileUnit::finishEntityDefinition` 解空指针（0xd0）。
+///
+/// 地址复用看 malloc 的脸色，所以是按进程随机的：同一份 bitcode 落盘再 `llc`
+/// 永远不崩（重新读入的模块是干净的），多线程只是让地址更乱、更容易撞上。
+/// 链到 LLVM 22 的 qi 撞得更勤（单线程串行跑 8 片也约 40% 进程崩），可以拿来放大复现。
+///
+/// 换成整函数删除：`Function::eraseFromParent` 先 dropAllReferences 再删块，
+/// 指令随块一起析构，记录直接销毁，不会进尾随表。
+fn replace_with_declaration<'ctx>(module: &Module<'ctx>, f: FunctionValue<'ctx>) {
+    use inkwell::attributes::AttributeLoc;
+    let name = f.get_name().to_bytes().to_vec();
+    let decl = module.add_function("__qi_part_decl", f.get_type(), Some(Linkage::External));
+    decl.set_call_conventions(f.get_call_conventions());
+    let mut locs = vec![AttributeLoc::Function, AttributeLoc::Return];
+    locs.extend((0..f.count_params()).map(AttributeLoc::Param));
+    for loc in locs {
+        for a in f.attributes(loc) {
+            decl.add_attribute(loc, a);
         }
-        bb = LLVMGetNextBasicBlock(bb);
     }
-    for &i in &insts {
-        if !LLVMGetFirstUse(i).is_null() {
-            let ty = LLVMTypeOf(i);
-            if LLVMGetTypeKind(ty) == TOKEN_TYPE_KIND {
-                return Err("token 类型的值有使用者".into());
-            }
-            LLVMReplaceAllUsesWith(i, LLVMGetPoison(ty));
-        }
+    let (g, dg) = (f.as_global_value(), decl.as_global_value());
+    dg.set_visibility(g.get_visibility());
+    g.as_pointer_value()
+        .replace_all_uses_with(dg.as_pointer_value());
+    unsafe {
+        f.delete();
+        LLVMSetValueName2(raw(decl), name.as_ptr() as *const _, name.len());
     }
-    for &i in &insts {
-        LLVMInstructionEraseFromParent(i);
-    }
-    for &b in &blocks {
-        LLVMDeleteBasicBlock(b);
-    }
-    if LLVMHasPersonalityFn(func) != 0 {
-        LLVMSetPersonalityFn(func, std::ptr::null_mut());
-    }
-    LLVMGlobalClearMetadata(func);
-    Ok(())
 }
 
 /// 在独立 Context 里读回 bitcode，只保留第 `k` 份，生成目标文件字节。
@@ -281,7 +284,7 @@ fn build_partition(
         let name = f.get_name().to_bytes();
         let mine = owner.get(name).copied().unwrap_or(0) == k;
         if !mine {
-            unsafe { strip_body(raw(f))? };
+            replace_with_declaration(&module, f);
         }
     }
     if k != 0 {
@@ -408,7 +411,7 @@ pub(super) fn try_emit_parallel(
     if !host_native || !(cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
         return Ok(None);
     }
-    let Some(parts) = partition_count() else {
+    let Some(parts) = partition_count(module) else {
         return Ok(None);
     };
     let Some(dir) = parts_dir(out) else {
