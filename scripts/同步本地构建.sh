@@ -57,6 +57,10 @@ DST_LIB="$DST_LIBDIR/libqi_runtime.a"
 
 SRC_BIN="$ROOT/target/release/qi"
 SRC_LIB="$ROOT/qi-runtime/target/release/libqi_runtime.a"
+# GUI 版归档（可选）：make runtime-gui 编在独立 target 目录里，装成另一个名字。
+# 编译器只在程序导入 标准库.图形化 时才链它，见 qi/src/runtime_archive.rs。
+SRC_GUI_LIB="$ROOT/qi-runtime/target/gui/release/libqi_runtime.a"
+DST_GUI_LIB="$DST_LIBDIR/libqi_runtime_gui.a"
 
 echo "仓库：  $ROOT"
 echo "安装到：$PREFIX"
@@ -92,6 +96,16 @@ else
     ok "运行时归档已是最新（$(date -r "$DST_LIB" '+%Y-%m-%d %H:%M')）"
 fi
 
+GUI_STALE=0
+if [ -f "$SRC_GUI_LIB" ]; then
+    if [ ! -f "$DST_GUI_LIB" ] || [ "$SRC_GUI_LIB" -nt "$DST_GUI_LIB" ]; then
+        warn "已安装的 GUI 版运行时归档缺失或比本地构建旧"
+        GUI_STALE=1
+    else
+        ok "GUI 版运行时归档已是最新"
+    fi
+fi
+
 BIN_STALE=0
 if [ -f "$SRC_BIN" ]; then
     if [ ! -f "$DST_BIN" ] || [ "$SRC_BIN" -nt "$DST_BIN" ]; then
@@ -103,7 +117,7 @@ if [ -f "$SRC_BIN" ]; then
 fi
 
 if [ "$CHECK_ONLY" = 1 ]; then
-    if [ "$LIB_STALE" = 1 ] || [ "$BIN_STALE" = 1 ]; then
+    if [ "$LIB_STALE" = 1 ] || [ "$BIN_STALE" = 1 ] || [ "$GUI_STALE" = 1 ]; then
         echo ""
         echo "跑 ${B}qi/scripts/同步本地构建.sh${N} 同步。"
         exit 1
@@ -111,7 +125,7 @@ if [ "$CHECK_ONLY" = 1 ]; then
     exit 0
 fi
 
-if [ "$LIB_STALE" = 0 ] && [ "$BIN_STALE" = 0 ]; then
+if [ "$LIB_STALE" = 0 ] && [ "$BIN_STALE" = 0 ] && [ "$GUI_STALE" = 0 ]; then
     echo ""
     ok "无需同步"
     exit 0
@@ -150,6 +164,13 @@ if [ "$LIB_STALE" = 1 ]; then
     fi
     if copy_to "$SRC_LIB" "$DST_LIB"; then
         ok "归档已更新"
+    fi
+fi
+
+if [ "$GUI_STALE" = 1 ] && [ -d "$DST_LIBDIR" ]; then
+    step "安装 GUI 版运行时归档 → $DST_GUI_LIB"
+    if copy_to "$SRC_GUI_LIB" "$DST_GUI_LIB"; then
+        ok "GUI 版归档已更新"
     fi
 fi
 

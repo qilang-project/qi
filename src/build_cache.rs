@@ -588,7 +588,7 @@ impl crate::QiCompiler {
                 k.file_identity("tool ld", &ld)?;
             }
             let rt = self
-                .find_host_runtime_library()
+                .find_host_runtime_library(crate::runtime_archive::uses_gui(programs))
                 .map_err(|e| format!("{:?}", e))?;
             k.file_identity("runtime", &rt)?;
         }

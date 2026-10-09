@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop, "feat-*"]
+    branches: [main, master, develop, "feat-*", "ci/**"]
   pull_request:
     branches: [main, master]
 
@@ -148,7 +148,8 @@ jobs:
       - name: Clone + build qi-runtime
         shell: bash
         run: |
-          git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
+          # qi-gui 跟 main：下面要把它真编进 GUI 版运行时
+          git clone --depth 1 https://github.com/qilang-project/qi-gui.git ../qi-gui
           git clone --depth 1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           cargo build --release --manifest-path ../qi-runtime/Cargo.toml
           # 归档路径要给 qi.exe（原生程序）读，必须是 Windows 形式的路径：
@@ -181,6 +182,111 @@ jobs:
       - name: DWARF 调试信息
         shell: bash
         run: bash tests/调试信息/断言.sh target/release/qi.exe
+
+      # GUI 版运行时（qi_runtime_gui.lib 在发布包里就是这份）+ 真开窗冒烟。
+      # Windows runner 有桌面会话，winit 能建窗。GUI 程序要的 Win32 导入库
+      # 清单在 qi/src/runtime_archive.rs，少一个就是这里 LNK2019。
+      - name: GUI 冒烟
+        shell: bash
+        run: |
+          cargo build --release --features gui --manifest-path ../qi-runtime/Cargo.toml --target-dir ../qi-runtime/target/gui
+          export QI_RUNTIME_GUI_LIB="$(cygpath -w "$PWD/../qi-runtime/target/gui/release/qi_runtime.lib")"
+          QI_GUI_REQUIRE=1 QI_GUI_SHOT_DIR="$PWD/gui-shots" bash tests/gui自动化/断言.sh target/release/qi.exe
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-shots-windows
+          path: gui-shots
+          if-no-files-found: ignore
+
+  # GUI 端到端：GUI 版运行时归档 + 真开窗 + QI_GUI_SCRIPT 回放截图。
+  #
+  # 为什么单独一个 job：发布包以前从不编 gui，用户的 GUI 程序报「GUI 库未安装」，
+  # 而 make ci 全绿 —— make ci 跑在无头机器上，GUI 冒烟只会 SKIP。这里显示环境
+  # 是备好的（Linux 套 xvfb-run），QI_GUI_REQUIRE=1 让「起不来窗口」直接算失败，
+  # 链到桩（应用创建 返回 0）也算。
+  #
+  # make gui-smoke 先跑 gui-archive：发布包布局下命令行程序链普通版（Linux 上
+  # 不依赖 libasound）、GUI 程序链 GUI 版。
+  gui-smoke:
+    name: GUI 冒烟 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-gui-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-gui-cargo-
+
+      # 比 Build + Test 多几样：libasound2-dev（编 GUI 版运行时，alsa-sys 走
+      # pkg-config）、xvfb（虚拟显示）、libxkbcommon-x11-0（winit 在 X11 上运行时
+      # dlopen 它，桌面系统都有，精简的 runner 上没有 —— 缺了是 panic 不是报错）、
+      # 一款小的 CJK 字体（不装也能画，只是字是方块）
+      - name: Install LLVM 21 + GUI 依赖 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config \
+            libasound2-dev xvfb libxkbcommon-x11-0 fonts-wqy-microhei
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          sudo ./llvm.sh 17
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 200
+
+      - name: Install LLVM 21 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@21
+          echo "LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)" >> $GITHUB_ENV
+
+      # GUI 版运行时要 qi-gui 的源码真编进去，所以 qi-gui 也跟 main（跟 runtime 一样：
+      # CI 要的是最新对最新）。上面 Build + Test 钉的老 tag 只够 cargo 读 manifest。
+      - name: Clone 被测依赖
+        run: |
+          git clone --depth 1 https://github.com/qilang-project/qi-gui.git ../qi-gui
+          git clone --depth 1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+
+      - name: 构建编译器 + 两份运行时归档
+        run: make build runtime runtime-gui
+
+      - name: GUI 冒烟 (Linux, xvfb)
+        if: runner.os == 'Linux'
+        env:
+          QI_GUI_SHOT_DIR: ${{ github.workspace }}/gui-shots
+        run: xvfb-run -a -s "-screen 0 1280x800x24" make gui-smoke QI_GUI_REQUIRE=1
+
+      - name: GUI 冒烟 (macOS)
+        if: runner.os == 'macOS'
+        env:
+          QI_GUI_SHOT_DIR: ${{ github.workspace }}/gui-shots
+        run: make gui-smoke QI_GUI_REQUIRE=1
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-shots-${{ matrix.os }}
+          path: gui-shots
+          if-no-files-found: ignore
 
   clippy:
     name: Clippy (lib)
