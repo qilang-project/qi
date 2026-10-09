@@ -28,11 +28,17 @@
 //! lldb 照常按源码断点。分片放在稳定位置（不是临时目录），跨次编译一直在；
 //! 往用户项目目录里放是不行的，那是在别人的源码树里乱丢文件。
 //!
-//! 什么时候不切（直接走原来的串行路径）：模块小（切了反而多花解析 bitcode 的钱）、
-//! 不是宿主原生目标、宿主不是 macOS/Linux、模块里有别名/ifunc/comdat 或
+//! 要求切了也不切（直接走原来的串行路径）的情形：不是宿主原生目标、宿主不是 macOS/Linux、模块里有别名/ifunc/comdat 或
 //! 我们不认识的链接类型。
 //!
-//! `QI_CODEGEN_PARTITIONS=N` 强制切成 N 份（测试用），`=1` 关掉。
+//! **默认不切**，只有 `QI_CODEGEN_PARTITIONS=N` 才切成 N 份。
+//!
+//! 原来优化后指令数过 6000 就自动切 8 份，2026.10.08-1 发版时 macOS arm64
+//! 的 Release 编 qipkg 段错误，本机冷编也约 15% 复现：崩在分片线程的
+//! `DwarfDebug::endModule → DwarfCompileUnit::finishEntityDefinition`（实体没有
+//! DIE）。各分片 bitcode 过得了 verifier，单独 `llc` 48 次不崩，同进程单线程跑
+//! 8 片也不崩 —— 只在多线程同时发射时出现，根因还在 LLVM 里没找到。
+//! 并行只省 0.3–0.5 秒（约 20%），不值得拿编译器偶发段错误换。
 
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
@@ -43,12 +49,8 @@ use inkwell::GlobalVisibility;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
-/// 自动模式下的分片数。固定常数（不看核数），保证同一输入的产物处处相同。
-const AUTO_PARTITIONS: usize = 8;
 /// 强制分片数的上限（也是清理旧分片文件时扫的范围）。
 const MAX_PARTITIONS: usize = 64;
-/// 自动模式下，优化后指令数低于这个就不切（小程序切了只会更慢）。
-const AUTO_MIN_INSTRUCTIONS: usize = 6000;
 
 // inkwell 没包的几个 C API。它们和 inkwell 用到的函数在同一个目标文件
 // （LLVM Core.cpp）里，静态链接时一并进来。
@@ -80,22 +82,13 @@ fn raw(v: impl AsValueRef) -> *mut c_void {
     v.as_value_ref() as *mut c_void
 }
 
-/// 这次要切几份；None = 走串行。
-fn partition_count(module: &Module<'_>) -> Option<usize> {
-    let forced = std::env::var("QI_CODEGEN_PARTITIONS")
+/// 这次要切几份；None = 走串行。只认显式的 `QI_CODEGEN_PARTITIONS`（见模块注释）。
+fn partition_count() -> Option<usize> {
+    std::env::var("QI_CODEGEN_PARTITIONS")
         .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok());
-    match forced {
-        Some(n) if n <= 1 => None,
-        Some(n) => Some(n.min(MAX_PARTITIONS)),
-        None => {
-            let total: usize = functions(module)
-                .iter()
-                .map(|f| instruction_count(*f))
-                .sum();
-            (total >= AUTO_MIN_INSTRUCTIONS).then_some(AUTO_PARTITIONS)
-        }
-    }
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 1)
+        .map(|n| n.min(MAX_PARTITIONS))
 }
 
 fn functions<'ctx>(module: &Module<'ctx>) -> Vec<FunctionValue<'ctx>> {
@@ -415,7 +408,7 @@ pub(super) fn try_emit_parallel(
     if !host_native || !(cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
         return Ok(None);
     }
-    let Some(parts) = partition_count(module) else {
+    let Some(parts) = partition_count() else {
         return Ok(None);
     };
     let Some(dir) = parts_dir(out) else {
