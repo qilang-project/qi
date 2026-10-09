@@ -23,6 +23,7 @@ pub mod utils;
 // 跟 codegen/inkwell_gen 下那批中文模块一个写法。
 #[path = "qi_stdlib.rs"]
 pub mod qi_stdlib;
+pub mod runtime_archive;
 #[path = "链接.rs"]
 pub mod 链接;
 
@@ -337,6 +338,8 @@ impl QiCompiler {
             ));
         }
 
+        let gui = crate::runtime_archive::uses_gui(&programs);
+
         // 输出库路径：优先 config.output_file，否则按平台约定命名（lib<基名>.<ext>）。
         let kind = self.config.library_kind.unwrap();
         let stem = source_file
@@ -361,11 +364,11 @@ impl QiCompiler {
         match kind {
             // 静态库是 ar 打包，链接期才解析符号 —— 外部 C 库由**使用者**在最终链接时提供，
             // 这里无处可放，故只有动态库需要把 外部 "..." 的链接目标带上。
-            config::LibraryKind::静态 => self.build_static_library(&obj, &lib_out)?,
+            config::LibraryKind::静态 => self.build_static_library(&obj, &lib_out, gui)?,
             config::LibraryKind::动态 => {
                 let 兜底目录 = source_file.parent().unwrap_or(std::path::Path::new("."));
                 let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
-                self.build_dynamic_library(&obj, &lib_out, &extern_libs)?
+                self.build_dynamic_library(&obj, &lib_out, &extern_libs, gui)?
             }
         }
 
@@ -390,8 +393,13 @@ impl QiCompiler {
     /// 静态库：把用户 .o 与 libqi_runtime.a 合并成一个自包含的 .a。
     /// 做法：在临时目录 `ar x` 解包运行时归档，连同用户 .o 一起 `ar rcs` 重新打包。
     /// 这样使用者只需链接这一个 .a，无需再并列运行时。
-    fn build_static_library(&self, obj: &PathBuf, lib_out: &PathBuf) -> Result<(), CompilerError> {
-        let runtime = self.find_host_runtime_library()?;
+    fn build_static_library(
+        &self,
+        obj: &PathBuf,
+        lib_out: &PathBuf,
+        gui: bool,
+    ) -> Result<(), CompilerError> {
+        let runtime = self.find_host_runtime_library(gui)?;
         let tmp = std::env::temp_dir().join(format!("qi_ar_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).map_err(CompilerError::Io)?;
@@ -448,8 +456,9 @@ impl QiCompiler {
         obj: &PathBuf,
         lib_out: &PathBuf,
         extern_libs: &[crate::链接::链接项],
+        gui: bool,
     ) -> Result<(), CompilerError> {
-        let runtime = self.find_host_runtime_library()?;
+        let runtime = self.find_host_runtime_library(gui)?;
         let mut cmd = std::process::Command::new("clang");
         // 同 link_objects：debug map 里的 .o 时间戳会破坏产物可复现性。
         cmd.env("ZERO_AR_DATE", "1");
@@ -505,6 +514,9 @@ impl QiCompiler {
             {
                 cmd.arg("-ldl");
             }
+        }
+        if gui {
+            crate::runtime_archive::push_gui_system_libs(&mut cmd);
         }
 
         // 库自身用到的 外部 "..." 目标（-L 搜索路径 + -l/直链文件/framework）。
@@ -650,7 +662,8 @@ impl QiCompiler {
         let extern_libs = Self::collect_extern_libs(&programs, 兜底目录)?;
         // 复用跨平台链接：mac frameworks / linux / windows / zig 交叉，链 libqi_runtime.a。
         let t = std::time::Instant::now();
-        self.link_objects(&objects, &exe, &extern_libs)?;
+        let gui = crate::runtime_archive::uses_gui(&programs);
+        self.link_objects(&objects, &exe, &extern_libs, gui)?;
         let t = crate::phase_timer::mark("链接", t);
         if let Some((c, k)) = &cache {
             c.store(k, &exe, &objects, &codegen_warnings);
@@ -756,6 +769,7 @@ impl QiCompiler {
         object_files: &[PathBuf],
         executable_path: &PathBuf,
         extern_libs: &[crate::链接::链接项],
+        gui: bool,
     ) -> Result<(), CompilerError> {
         // -L 搜索路径（CLI --库路径 优先，QI_LIBRARY_PATH 追加），两条链接路径共用。
         let 搜索路径 = self.库搜索路径()?;
@@ -792,7 +806,7 @@ impl QiCompiler {
         }
 
         // 链接无 LLVM 的 qi-runtime 归档（libqi_runtime.a）。
-        let lib_path = self.find_host_runtime_library()?;
+        let lib_path = self.find_host_runtime_library(gui)?;
 
         let mut command = std::process::Command::new("clang");
         // macOS 的调试信息不进可执行文件，只留一张 debug map（N_OSO 条目）指回
@@ -888,6 +902,9 @@ impl QiCompiler {
                     .arg("-framework")
                     .arg("AppKit");
             }
+        }
+        if gui {
+            crate::runtime_archive::push_gui_system_libs(&mut command);
         }
 
         // 外部块声明的链接目标。放在系统库之后，确保符号可被解析。
@@ -1042,51 +1059,6 @@ impl QiCompiler {
                 归档.display()
             );
         }
-    }
-
-    /// 找宿主平台的 qi-runtime 归档（无 LLVM）。inkwell 后端链接它，避免 libqi_compiler.a 拖 LLVM。
-    fn find_host_runtime_library(&self) -> Result<PathBuf, CompilerError> {
-        if let Ok(p) = std::env::var("QI_RUNTIME_LIB") {
-            let path = PathBuf::from(p);
-            if path.exists() {
-                Self::提醒归档过期(&path);
-                return Ok(path);
-            }
-        }
-        let exe = std::env::current_exe().map_err(CompilerError::Io)?;
-        // 归档文件名平台相关：unix .a / windows msvc .lib
-        let 归档名 = if cfg!(windows) {
-            "qi_runtime.lib"
-        } else {
-            "libqi_runtime.a"
-        };
-        // 安装后/发布包布局：<prefix>/bin/qi → <prefix>/lib/qi/<归档>
-        // （installer 装到 /usr/local;release tar/zip 解压即用同构）
-        if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
-            let p = prefix.join("lib/qi").join(归档名);
-            if p.exists() {
-                Self::提醒归档过期(&p);
-                return Ok(p);
-            }
-        }
-        // 开发布局：qilang/target/debug/qi → 上溯到 qilang
-        if let Some(ws) = exe
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-        {
-            for profile in ["debug", "release"] {
-                let p = ws.join("qi-runtime/target").join(profile).join(归档名);
-                if p.exists() {
-                    Self::提醒归档过期(&p);
-                    return Ok(p);
-                }
-            }
-        }
-        Err(CompilerError::Codegen(
-            "找不到 qi-runtime 归档。先在 qi-runtime/ 跑 cargo build，或设 QI_RUNTIME_LIB。"
-                .to_string(),
-        ))
     }
 
     /// Internal implementation with visited set to prevent infinite recursion

@@ -8,6 +8,7 @@
 # 常用：
 #   make build            构建编译器（release）
 #   make runtime          构建 qi-runtime 归档（独立 cargo 项目，容易漏）
+#   make runtime-gui      构建 GUI 版 qi-runtime 归档（--features gui，独立 target 目录）
 #   make test             库单测
 #   make regress          codegen 回归
 #   make build-cache      构建缓存（命中/失配/QI_NO_CACHE/警告重放）
@@ -17,7 +18,8 @@
 #   make debuginfo        DWARF 调试信息验收（实跑 lldb 断点/单步/backtrace）
 #   make fuzz             差分模糊（参考求值器 / 无优化 / 最大优化 三方比对）
 #   make grpc             gRPC 全套互通验收（要 qi-grpc 仓）
-#   make gui-smoke        GUI 冒烟（要显示环境 + 带 gui feature 的运行时，不进 ci）
+#   make gui-smoke        GUI 冒烟（要显示环境 + GUI 版运行时，不进 ci；CI 里是单独的 job）
+#   make gui-archive      运行时归档选择（CLI 程序链普通版、GUI 程序链 GUI 版，不开窗）
 #   make ci               CI 跑的全部（= check test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc）
 #   make install          装到 /usr/local（同步编译器 + 运行时归档）
 #   make release V=2026.07.29-2   全量门禁 → 改版本号 → 提交 → 打 tag
@@ -34,6 +36,15 @@ RUNTIME_LIB := $(abspath $(RUNTIME_DIR)/target/release/libqi_runtime.a)
 # wasm 版归档也跟着 RUNTIME_DIR 走：CI 里 qi-runtime 克隆在 qi 检出目录**旁边**，
 # 编译器按自己所在仓库根去猜是猜不到的，必须像 QI_RUNTIME_LIB 一样显式传
 WASM_RUNTIME_LIB := $(abspath $(RUNTIME_DIR)/wasm/target/wasm32-wasip1/release/libqi_runtime_wasm.a)
+# GUI 版归档：同一份源码带 --features gui 编，放在**独立的** target 目录 ——
+# 跟普通版共用 target/release 的话，两次构建会互相覆盖 libqi_runtime.a，
+# 于是「服务器程序被迫链 ALSA」或「GUI 程序链到桩」取决于最后编的是哪个。
+# 发布包里它改名叫 libqi_runtime_gui.a，编译器只在程序导入 标准库.图形化 时选它
+# （qi/src/runtime_archive.rs）。Windows MSVC 下文件名是 qi_runtime.lib。
+# --target-dir 用相对路径：Windows 上 make 的 abspath 给的是 /d/a/... 这种 MSYS
+# 路径，cargo 不一定认；相对 qi/ 的路径两边都认（跟 make runtime 一个写法）。
+RUNTIME_GUI_TARGET := $(RUNTIME_DIR)/target/gui
+RUNTIME_GUI_LIB := $(abspath $(RUNTIME_GUI_TARGET)/release/libqi_runtime.a)
 
 # target 目录问 cargo 要：本地 qi/ 是 qilang workspace 的成员，产物在
 # 上一级的共享 target/；CI 里 qi 是独立 checkout，产物在 ./target/。
@@ -94,7 +105,7 @@ check-llvm:
 	       exit 1 ;; \
 	  esac
 
-.PHONY: help build runtime test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc gui-smoke check lint-strict ci install \
+.PHONY: help build runtime runtime-gui test regress build-cache ffi-link bindgen examples debuginfo fuzz grpc gui-smoke gui-archive check lint-strict ci install \
         release push-release clean version check-llvm
 
 help:
@@ -110,6 +121,15 @@ runtime:
 
 $(RUNTIME_LIB):
 	$(MAKE) runtime
+
+# Linux 上要 ALSA 开发包（alsa-sys 走 pkg-config）：apt install libasound2-dev pkg-config。
+# X11 / Wayland / xkbcommon 是运行时 dlopen 的，编译期不需要。
+runtime-gui:
+	cargo build --release --features gui --manifest-path $(RUNTIME_DIR)/Cargo.toml \
+	  --target-dir $(RUNTIME_GUI_TARGET)
+
+$(RUNTIME_GUI_LIB):
+	$(MAKE) runtime-gui
 
 # --test-threads=1 不是图省事:标准库 FFI 有几个测试会改进程环境变量
 # (os_ffi/env_ffi/system 的 set_var)，而**任何**并发读 env 的测试都可能撞上 ——
@@ -186,12 +206,20 @@ grpc: build $(RUNTIME_LIB)
 	  echo "没有 $(GRPC_DIR)/跑验收.sh，跳过 gRPC 验收"; \
 	fi
 
-# GUI 冒烟。**故意不进 ci** —— 它要真开窗，依赖显示环境；CI 的 runner 是无头的，
-# 挂进去只会得到一条永远 SKIP（或者更糟：偶发假红）的噪音用例。
-# 想跑就单独 make gui-smoke，前提是 RUNTIME_LIB 那份归档是带 --features gui 编的
-# （不带的话 GUI 全是 stub，窗口根本不会出现，脚本会 SKIP 掉）。
-gui-smoke: build $(RUNTIME_LIB)
-	QI_RUNTIME_LIB=$(RUNTIME_LIB) bash tests/gui自动化/断言.sh $(QI)
+# GUI 冒烟。**不进 make ci** —— 它要真开窗，依赖显示环境；make ci 跑在无头机器上
+# 只会得到一条永远 SKIP 的噪音用例。CI 里它是单独的 GUI 冒烟 job：Linux 套
+# xvfb-run，并设 QI_GUI_REQUIRE=1 让「起不来窗口」直接算失败。
+#   本地：make gui-smoke
+#   CI：  xvfb-run -a make gui-smoke QI_GUI_REQUIRE=1
+QI_GUI_REQUIRE ?= 0
+gui-smoke: build $(RUNTIME_GUI_LIB) gui-archive
+	QI_RUNTIME_GUI_LIB=$(RUNTIME_GUI_LIB) QI_GUI_REQUIRE=$(QI_GUI_REQUIRE) \
+	  bash tests/gui自动化/断言.sh $(QI)
+
+# 归档选择：发布包布局下命令行程序链普通版、GUI 程序链 GUI 版（Linux 上前者不依赖
+# libasound）。不开窗，任何机器都能跑；gui-smoke 先跑它。
+gui-archive: build $(RUNTIME_LIB) $(RUNTIME_GUI_LIB)
+	bash tests/gui自动化/归档选择.sh $(QI) $(RUNTIME_LIB) $(RUNTIME_GUI_LIB)
 
 # 门禁用的 lint。clippy 只挡真 error ——
 # 仓库里还有一批历史 warning，现在就上 -D warnings 会让 CI 当场全红；
@@ -271,6 +299,17 @@ check-runtime-pin:
 	    exit 1; \
 	  fi; \
 	  echo "运行时 tag 对得上：$$pinned"
+	@# qi-gui 也钉了 tag：GUI 版运行时把它真编进去，runtime 转发的 qi_gui_*_impl
+	@# 符号它得都有。runtime 打了新 tag 而 qi-gui 没跟上，release 的 GUI 那步直接编不过。
+	@pinned=$$(sed -n 's#.*--branch \([0-9.-]*\) https://github.com/qilang-project/qi-gui.*#\1#p' \
+	    .github/workflows/release.yml); \
+	  latest=$$(git ls-remote --tags --refs https://github.com/qilang-project/qi-gui.git \
+	    | awk -F/ '{print $$NF}' | sort -V | tail -1); \
+	  if [ "$$pinned" != "$$latest" ]; then \
+	    echo "qi-gui tag 落后：release.yml 钉的是 $${pinned}，qi-gui 最新是 $${latest}"; \
+	    exit 1; \
+	  fi; \
+	  echo "qi-gui tag 对得上：$$pinned"
 
 release:
 ifndef V
