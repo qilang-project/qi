@@ -86,6 +86,8 @@ pub fn push_gui_system_libs(cmd: &mut std::process::Command) {
             "-lwinmm",
             "-lpropsys",
             "-lmsimg32",
+            // windows-core 的 COM 工厂缓存（cpal 走 WASAPI 带进来）要 RoGetActivationFactory
+            "-lruntimeobject",
         ] {
             cmd.arg(lib);
         }
