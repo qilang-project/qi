@@ -3252,6 +3252,134 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // ── 窗口内视频（2026-10）──
+        // ffmpeg 子进程解码（画面 rawvideo RGBA、声音 s16le PCM），声音交给 rodio，
+        // 画面以声音为钟同步。没装 ffmpeg 时 视频加载 返回 0，调用方退回封面/外部播放器。
+        // 实现见 qi-gui/src/egui_video.rs。
+        // 视频可用() → 1/0：本机有没有 ffmpeg + ffprobe
+        gui_module.add_function(ModuleFunction::new(
+            "视频可用",
+            "qi_gui_egui_video_available",
+            vec![],
+            "整数",
+        ));
+        // 视频加载(路径) → 句柄，失败 0。加载即解出第一帧当封面，不播放
+        gui_module.add_function(ModuleFunction::new(
+            "视频加载",
+            "qi_gui_egui_video_load",
+            vec![s()],
+            "整数",
+        ));
+        // 视频画(句柄, 最大宽) → 1 画面本帧被点了 / 0：按比例占满可用宽度，暂停时中间画播放钮
+        gui_module.add_function(ModuleFunction::new(
+            "视频画",
+            "qi_gui_egui_video_draw",
+            vec![i(), i()],
+            "整数",
+        ));
+        // 视频播放(句柄) / 视频暂停(句柄) / 视频释放(句柄)
+        gui_module.add_function(ModuleFunction::new(
+            "视频播放",
+            "qi_gui_egui_video_play",
+            vec![i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "视频暂停",
+            "qi_gui_egui_video_pause",
+            vec![i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "视频释放",
+            "qi_gui_egui_video_free",
+            vec![i()],
+            "void",
+        ));
+        // 视频跳到(句柄, 毫秒)
+        gui_module.add_function(ModuleFunction::new(
+            "视频跳到",
+            "qi_gui_egui_video_seek",
+            vec![i(), i()],
+            "void",
+        ));
+        // 视频位置(句柄) / 视频时长(句柄) → 毫秒
+        gui_module.add_function(ModuleFunction::new(
+            "视频位置",
+            "qi_gui_egui_video_position",
+            vec![i()],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "视频时长",
+            "qi_gui_egui_video_duration",
+            vec![i()],
+            "整数",
+        ));
+        // 视频播放中(句柄) → 1/0，放到头自动停
+        gui_module.add_function(ModuleFunction::new(
+            "视频播放中",
+            "qi_gui_egui_video_playing",
+            vec![i()],
+            "整数",
+        ));
+
+        // ── 原生文件对话框（rfd）──
+        // 模态；选中返回路径，取消返回空串。实现见 qi-gui/src/native_dialog.rs。
+        // 选择打开文件(标题, 扩展名过滤)：过滤写 "md,txt" 或 "图片:png,jpg;音频:mp3"，空串不过滤
+        gui_module.add_function(ModuleFunction::new(
+            "选择打开文件",
+            "qi_gui_dialog_open_file",
+            vec![s(), s()],
+            "字符串",
+        ));
+        // 选择保存文件(标题, 默认名)：默认名可带目录，带了就从那个目录开始
+        gui_module.add_function(ModuleFunction::new(
+            "选择保存文件",
+            "qi_gui_dialog_save_file",
+            vec![s(), s()],
+            "字符串",
+        ));
+        // 选择文件夹(标题)
+        gui_module.add_function(ModuleFunction::new(
+            "选择文件夹",
+            "qi_gui_dialog_pick_folder",
+            vec![s()],
+            "字符串",
+        ));
+
+        // ── 原生菜单栏（muda，macOS / Windows；Linux 返回 0）──
+        // 实现见 qi-gui/src/native_menu.rs。菜单在 应用创建 之后建一次，不要每帧调。
+        // 菜单添加(菜单名, 项名, 快捷键) → 编号：快捷键 "Cmd+S" / "Cmd+Shift+S"（Cmd 在
+        // macOS 是 ⌘、其它系统是 Ctrl），空串不设；没有原生菜单的平台返回 0
+        gui_module.add_function(ModuleFunction::new(
+            "菜单添加",
+            "qi_gui_menu_add",
+            vec![s(), s(), s()],
+            "整数",
+        ));
+        // 菜单分隔线(菜单名)
+        gui_module.add_function(ModuleFunction::new(
+            "菜单分隔线",
+            "qi_gui_menu_separator",
+            vec![s()],
+            "void",
+        ));
+        // 菜单添加编辑项(菜单名) → 1/0：撤销/重做/剪切/拷贝/粘贴/全选，作用于有焦点的输入框
+        gui_module.add_function(ModuleFunction::new(
+            "菜单添加编辑项",
+            "qi_gui_menu_add_edit",
+            vec![s()],
+            "整数",
+        ));
+        // 菜单被点() → 编号，没有 0。逐帧轮询，一次取一个
+        gui_module.add_function(ModuleFunction::new(
+            "菜单被点",
+            "qi_gui_menu_clicked",
+            vec![],
+            "整数",
+        ));
+
         // ── 画布精灵（2026-08）──
         // 在画布上贴图片：Scratch「角色」的平替，给儿童编程做小游戏用。
         // 纹理按路径缓存（每帧重解码 PNG 会把帧率打死），加载失败画品红占位方块。
