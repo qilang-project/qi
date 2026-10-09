@@ -65,6 +65,33 @@ fn resolve_trace() -> bool {
     )
 }
 
+/// 只给报错提示用：往上最多三级找 `<路径>.qi`，返回 (往上几级, 文件)。
+/// **不参与解析** —— 解析要是这么干，就又回到了被删掉的祖先扫描。
+#[allow(non_snake_case)]
+fn 上级目录里的同名模块(
+    parent_dir: &std::path::Path,
+    module_path: &[String],
+) -> Option<(usize, PathBuf)> {
+    if module_path.is_empty() || module_path[0] == "." || module_path[0] == ".." {
+        return None;
+    }
+    let mut dir = parent_dir.to_path_buf();
+    for 层数 in 1..=3 {
+        if !dir.pop() || dir.as_os_str().is_empty() {
+            return None;
+        }
+        let mut candidate = dir.clone();
+        for part in module_path {
+            candidate.push(part);
+        }
+        candidate.set_extension("qi");
+        if candidate.is_file() {
+            return Some((层数, candidate));
+        }
+    }
+    None
+}
+
 /// 解析收集一次编译单元时的遍历状态（每次 collect 新建，不跨编译复用）。
 #[derive(Default)]
 struct CollectState {
@@ -1398,6 +1425,26 @@ impl QiCompiler {
             }
         }
 
+        // 4.5 项目根：最近的 qi.toml 所在目录（含其 [源码] 目录）。让 `测试/`、
+        //     `工具/` 这类子目录里的文件也能 `导入 标记;` 拿到项目根的 标记.qi。
+        //     排在同目录（2-4）之后 —— 离得近的赢；排在工作区覆盖 / 第三方包
+        //     之前 —— 跟同目录查找同一个理由：自己项目里的模块不该被外面同名包
+        //     劫持。边界见 package::project_root（只认最近的一个 qi.toml，不出仓库）。
+        if !module_path.is_empty() {
+            if let Some(manifest) = crate::package::project_root(current_file) {
+                if let Some(path) = manifest.resolve_module_path("", module_path) {
+                    if resolve_trace() {
+                        eprintln!(
+                            "[包解析] `{}` ← 项目根 {}",
+                            module_path.join("."),
+                            path.display()
+                        );
+                    }
+                    return Ok(path);
+                }
+            }
+        }
+
         // 5. Try third-party package paths (QI_PACKAGES_PATH environment variable)
         if !module_path.is_empty() {
             // 5.0 工作区覆盖（仓库根的 qi工作区.toml 的 [覆盖]）：别名 → 本地目录。
@@ -1486,6 +1533,15 @@ impl QiCompiler {
         let mut 提示 = format!("无法找到导入模块: {}", module_path.join("."));
         提示.push_str("\n找过这些地方：");
         提示.push_str(&format!("\n  · 相对 {}", parent_dir.display()));
+        match crate::package::project_root(current_file) {
+            Some(m) => 提示.push_str(&format!(
+                "\n  · 项目根 {}（最近的 qi.toml 所在目录）",
+                m.root_dir.display()
+            )),
+            None => 提示.push_str(
+                "\n  · 项目根（没查：从这里往上到仓库根都没有 qi.toml，或文件本身就在项目根）",
+            ),
+        }
         提示.push_str(&format!(
             "\n  · 本项目 qi.toml 的 [依赖] / [开发依赖] 里名为 `{}` 的条目",
             alias
@@ -1501,6 +1557,27 @@ impl QiCompiler {
             }
         }
         提示.push_str("\n  · QI_PACKAGES_PATH、./qi_packages、~/.qi/packages");
+        // 文件其实就在上面几级目录里（典型：测试/xx.qi 想导入项目根的模块，但项目
+        // 没有 qi.toml）—— 直接告诉用户两种写法，而不是让他去配工作区。
+        if let Some((层数, 找到)) = 上级目录里的同名模块(parent_dir, module_path) {
+            let 前缀 = "../".repeat(层数);
+            let 相对写法 = format!("导入 {}{};", 前缀, module_path.join("/"));
+            match crate::package::project_root(current_file) {
+                // 有项目根还没找到 = 那个文件在项目根外面：项目根查找不越界，只能显式写
+                Some(m) => 提示.push_str(&format!(
+                    "\n\n在项目根 {} 之外找到了 {}。项目根查找不会越过 qi.toml 所在目录，\n要用它请写相对导入 `{}`",
+                    m.root_dir.display(),
+                    找到.display(),
+                    相对写法
+                )),
+                None => 提示.push_str(&format!(
+                    "\n\n在上级目录找到了 {}：\n  · 写成相对导入 `{}`\n  · 或者在项目根放一个 qi.toml（`[包]` 下写 `名称 = \"…\"`），子目录里就能直接 `导入 {};`",
+                    找到.display(),
+                    相对写法,
+                    module_path.join(".")
+                )),
+            }
+        }
         提示.push_str(&format!(
             "\n\n怎么办：本地源码就在同一个仓库里 → 在仓库根的 qi工作区.toml 写 `[覆盖]` 下 `{} = \"./目录\"`；",
             alias

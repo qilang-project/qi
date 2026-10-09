@@ -131,6 +131,40 @@ pub fn nearest_workspace_file(current_file: &Path) -> Option<PathBuf> {
     }
 }
 
+/// 文件所属**项目根**：从文件所在目录往上，最近一个放着 `qi.toml` 的目录。
+///
+/// 用途：项目子目录（`测试/`、`工具/`）里的文件可以直接 `导入 标记;` 拿到
+/// 项目根下的 `标记.qi`，不必写 `导入 ../标记;`。
+///
+/// 它**有边界**，跟 2.0 删掉的祖先扫描不是一回事：
+/// - 只认一个目录：最近的 qi.toml 就停，不会继续往上找第二个；
+/// - 只查那个目录（及其 `[源码] 目录`）里**按路径对得上**的文件，不翻子目录比包名；
+/// - 往上走时碰到仓库根（有 `.git`）或工作区根（有 `qi工作区.toml`）还没找到
+///   qi.toml，就当没有项目根 —— 不出仓库，`~/qi.toml` 这种东西够不着。
+///
+/// 文件自己就在项目根里时返回 None（同目录查找已经覆盖了）。
+pub fn project_root(current_file: &Path) -> Option<ResolvedPackageManifest> {
+    let parent = current_file.parent()?;
+    let file_dir = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
+    let mut dir = file_dir.clone();
+    loop {
+        if dir.join("qi.toml").is_file() {
+            if dir == file_dir {
+                return None;
+            }
+            return ResolvedPackageManifest::load_dir(&dir).ok().flatten();
+        }
+        if dir.join(".git").exists() || dir.join(WORKSPACE_FILE).is_file() {
+            return None;
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 pub fn workspace_override(current_file: &Path, alias: &str) -> Option<PathBuf> {
     let mut dir = current_file.parent()?.to_path_buf();
     loop {
