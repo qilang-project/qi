@@ -64,7 +64,7 @@ jobs:
       # 在 CI 里根本测不到 —— 发布那条路才需要可复现（见 release.yml）。
       - name: Clone 被测依赖
         run: |
-          git clone --depth 1 --branch 2026.07.24-1 https://github.com/qilang-project/qi-gui.git ../qi-gui
+          git clone --depth 1 https://github.com/qilang-project/qi-gui.git ../qi-gui
           git clone --depth 1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           git clone --depth 1 https://github.com/qilang-project/qi-grpc.git ../qi-grpc
 
