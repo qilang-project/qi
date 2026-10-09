@@ -3139,11 +3139,69 @@ impl ModuleRegistry {
             vec![],
             "整数",
         ));
+        // 编辑区光标行() / 编辑区光标列() → 同一个光标在第几行（按换行分）、本行第几个字符，
+        // 都从 1 起；没有光标 -1。状态栏「行:列」用，不必把正文切开数
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区光标行",
+            "qi_gui_egui_editor_cursor_row",
+            vec![],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区光标列",
+            "qi_gui_egui_editor_cursor_col",
+            vec![],
+            "整数",
+        ));
         // 设置编辑区光标(id, 字符下标)：下一帧生效
         gui_module.add_function(ModuleFunction::new(
             "设置编辑区光标",
             "qi_gui_egui_editor_set_cursor",
             vec![s(), i()],
+            "void",
+        ));
+        // 托管编辑区(id, 等宽, 字号) → 版本：正文由运行时持有、不再每帧往返全文；
+        // 内容每改一次版本 +1，qi 只在版本变了时用 编辑区文本 取一次
+        gui_module.add_function(ModuleFunction::new(
+            "托管编辑区",
+            "qi_gui_egui_editor_managed",
+            vec![s(), i(), i()],
+            "整数",
+        ));
+        // 设置编辑区文本(id, 文本)：整篇换掉（打开、新建、程序插入），版本 +1，高亮清空
+        gui_module.add_function(ModuleFunction::new(
+            "设置编辑区文本",
+            "qi_gui_egui_editor_set_text",
+            vec![s(), s()],
+            "void",
+        ));
+        // 编辑区文本(id) → 托管编辑区的当前正文
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区文本",
+            "qi_gui_egui_editor_text",
+            vec![s()],
+            "字符串",
+        ));
+        // 编辑区版本(id) → 内容版本号，没建过的编辑区 0
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区版本",
+            "qi_gui_egui_editor_version",
+            vec![s()],
+            "整数",
+        ));
+        // 设置编辑区高亮(id, "起,止,样式;…")：字节区间 + 样式位（1 标题 2 粗 4 斜 8 行内代码
+        // 16 链接 32 记号 64 引用 128 代码块 256 删除线 512 列表符号），重叠处按位或
+        gui_module.add_function(ModuleFunction::new(
+            "设置编辑区高亮",
+            "qi_gui_egui_editor_set_highlight",
+            vec![s(), s()],
+            "void",
+        ));
+        // 设置高亮颜色(样式位, 颜色)：覆盖某个样式的颜色，颜色 <0 恢复默认（从外观派生）
+        gui_module.add_function(ModuleFunction::new(
+            "设置高亮颜色",
+            "qi_gui_egui_set_highlight_color",
+            vec![i(), i()],
             "void",
         ));
         // 组合键(键名, 上档) → 整数：Cmd/Ctrl + 键刚按下；上档=1 要求按着 Shift，=0 要求没按
