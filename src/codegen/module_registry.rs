@@ -4346,10 +4346,49 @@ impl ModuleRegistry {
             vec![],
             "整数",
         ));
+        // 本地时区一族。时间戳永远是 Unix 秒（绝对时刻），上面的 年/月/日/时… 按 UTC 拆；
+        // 要墙上的钟就用「本地」前缀这一套。本地时间() 返回的是本地墙钟读数
+        // （= 转本地(现在())），只能拿给 年/时/格式化 这类 UTC 系函数读分量。
         dt_module.add_function(ModuleFunction::new(
             "本地时间",
             "qi_datetime_now_local",
             vec![],
+            "整数",
+        ));
+        for (name, ffi) in [
+            ("时区偏移", "qi_datetime_local_offset"),
+            ("转本地", "qi_datetime_to_local"),
+            ("从本地", "qi_datetime_from_local"),
+            ("本地年", "qi_datetime_local_year"),
+            ("本地月", "qi_datetime_local_month"),
+            ("本地日", "qi_datetime_local_day"),
+            ("本地时", "qi_datetime_local_hour"),
+            ("本地分", "qi_datetime_local_minute"),
+            ("本地秒", "qi_datetime_local_second"),
+            ("本地星期几", "qi_datetime_local_weekday"),
+            ("本地季度", "qi_datetime_local_quarter"),
+            ("本地年的第几天", "qi_datetime_local_day_of_year"),
+            ("本地当天开始", "qi_datetime_local_start_of_day"),
+            ("本地当天结束", "qi_datetime_local_end_of_day"),
+            ("是本地今天", "qi_datetime_is_local_today"),
+        ] {
+            dt_module.add_function(ModuleFunction::new(
+                name,
+                ffi,
+                vec!["整数".to_string()],
+                "整数",
+            ));
+        }
+        dt_module.add_function(ModuleFunction::new(
+            "从本地年月日",
+            "qi_datetime_from_local_ymd",
+            vec!["整数".to_string(), "整数".to_string(), "整数".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "从本地年月日时分秒",
+            "qi_datetime_from_local_ymdhms",
+            vec!["整数".to_string(); 6],
             "整数",
         ));
 
@@ -4371,6 +4410,12 @@ impl ModuleRegistry {
         dt_module.add_function(ModuleFunction::new(
             "解析",
             "qi_datetime_parse",
+            vec!["字符串".to_string(), "字符串".to_string()],
+            "整数",
+        ));
+        dt_module.add_function(ModuleFunction::new(
+            "解析本地",
+            "qi_datetime_parse_local",
             vec!["字符串".to_string(), "字符串".to_string()],
             "整数",
         ));

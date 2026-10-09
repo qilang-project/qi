@@ -40,6 +40,11 @@
 #   ⑰ 字符串插值降成一次 qi_string_format_parts（41）：数值洞直接格式化进结果、
 #     N 段一次分配；输出与老 `+` 链逐字节一致，洞里新建的临时串要释放、变量不许
 #     释放 —— 跑 QI_RC_REPORT=1 查零泄漏（顺带抓到 填充模板 结果每次漏一条串）
+#   ⑱ 字符值在插值 / 打印 / `+` 拼接里按字符输出（42）：后端类型格里 字符 就是
+#     i64 码点，`"${'中'}"` 以前输出 20013。旁表记字符槽，显示处查（char_display.rs）
+#   ⑲ 本地时区一族（43 + 本地时区/东八区）：本地时间() 以前就是 现在()，
+#     时间.时(时间.本地时间()) 在北京 9 点给 1。43 只断言与时区无关的恒等式；
+#     东八区的具体数字用 TZ=Asia/Shanghai 另跑（Windows 不认 TZ，跳过）
 #   ⑨ 无限定内置原语给用户同名函数让路（28）：`完成` / `加锁` / `获取时间` /
 #     `取消协程` 这些短裸名以前排在用户函数**之前**解析，用户定义了同名函数就
 #     静默绑到运行时 FFI 上 —— 有类型标注报「聚合类型 vs 标量」（指错方向），
@@ -74,7 +79,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/42_*.qi "$HERE"/43_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -100,7 +105,8 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
     fi
     # 02：ARC 遮蔽变体 / 41：插值一次分配（洞里临时串的释放）——
     # QI_RC_REPORT=1 下活跃对象/字符串/闭包必须全 0
-    if [ "$name" = "02_遮蔽_字符串ARC.qi" ] || [ "$name" = "41_插值一次分配.qi" ]; then
+    if [ "$name" = "02_遮蔽_字符串ARC.qi" ] || [ "$name" = "41_插值一次分配.qi" ] \
+        || [ "$name" = "42_字符按字符显示.qi" ]; then
         rc_line=$(QI_RC_REPORT=1 run_limited "$QI" run "$f" 2>&1 | grep '\[qi-rc\]')
         if ! echo "$rc_line" | grep -q '活跃对象=0 活跃字符串=0 活跃闭包=0'; then
             echo "FAIL $name (RC 泄漏: $rc_line)"
@@ -111,6 +117,25 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
     echo "PASS $name"
     passed=$((passed+1))
 done
+
+# ── 东八区：本地时区一族的具体数字（Windows 的 chrono 不读 TZ，跳过）──
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "SKIP 本地时区/东八区 (Windows 不认 TZ)" ;;
+    *)
+        total=$((total+1))
+        tz_actual=$(TZ=Asia/Shanghai run_limited "$QI" run "$HERE/本地时区/东八区.qi" 2>/dev/null | tr -d '\r')
+        tz_expect=$(tr -d '\r' < "$HERE/本地时区/东八区.期望")
+        if [ "$tz_actual" = "$tz_expect" ]; then
+            echo "PASS 本地时区/东八区"
+            passed=$((passed+1))
+        else
+            echo "FAIL 本地时区/东八区 (输出不符)"
+            echo "  期望: $tz_expect"
+            echo "  实际: $tz_actual"
+            failed=$((failed+1))
+        fi
+        ;;
+esac
 
 # ── 编译确定性：同一源码编译 5 次，产物 md5 完全一致 ──
 #   04：模块限定分发（最早的那条）
