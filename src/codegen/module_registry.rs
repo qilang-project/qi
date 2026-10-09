@@ -3076,6 +3076,182 @@ impl ModuleRegistry {
             "整数",
         ));
 
+        // ── 编辑器层（2026-10）──
+        // 文字编辑器一类程序用的通用原语，实现见 qi-gui/src/egui_editor.rs。
+        // 富文本开始() / 富文本片段(文本, 字号, 样式位, 颜色) / 富文本结束(缩进, 竖线)：
+        // 一行由多个片段组成，样式位 1粗 2斜 4等宽 8删除线 16下划线 32行内代码底色，
+        // 字号 <=0 用正文字号，颜色 <0 用主题文字色（打包整数 r*65536+g*256+b）
+        gui_module.add_function(ModuleFunction::new(
+            "富文本开始",
+            "qi_gui_egui_rich_begin",
+            vec![],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "富文本片段",
+            "qi_gui_egui_rich_span",
+            vec![s(), i(), i(), i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "富文本结束",
+            "qi_gui_egui_rich_end",
+            vec![i(), i()],
+            "void",
+        ));
+        // 代码块(文本, 字号)：等宽 + 底色框，字号 <=0 用等宽默认字号
+        gui_module.add_function(ModuleFunction::new(
+            "代码块",
+            "qi_gui_egui_code_block",
+            vec![s(), i()],
+            "void",
+        ));
+        // 分栏开始(左栏千分比) / 分栏下一栏() / 分栏结束()：两栏占满剩余区域
+        gui_module.add_function(ModuleFunction::new(
+            "分栏开始",
+            "qi_gui_egui_columns_begin",
+            vec![i()],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "分栏下一栏",
+            "qi_gui_egui_columns_next",
+            vec![],
+            "void",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "分栏结束",
+            "qi_gui_egui_columns_end",
+            vec![],
+            "void",
+        ));
+        // 编辑区(id, 当前值, 等宽, 字号) → 新值：撑满剩余区域、自带滚动的多行输入
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区",
+            "qi_gui_egui_editor",
+            vec![s(), s(), i(), i()],
+            "字符串",
+        ));
+        // 编辑区光标() → 最近一次 编辑区 调用后的光标字符下标，没有光标 -1
+        gui_module.add_function(ModuleFunction::new(
+            "编辑区光标",
+            "qi_gui_egui_editor_cursor",
+            vec![],
+            "整数",
+        ));
+        // 设置编辑区光标(id, 字符下标)：下一帧生效
+        gui_module.add_function(ModuleFunction::new(
+            "设置编辑区光标",
+            "qi_gui_egui_editor_set_cursor",
+            vec![s(), i()],
+            "void",
+        ));
+        // 组合键(键名, 上档) → 整数：Cmd/Ctrl + 键刚按下；上档=1 要求按着 Shift，=0 要求没按
+        gui_module.add_function(ModuleFunction::new(
+            "组合键",
+            "qi_gui_egui_shortcut",
+            vec![s(), i()],
+            "整数",
+        ));
+
+        // 设置窗口边距(像素)：根区域离窗口边缘多远，默认 10
+        gui_module.add_function(ModuleFunction::new(
+            "设置窗口边距",
+            "qi_gui_egui_window_margin",
+            vec![i()],
+            "void",
+        ));
+        // 设置外观(底色, 文字, 弱文字, 强调, 边框, 字号)：全套配色 + 基准字号，颜色是打包整数
+        gui_module.add_function(ModuleFunction::new(
+            "设置外观",
+            "qi_gui_egui_set_appearance",
+            vec![i(), i(), i(), i(), i(), i()],
+            "void",
+        ));
+        // 弱标签(文本)：次要信息用的浅色文字
+        gui_module.add_function(ModuleFunction::new(
+            "弱标签",
+            "qi_gui_egui_weak_label",
+            vec![s()],
+            "void",
+        ));
+        // 空白(像素)：沿当前布局方向留空
+        gui_module.add_function(ModuleFunction::new(
+            "空白",
+            "qi_gui_egui_add_space",
+            vec![i()],
+            "void",
+        ));
+        // 区域开始(高度, 内边距, 背景色, 最大宽)：高度>0 定高，0 随内容，-1 撑满，-(N+1) 撑满让出 N 像素；背景色<0 不画；最大宽>0 居中
+        gui_module.add_function(ModuleFunction::new(
+            "区域开始",
+            "qi_gui_egui_region_begin",
+            vec![i(), i(), i(), i()],
+            "void",
+        ));
+        // 区域结束()
+        gui_module.add_function(ModuleFunction::new(
+            "区域结束",
+            "qi_gui_egui_region_end",
+            vec![],
+            "void",
+        ));
+        // 右对齐开始()：这一行剩下的宽度里从右往左排
+        gui_module.add_function(ModuleFunction::new(
+            "右对齐开始",
+            "qi_gui_egui_right_begin",
+            vec![],
+            "void",
+        ));
+        // 右对齐结束()
+        gui_module.add_function(ModuleFunction::new(
+            "右对齐结束",
+            "qi_gui_egui_right_end",
+            vec![],
+            "void",
+        ));
+
+        // 适应图片(路径, 最大宽) → 1/0：按比例缩到可用宽度（不超过最大宽、不放大），圆角
+        gui_module.add_function(ModuleFunction::new(
+            "适应图片",
+            "qi_gui_egui_image_fit",
+            vec![s(), i()],
+            "整数",
+        ));
+        // 拖入文件() → 这一帧拖进窗口的文件路径，多个用换行分开，没有则空串
+        gui_module.add_function(ModuleFunction::new(
+            "拖入文件",
+            "qi_gui_egui_dropped_files",
+            vec![],
+            "字符串",
+        ));
+        // 进度拖条(id, 千分比, 宽) → 本帧点/拖到的千分比，没动 -1；宽 <=0 占满
+        gui_module.add_function(ModuleFunction::new(
+            "进度拖条",
+            "qi_gui_egui_seek_bar",
+            vec![s(), i(), i()],
+            "整数",
+        ));
+        // 音频位置(句柄) / 音频时长(句柄) → 毫秒（时长给不出时 0）；音频跳到(句柄, 毫秒) → 1/0
+        gui_module.add_function(ModuleFunction::new(
+            "音频位置",
+            "qi_gui_audio_position_ms",
+            vec![i()],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "音频时长",
+            "qi_gui_audio_duration_ms",
+            vec![i()],
+            "整数",
+        ));
+        gui_module.add_function(ModuleFunction::new(
+            "音频跳到",
+            "qi_gui_audio_seek_ms",
+            vec![i(), i()],
+            "整数",
+        ));
+
         // ── 画布精灵（2026-08）──
         // 在画布上贴图片：Scratch「角色」的平替，给儿童编程做小游戏用。
         // 纹理按路径缓存（每帧重解码 PNG 会把帧率打死），加载失败画品红占位方块。
