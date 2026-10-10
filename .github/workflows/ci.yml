@@ -17,6 +17,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +42,12 @@ jobs:
           sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
+          for i in 1 2 3; do sudo timeout 900 ./llvm.sh 21 && break; [ $i = 3 ] && exit 1; sleep 20; done
           sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
           # qi 生成的是不透明指针(ptr) IR；装 clang-17 专供编译 .ll（独立工具，与构建 qi 用的 LLVM 21 无关），
           # 把 `clang` 指向它。
-          sudo ./llvm.sh 17
+          for i in 1 2 3; do sudo timeout 900 ./llvm.sh 17 && break; [ $i = 3 ] && exit 1; sleep 20; done
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 200
 
       - name: Install LLVM 21 (macOS)
@@ -96,6 +97,7 @@ jobs:
   build-windows:
     name: Build + Test (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -246,10 +248,10 @@ jobs:
             libasound2-dev xvfb libxkbcommon-x11-0 fonts-wqy-microhei
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
+          for i in 1 2 3; do sudo timeout 900 ./llvm.sh 21 && break; [ $i = 3 ] && exit 1; sleep 20; done
           sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
-          sudo ./llvm.sh 17
+          for i in 1 2 3; do sudo timeout 900 ./llvm.sh 17 && break; [ $i = 3 ] && exit 1; sleep 20; done
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 200
 
       - name: Install LLVM 21 (macOS)
@@ -291,6 +293,7 @@ jobs:
   clippy:
     name: Clippy (lib)
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -303,7 +306,7 @@ jobs:
           sudo apt-get install -y cmake build-essential lsb-release wget software-properties-common gnupg libssl-dev libsqlite3-dev pkg-config
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 21
+          for i in 1 2 3; do sudo timeout 900 ./llvm.sh 21 && break; [ $i = 3 ] && exit 1; sleep 20; done
           sudo apt-get install -y libpolly-21-dev libzstd-dev libxml2-dev
           echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
       - run: cargo clippy --lib  # 报告不阻塞：既有 ~600 lint 债务(多为 FFI 裸指针等故意模式)，待逐步清理后再收紧回 -D warnings
