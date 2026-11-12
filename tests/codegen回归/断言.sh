@@ -85,7 +85,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/86_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -257,7 +257,6 @@ for one in "$@"; do
         failed=$((failed+1))
     fi
 done
-
 
 echo "codegen回归: $passed/$total 通过"
 [ $failed -eq 0 ] || exit 1

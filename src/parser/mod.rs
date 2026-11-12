@@ -84,7 +84,7 @@ where
             let snippet = snippet_with_caret(source, line, col, len);
             let exp_summary = friendly_expected_list(expected);
             let tok_str = tok.to_string();
-            let hint = build_unexpected_token_hint(&tok_str, expected);
+            let hint = build_unexpected_token_hint(&tok_str, expected, starts_line(source, lo));
             format!(
                 "语法错误：意外的标记 `{tok}`\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  期望：{exp_summary}{hint}"
             )
@@ -97,8 +97,13 @@ where
             let len = hi.saturating_sub(lo).max(1);
             let (line, col) = byte_offset_to_line_col(source, lo);
             let snippet = snippet_with_caret(source, line, col, len);
+            let hint = if starts_line(source, lo) {
+                "删除多余的标记，或检查上一行是否漏写 `;` / `}`"
+            } else {
+                "删除多余的标记"
+            };
             format!(
-                "语法错误：多余的标记 `{tok}`\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  提示：删除多余的标记，或检查上一行是否漏写 `;` / `}}`"
+                "语法错误：多余的标记 `{tok}`\n  --> 第 {line} 行第 {col} 列\n{snippet}\n  提示：{hint}"
             )
         }
         LE::User { error } => format!("语法错误：{error}"),
@@ -230,7 +235,20 @@ fn friendly_expected_list<T: std::fmt::Display>(expected: &[T]) -> String {
 /// 时，parser 的 expected 集里往往同时有 `)`，于是先命中「缺少 `)`」那条 ——
 /// 报出来的提示指着一个根本没缺的括号，真正的原因一个字不提。踩过一次，
 /// 排查花了好几分钟，而正确提示一眼就能看出来。
-fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) -> String {
+/// 标记是不是本行第一个非空白的东西。「上一行漏写 `;`」只在这种时候说得通：
+/// `变量 大 = 1e3;` 这种同一行里的意外标记，上一行好好的，那句提示只会把人
+/// 往错的地方指。
+fn starts_line(source: &str, byte_off: usize) -> bool {
+    let before = source.get(..byte_off).unwrap_or("");
+    let line_head = before.rsplit('\n').next().unwrap_or("");
+    line_head.trim().is_empty() && before.contains('\n')
+}
+
+fn build_unexpected_token_hint<T: std::fmt::Display>(
+    tok: &str,
+    expected: &[T],
+    at_line_start: bool,
+) -> String {
     let expected_strs: Vec<String> = expected.iter().map(|e| e.to_string()).collect();
     let expects = |needle: &str| expected_strs.iter().any(|s| s == needle);
 
@@ -253,7 +271,14 @@ fn build_unexpected_token_hint<T: std::fmt::Display>(tok: &str, expected: &[T]) 
     }
 
     if expects("\";\"") || expects("\"；\"") {
-        return "\n  提示：上一行可能漏写了 `;`，或本行多写了 `变量` / `函数` 关键字".to_string();
+        if at_line_start {
+            return "\n  提示：上一行可能漏写了 `;`，或本行多写了 `变量` / `函数` 关键字"
+                .to_string();
+        }
+        return format!(
+            "\n  提示：这里期望 `;`，却遇到了 `{tok}` —— 检查本行它前面是不是少了运算符，\
+             或者用了 qi 不认识的写法"
+        );
     }
     if expects("\"}\"") {
         return "\n  提示：缺少 `}` — 检查上面的代码块是否漏写收尾大括号".to_string();
@@ -304,6 +329,33 @@ mod error_format_tests {
         let msg = format!("{}", err);
         assert!(msg.contains("`类型` 是 qi 的保留字"), "{msg}");
         assert!(!msg.contains("缺少 `)`"), "括号提示会盖住真正的原因：{msg}");
+    }
+
+    /// 同一行里的意外标记不该怪到「上一行漏写 `;`」头上。
+    #[test]
+    fn same_line_error_does_not_blame_previous_line() {
+        let src = "包 主程序;\n函数 入口() {\n    变量 甲 = 1 乙;\n}\n";
+        let msg = format!("{}", Parser::new().parse_source(src).unwrap_err());
+        assert!(msg.contains("第 3 行"), "{msg}");
+        assert!(
+            !msg.contains("上一行"),
+            "同一行的错误提示指向了上一行：{msg}"
+        );
+        assert!(msg.contains("这里期望 `;`"), "{msg}");
+    }
+
+    #[test]
+    fn scientific_float_literals_parse() {
+        let src = "包 主程序;\n函数 入口() {\n    变量 甲 = 1e3;\n    变量 乙 = 1.5e-3;\n    \
+                   变量 丙 = 2E+10;\n    变量 丁 = 1_000e1_0;\n    变量 戊 = 0xE3;\n}\n";
+        let program = Parser::new().parse_source(src).expect("科学计数法应能解析");
+        let floats: Vec<f64> = format!("{:?}", program.statements)
+            .split("浮点数(")
+            .skip(1)
+            .filter_map(|rest| rest.split(')').next()?.parse().ok())
+            .collect();
+        assert_eq!(floats, vec![1e3, 1.5e-3, 2e10, 1000e10], "{floats:?}");
+        assert!(format!("{:?}", program.statements).contains("整数(227)"));
     }
 
     #[test]
