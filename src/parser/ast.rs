@@ -397,6 +397,16 @@ pub enum TypeNode {
     自定义类型(String),      // 引用已定义的自定义类型(结构体或枚举)
 }
 
+impl TypeNode {
+    /// `通道<T>` → `T`；不是通道类型原样返回。通道创建表达式用它从类型构造器里取元素类型。
+    pub fn unwrap_channel_element(self) -> TypeNode {
+        match self {
+            TypeNode::通道类型(ct) => *ct.element_type,
+            other => other,
+        }
+    }
+}
+
 /// Basic types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BasicType {
@@ -680,6 +690,10 @@ pub struct ArrayCreateExpression {
 /// Channel create expression (e.g., 通道<类型>())
 #[derive(Debug, Clone)]
 pub struct ChannelCreateExpression {
+    /// **元素类型**本身（`通道<字符串>()` 里的 `字符串`），不是 `通道<字符串>` 整体。
+    /// 文法里 ChannelTypeConstructor 产出的是 通道类型 包装，创建表达式要先拆开
+    /// （TypeNode::unwrap_channel_element）—— 以前没拆，后端/检查器都把元素当成「通道」，
+    /// 推不出类型就退回 整数：`变量 x = <- 字符串通道` 打印出指针地址。
     pub element_type: TypeNode,
     pub capacity: Option<Box<AstNode>>, // Optional buffer capacity
     pub span: Span,

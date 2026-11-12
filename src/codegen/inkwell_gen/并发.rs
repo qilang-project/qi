@@ -11,7 +11,7 @@ use super::后端;
 use super::类型::Qi类型;
 use crate::parser::ast::{
     AstNode, ChannelCreateExpression, ChannelReceiveExpression, ChannelSendExpression,
-    ExpressionStatement, GoroutineSpawnExpression, SelectCaseKind, SelectExpression,
+    ExpressionStatement, GoroutineSpawnExpression,
 };
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
@@ -235,39 +235,25 @@ impl<'ctx> 后端<'ctx> {
         }
         // 值 → i64 位模式（f64 bitcast / ptr ptrtoint / i1 zext）
         let i64t = self.ctx.i64_type();
-        let v64: BasicValueEnum = if v.is_float_value() {
-            self.builder
-                .build_bit_cast(v.into_float_value(), i64t, "f2bits")
-                .map_err(|e| e.to_string())?
-        } else if v.is_pointer_value() {
-            self.builder
-                .build_ptr_to_int(v.into_pointer_value(), i64t, "p2i")
-                .map_err(|e| e.to_string())?
-                .into()
-        } else {
-            let iv = v.into_int_value();
-            if iv.get_type().get_bit_width() < 64 {
-                self.builder
-                    .build_int_z_extend(iv, i64t, "zext")
-                    .map_err(|e| e.to_string())?
-                    .into()
-            } else {
-                v
-            }
-        };
-        // R3：协程模式走协程原生 try_send（无界恒成功；软上限满返 1）。签名同为 (ptr,i64)->i32。
+        let v64: BasicValueEnum = self.value_to_channel_bits(v)?.into();
+        // R3：协程模式走协程原生通道。签名同为 (ptr,i64)->i32。
+        // - 协程体内：try_send，满返 1 → 下面 park 挂起；
+        // - 非协程上下文（goroutine 线程 / 入口 / 普通函数）：阻塞发送，满了等接收方腾位。
+        //   以前这里也是 try_send 且不看返回值：带缓冲通道一写满，后面的值就丢了，
+        //   接收方永远等不到 → 整个程序挂住。
         let f = if self.协程开() {
             let ptrt = self.ctx.ptr_type(AddressSpace::default());
-            match self.module.get_function("qi_coro_chan_try_send") {
-                Some(f) => f,
-                None => self.module.add_function(
-                    "qi_coro_chan_try_send",
-                    self.ctx
-                        .i32_type()
-                        .fn_type(&[ptrt.into(), i64t.into()], false),
-                    None,
-                ),
-            }
+            let ffi_name = if self.协程当前.is_some() {
+                "qi_coro_chan_try_send"
+            } else {
+                "qi_coro_chan_send_blocking"
+            };
+            self.取或声明函数(
+                ffi_name,
+                self.ctx
+                    .i32_type()
+                    .fn_type(&[ptrt.into(), i64t.into()], false),
+            )
         } else {
             self.module
                 .get_function("qi_runtime_channel_send")
@@ -413,12 +399,19 @@ impl<'ctx> 后端<'ctx> {
                     .build_unconditional_branch(check_bb)
                     .map_err(|e| e.to_string())?;
             } else {
-                let step = self.取或声明函数("qi_coro_step_once", i64t.fn_type(&[], false));
+                // 非协程上下文：阻塞到有值（内部会顺手驱动就绪协程，对端是协程也能产出）。
+                // 以前是 step_once + try_recv 的忙等，对端是 goroutine 线程时空转吃满一核。
+                let recv = self.取或声明函数(
+                    "qi_coro_chan_recv_blocking",
+                    self.ctx
+                        .i32_type()
+                        .fn_type(&[ptrt.into(), ptrt.into()], false),
+                );
                 self.builder
-                    .build_call(step, &[], "")
+                    .build_call(recv, &[ch.into(), slot.into()], "")
                     .map_err(|e| e.to_string())?;
                 self.builder
-                    .build_unconditional_branch(check_bb)
+                    .build_unconditional_branch(got_bb)
                     .map_err(|e| e.to_string())?;
             }
 
@@ -452,12 +445,51 @@ impl<'ctx> 后端<'ctx> {
                 .into_int_value()
         };
         // 3) 按通道元素类型还原（send 侧按位模式装入 i64）
+        self.channel_bits_to_value(v, cht.通道元素())
+    }
+
+    /// 发送值 → 通道里传的 i64 位模式：f64 bitcast、指针 ptrtoint、窄整数（布尔 i1）zext。
+    pub(super) fn value_to_channel_bits(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        let i64t = self.ctx.i64_type();
+        if v.is_float_value() {
+            return Ok(self
+                .builder
+                .build_bit_cast(v.into_float_value(), i64t, "f2bits")
+                .map_err(|e| e.to_string())?
+                .into_int_value());
+        }
+        if v.is_pointer_value() {
+            return self
+                .builder
+                .build_ptr_to_int(v.into_pointer_value(), i64t, "p2i")
+                .map_err(|e| e.to_string());
+        }
+        let iv = v.into_int_value();
+        if iv.get_type().get_bit_width() < 64 {
+            return self
+                .builder
+                .build_int_z_extend(iv, i64t, "zext")
+                .map_err(|e| e.to_string());
+        }
+        Ok(iv)
+    }
+
+    /// 通道里收到的 i64 位模式 → 按元素类型还原成 Qi 值（value_to_channel_bits 的逆）。
+    /// 元素类型未知（旧式整数句柄通道）保持 整数。
+    pub(super) fn channel_bits_to_value(
+        &mut self,
+        v: inkwell::values::IntValue<'ctx>,
+        element: Option<super::类型::元素类型>,
+    ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
         use super::类型::元素类型;
-        let Some(元素) = cht.通道元素() else {
-            // 旧式整数句柄通道：保持 i64 语义
+        let ptrt = self.ctx.ptr_type(AddressSpace::default());
+        let Some(element) = element else {
             return Ok((v.into(), Qi类型::整数));
         };
-        let (rv, rt): (BasicValueEnum<'ctx>, Qi类型) = match 元素 {
+        let (rv, rt): (BasicValueEnum<'ctx>, Qi类型) = match element {
             元素类型::整数 => (v.into(), Qi类型::整数),
             元素类型::浮点数 => (
                 self.builder
@@ -622,264 +654,8 @@ impl<'ctx> 后端<'ctx> {
         Ok(tramp.as_global_value().as_pointer_value())
     }
 
-    /// `选择 { 情况 … : …  默认: …  情况 超时(ms): … }` —— 通道多路选择。
-    ///
-    /// 最小可用降级：非阻塞轮询各通道 case
-    /// （`qi_runtime_channel_try_receive` / `qi_runtime_channel_try_send`）：
-    ///   - 有 `默认` 分支：单轮轮询，全部未就绪立刻走 默认（Go 语义）。
-    ///   - 有 `超时(ms)` 分支：轮询 + `qi_runtime_select_backoff`（~1ms）退避，
-    ///     到截止时间走 超时 体。
-    ///   - 两者皆无：轮询 + 退避直到某 case 就绪（阻塞语义）。
-    /// 通道表达式 / 发送值 / 超时毫秒只在进入 选择 时求值一次，轮询不重复副作用。
-    /// 接收 case 的 `变量 := <-ch` 把收到的 i64 绑进 case 体（与 `<-ch` 表达式
-    /// 一致的两层 load：slot 里是 boxed 指针，再 deref 出值）。
-    pub(super) fn 生成选择(
-        &mut self,
-        s: &SelectExpression,
-        func: FunctionValue<'ctx>,
-    ) -> Result<(), String> {
-        let i32t = self.ctx.i32_type();
-        let i64t = self.ctx.i64_type();
-        let ptrt = self.ctx.ptr_type(AddressSpace::default());
-
-        // FFI 原型（幂等声明）。R3+：协程模式下通道由 qi_coro_chan_new 创建（QiCoroChan
-        // 布局），必须用协程原生非阻塞收发；否则把 QiCoroChan* 当 eager 通道解引用 → 类型
-        // 混淆（select 发送/接收静默失败）。签名一致：try_recv=(ptr,ptr)->i32、
-        // try_send=(ptr,i64)->i32。差异仅在 slot 语义（下方 recv 体处理）。
-        let 协程通道 = self.协程开();
-        let try_recv = self.取或声明函数(
-            if 协程通道 {
-                "qi_coro_chan_try_recv"
-            } else {
-                "qi_runtime_channel_try_receive"
-            },
-            i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
-        );
-        let try_send = self.取或声明函数(
-            if 协程通道 {
-                "qi_coro_chan_try_send"
-            } else {
-                "qi_runtime_channel_try_send"
-            },
-            i32t.fn_type(&[ptrt.into(), i64t.into()], false),
-        );
-        let backoff = self.取或声明函数(
-            "qi_runtime_select_backoff",
-            self.ctx.void_type().fn_type(&[], false),
-        );
-        // 协程模式顶层 select 需驱动执行器（否则发送方协程永不运行 → 全未就绪空转）。
-        let step_once = if 协程通道 {
-            Some(self.取或声明函数("qi_coro_step_once", i64t.fn_type(&[], false)))
-        } else {
-            None
-        };
-
-        // 预求值：各 case 的通道指针 / 发送值（避免每轮轮询重复副作用）。
-        // (是否发送, 通道 ptr, 发送值 i64)
-        let mut 准备: Vec<(
-            bool,
-            PointerValue<'ctx>,
-            Option<inkwell::values::IntValue<'ctx>>,
-        )> = Vec::new();
-        for case in &s.cases {
-            match &case.kind {
-                SelectCaseKind::通道接收 { channel, .. } => {
-                    let ch = self.求通道指针(channel)?;
-                    准备.push((false, ch, None));
-                }
-                SelectCaseKind::通道发送 { channel, value } => {
-                    let ch = self.求通道指针(channel)?;
-                    let (v, _t) = self
-                        .生成表达式(value)?
-                        .ok_or_else(|| "选择 发送值无值".to_string())?;
-                    let iv = if v.is_pointer_value() {
-                        self.builder
-                            .build_ptr_to_int(v.into_pointer_value(), i64t, "sel.p2i")
-                            .map_err(|e| e.to_string())?
-                    } else {
-                        v.into_int_value()
-                    };
-                    准备.push((true, ch, Some(iv)));
-                }
-                // 语法层已把 默认/超时 分离进 default_case / timeout_case
-                _ => return Err("选择：默认/超时 分支位置异常".to_string()),
-            }
-        }
-
-        // 超时：截止时刻 = 进入时刻 + 毫秒（只求一次）
-        let 超时 = match &s.timeout_case {
-            Some(tc) => {
-                let SelectCaseKind::超时 { 毫秒 } = &tc.kind else {
-                    return Err("选择：超时分支结构异常".to_string());
-                };
-                let get_ms =
-                    self.取或声明函数("qi_runtime_get_time_ms", i64t.fn_type(&[], false));
-                let (msv, _) = self
-                    .生成表达式(毫秒)?
-                    .ok_or_else(|| "选择 超时毫秒无值".to_string())?;
-                let start = self
-                    .builder
-                    .build_call(get_ms, &[], "sel.start")
-                    .map_err(|e| e.to_string())?
-                    .try_as_basic_value()
-                    .basic()
-                    .ok_or_else(|| "get_time_ms 未返回".to_string())?
-                    .into_int_value();
-                let deadline = self
-                    .builder
-                    .build_int_add(start, msv.into_int_value(), "sel.deadline")
-                    .map_err(|e| e.to_string())?;
-                Some((get_ms, deadline, tc))
-            }
-            None => None,
-        };
-
-        // 接收 slot（entry 块 alloca，轮询循环里复用不吃栈）。协程通道 try_recv 写裸 i64
-        // （单层）；eager try_receive 写 boxed 指针（双层）。故槽类型按模式分。
-        let slot = if 协程通道 {
-            self.入口块alloca(i64t.into(), "sel.slot")?
-        } else {
-            self.入口块alloca(ptrt.into(), "sel.slot")?
-        };
-
-        let poll_bb = self.ctx.append_basic_block(func, "select.poll");
-        let end_bb = self.ctx.append_basic_block(func, "select.end");
-        self.builder
-            .build_unconditional_branch(poll_bb)
-            .map_err(|e| e.to_string())?;
-        self.builder.position_at_end(poll_bb);
-
-        // 轮询链：逐 case 非阻塞试收/试发，就绪即跳该 case 体
-        let mut 体块 = Vec::new();
-        for (i, (是发送, ch, val)) in 准备.iter().enumerate() {
-            let body_bb = self
-                .ctx
-                .append_basic_block(func, &format!("select.body{}", i));
-            let next_bb = self
-                .ctx
-                .append_basic_block(func, &format!("select.try{}", i));
-            let rc = if *是发送 {
-                self.builder
-                    .build_call(
-                        try_send,
-                        &[(*ch).into(), val.unwrap().into()],
-                        "sel.trysend",
-                    )
-                    .map_err(|e| e.to_string())?
-            } else {
-                self.builder
-                    .build_call(try_recv, &[(*ch).into(), slot.into()], "sel.tryrecv")
-                    .map_err(|e| e.to_string())?
-            }
-            .try_as_basic_value()
-            .basic()
-            .ok_or_else(|| "try_receive/try_send 未返回".to_string())?
-            .into_int_value();
-            let ok = self
-                .builder
-                .build_int_compare(IntPredicate::EQ, rc, i32t.const_zero(), "sel.ok")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_conditional_branch(ok, body_bb, next_bb)
-                .map_err(|e| e.to_string())?;
-            self.builder.position_at_end(next_bb);
-            体块.push(body_bb);
-        }
-
-        // 全部未就绪
-        if let Some(dc) = &s.default_case {
-            // 默认：单轮判定，立刻走 默认 体（不退避不循环）
-            self.生成块(&dc.body, func)?;
-            self.跳转若未终结(end_bb)?;
-        } else if let Some((get_ms, deadline, tc)) = &超时 {
-            let now = self
-                .builder
-                .build_call(*get_ms, &[], "sel.now")
-                .map_err(|e| e.to_string())?
-                .try_as_basic_value()
-                .basic()
-                .ok_or_else(|| "get_time_ms 未返回".to_string())?
-                .into_int_value();
-            let 到期 = self
-                .builder
-                .build_int_compare(IntPredicate::SGE, now, *deadline, "sel.expired")
-                .map_err(|e| e.to_string())?;
-            let to_bb = self.ctx.append_basic_block(func, "select.timeout");
-            let wait_bb = self.ctx.append_basic_block(func, "select.wait");
-            self.builder
-                .build_conditional_branch(到期, to_bb, wait_bb)
-                .map_err(|e| e.to_string())?;
-            self.builder.position_at_end(wait_bb);
-            if let Some(step) = step_once {
-                self.builder
-                    .build_call(step, &[], "")
-                    .map_err(|e| e.to_string())?;
-            }
-            self.builder
-                .build_call(backoff, &[], "")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_unconditional_branch(poll_bb)
-                .map_err(|e| e.to_string())?;
-            self.builder.position_at_end(to_bb);
-            self.生成块(&tc.body, func)?;
-            self.跳转若未终结(end_bb)?;
-        } else {
-            // 无 默认/超时：退避后再轮询（阻塞语义）。协程模式先驱动执行器一步，
-            // 让发送/接收方协程有机会推进，否则顶层 select 永远看不到就绪。
-            if let Some(step) = step_once {
-                self.builder
-                    .build_call(step, &[], "")
-                    .map_err(|e| e.to_string())?;
-            }
-            self.builder
-                .build_call(backoff, &[], "")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_unconditional_branch(poll_bb)
-                .map_err(|e| e.to_string())?;
-        }
-
-        // 各 case 体
-        for (case, body_bb) in s.cases.iter().zip(体块) {
-            self.builder.position_at_end(body_bb);
-            if let SelectCaseKind::通道接收 {
-                variable: Some(name),
-                ..
-            } = &case.kind
-            {
-                // 协程通道：slot 直接是 i64（单层）；eager：slot 是 boxed 指针（双层）。
-                let v = if 协程通道 {
-                    self.builder
-                        .build_load(i64t, slot, "sel.val")
-                        .map_err(|e| e.to_string())?
-                } else {
-                    let boxed = self
-                        .builder
-                        .build_load(ptrt, slot, "sel.box")
-                        .map_err(|e| e.to_string())?
-                        .into_pointer_value();
-                    self.builder
-                        .build_load(i64t, boxed, "sel.val")
-                        .map_err(|e| e.to_string())?
-                };
-                let var = self.入口块alloca(i64t.into(), name)?;
-                self.builder
-                    .build_store(var, v)
-                    .map_err(|e| e.to_string())?;
-                self.变量表.insert(name.clone(), (var, Qi类型::整数));
-                self.符号.声明变量(name, Qi类型::整数);
-            }
-            self.生成块(&case.body, func)?;
-            self.跳转若未终结(end_bb)?;
-        }
-
-        self.builder.position_at_end(end_bb);
-        Ok(())
-    }
-
     /// 幂等取/声明模块级函数原型。
-    fn 取或声明函数(
+    pub(super) fn 取或声明函数(
         &mut self,
         name: &str,
         ft: inkwell::types::FunctionType<'ctx>,
@@ -891,7 +667,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 求通道句柄的 ptr 值（通道值是 ptr；旧式整数句柄转回 ptr 传给运行时）。
-    fn 求通道指针(
+    pub(super) fn 求通道指针(
         &mut self,
         node: &AstNode,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
@@ -902,7 +678,7 @@ impl<'ctx> 后端<'ctx> {
     }
 
     /// 通道值 → ptr（ptr 原样；i64 句柄 int_to_ptr）。
-    fn 通道值转指针(
+    pub(super) fn 通道值转指针(
         &mut self,
         v: BasicValueEnum<'ctx>,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {

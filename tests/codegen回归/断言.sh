@@ -130,6 +130,65 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
     passed=$((passed+1))
 done
 
+# ── 并发（70~79）：先编译再直接跑二进制，限时 30 秒 ──
+#   ㉔ 带缓冲通道写满后，goroutine / 入口 的发送要阻塞到对端腾位（70）：以前非协程
+#     上下文调 try_send 不看返回值，写满后的值直接丢了，接收方永远等不到，整个程序挂住
+#   ㉕ `<- ch` 与 选择 的 `情况 名 := <- ch:` 按通道元素类型推断（71）：创建表达式
+#     里存的是 通道<T> 整体而不是 T，推不出来退回整数，字符串通道收到指针地址
+# 挂住必须变成**失败**，不能把 CI 拖到 job 超时。不走 `qi run`：限时只杀得到
+# 直接子进程，qi run 再起的那个程序会变孤儿、还攥着管道，$( ) 照样等下去。
+# macOS 没有 timeout 时用 perl 的 alarm（exec 后计时器还在，到点 SIGALRM 杀掉程序）。
+if command -v timeout >/dev/null 2>&1; then
+    run_short() { timeout 30 "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_short() { gtimeout 30 "$@"; }
+elif command -v perl >/dev/null 2>&1; then
+    run_short() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' 30 "$@"; }
+else
+    run_short() { "$@"; }
+fi
+for f in "$HERE"/7[0-9]_*.qi; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    expect="${f%.qi}.期望"
+    total=$((total+1))
+    bin="/tmp/codegen回归_并发.bin"
+    rm -f "$bin" "$bin.exe"
+    build_err=$(run_limited "$QI" compile "$f" -o "$bin" 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "FAIL $name (编译失败: $(echo "$build_err" | head -3 | tr '\n' ' '))"
+        failed=$((failed+1))
+        continue
+    fi
+    [ -f "$bin" ] || bin="$bin.exe"
+    actual=$(run_short "$bin" 2>/dev/null | tr -d '\r')
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        echo "FAIL $name (运行失败或超时 rc=$rc)"
+        failed=$((failed+1))
+        continue
+    fi
+    expect_text=$(tr -d '\r' < "$expect")
+    if [ "$actual" != "$expect_text" ]; then
+        echo "FAIL $name (输出不符)"
+        echo "  期望: $(tr '\n' ' ' < "$expect")"
+        echo "  实际: $(printf '%s' "$actual" | tr '\n' ' ')"
+        failed=$((failed+1))
+        continue
+    fi
+    if [ "$name" = "71_通道接收按元素类型.qi" ]; then
+        rc_line=$(QI_RC_REPORT=1 run_short "$bin" 2>&1 | grep '\[qi-rc\]')
+        if ! echo "$rc_line" | grep -q '活跃对象=0 活跃字符串=0 活跃闭包=0'; then
+            echo "FAIL $name (RC 泄漏: $rc_line)"
+            failed=$((failed+1))
+            continue
+        fi
+    fi
+    echo "PASS $name"
+    passed=$((passed+1))
+done
+rm -f /tmp/codegen回归_并发.bin /tmp/codegen回归_并发.bin.exe
+
 # ── 东八区：本地时区一族的具体数字（Windows 的 chrono 不读 TZ，跳过）──
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "SKIP 本地时区/东八区 (Windows 不认 TZ)" ;;

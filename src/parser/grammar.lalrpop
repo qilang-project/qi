@@ -1643,22 +1643,22 @@ Precedence8: AstNode = {
     }),
     <sp_l:@L> // 通道类型构造器：通道<类型>() or 通道<类型>(容量)
     <channel_type:ChannelTypeConstructor> "(" ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
-        element_type: channel_type,
+        element_type: channel_type.unwrap_channel_element(),
         capacity: None,
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> <channel_type:ChannelTypeConstructor> "(" <capacity:Expr> ")" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
-        element_type: channel_type,
+        element_type: channel_type.unwrap_channel_element(),
         capacity: Some(Box::new(capacity)),
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> <channel_type:ChannelTypeConstructor> "（" "）" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
-        element_type: channel_type,
+        element_type: channel_type.unwrap_channel_element(),
         capacity: None,
         span: Span::new(sp_l, sp_r),
     }),
     <sp_l:@L> <channel_type:ChannelTypeConstructor> "（" <capacity:Expr> "）" <sp_r:@R> => AstNode::通道创建表达式(ChannelCreateExpression {
-        element_type: channel_type,
+        element_type: channel_type.unwrap_channel_element(),
         capacity: Some(Box::new(capacity)),
         span: Span::new(sp_l, sp_r),
     }),
