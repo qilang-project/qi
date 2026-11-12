@@ -1348,9 +1348,10 @@ impl TypeChecker {
             self.check(capacity)?;
         }
 
-        // Channel creation returns a channel type
-        // TODO: Add proper channel type representation
-        Ok(TypeNode::基础类型(BasicType::字符串)) // Temporary placeholder
+        // 通道创建 → 通道<元素>
+        Ok(TypeNode::通道类型(crate::parser::ast::ChannelType {
+            element_type: Box::new(channel_expr.element_type.clone()),
+        }))
     }
 
     fn check_channel_send(
@@ -1371,12 +1372,15 @@ impl TypeChecker {
         &mut self,
         recv_expr: &crate::parser::ast::ChannelReceiveExpression,
     ) -> Result<TypeNode, TypeError> {
-        // Type check the channel
-        self.check(&recv_expr.channel)?;
+        // 通道接收 → 通道的元素类型（认不出通道类型时保守按 整数）
+        Ok(Self::channel_element_type(self.check(&recv_expr.channel)?))
+    }
 
-        // Channel receive expressions return the channel element type
-        // TODO: Add proper channel type inference
-        Ok(TypeNode::基础类型(BasicType::整数)) // Temporary placeholder
+    fn channel_element_type(t: TypeNode) -> TypeNode {
+        match t {
+            TypeNode::通道类型(ct) => *ct.element_type,
+            _ => TypeNode::基础类型(BasicType::整数),
+        }
     }
 
     fn check_select(
@@ -1385,10 +1389,28 @@ impl TypeChecker {
     ) -> Result<TypeNode, TypeError> {
         // Type check each select case
         for case in &select_expr.cases {
+            // 每个分支一层作用域：`情况 消息 := <- 信:` 的绑定只在本分支可见
+            self.symbol_table.enter_scope();
             match &case.kind {
                 crate::parser::ast::SelectCaseKind::通道接收 { channel, variable } => {
-                    self.check(channel)?;
-                    // TODO: Check variable type if present
+                    let element = Self::channel_element_type(self.check(channel)?);
+                    if let Some(name) = variable {
+                        let symbol = crate::semantic::symbol_table::Symbol {
+                            name: name.clone(),
+                            kind: crate::semantic::symbol_table::SymbolKind::变量,
+                            type_node: element,
+                            scope_level: self.symbol_table.current_scope(),
+                            span: case.span,
+                            is_mutable: false,
+                        };
+                        if let Err(scope_error) = self.symbol_table.define_symbol(symbol) {
+                            self.symbol_table.exit_scope();
+                            return Err(TypeError::General {
+                                message: format!("变量定义错误: {}", scope_error),
+                                span: case.span,
+                            });
+                        }
+                    }
                 }
                 crate::parser::ast::SelectCaseKind::通道发送 { channel, value } => {
                     self.check(channel)?;
@@ -1403,9 +1425,15 @@ impl TypeChecker {
             }
 
             // Type check case body
+            let mut result = Ok(());
             for stmt in &case.body {
-                self.check(stmt)?;
+                if let Err(e) = self.check(stmt) {
+                    result = Err(e);
+                    break;
+                }
             }
+            self.symbol_table.exit_scope();
+            result?;
         }
 
         // Type check the timeout case body (if any)

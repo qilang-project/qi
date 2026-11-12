@@ -27,6 +27,7 @@ mod char_display;
 mod emit;
 mod format_string;
 mod parallel_emit;
+mod select;
 #[path = "全局.rs"]
 mod 全局;
 #[path = "剖析.rs"]
