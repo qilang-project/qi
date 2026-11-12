@@ -48,7 +48,7 @@ check_one() {
 
     # ② QI_TYPECHECK=1 零报错
     local tc_out
-    tc_out=$(QI_TYPECHECK=1 timeout 120 "$QI" compile "$f" -o /tmp/绿码断言.ll 2>&1 | grep '\[类型检查\] 报错' || true)
+    tc_out=$(QI_TYPECHECK=1 timeout 120 "$QI" compile "$f" -o /tmp/绿码断言.ll 2>&1 | grep -E '^(错误|警告)：' || true)
     if [ -n "$tc_out" ]; then
         echo "FAIL $name —— 类型检查器误报（假阳性）"
         printf '%s\n' "$tc_out" | head -3 | sed 's/^/       /'
