@@ -87,6 +87,8 @@ use std::sync::OnceLock;
 
 // 表达式层（推断/调用/成员访问）拆在子模块（同一检查器的另一半 impl，
 // 子模块可直接访问本模块私有状态）——单文件 <1000 行约束。
+#[path = "return_paths.rs"]
+mod return_paths;
 #[path = "单元检查_检查项.rs"]
 mod 检查项;
 #[path = "单元检查_表达式.rs"]
@@ -901,6 +903,7 @@ impl 单元检查器 {
                     self.绑定(&f.name, None);
                 }
                 self.检查函数体(&f.type_params, &f.parameters, &f.return_type, &f.body, None);
+                self.check_missing_return("函数", &f.name, &f.return_type, &f.body, f.span);
                 // 异步函数必须返回 未来<T>（镜像 codegen 语义规则）
                 if f.is_async && !matches!(f.return_type, Some(TypeNode::未来类型(_))) {
                     self.报(TypeError::General {
@@ -1166,5 +1169,6 @@ impl 单元检查器 {
             &m.body,
             Some((m.receiver_name.as_str(), 接收者型)),
         );
+        self.check_missing_return("方法", &m.method_name, &m.return_type, &m.body, m.span);
     }
 }

@@ -252,15 +252,38 @@ impl QiCompiler {
         // 没有任何报错，查了很久。off 档也拦它。
         let t = crate::phase_timer::mark("整理模块", t);
         if 跑类型检查 && std::env::var("QI_TYPECHECK").as_deref() != Ok("off") {
-            let 硬 = crate::semantic::单元检查::硬错检查(&programs);
-            if !硬.is_empty() {
-                for e in &硬 {
-                    let s: String = format!("{:?}", e).chars().take(2000).collect();
-                    eprintln!("[类型检查] {}", s);
+            let 硬组: Vec<Vec<crate::semantic::type_checker::TypeError>> =
+                crate::semantic::分析编译单元_分组(&programs)
+                    .into_iter()
+                    .map(|g| {
+                        g.into_iter()
+                            .filter(crate::semantic::单元检查::是硬错)
+                            .collect()
+                    })
+                    .collect();
+            let 硬数: usize = 硬组.iter().map(|g| g.len()).sum();
+            if 硬数 > 0 {
+                for (组号, 组) in 硬组.iter().enumerate() {
+                    let 路径 = programs[组号]
+                        .source_path
+                        .clone()
+                        .unwrap_or_else(|| source_file.display().to_string());
+                    let 源码 = std::fs::read_to_string(&路径).unwrap_or_default();
+                    for e in 组 {
+                        eprintln!(
+                            "{}",
+                            crate::semantic::诊断渲染::render_diagnostic_line(
+                                "错误",
+                                e,
+                                Some((路径.as_str(), 源码.as_str()))
+                            )
+                        );
+                    }
                 }
-                return Err(CompilerError::Codegen(format!(
-                    "类型检查失败：{} 处把结构体传给了标量形参（这一类一定是错的，\n                       不受 QI_TYPECHECK 控制；确实要绕过请先改签名）",
-                    硬.len()
+                return Err(CompilerError::Diagnosed(format!(
+                    "共 {} 条错误（把结构体传给了标量形参，这一类一定是错的，\
+                     QI_TYPECHECK 也绕不过；确实要这么传请先改函数签名）",
+                    硬数
                 )));
             }
         }
@@ -268,16 +291,12 @@ impl QiCompiler {
         // 档位：未设 → strict。off 在上面的硬错块之后就不再往下走。
         let 档位 = std::env::var("QI_TYPECHECK").unwrap_or_else(|_| "strict".to_string());
         if 跑类型检查 && 档位 != "off" {
-            // 分组而不是拉平：span 是各自文件内的字节偏移，只有 entry（组 0，
-            // 即 source_file 本身）能拿它换算行列。被导入模块的错误（组 1+）
-            // 在这一层拿不到源码路径，退化成不带行列。
+            // 分组而不是拉平：span 是各自文件内的字节偏移，每组对应一个编译单元
+            // （分析编译单元_分组 与 programs 一一对应），各读各的源码换算行列。
+            // 以前只读主文件，于是**导入模块里的报错全都不带文件行列**，一个
+            // 几十个文件的包里出一条，等于让人肉眼全库找。
             let 错误组 = crate::semantic::分析编译单元_分组(&programs);
             let 总数: usize = 错误组.iter().map(|g| g.len()).sum();
-            // 每组对应一个编译单元（分析编译单元_分组 与 programs 一一对应），
-            // 各读各的源码 —— 以前只读主文件，于是**导入模块里的报错全都不带
-            // 文件行列**，只剩一句「TypeMismatch 函数返回类型声明为 字符串，
-            // 返回值却是 整数」。一个几十个文件的包里出这么一条，等于让人肉眼
-            // 全库找。2026-09-12 我自己就被它坑到误判成「本来就有的问题」。
             let 各组源码: Vec<(String, String)> = if 总数 > 0 {
                 programs
                     .iter()
@@ -293,44 +312,28 @@ impl QiCompiler {
             } else {
                 Vec::new()
             };
+            // strict（含默认）= 致命，标「错误」；warn / 1 / 其它值 = 只打印，标「警告」。
+            // 红码/绿码断言与扫描脚本按行首「错误：」「警告：」认诊断行。
+            let 致命 = 档位 == "strict";
+            let 级别 = if 致命 { "错误" } else { "警告" };
             for (组号, 组) in 错误组.iter().enumerate() {
+                let 位置 = 各组源码.get(组号).map(|(p, s)| (p.as_str(), s.as_str()));
                 for e in 组 {
-                    // 行内三样都要：
-                    //   变体名 —— 红码断言 grep 的就是它（TypeMismatch/UndefinedVariable…），
-                    //             换成纯人话会让 tests/类型检查红码/断言.sh 整套失效；
-                    //   行列   —— 抬成默认致命之后，报错得能点开；
-                    //   人话   —— Debug 原样（`TypeMismatch { expected: "…", span: Span
-                    //             { start: 336, end: 348 } }`）不是给人读的。
-                    let 类别 = {
-                        let d = format!("{:?}", e);
-                        d.split([' ', '{']).next().unwrap_or("类型检查").to_string()
-                    };
-                    // 超长兜底截断防洪水（按字符截，避免切到多字节 UTF-8 中间）
-                    let 文案: String = e.渲染人话().chars().take(500).collect();
-                    let span = e.span();
-                    // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
-                    let 本组 = 各组源码.get(组号);
-                    if 本组.is_some() && !(span.start == 0 && span.end == 0) {
-                        let (路径, 源码) = 本组.unwrap();
-                        let (行, 列) = crate::parser::位置::偏移转行列(源码, span.start);
-                        eprintln!("[类型检查] 报错: {} {}:{}:{} {}", 类别, 路径, 行, 列, 文案);
-                    } else {
-                        eprintln!("[类型检查] 报错: {} {}", 类别, 文案);
-                    }
+                    eprintln!(
+                        "{}",
+                        crate::semantic::诊断渲染::render_diagnostic_line(级别, e, 位置)
+                    );
                 }
             }
             if 总数 > 0 {
-                eprintln!("[类型检查] 共 {} 条报错", 总数);
-                // warn / 1 / 其它值 = 只打印；strict（含默认）= 致命
-                if 档位 == "strict" {
-                    return Err(CompilerError::Codegen(format!(
-                        "类型检查失败：{} 条报错。\n\
-                         确认是检查器误报可以先用 QI_TYPECHECK=warn 只打印、\n\
-                         QI_TYPECHECK=off 完全关掉 —— 但请连同复现代码开一个 issue，\n\
-                         误报是检查器的 bug，不是写法问题。",
-                        总数
+                if 致命 {
+                    return Err(CompilerError::Diagnosed(format!(
+                        "共 {} 条错误\n{}",
+                        总数,
+                        crate::semantic::诊断渲染::FALSE_POSITIVE_HINT
                     )));
                 }
+                eprintln!("共 {} 条警告（QI_TYPECHECK={}，不中止编译）", 总数, 档位);
             }
         }
 
@@ -1956,6 +1959,10 @@ pub enum CompilerError {
     /// Code generation error
     #[error("代码生成错误: {0}")]
     Codegen(String),
+    /// 用户代码里的普通错误（类型检查 / 语法检查没过）：诊断行已经逐条打印过，
+    /// 这里只是收尾的汇总句 —— 不加「代码生成错误」前缀，那会让人以为编译器坏了。
+    #[error("{0}")]
+    Diagnosed(String),
     /// I/O error
     #[error("输入/输出错误: {0}")]
     Io(#[from] std::io::Error),

@@ -89,7 +89,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/6[0-2]_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/6[0-2]_*.qi "$HERE"/8[356]_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -300,7 +300,11 @@ set -- \
   "46_添加元素类型不符_必须报错.qi::添加 的元素类型不对" \
   "47_添加接收者是临时值_必须报错.qi::接收者必须是变量或结构体字段" \
   "48_十六进制超出64位_必须报错.qi::超出 64 位" \
-  "63_字符串下标_必须报错.qi::字符串不能用下标"
+  "63_字符串下标_必须报错.qi::字符串不能用下标" \
+  "80_漏写返回_必须报错.qi::走到结尾没有 \`返回\`" \
+  "81_匹配臂漏返回_必须报错.qi::函数 \`名字\` 声明返回 字符串" \
+  "82_方法漏返回_必须报错.qi::方法 \`首个大于\` 声明返回 整数" \
+  "84_整数与字符串比较_必须报错.qi::不能比较 整数 和 字符串"
 
 for one in "$@"; do
     case_file=${one%%::*}
@@ -336,6 +340,27 @@ if [ $crash_rc -ne 0 ] && echo "$crash_out" | grep -q "未捕获的异常: 下�
 else
     echo "FAIL 64_未捕获越界_进程中止.qi (rc=$crash_rc 输出: $(echo "$crash_out" | tr '\n' ' '))"
     failed=$((failed+1))
+fi
+
+# ── 类型错误的诊断格式（80 复用）：用户代码里的普通错误，不能顶着「代码生成错误」
+# 的帽子、也不能劝人去开 issue —— 初学者会以为编译器坏了。行首是
+# 「错误：文件:行:列」，误报逃生口只说一行。
+total=$((total+1))
+diag_out=$(cd "$HERE" && run_limited "$QI" compile 80_漏写返回_必须报错.qi -o /tmp/codegen回归_诊断.bin 2>&1)
+rm -f /tmp/codegen回归_诊断.bin
+diag_first=$(printf '%s\n' "$diag_out" | head -1)
+if printf '%s' "$diag_out" | grep -qE '代码生成错误|开一个 issue|\[类型检查\]'; then
+    echo "FAIL 类型错误诊断格式 (还带着内部错误的措辞: $(printf '%s' "$diag_out" | tr '\n' ' '))"
+    failed=$((failed+1))
+elif [ "$diag_first" != "错误：80_漏写返回_必须报错.qi:5:1 函数 \`绝对值\` 声明返回 整数，但有路径走到结尾没有 \`返回\`" ]; then
+    echo "FAIL 类型错误诊断格式 (首行: $diag_first)"
+    failed=$((failed+1))
+elif [ "$(printf '%s\n' "$diag_out" | grep -c 'QI_TYPECHECK')" -ne 1 ]; then
+    echo "FAIL 类型错误诊断格式 (误报逃生口应该只说一次)"
+    failed=$((failed+1))
+else
+    echo "PASS 类型错误诊断格式"
+    passed=$((passed+1))
 fi
 
 echo "codegen回归: $passed/$total 通过"

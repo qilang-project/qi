@@ -1429,32 +1429,28 @@ impl Cli {
                             (路径, 文本)
                         })
                         .collect();
+                    let 级别 = if strict { "错误" } else { "警告" };
                     for (组号, 组) in 错误组.iter().enumerate() {
+                        let 位置 = 各组源码.get(组号).map(|(p, s)| (p.as_str(), s.as_str()));
                         for e in 组 {
-                            let span = e.span();
-                            let 文案: String = e.渲染人话().chars().take(500).collect();
-                            // span (0,0) = 该错误类还没接真实位置 → 退化为不带行列
-                            match 各组源码.get(组号) {
-                                Some((路径, 源码)) if !(span.start == 0 && span.end == 0) => {
-                                    let (行, 列) =
-                                        crate::parser::位置::偏移转行列(源码, span.start);
-                                    eprintln!("{}:{}:{} 类型警告: {}", 路径, 行, 列, 文案);
-                                }
-                                Some((路径, _)) => {
-                                    eprintln!("{} 类型警告: {}", 路径, 文案);
-                                }
-                                None => {
-                                    eprintln!("{} 类型警告: {}", file.display(), 文案);
-                                }
-                            }
+                            eprintln!(
+                                "{}",
+                                crate::semantic::诊断渲染::render_diagnostic_line(
+                                    级别, e, 位置
+                                )
+                            );
                         }
                     }
                     类型警告数 += 总数;
                 }
             }
             if strict && 类型警告数 > 0 {
-                return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                    format!("类型检查失败（strict 模式）：{} 条", 类型警告数),
+                return Err(CliError::Compilation(crate::CompilerError::Diagnosed(
+                    format!(
+                        "共 {} 条错误\n{}",
+                        类型警告数,
+                        crate::semantic::诊断渲染::FALSE_POSITIVE_HINT
+                    ),
                 )));
             }
         }
@@ -1469,7 +1465,7 @@ impl Cli {
                 }
             }
         } else {
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
+            return Err(CliError::Compilation(crate::CompilerError::Diagnosed(
                 "语法检查失败".to_string(),
             )));
         }

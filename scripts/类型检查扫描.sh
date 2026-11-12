@@ -59,7 +59,7 @@ while IFS= read -r f; do
   [ -f "$f" ] || continue
   if is_excluded "$f"; then skipped=$((skipped+1)); continue; fi
   total=$((total+1))
-  out=$("$QI" compile "$f" -o /tmp/类型检查扫描.ll 2>&1 | grep '\[类型检查\]' | grep '报错')
+  out=$("$QI" compile "$f" -o /tmp/类型检查扫描.ll 2>&1 | grep -E '^(错误|警告)：')
   if [ -n "$out" ]; then
     bad=$((bad+1))
     echo "### $f" >> "$LOG"
@@ -73,15 +73,16 @@ echo "语料: $total 文件 | 有报错: $bad 文件 | 已知坏码跳过: $skip
 echo ""
 echo "--- 按类别聚合 ---"
 printf "未定义函数     : %s\n" "$(grep -o "未定义的函数 '[^']*'" "$LOG" | wc -l | tr -d ' ')"
-printf "未定义变量     : %s\n" "$(grep -o 'UndefinedVariable' "$LOG" | wc -l | tr -d ' ')"
-printf "类型不匹配     : %s\n" "$(grep -o 'TypeMismatch {' "$LOG" | wc -l | tr -d ' ')"
-printf "函数调用错误   : %s\n" "$(grep -o 'FunctionCallError' "$LOG" | wc -l | tr -d ' ')"
-printf "作用域错误     : %s\n" "$(grep -o 'ScopeError' "$LOG" | wc -l | tr -d ' ')"
+printf "未定义变量     : %s\n" "$(grep -o '未定义的变量' "$LOG" | wc -l | tr -d ' ')"
+printf "类型不匹配     : %s\n" "$(grep -o '类型不匹配' "$LOG" | wc -l | tr -d ' ')"
+printf "参数数量不匹配 : %s\n" "$(grep -o '参数数量不匹配' "$LOG" | wc -l | tr -d ' ')"
+printf "漏写返回       : %s\n" "$(grep -o '走到结尾没有' "$LOG" | wc -l | tr -d ' ')"
+printf "比较两边类型不同: %s\n" "$(grep -o '不能比较' "$LOG" | wc -l | tr -d ' ')"
 echo ""
 echo "--- 高频未定义函数 Top20 ---"
 grep -o "未定义的函数 '[^']*'" "$LOG" | sort | uniq -c | sort -rn | head -20
 echo ""
 echo "--- 高频未定义变量 Top20 ---"
-grep -oE 'UndefinedVariable \{ name: \\?"[^"\\]*' "$LOG" | sed 's/.*name: \\\{0,1\}"//' | sort | uniq -c | sort -rn | head -20
+grep -o '未定义的变量 `[^`]*`' "$LOG" | sed 's/未定义的变量 //' | sort | uniq -c | sort -rn | head -20
 echo ""
 echo "原始日志: $LOG"

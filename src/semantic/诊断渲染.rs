@@ -97,3 +97,66 @@ impl TypeError {
         }
     }
 }
+
+/// 编译路径（`qi run` / `qi compile`）面向用户的一条诊断：
+///
+/// ```text
+/// 错误：e1.qi:3:15 类型不匹配：函数 '平方' 第 1 个参数期望 整数，实参却是 字符串
+/// ```
+///
+/// 以前是 `[类型检查] 报错: TypeMismatch /绝对/路径/e1.qi:3:15 …`，后面再跟一句
+/// 「代码生成错误: 类型检查失败 …误报是检查器的 bug，开 issue」—— 初学者读到的是
+/// 「编译器坏了」，而这其实是他自己代码里的一个普通错误。
+pub fn render_diagnostic_line(
+    severity: &str,
+    error: &TypeError,
+    location: Option<(&str, &str)>,
+) -> String {
+    let mut text: String = error.渲染人话().chars().take(500).collect();
+    // 「…却是…」那种 TypeMismatch 的文案本身没点明是类型问题，补个标签；
+    // 旧式文案自带「类型不匹配: 期望 …」，别重复。
+    if matches!(error, TypeError::TypeMismatch { actual, .. } if actual.contains("却是")) {
+        text = format!("类型不匹配：{}", text);
+    }
+    let span = error.span();
+    // span (0,0) = 该错误类还没接真实位置 → 只给文件名
+    match location {
+        Some((path, source)) if !(span.start == 0 && span.end == 0) => {
+            let (line, column) = crate::parser::位置::偏移转行列(source, span.start);
+            format!(
+                "{}：{}:{}:{} {}",
+                severity,
+                display_path(path),
+                line,
+                column,
+                text
+            )
+        }
+        Some((path, _)) => format!("{}：{} {}", severity, display_path(path), text),
+        None => format!("{}：{}", severity, text),
+    }
+}
+
+/// 在当前目录底下的文件显示相对路径（`e1.qi:3:15`），否则原样。
+fn display_path(path: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        return path.to_string();
+    };
+    let absolute = std::path::Path::new(path);
+    let absolute = absolute
+        .canonicalize()
+        .unwrap_or_else(|_| absolute.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or(cwd);
+    // 在根目录下跑时剥掉前缀只会剩一个缺了开头 `/` 的怪路径
+    if cwd.parent().is_none() {
+        return path.to_string();
+    }
+    match absolute.strip_prefix(&cwd) {
+        Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
+        _ => path.to_string(),
+    }
+}
+
+/// 误报逃生口的说明，整次编译只说一遍。
+pub const FALSE_POSITIVE_HINT: &str =
+    "（如果你确定代码没错、是检查器误判，可以先用 QI_TYPECHECK=warn 绕过，并把代码报给我们）";
