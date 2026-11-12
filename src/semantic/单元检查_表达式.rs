@@ -217,6 +217,12 @@ impl 单元检查器 {
         let l = self.推断表达式(&b.left);
         let r = self.推断表达式(&b.right);
         use BinaryOperator::*;
+        if matches!(
+            b.operator,
+            等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于
+        ) {
+            self.check_comparison_operands(b, &l, &r);
+        }
         match b.operator {
             等于 | 不等于 | 大于 | 小于 | 大于等于 | 小于等于 | 与 | 或 => {
                 Some(TypeNode::基础类型(BasicType::布尔))
@@ -239,6 +245,38 @@ impl 单元检查器 {
                 }
             }
         }
+    }
+
+    /// 比较运算两侧一边字符串、一边数值（整数/浮点/布尔/字符）：codegen 会把
+    /// 数值硬塞给 qi_runtime_string_compare，结局是「LLVM 模块校验失败」这种
+    /// 内部错误。整数/浮点/布尔之间互比是合法的（codegen 会提升），不报。
+    fn check_comparison_operands(&mut self, b: &BinaryExpression, l: &推断, r: &推断) {
+        let (Some(lt), Some(rt)) = (l, r) else {
+            return;
+        };
+        let (lf, rf) = (类型家族(lt), 类型家族(rt));
+        let mixed = (lf == 家族::字符串族 && rf == 家族::数值)
+            || (lf == 家族::数值 && rf == 家族::字符串族);
+        if !mixed {
+            return;
+        }
+        let symbol = match b.operator {
+            BinaryOperator::等于 => "==",
+            BinaryOperator::不等于 => "!=",
+            BinaryOperator::大于 => ">",
+            BinaryOperator::小于 => "<",
+            BinaryOperator::大于等于 => ">=",
+            _ => "<=",
+        };
+        self.报(TypeError::General {
+            message: format!(
+                "不能比较 {} 和 {}（`{}` 两边要是同一种类型，先转换再比，例如 整数转字符串(x)）",
+                类型显示(lt),
+                类型显示(rt),
+                symbol
+            ),
+            span: b.span,
+        });
     }
 
     pub(super) fn 检查赋值(&mut self, a: &AssignmentExpression) -> 推断 {

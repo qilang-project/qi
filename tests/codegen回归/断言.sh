@@ -85,7 +85,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/86_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/8[56]_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -235,7 +235,8 @@ set -- \
   "39_插值洞里转义引号_必须报错.qi::字符串直接写引号、不用转义" \
   "46_添加元素类型不符_必须报错.qi::添加 的元素类型不对" \
   "47_添加接收者是临时值_必须报错.qi::接收者必须是变量或结构体字段" \
-  "48_十六进制超出64位_必须报错.qi::超出 64 位"
+  "48_十六进制超出64位_必须报错.qi::超出 64 位" \
+  "84_整数与字符串比较_必须报错.qi::不能比较 整数 和 字符串"
 
 for one in "$@"; do
     case_file=${one%%::*}

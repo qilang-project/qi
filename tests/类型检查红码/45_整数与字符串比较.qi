@@ -1,0 +1,10 @@
+// 整数 == 字符串 以前一路放到 codegen，报「LLVM 模块校验失败: Call parameter
+// type does not match function signature!」—— 用户完全看不懂。
+包 主程序;
+
+函数 入口() {
+    变量 数量 = 5;
+    如果 数量 == "5" {
+        打印行("相等");
+    }
+}
