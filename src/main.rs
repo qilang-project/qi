@@ -27,6 +27,6 @@ async fn main() {
     // Execute the command
     if let Err(e) = cli.execute(config).await {
         eprintln!("{}", e);
-        process::exit(1);
+        process::exit(e.exit_code());
     }
 }

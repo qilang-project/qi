@@ -913,21 +913,22 @@ impl Cli {
 
         // Step 2: Determine how to run the executable based on target platform
         let verbose_after = config.verbose;
-        match config.target_platform {
+        // 先拿结果、清完临时文件再返回：程序崩了也不该在源码旁边留下可执行文件
+        let run_result = match config.target_platform {
             crate::config::CompilationTarget::MacOS => {
                 // For macOS, the executable is already compiled and linked
                 self.run_executable(&compile_result.executable_path, &args, config)
-                    .await?;
+                    .await
             }
             crate::config::CompilationTarget::Linux => {
                 // For Linux, run the executable directly
                 self.run_executable(&compile_result.executable_path, &args, config)
-                    .await?;
+                    .await
             }
             crate::config::CompilationTarget::Windows => {
                 // For Windows, run the executable directly
                 self.run_executable(&compile_result.executable_path, &args, config)
-                    .await?;
+                    .await
             }
             crate::config::CompilationTarget::Wasm => {
                 // For WebAssembly, we need a different approach
@@ -935,7 +936,7 @@ impl Cli {
                     "WebAssembly 运行暂未实现".to_string(),
                 )));
             }
-        }
+        };
 
         // Step 3: Cleanup intermediate files and final executable
         if verbose_after {
@@ -955,7 +956,7 @@ impl Cli {
         // Remove the final executable
         let _ = std::fs::remove_file(&compile_result.executable_path);
 
-        Ok(())
+        run_result
     }
 
     async fn run_macos_executable(
@@ -1130,15 +1131,13 @@ impl Cli {
             eprint!("{}", String::from_utf8_lossy(&output.stderr));
         }
 
-        if !output.status.success() {
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code()),
-            )));
-        }
-
-        // Clean up temporary files
+        // 清临时文件 —— 成败都清：程序崩了也不该在源码旁边留一个可执行文件
         let _ = std::fs::remove_file(&temp_executable.with_extension("o"));
         let _ = std::fs::remove_file(&temp_executable);
+
+        if !output.status.success() {
+            return Err(program_failure(output.status));
+        }
 
         Ok(())
     }
@@ -1173,9 +1172,7 @@ impl Cli {
         }
 
         if !output.status.success() {
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code()),
-            )));
+            return Err(program_failure(output.status));
         }
 
         Ok(())
@@ -1877,10 +1874,7 @@ impl Cli {
         }
 
         if !output.status.success() {
-            eprintln!("❌ 程序异常退出，退出码: {:?}", output.status.code());
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code()),
-            )));
+            return Err(program_failure(output.status));
         }
 
         Ok(())
@@ -2009,16 +2003,13 @@ impl Cli {
             eprint!("{}", String::from_utf8_lossy(&output.stderr));
         }
 
-        if !output.status.success() {
-            eprintln!("❌ 调试程序异常退出，退出码: {:?}", output.status.code());
-            return Err(CliError::Compilation(crate::CompilerError::Codegen(
-                format!("程序运行失败，退出码: {:?}", output.status.code()),
-            )));
-        }
-
-        // Clean up temporary files
+        // 清临时文件 —— 成败都清：程序崩了也不该在源码旁边留一个可执行文件
         let _ = std::fs::remove_file(&temp_executable.with_extension("o"));
         let _ = std::fs::remove_file(&temp_executable);
+
+        if !output.status.success() {
+            return Err(program_failure(output.status));
+        }
 
         Ok(())
     }
@@ -2179,6 +2170,63 @@ pub enum CliError {
     /// 包管理错误（qi get 等）
     #[error("{0}")]
     Package(String),
+
+    /// 编译出来的程序自己运行失败（非零退出 / 被信号杀死）。
+    /// 跟编译无关 —— 以前这里报成「代码生成错误: 程序运行失败，退出码: None」，
+    /// 段错误和未捕获异常都被说成是编译器的锅。`code` 是 qi 自身该用的退出码
+    /// （程序的退出码；被信号杀死按 shell 惯例 128+信号号）。
+    #[error("{message}")]
+    ProgramExit { message: String, code: i32 },
+}
+
+impl CliError {
+    /// 这个错误该让 qi 以什么退出码结束。
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliError::ProgramExit { code, .. } => *code,
+            _ => 1,
+        }
+    }
+}
+
+/// 程序退出状态 → 人话。信号按名字和中文解释说出来。
+fn program_failure(status: std::process::ExitStatus) -> CliError {
+    if let Some(code) = status.code() {
+        return CliError::ProgramExit {
+            message: format!("程序退出码 {}", code),
+            code,
+        };
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            let (name, meaning) = match sig {
+                libc::SIGSEGV => ("SIGSEGV", "段错误"),
+                libc::SIGBUS => ("SIGBUS", "总线错误"),
+                libc::SIGABRT => ("SIGABRT", "程序中止，常见于未捕获的异常"),
+                libc::SIGFPE => ("SIGFPE", "算术异常"),
+                libc::SIGILL => ("SIGILL", "非法指令"),
+                libc::SIGKILL => ("SIGKILL", "被强制结束"),
+                libc::SIGTERM => ("SIGTERM", "被要求终止"),
+                libc::SIGINT => ("SIGINT", "被中断"),
+                _ => ("", ""),
+            };
+            let message = if name.is_empty() {
+                format!("程序崩溃：收到信号 {}", sig)
+            } else {
+                format!("程序崩溃：收到信号 {}（{}）", name, meaning)
+            };
+            return CliError::ProgramExit {
+                message,
+                code: 128 + sig,
+            };
+        }
+    }
+    CliError::ProgramExit {
+        message: "程序异常结束（拿不到退出码）".to_string(),
+        code: 1,
+    }
 }
 
 // ── WebAssembly 链接 ──────────────────────────────────────────────────

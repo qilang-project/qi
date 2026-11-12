@@ -479,12 +479,12 @@ impl<'ctx> 后端<'ctx> {
                     .into(),
                 Qi类型::字符串,
             ),
-            元素类型::结构体(i) => (
+            元素类型::结构体(_) | 元素类型::Nested(_) => (
                 self.builder
                     .build_int_to_ptr(v, ptrt, "i2p")
                     .map_err(|e| e.to_string())?
                     .into(),
-                Qi类型::结构体(i),
+                元素.标量(),
             ),
         };
         Ok((rv, rt))

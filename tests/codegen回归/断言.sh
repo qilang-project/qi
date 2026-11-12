@@ -48,6 +48,10 @@
 #   ㉑ 字符串.字节 / 清空字符串列表 / 清空浮点列表 / 进程.参数（45）
 #   ㉒ 字符值在插值 / 打印 / `+` 拼接里按字符输出（49）：后端类型格里 字符 就是
 #     i64 码点，`"${'中'}"` 以前输出 20013。旁表记字符槽，显示处查（char_display.rs）
+#   ㉔ 运行期安全（60~64）：整数除零、数组越界（读/写/负下标/空数组）抛可捕获
+#     异常而不是给垃圾或段错误；INT64_MIN / -1 回绕；嵌套数组 数组<数组<T>>
+#     取元素不再让编译器 panic、链式下标读写可用；字符串不许下标；没人接时
+#     qi run 报「程序崩溃」而不是「代码生成错误」
 #   ㉓ 本地时区一族（50 + 本地时区/东八区）：本地时间() 以前就是 现在()，
 #     时间.时(时间.本地时间()) 在北京 9 点给 1。50 只断言与时区无关的恒等式；
 #     东八区的具体数字用 TZ=Asia/Shanghai 另跑（Windows 不认 TZ，跳过）
@@ -85,7 +89,7 @@ passed=0
 failed=0
 
 # ── 正向用例：运行输出与 .期望 逐字节一致 ──
-for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi; do
+for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$HERE"/28_*.qi "$HERE"/30_*.qi "$HERE"/31_*.qi "$HERE"/32_*.qi "$HERE"/33_*.qi "$HERE"/34_*.qi "$HERE"/35_*.qi "$HERE"/36_*.qi "$HERE"/37_*.qi "$HERE"/38_*.qi "$HERE"/41_*.qi "$HERE"/4[2-5]_*.qi "$HERE"/49_*.qi "$HERE"/50_*.qi "$HERE"/6[0-2]_*.qi; do
     name=$(basename "$f")
     expect="${f%.qi}.期望"
     total=$((total+1))
@@ -113,7 +117,8 @@ for f in "$HERE"/0[1-68]_*.qi "$HERE"/11_*.qi "$HERE"/22_*.qi "$HERE"/27_*.qi "$
     # QI_RC_REPORT=1 下活跃对象/字符串/闭包必须全 0
     if [ "$name" = "02_遮蔽_字符串ARC.qi" ] || [ "$name" = "41_插值一次分配.qi" ] \
         || [ "$name" = "43_可增长数组.qi" ] || [ "$name" = "45_标准库小缺口.qi" ] \
-        || [ "$name" = "49_字符按字符显示.qi" ]; then
+        || [ "$name" = "49_字符按字符显示.qi" ] || [ "$name" = "60_整数除零可捕获.qi" ] \
+        || [ "$name" = "61_数组越界可捕获.qi" ] || [ "$name" = "62_嵌套数组.qi" ]; then
         rc_line=$(QI_RC_REPORT=1 run_limited "$QI" run "$f" 2>&1 | grep '\[qi-rc\]')
         if ! echo "$rc_line" | grep -q '活跃对象=0 活跃字符串=0 活跃闭包=0'; then
             echo "FAIL $name (RC 泄漏: $rc_line)"
@@ -235,7 +240,8 @@ set -- \
   "39_插值洞里转义引号_必须报错.qi::字符串直接写引号、不用转义" \
   "46_添加元素类型不符_必须报错.qi::添加 的元素类型不对" \
   "47_添加接收者是临时值_必须报错.qi::接收者必须是变量或结构体字段" \
-  "48_十六进制超出64位_必须报错.qi::超出 64 位"
+  "48_十六进制超出64位_必须报错.qi::超出 64 位" \
+  "63_字符串下标_必须报错.qi::字符串不能用下标"
 
 for one in "$@"; do
     case_file=${one%%::*}
@@ -258,6 +264,20 @@ for one in "$@"; do
     fi
 done
 
+# ── 运行期错误没人接（64）：进程以「未捕获的异常」中止，qi run 要说「程序崩溃」
+#    而不是以前的「代码生成错误: 程序运行失败，退出码: None」。Windows 上 abort
+#    是退出码 3 不是信号，只查消息本体。
+total=$((total+1))
+crash_out=$(run_limited "$QI" run "$HERE/64_未捕获越界_进程中止.qi" 2>&1)
+crash_rc=$?
+if [ $crash_rc -ne 0 ] && echo "$crash_out" | grep -q "未捕获的异常: 下标越界：下标 3，长度 3" \
+    && ! echo "$crash_out" | grep -q "代码生成错误"; then
+    echo "PASS 64_未捕获越界_进程中止.qi"
+    passed=$((passed+1))
+else
+    echo "FAIL 64_未捕获越界_进程中止.qi (rc=$crash_rc 输出: $(echo "$crash_out" | tr '\n' ' '))"
+    failed=$((failed+1))
+fi
 
 echo "codegen回归: $passed/$total 通过"
 [ $failed -eq 0 ] || exit 1

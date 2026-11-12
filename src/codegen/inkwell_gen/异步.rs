@@ -108,7 +108,7 @@ impl<'ctx> 后端<'ctx> {
                     .map_err(|e| e.to_string())?;
                 ("qi_future_ready_bool", vec![b.into()])
             }
-            元素类型::指针 | 元素类型::结构体(_) => {
+            元素类型::指针 | 元素类型::结构体(_) | 元素类型::Nested(_) => {
                 // 字符串走 ready_string(ptr,len)；其它指针（含结构体）走 ready_ptr
                 if vt == Qi类型::字符串 {
                     let len = self.计算字符串长度(v)?;
@@ -242,6 +242,7 @@ impl<'ctx> 后端<'ctx> {
             元素类型::浮点数 => ("qi_future_await_f64", Qi类型::浮点数),
             元素类型::布尔 => ("qi_future_await_bool", Qi类型::布尔),
             元素类型::指针 => ("qi_future_await_ptr", Qi类型::字符串),
+            元素类型::Nested(_) => ("qi_future_await_ptr", 内部.标量()),
             元素类型::结构体(_) => unreachable!("结构体 future 已在上方分流"),
             元素类型::整数 => ("qi_future_await_i64", Qi类型::整数),
         };

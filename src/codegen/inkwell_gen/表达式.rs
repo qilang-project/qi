@@ -800,16 +800,9 @@ impl<'ctx> 后端<'ctx> {
                     .build_int_mul(li, ri, "imul")
                     .map_err(|e| e.to_string())?
                     .into(),
-                除 => self
-                    .builder
-                    .build_int_signed_div(li, ri, "idiv")
-                    .map_err(|e| e.to_string())?
-                    .into(),
-                取余 => self
-                    .builder
-                    .build_int_signed_rem(li, ri, "irem")
-                    .map_err(|e| e.to_string())?
-                    .into(),
+                // 除零抛异常、INT64_MIN / -1 回绕（见 runtime_checks.rs）
+                除 => self.emit_int_division(li, ri, false)?.into(),
+                取余 => self.emit_int_division(li, ri, true)?.into(),
                 _ => {
                     let pred = match b.operator {
                         等于 => IntPredicate::EQ,

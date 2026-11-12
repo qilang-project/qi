@@ -157,7 +157,8 @@ impl<'ctx> 后端<'ctx> {
         Ok((base.into(), Qi类型::数组(元素)))
     }
 
-    /// `arr[idx]` → GEP(idx+1) + load，返回元素值。
+    /// `arr[idx]` → 越界检查 + GEP(idx+1) + load，返回元素值。
+    /// 越界（含负下标、空数组）抛可捕获的「下标越界」异常，见 runtime_checks.rs。
     pub(super) fn 生成数组访问(
         &mut self,
         acc: &ArrayAccessExpression,
@@ -165,17 +166,19 @@ impl<'ctx> 后端<'ctx> {
         let (av, at) = self
             .生成表达式(&acc.array)?
             .ok_or_else(|| "数组表达式无值".to_string())?;
+        reject_non_indexable(at)?;
         let 元素 = at.数组元素().unwrap_or(元素类型::整数);
-        let base = av.into_pointer_value();
+        let base = as_array_pointer(av)?;
         let (iv, _) = self
             .生成表达式(&acc.index)?
             .ok_or_else(|| "数组下标无值".to_string())?;
+        let index = self.emit_index_check(base, index_as_int(iv)?)?;
 
         // 元素偏移 = idx + 1（跳过长度头）
         let one = self.ctx.i64_type().const_int(1, false);
         let 偏移 = self
             .builder
-            .build_int_add(iv.into_int_value(), one, "idx1")
+            .build_int_add(index, one, "idx1")
             .map_err(|e| e.to_string())?;
         let 元素llvm = self.元素llvm类型(元素);
         let slot = self.槽指针动态(base, 元素llvm, 偏移)?;
@@ -186,8 +189,8 @@ impl<'ctx> 后端<'ctx> {
         Ok((v, 元素.标量()))
     }
 
-    /// `arr[idx] = 值` → GEP(idx+1) + store，返回存入的值。
-    /// 越界防御与下标读取一致（同为 inbounds GEP，无运行时检查）。
+    /// `arr[idx] = 值` → 越界检查 + GEP(idx+1) + store，返回存入的值。
+    /// 越界检查与下标读取一致（越界抛异常，不写内存）。
     /// ARC：元素是 RC 类型（字符串/结构体等）时 retain 新值 → release 槽旧值 →
     /// store（与 结构体.rs 字段覆写同款顺序，自赋值安全）。
     pub(super) fn 生成数组元素赋值(
@@ -195,8 +198,12 @@ impl<'ctx> 后端<'ctx> {
         acc: &ArrayAccessExpression,
         value: &AstNode,
     ) -> Result<(BasicValueEnum<'ctx>, Qi类型), String> {
-        // 链式下标赋值（甲[i][j] = x）暂不支持：给人话错误而不是悄悄写错内存
-        if matches!(acc.array.as_ref(), AstNode::数组访问表达式(_)) {
+        // 链式下标赋值 甲[i][j] = x：内层确知是数组（`数组<数组<T>>` 取出来的）
+        // 时就是「取出内层数组 → 原地写槽」，与 变量 行 = 甲[i]; 行[j] = x 等价。
+        // 内层类型不明时仍给人话错误，而不是悄悄写错内存。
+        if matches!(acc.array.as_ref(), AstNode::数组访问表达式(_))
+            && 推断表达式类型(&acc.array, &self.符号).数组元素().is_none()
+        {
             return Err(
                 "暂不支持链式下标赋值（如 甲[i][j] = 值）。请先取出内层数组再赋值：\
                  变量 行 = 甲[i]; 行[j] = 值;"
@@ -206,17 +213,19 @@ impl<'ctx> 后端<'ctx> {
         let (av, at) = self
             .生成表达式(&acc.array)?
             .ok_or_else(|| "数组表达式无值".to_string())?;
+        reject_non_indexable(at)?;
         let 元素 = at.数组元素().unwrap_or(元素类型::整数);
-        let base = av.into_pointer_value();
+        let base = as_array_pointer(av)?;
         let (iv, _) = self
             .生成表达式(&acc.index)?
             .ok_or_else(|| "数组下标无值".to_string())?;
+        let index = self.emit_index_check(base, index_as_int(iv)?)?;
 
         // 元素偏移 = idx + 1（跳过长度头，与读取一致）
         let one = self.ctx.i64_type().const_int(1, false);
         let 偏移 = self
             .builder
-            .build_int_add(iv.into_int_value(), one, "idx1")
+            .build_int_add(index, one, "idx1")
             .map_err(|e| e.to_string())?;
         let 元素llvm = self.元素llvm类型(元素);
         let slot = self.槽指针动态(base, 元素llvm, 偏移)?;
@@ -258,7 +267,7 @@ impl<'ctx> 后端<'ctx> {
         match e {
             元素类型::浮点数 => self.ctx.f64_type().into(),
             元素类型::布尔 => self.ctx.bool_type().into(),
-            元素类型::指针 | 元素类型::结构体(_) => {
+            元素类型::指针 | 元素类型::结构体(_) | 元素类型::Nested(_) => {
                 self.ctx.ptr_type(inkwell::AddressSpace::default()).into()
             }
             元素类型::整数 => self.ctx.i64_type().into(),
@@ -300,5 +309,43 @@ impl<'ctx> 后端<'ctx> {
                 .build_in_bounds_gep(self.ctx.i64_type(), base, &[idx], "arrslot")
                 .map_err(|e| e.to_string())
         }
+    }
+}
+
+/// 明确不是数组的值不许下标：以前 `"abc"[1]` 把字符串字节当数组槽读，
+/// 读出 4294967297 这类垃圾（还会越过字符串末尾）。
+fn reject_non_indexable(t: Qi类型) -> Result<(), String> {
+    let kind = match t {
+        Qi类型::字符串 => "字符串",
+        Qi类型::浮点数 => "浮点数",
+        Qi类型::布尔 => "布尔",
+        Qi类型::结构体(_) => "结构体",
+        _ => return Ok(()),
+    };
+    let hint = if kind == "字符串" {
+        "；取第 i 个字符用 字符串.字符取(串, i)，取字节用 字符串.字节(串, i)"
+    } else {
+        ""
+    };
+    Err(format!(
+        "{}不能用下标 [ ] 取值或赋值（只有数组可以）{}",
+        kind, hint
+    ))
+}
+
+/// 数组值 → 指针。非指针值（类型丢失时会出现 i64）报人话错误，
+/// 不再在 into_pointer_value 处 panic。
+fn as_array_pointer(v: BasicValueEnum<'_>) -> Result<PointerValue<'_>, String> {
+    match v {
+        BasicValueEnum::PointerValue(p) => Ok(p),
+        _ => Err("下标的对象不是数组（取到的是一个非指针值）".to_string()),
+    }
+}
+
+/// 下标必须是整数。
+fn index_as_int(v: BasicValueEnum<'_>) -> Result<IntValue<'_>, String> {
+    match v {
+        BasicValueEnum::IntValue(i) => Ok(i),
+        _ => Err("数组下标必须是整数".to_string()),
     }
 }

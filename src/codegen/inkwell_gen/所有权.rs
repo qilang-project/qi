@@ -1054,7 +1054,8 @@ fn 结构体释放名(idx: u32) -> String {
 ///   结构体元素（E2 类型化）→ arr.s<idx>（逐槽 qi.release.s<idx> 级联）
 fn 数组释放名(e: 元素类型) -> String {
     match e {
-        元素类型::指针 => "qi.release.arr.p".to_string(),
+        // 嵌套数组元素走动态释放（qi_rc_release_any 认得数组对象）
+        元素类型::指针 | 元素类型::Nested(_) => "qi.release.arr.p".to_string(),
         元素类型::结构体(i) => format!("qi.release.arr.s{}", i),
         _ => "qi.release.arr.v".to_string(),
     }

@@ -52,6 +52,18 @@ pub enum 元素类型 {
     /// 已知元素是结构体时，数组释放走 qi.release.arr.s<idx> 类型化级联，
     /// 元素访问返回精确的 结构体(idx) 类型。
     结构体(u32),
+    /// 嵌套数组元素（`数组<数组<T>>`）：槽里存内层数组指针。u32 是内层元素类型
+    /// 在 [`nested_element_table`] 里的编号 —— 元素类型 要保持 Copy（Qi类型 到处按值传），
+    /// 所以不能直接 Box 递归，改成全局驻留表。以前这里退化成 整数：取出来的
+    /// 内层数组是个 i64，再对它取下标就在 into_pointer_value 处 panic。
+    Nested(u32),
+}
+
+/// 嵌套数组的内层元素类型驻留表（进程级，只增不减；同一元素类型永远同一编号）。
+/// 编号不进任何符号名，跨模块/并行 codegen 不需要稳定。
+fn nested_element_table() -> &'static std::sync::Mutex<Vec<元素类型>> {
+    static TABLE: std::sync::OnceLock<std::sync::Mutex<Vec<元素类型>>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 impl 元素类型 {
@@ -63,7 +75,31 @@ impl 元素类型 {
             元素类型::布尔 => Qi类型::布尔,
             元素类型::指针 => Qi类型::字符串,
             元素类型::结构体(i) => Qi类型::结构体(i),
+            元素类型::Nested(inner) => Qi类型::数组(元素类型::inner_of(inner)),
         }
+    }
+
+    /// 内层数组的元素类型 → 嵌套数组元素（驻留编号）。
+    pub fn nested(inner: 元素类型) -> 元素类型 {
+        let mut table = nested_element_table()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let id = match table.iter().position(|existing| *existing == inner) {
+            Some(i) => i,
+            None => {
+                table.push(inner);
+                table.len() - 1
+            }
+        };
+        元素类型::Nested(id as u32)
+    }
+
+    /// 驻留编号 → 内层元素类型（查不到按 整数，只可能是编号伪造）。
+    pub fn inner_of(id: u32) -> 元素类型 {
+        let table = nested_element_table()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        table.get(id as usize).copied().unwrap_or(元素类型::整数)
     }
 
     /// 由标量 Qi 类型推元素类型。
@@ -73,6 +109,7 @@ impl 元素类型 {
             Qi类型::布尔 => 元素类型::布尔,
             Qi类型::结构体(i) => 元素类型::结构体(i),
             Qi类型::字符串 | Qi类型::函数值(_) => 元素类型::指针,
+            Qi类型::数组(inner) => 元素类型::nested(inner),
             _ => 元素类型::整数,
         }
     }

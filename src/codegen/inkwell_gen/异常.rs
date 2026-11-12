@@ -31,7 +31,7 @@ use inkwell::AddressSpace;
 
 impl<'ctx> 后端<'ctx> {
     /// 幂等声明一个异常运行时函数。
-    fn 取异常运行时(&mut self, name: &str) -> Result<FunctionValue<'ctx>, String> {
+    pub(super) fn 取异常运行时(&mut self, name: &str) -> Result<FunctionValue<'ctx>, String> {
         if let Some(f) = self.module.get_function(name) {
             return Ok(f);
         }
@@ -275,6 +275,11 @@ impl<'ctx> 后端<'ctx> {
             .map_err(|e| e.to_string())?;
         if let Some(clause) = t.catch_clauses.first() {
             self.符号.进入作用域();
+            // 错误变量自成一层作用域（同 对于 的循环变量）：出 catch 恢复外层同名
+            // 变量，本 catch 的串槽记进隐藏槽由函数出口释放。以前直接覆盖 变量表，
+            // 一个函数里几个 `捕获 错误` 用同一个名字时，先前几个槽从出口释放
+            // 名单上掉了 —— N 个同名 catch 漏 N-1 条消息串。
+            self.作用域遮蔽栈.push(Vec::new());
             if let Some(var) = &clause.error_var {
                 let msg_fn = self.取异常运行时("qi_exc_message")?;
                 let msg = self
@@ -304,8 +309,7 @@ impl<'ctx> 后端<'ctx> {
                 self.builder
                     .build_store(slot, msg)
                     .map_err(|e| e.to_string())?;
-                self.变量表
-                    .insert(var.clone(), (slot, super::类型::Qi类型::字符串));
+                self.声明局部槽(var, slot, super::类型::Qi类型::字符串);
                 self.符号.声明变量(var, super::类型::Qi类型::字符串);
             }
             for s in &clause.body {
@@ -315,6 +319,7 @@ impl<'ctx> 后端<'ctx> {
                 }
             }
             self.符号.退出作用域();
+            self.弹作用域帧();
             if !self.当前块已终结() {
                 let clear_fn = self.取异常运行时("qi_exc_clear")?;
                 self.builder
