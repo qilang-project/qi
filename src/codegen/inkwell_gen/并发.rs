@@ -516,7 +516,7 @@ impl<'ctx> 后端<'ctx> {
                     .build_int_to_ptr(v, ptrt, "i2p")
                     .map_err(|e| e.to_string())?
                     .into(),
-                元素.标量(),
+                element.标量(),
             ),
         };
         Ok((rv, rt))
