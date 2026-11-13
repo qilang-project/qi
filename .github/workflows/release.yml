@@ -121,7 +121,7 @@ jobs:
           # 钉旧 tag 的话用 qi-test 断言JSON相等 的程序直接链接失败（符号不存在）。
           # 2026.09.26-1 加了 qi_string_format_parts —— 编译器把字符串插值降成它，
           # 钉旧 tag 的话任何用了 ${} 的程序都链接失败。
-          git clone --depth 1 --branch 2026.10.09-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
+          git clone --depth 1 --branch 2026.11.12-1 https://github.com/qilang-project/qi-runtime.git ../qi-runtime
           # 走 Makefile：归档路径只在 RUNTIME_DIR 一处定义，和本地/CI 一致
           make runtime
 
