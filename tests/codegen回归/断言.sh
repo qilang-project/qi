@@ -68,6 +68,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 QI="${1:-$ROOT/target/debug/qi}"
+# 下面有检查要 cd 进用例目录再跑，相对路径（Windows CI 传 target/release/qi.exe）会失效
+case "$QI" in /*) ;; *) QI="$(pwd)/$QI" ;; esac
 export QI_PACKAGES_PATH="${QI_PACKAGES_PATH:-$ROOT/qi_packages}"
 
 # 限时执行。**macOS 没有 GNU timeout** —— 那是 coreutils 带的，
